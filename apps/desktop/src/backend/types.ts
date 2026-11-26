@@ -28,7 +28,7 @@ export interface LinkHooks {
 }
 
 export interface HostKeyVerifier {
-  verify(host: string, port: number, fingerprint: string): Promise<boolean>
+  verify(host: string, port: number, fingerprint: string, interactive?: boolean): Promise<boolean>
 }
 
 /** 建立 SSH 连接所需的最小信息；连接测试只需要这些。 */
@@ -49,6 +49,7 @@ export interface SshLinkContext extends SshTestContext {
   userData: string
   resourcesPath: string
   appVersion: string
+  signal?: AbortSignal
 }
 
 export interface DirectLinkContext {
@@ -58,6 +59,7 @@ export interface DirectLinkContext {
   appVersion: string
   /** 缺省 10s；SSH 目标试直连时用更短的值以便尽快回退 */
   connectTimeoutMs?: number
+  signal?: AbortSignal
 }
 
 export interface LocalLinkContext {

@@ -1,20 +1,23 @@
 import { Select } from '../../components/primitives'
 import { Checkbox } from '../../components/ui'
+import { DEFAULT_FONT_SIZES, FONT_SIZES, isFontSize } from '../../../../shared/fontSizes'
 import { useSettings } from './settingsStore'
 import {
   DEFAULT_AGENT_OPTIONS,
   DENSITY_OPTIONS,
+  FONT_SIZE_SETTINGS,
   SEND_KEY_OPTIONS,
   THEME_OPTIONS,
   isSettingsAgent,
   isSettingsDensity,
   isSettingsSendKey,
 } from './settingsModel'
-import { Segmented, SettingRow } from './fields'
+import { SectionHeading, Segmented, SettingRow } from './fields'
 
 export function GeneralSection({ visible }: { visible: (itemId: string) => boolean }) {
   const general = useSettings((state) => state.settings.general)
   const update = useSettings((state) => state.update)
+  const fontSizes = FONT_SIZE_SETTINGS.filter(({ id }) => visible(id))
 
   return (
     <div>
@@ -32,7 +35,7 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
       )}
 
       {visible('autoConnectLast') && (
-        <SettingRow title="启动时自动连接上次使用的目标" description="仅记住目标 id，不保存任何连接凭据。">
+        <SettingRow title="启动时自动连接上次使用的目标" description="在后台尝试连接，并通过 SSH 检查远端 Server 更新。">
           <Checkbox
             checked={general.autoConnectLast}
             onChange={(value) => void update({ general: { autoConnectLast: value } })}
@@ -74,6 +77,28 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
         <SettingRow title="主题" description="当前版本只提供深色主题。">
           <Segmented value="dark" options={THEME_OPTIONS} onChange={() => undefined} />
         </SettingRow>
+      )}
+
+      {fontSizes.length > 0 && (
+        <section className="mt-6">
+          <SectionHeading title="字体大小" />
+          {fontSizes.map(({ id, title, description }) => (
+            <SettingRow key={id} title={title} description={description}>
+              <Select
+                aria-label={title}
+                value={String(general[id])}
+                options={FONT_SIZES.map((size) => ({
+                  value: String(size),
+                  label: size === DEFAULT_FONT_SIZES[id] ? `${size} px（默认）` : `${size} px`,
+                }))}
+                onValueChange={(value) => {
+                  const size = Number(value)
+                  if (isFontSize(size)) void update({ general: { [id]: size } })
+                }}
+              />
+            </SettingRow>
+          ))}
+        </section>
       )}
     </div>
   )

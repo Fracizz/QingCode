@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_FONT_SIZES } from '../../shared/fontSizes'
 import {
   defaultAppSettings,
   isSettingsAgent,
@@ -16,9 +17,10 @@ describe('defaultAppSettings', () => {
     expect(first).toEqual({
       general: {
         sendKey: 'enter',
-        autoConnectLast: false,
+        autoConnectLast: true,
         defaultAgent: 'codex',
         density: 'comfortable',
+        ...DEFAULT_FONT_SIZES,
       },
       agents: {},
     })
@@ -65,9 +67,10 @@ describe('sanitizeAppSettings', () => {
     })
     expect(result.general).toEqual({
       sendKey: 'ctrlEnter',
-      autoConnectLast: false,
+      autoConnectLast: true,
       defaultAgent: 'pi',
       density: 'compact',
+      ...DEFAULT_FONT_SIZES,
     })
     expect(result.agents.local).toEqual({
       codex: { enabled: false, path: 'C:\\bin\\codex.exe', configDir: 'D:\\codex-home' },
@@ -147,6 +150,7 @@ describe('mergeAppSettings', () => {
       autoConnectLast: true,
       defaultAgent: 'claude',
       density: 'compact',
+      ...DEFAULT_FONT_SIZES,
     })
     expect(next.agents.local?.codex).toEqual({
       enabled: false,
@@ -180,5 +184,14 @@ describe('mergeAppSettings', () => {
     const current = defaultAppSettings()
     expect(mergeAppSettings(current, { general: { sendKey: 'bad' } } as never)).toEqual(defaultAppSettings())
     expect(mergeAppSettings(current, {})).toEqual(defaultAppSettings())
+  })
+
+  it('字号独立保存，旧设置和无效字号使用默认值', () => {
+    const current = sanitizeAppSettings({ general: { chatFontSize: 18, composerFontSize: -1 } })
+    expect(current.general).toMatchObject({ ...DEFAULT_FONT_SIZES, chatFontSize: 18 })
+    const next = mergeAppSettings(current, {
+      general: { editorFontSize: 16, chatFontSize: 100 },
+    })
+    expect(next.general).toMatchObject({ ...DEFAULT_FONT_SIZES, chatFontSize: 18, editorFontSize: 16 })
   })
 })

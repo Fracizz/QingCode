@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { LockKeyhole } from 'lucide-react'
 import { EditorView } from '@codemirror/view'
 import { Transaction } from '@codemirror/state'
+import { useSetting } from '../../settings/settingsStore'
 import { cn } from '../../../lib/cn'
 import { readOnlyLabel, readOnlyReason } from '../editModel'
 import { loadedLabel } from '../filesModel'
@@ -32,6 +33,7 @@ type Props = {
 export function CodeEditor({ tab, onChange, onSave, onLoadMore, className }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const fontSize = useSetting((settings) => settings.general.editorFontSize)
   const jumped = useRef<string | null>(null)
   const reason = readOnlyReason(tab)
   const readOnly = reason !== null
@@ -61,6 +63,8 @@ export function CodeEditor({ tab, onChange, onSave, onLoadMore, className }: Pro
     // 只在标签切换时重建视图；其余变化通过 compartment / 事务同步。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.id])
+
+  useEffect(() => viewRef.current?.requestMeasure(), [fontSize])
 
   useEffect(() => {
     const view = viewRef.current

@@ -604,6 +604,29 @@ export class MockNativePort implements NativePort {
           },
         })
         return
+      case 'thread/compact/start': {
+        if (agent !== 'codex' || active) {
+          recv({ id, error: { code: agent !== 'codex' ? -32601 : -32602, message: '当前无法压缩会话' } })
+          return
+        }
+        const item = { type: 'contextCompaction', id: `compact-${++this.counter}` }
+        const turn: MockTurn = { id: `turn-${this.counter}`, status: 'inProgress', items: [item] }
+        turns.push(turn)
+        this.turns.set(key, turns)
+        recv({ id, result: {} })
+        setTimeout(() => {
+          if (turn.status !== 'inProgress') return
+          recv({ method: 'turn/started', params: { threadId, turn: { ...turn, items: [] } } })
+          recv({ method: 'item/started', params: { threadId, turnId: turn.id, item } })
+          setTimeout(() => {
+            if (turn.status !== 'inProgress') return
+            turn.status = 'completed'
+            recv({ method: 'item/completed', params: { threadId, turnId: turn.id, item } })
+            recv({ method: 'turn/completed', params: { threadId, turn } })
+          }, 240)
+        }, 80)
+        return
+      }
       case 'turn/start':
         if (active) {
           recv({ id, error: { code: -32602, message: '已有一轮正在运行，请等待完成' } })

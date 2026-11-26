@@ -67,6 +67,7 @@ export function registerTargetMethods(router: BackendRouter): void {
     emit,
     ...(process.env['QN_AUTO_ACCEPT_HOST_KEY'] === '1' ? { autoAcceptHostKey: true } : {}),
   })
+  const connecting = new Map<string, symbol>()
 
   router.register('target.connect', async (params) => {
     const id = requireId(params)
@@ -74,13 +75,19 @@ export function registerTargetMethods(router: BackendRouter): void {
     const credentials = readCredentials(params)
     const remember = params.remember === true
 
+    const attempt = Symbol()
+    connecting.set(id, attempt)
     let target: Target | undefined
-    if (id === 'local') target = LOCAL_TARGET
-    else target = (await readTargets(backendConfig.userData)).find((item) => item.id === id)
+    try {
+      target = id === 'local' ? LOCAL_TARGET : (await readTargets(backendConfig.userData)).find((item) => item.id === id)
+      if (connecting.get(id) !== attempt) return
+    } finally {
+      if (connecting.get(id) === attempt) connecting.delete(id)
+    }
     if (!target) throw new RouterError('not_found', `目标 ${id} 不存在`)
 
-    // 渲染进程乐观地把 connecting 改成 ready；等首次握手结束再回包，避免假就绪闪烁。
-    await manager.connect(target, credentials, remember).catch((err: unknown) => {
+    const startup = target.kind !== 'local' && params.startup === true
+    await manager.connect(target, credentials, remember, startup).catch((err: unknown) => {
       emit('target.state', {
         id,
         state: 'error',
@@ -161,7 +168,9 @@ export function registerTargetMethods(router: BackendRouter): void {
   })
 
   router.register('target.disconnect', (params) => {
-    manager.disconnect(requireId(params))
+    const id = requireId(params)
+    connecting.delete(id)
+    manager.disconnect(id)
   })
 
   router.register('hostKey.respond', (params) => {

@@ -116,8 +116,9 @@ async function buildAuthConfig(
   }
 }
 
-function openSshClient(config: ConnectConfig, isPaused: () => boolean = () => false): Promise<Client> {
+function openSshClient(config: ConnectConfig, isPaused: () => boolean, signal?: AbortSignal): Promise<Client> {
   return new Promise((resolve, reject) => {
+    signal?.throwIfAborted()
     const client = new Client()
     let settled = false
     // 自己计握手时间：指纹确认弹窗期间暂停计时。
@@ -149,8 +150,16 @@ function openSshClient(config: ConnectConfig, isPaused: () => boolean = () => fa
       detach()
       reject(new Error('SSH 连接已关闭'))
     }
+    const onAbort = (): void => {
+      if (settled) return
+      settled = true
+      detach()
+      client.destroy()
+      reject(signal?.reason)
+    }
     const detach = (): void => {
       clearInterval(watchdog)
+      signal?.removeEventListener('abort', onAbort)
       client.removeListener('ready', onReady)
       client.removeListener('error', onError)
       client.removeListener('close', onClose)
@@ -160,7 +169,13 @@ function openSshClient(config: ConnectConfig, isPaused: () => boolean = () => fa
     client.on('ready', onReady)
     client.on('error', onError)
     client.on('close', onClose)
-    client.connect(config)
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      client.connect(config)
+    } catch (err) {
+      detach()
+      reject(err)
+    }
   })
 }
 
@@ -481,8 +496,9 @@ function openConnectChannel(client: Client, command: string): Promise<ClientChan
 }
 
 /** 建立到目标机的 SSH 连接（认证 + 主机指纹确认），连接测试与正式连接共用。 */
-async function dialTarget(context: SshTestContext): Promise<{ client: Client; stopVerifying: () => void }> {
+async function dialTarget(context: SshTestContext, signal?: AbortSignal): Promise<{ client: Client; stopVerifying: () => void }> {
   const { target, gate } = context
+  signal?.throwIfAborted()
   const auth = await buildAuthConfig(target, context.credentials)
   // 握手超时后 ssh2 会销毁 Client；迟到的指纹确认不能再回调已失效的 verify。
   let verifyingClient = true
@@ -496,7 +512,7 @@ async function dialTarget(context: SshTestContext): Promise<{ client: Client; st
     keepaliveCountMax: 3,
     hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => {
       const decide = (accepted: boolean): void => {
-        if (!verifyingClient) return
+        if (!verifyingClient || signal?.aborted) return
         try {
           verify(accepted)
         } catch {
@@ -515,8 +531,13 @@ async function dialTarget(context: SshTestContext): Promise<{ client: Client; st
     ...auth.config,
   }
 
-  const client = await openSshClient(config, () => promptPending)
-  return { client, stopVerifying: () => { verifyingClient = false } }
+  try {
+    const client = await openSshClient(config, () => promptPending, signal)
+    return { client, stopVerifying: () => { verifyingClient = false } }
+  } catch (err) {
+    verifyingClient = false
+    throw err
+  }
 }
 
 /** 只验证认证与远端环境，不部署、不启动任何远端进程。 */
@@ -538,9 +559,9 @@ export async function testSshTarget(context: SshTestContext): Promise<TargetProb
 }
 
 export async function connectSshTarget(context: SshLinkContext): Promise<TargetLink> {
-  const { target, hooks } = context
+  const { target, hooks, signal } = context
   hooks.onState('connecting', `连接 ${target.host}:${target.port}`)
-  const { client, stopVerifying } = await dialTarget(context)
+  const { client, stopVerifying } = await dialTarget(context, signal)
   let closed = false
   let userClosed = false
   let channelStderr = ''
@@ -560,10 +581,15 @@ export async function connectSshTarget(context: SshLinkContext): Promise<TargetL
   }
   client.on('error', (err: Error) => finish(err))
   client.on('close', () => finish(new Error('SSH 连接已断开')))
+  const abort = () => { client.destroy() }
+  signal?.addEventListener('abort', abort, { once: true })
 
   try {
+    signal?.throwIfAborted()
     const bundle = await readServerBundle(context.resourcesPath)
+    signal?.throwIfAborted()
     const deployed = await deployServer(client, (detail) => hooks.onState('deploying', detail), bundle, context.resourcesPath)
+    signal?.throwIfAborted()
     const { channel, via } = await openServerChannel(client, deployed)
     hooks.onState('connecting', via === 'streamlocal' ? 'SSH 转发连接 daemon' : 'SSH 通道连接 daemon')
     channel.stderr.on('data', (chunk: Buffer) => {
@@ -604,10 +630,13 @@ export async function connectSshTarget(context: SshLinkContext): Promise<TargetL
     stopVerifying()
     closed = true
     try {
-      client.end()
+      if (signal?.aborted) client.destroy()
+      else client.end()
     } catch {
       // 连接可能已经断开。
     }
     throw err
+  } finally {
+    signal?.removeEventListener('abort', abort)
   }
 }

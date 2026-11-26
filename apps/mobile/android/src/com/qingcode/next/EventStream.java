@@ -19,7 +19,8 @@ final class EventStream implements Runnable {
     void closed(String stream, String error);
   }
 
-  private static final int MAX_LINE_CHARS = 1024 * 1024;
+  // 历史回包最多占一个 16 MiB 协议帧，网关还会附加目标和事件字段。
+  private static final int MAX_LINE_CHARS = 16 * 1024 * 1024 + 1024;
 
   private final String id;
   private final HttpsURLConnection connection;

@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+import type { SshTarget } from '../shared/backendApi'
+import { backendConfig } from './config'
 import { registerTargetMethods } from './registerTargets'
 import { BackendRouter, type WirePort } from './router'
+import { connectSshTarget } from './sshTarget'
+import { writeTargets } from './targetStore'
+
+vi.mock('./sshTarget', () => ({ connectSshTarget: vi.fn(), runRemoteServerCommands: vi.fn(), testSshTarget: vi.fn() }))
 
 class FakePort implements WirePort {
   readonly messages: unknown[] = []
@@ -50,5 +59,31 @@ describe('registerTargetMethods', () => {
     expect(await call(router, port, 'target.connect', { id: 'no-such-target' })).toMatchObject({
       ok: false, error: { code: 'not_found' },
     })
+  })
+
+  it('启动标记传给远程连接，手动断开可取消正在读取的目标', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'qn-startup-target-'))
+    const previousUserData = backendConfig.userData
+    backendConfig.userData = userData
+    const target: SshTarget = { id: 'remote', name: '远程', kind: 'ssh', host: 'host', port: 22, username: 'user', auth: { kind: 'agent' } }
+    const ssh = vi.mocked(connectSshTarget)
+    ssh.mockResolvedValue({ request: vi.fn(), codexSend: vi.fn(), close: vi.fn() })
+    const router = new BackendRouter()
+    registerTargetMethods(router)
+    try {
+      await writeTargets(userData, [target])
+      const pending = router.invoke('target.connect', { id: target.id, startup: true })
+      await router.invoke('target.disconnect', { id: target.id })
+      await pending
+      expect(ssh).not.toHaveBeenCalled()
+
+      await router.invoke('target.connect', { id: target.id, startup: true })
+      expect(ssh.mock.calls[0]?.[0]).toMatchObject({ target, signal: expect.any(AbortSignal) })
+      await router.invoke('target.disconnect', { id: target.id })
+    } finally {
+      ssh.mockReset()
+      backendConfig.userData = previousUserData
+      await rm(userData, { recursive: true, force: true })
+    }
   })
 })

@@ -14,19 +14,18 @@ import {
   pickAccount,
   pickSnapshot,
   readThread,
-  requestSubagents,
   resolveServerRequest,
   resumeThread,
   sendInput,
   startThread,
   steerTurn,
-  supportsSubagentRequests,
   type AccountSummary,
   type ConversationState,
   type RateLimitSnapshot,
   type RequestId,
   type ServerNotification,
   type ServerRequest,
+  type Thread,
   type TurnOverrides,
   type UserInput,
 } from '@qn/codex-client'
@@ -63,10 +62,10 @@ import {
   type ModelList,
   type ModelPrefs,
 } from './models'
+import { NativeRequestError } from './native'
 import {
   applyTargetState,
   availableApprovalDecisions,
-  buildMobileTurnInput,
   connectionRepairReason,
   draftKey,
   errorCode,
@@ -102,6 +101,7 @@ import {
   MobileCodexTransport,
   openSeq,
 } from './transport'
+import { mobileTurnFits, queuedInput, QUEUE_STORAGE_KEY, restoreQueues, serializeQueues, type QueuedSend } from './queuedSends'
 import { deliverTerminalEvent } from './terminalEvents'
 import type {
   AgentKind,
@@ -185,10 +185,12 @@ export type AgentSession = {
   rpc: CodexRpc
   transport: MobileCodexTransport
   resumedCodexThreads: Set<string>
+  loadedThreads: Set<string>
   state: ConversationState
   opened: boolean
   opening: boolean
   openError: string | null
+  openErrorCode?: string
   lastSeq: number | null
 }
 
@@ -212,16 +214,6 @@ export type ViewerState = {
 export type DiffRequest = { path: string; diff?: string | null }
 export type SendMode = 'queue' | 'steer' | 'immediate'
 
-type QueuedSend = {
-  id: string
-  text: string
-  imageCount: number
-  input: UserInput[]
-  overrides: TurnOverrides
-  sending?: boolean
-  error?: string
-}
-
 type SendAddress = { desktopId: string; targetId: string; agent: AgentKind; threadId: string }
 
 type DiscoveredThread = ThreadSummary & { targetId: string; projectId: string }
@@ -234,6 +226,10 @@ type WorkspaceProject = {
 
 type AppState = {
   page: Page
+  targetsReturnPage: 'connections' | 'workspace'
+  projectsReturnPage: 'targets' | 'workspace'
+  chatReturnPage: 'workspace' | 'threads'
+  threadsReturnPage: 'workspace' | 'projects'
   booting: boolean
   mock: boolean
   connections: Connection[]
@@ -277,6 +273,7 @@ type AppState = {
   draftText: string
   approvalSubmitting: Record<string, boolean>
   sending: boolean
+  compactingThreads: Record<string, true>
   queuedSends: Record<string, QueuedSend[]>
   error: string | null
   notice: string | null
@@ -295,7 +292,7 @@ type AppState = {
   saveEdit: () => Promise<void>
   closeForm: () => void
   removeConnection: (id: string) => Promise<void>
-  activate: (id: string) => Promise<void>
+  activate: (id: string, page?: 'workspace' | 'targets') => Promise<void>
   deactivate: () => void
   loadTargets: () => Promise<void>
   loadAgentSettings: () => Promise<void>
@@ -319,9 +316,13 @@ type AppState = {
   newThread: (agent?: AgentKind, workspace?: WorkspaceProject) => Promise<boolean>
   openThread: (id: string, agent?: AgentKind, workspace?: WorkspaceProject) => Promise<boolean>
   archiveConversation: (targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>) => Promise<void>
+  compactConversation: () => Promise<boolean>
   setDraftText: (text: string) => void
   send: (text: string, attachments?: UserInput[], delegate?: boolean, mode?: SendMode, options?: { keepDraft?: boolean }) => Promise<boolean>
   removeQueuedSend: (id: string) => void
+  beginQueuedEdit: (id: string) => (() => void) | null
+  editQueuedSend: (id: string, text: string) => Promise<boolean>
+  steerQueuedSend: (id: string) => Promise<boolean>
   retryQueuedSend: () => Promise<void>
   interrupt: () => Promise<void>
   respondApproval: (requestId: RequestId, decision: MobileApprovalDecision) => Promise<boolean>
@@ -388,6 +389,26 @@ export function selectedQueuedSends(state: AppState): QueuedSend[] | undefined {
   return address ? state.queuedSends[sendKey(address)] : undefined
 }
 
+export function selectedCompactionStarting(state: AppState): boolean {
+  const address = selectedSendAddress(state)
+  return !!address && !!state.compactingThreads[sendKey(address)]
+}
+
+export function selectedCompactionBlockedReason(state: AppState): string | null {
+  const address = selectedSendAddress(state)
+  if (!address || address.agent !== 'codex') return '仅已创建的 Codex 会话支持压缩'
+  if (!state.eventsConnected) return '连接电脑后可压缩会话'
+  const session = state.sessions[sessionKey(address.targetId, address.agent)]
+  const thread = session?.state.threads[address.threadId]
+  if (!session?.opened || !thread) return '请先打开会话'
+  if (selectedCompactionStarting(state)) return '正在启动压缩…'
+  if (thread.status === 'running' || thread.pendingApprovals.length > 0 || state.sending) return '请先等待当前一轮结束'
+  if (selectedQueuedSends(state)?.length) return '请先处理排队的消息'
+  const quota = state.rateLimits[address.targetId]?.snapshot
+  if (quota?.rateLimitReachedType || quota?.spendControlReached) return '当前额度已用完'
+  return null
+}
+
 /** 当前项目目录：相对路径解析、新建会话、git.diff 的 cwd 都以它为准。 */
 export const currentCwd = (state: Pick<AppState, 'projects' | 'selectedProjectId'>): string =>
   state.projects.find((item) => item.id === state.selectedProjectId)?.path ?? ''
@@ -424,12 +445,16 @@ const openFailureMessage = (agent: AgentKind, err: unknown): string =>
     agent === 'codex' ? 'Codex 未就绪，请确认目标已连接' : `${agentLabel(agent)} 打开失败，请确认目标机已安装并登录`,
   )
 
+const isTargetDisconnected = (err: unknown): boolean =>
+  errorCode(err) === 'not_connected' || (isRecord(err) && errorCode(err.data) === 'not_connected')
+
 let initialized = false
 let controller: EventStreamController | null = null
 let refreshToken = 0
 let viewerToken = 0
 const opening = new Map<string, Promise<boolean>>()
 const rateRefresh = new Map<string, Promise<void>>()
+const OPEN_THREAD_TIMEOUT_MS = 30_000
 
 export const useApp = create<AppState>((set, get) => {
   let desktopEpoch = 0
@@ -453,6 +478,9 @@ export const useApp = create<AppState>((set, get) => {
   const storageWrites = new Map<string, Promise<void>>()
   const submitting = new Set<string>()
   const replacing = new Set<string>()
+  const editingQueue = new Set<string>()
+  const savingQueue = new Set<string>()
+  const queueingDrafts = new Set<string>()
 
   const queueStorageWrite = (key: string, write: () => Promise<void>): Promise<void> => {
     const previous = storageWrites.get(key) ?? Promise.resolve()
@@ -514,6 +542,26 @@ export const useApp = create<AppState>((set, get) => {
     saveRecord(STORAGE_SAVED_CHATS, savedChats)
   }
 
+  const chatReturnPage = (source: AppState): AppState['chatReturnPage'] => {
+    if (source.page === 'chat') return source.chatReturnPage
+    return source.page === 'workspace' ? 'workspace' : 'threads'
+  }
+
+  const leaveChat = (threads = get().threads): void => {
+    const page = get().chatReturnPage
+    beginNavigation()
+    viewerToken += 1
+    set({
+      page,
+      ...(page === 'workspace' ? { selectedTargetId: null, selectedProjectId: null } : {}),
+      selectedThreadId: null,
+      viewer: null,
+      threads,
+    })
+    showDraft()
+    saveActiveChat()
+  }
+
   const isArchived = (desktopId: string, targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>): boolean =>
     get().archivedThreads[archivedThreadKey(desktopId, targetId, thread)] === true
 
@@ -542,10 +590,7 @@ export const useApp = create<AppState>((set, get) => {
       if (current.selectedTargetId === targetId) {
         const threads = current.threads.filter((item) => item.agent !== thread.agent || item.id !== thread.id)
         if (current.page === 'chat' && current.selectedAgent === thread.agent && current.selectedThreadId === thread.id) {
-          beginNavigation()
-          viewerToken += 1
-          set({ page: 'threads', selectedThreadId: null, viewer: null, threads })
-          showDraft()
+          leaveChat(threads)
         } else if (threads.length !== current.threads.length) {
           set({ threads })
         }
@@ -653,14 +698,6 @@ export const useApp = create<AppState>((set, get) => {
           pendingRestore = null
           return
         }
-        try {
-          await getGateway().rpc(conn, 'server.req', { targetId: chat.targetId, method: 'ping' })
-        } catch (err) {
-          if (!isCurrent()) return
-          if (errorCode(err) !== 'not_connected') throw err
-          await connectSavedTarget(conn, chat.targetId)
-        }
-        if (!isCurrent()) return
         set({ projects, selectedTargetId: chat.targetId, selectedProjectId: chat.projectId })
         await get().openThread(chat.threadId, chat.agent)
         if (epoch === desktopEpoch && get().page === 'chat') pendingRestore = null
@@ -694,7 +731,8 @@ export const useApp = create<AppState>((set, get) => {
     })
   }
 
-  function updateQueue(key: string, update: (list: QueuedSend[]) => QueuedSend[]): void {
+  function updateQueue(key: string, update: (list: QueuedSend[]) => QueuedSend[], persist = true): Promise<void> {
+    let snapshot: AppState['queuedSends'] | undefined
     set((state) => {
       const current = state.queuedSends[key] ?? []
       const next = update(current)
@@ -702,7 +740,25 @@ export const useApp = create<AppState>((set, get) => {
       const queuedSends = { ...state.queuedSends }
       if (next.length) queuedSends[key] = next
       else delete queuedSends[key]
+      snapshot = queuedSends
       return { queuedSends }
+    })
+    if (!snapshot || !persist) return Promise.resolve()
+    const json = serializeQueues(snapshot, get().connections)
+    const gateway = getGateway()
+    const task = queueStorageWrite(QUEUE_STORAGE_KEY, () => gateway.storageSet(QUEUE_STORAGE_KEY, json))
+    void task.catch(() => set({ notice: '无法写入本地发送队列，请检查手机存储' }))
+    return task
+  }
+
+  function dropQueuedSend(key: string, id: string): Promise<void> {
+    return updateQueue(key, (list) => {
+      const first = list[0]
+      const remaining = list.filter((item) => item.id !== id)
+      if (first?.id === id && first.error && remaining[0]) {
+        remaining[0] = { ...remaining[0], error: remaining[0].error ?? '队列已暂停' }
+      }
+      return remaining
     })
   }
 
@@ -718,7 +774,8 @@ export const useApp = create<AppState>((set, get) => {
     const prefix = `${JSON.stringify(scope).slice(0, -1)},`
     for (const key of Object.keys(get().queuedSends)) {
       if (!key.startsWith(prefix)) continue
-      if (resetFlights) updateQueue(key, (list) => list.map((item) => item.sending ? { ...item, sending: false } : item))
+      if (resetFlights) void updateQueue(key, (list) => list.map((item) => item.sending
+        ? { ...item, sending: false, error: '上次发送结果未确认，请核对对话后再继续' } : item))
       pauseQueue(key, message)
     }
   }
@@ -765,7 +822,9 @@ export const useApp = create<AppState>((set, get) => {
     const next = state.queuedSends[key]?.[0]
     const session = state.sessions[sessionKey(targetId, agent)]
     const view = session?.state.threads[threadId]
-    if (state.activeId !== desktopId || !next || next.sending || submitting.has(key) || isArchived(desktopId, targetId, { agent, id: threadId })) return
+    if (state.activeId !== desktopId || !next || next.sending || next.saving || submitting.has(key) || state.compactingThreads[key]
+      || editingQueue.has(next.id) || savingQueue.has(next.id)
+      || isArchived(desktopId, targetId, { agent, id: threadId })) return
     if (!session?.opened || !state.eventsConnected || reconnectTask || !view) return
     if (queueLimited(address)) {
       pauseQueue(key, '当前额度已用完，队列已暂停')
@@ -779,8 +838,11 @@ export const useApp = create<AppState>((set, get) => {
 
     const epoch = desktopEpoch
     submitting.add(key)
-    updateQueue(key, (list) => list.map((item) => item.id === next.id ? { ...item, sending: true, error: undefined } : item))
     try {
+      await updateQueue(key, (list) => list.map((item) => item.id === next.id ? { ...item, sending: true, error: undefined } : item))
+      if (epoch !== desktopEpoch) return
+      if (!get().eventsConnected || !get().sessions[session.key]?.opened) throw new Error('连接中断，队列已暂停')
+      if (queueLimited(address)) throw new Error('当前额度已用完，队列已暂停')
       if (agent === 'codex' && !session.resumedCodexThreads.has(threadId)) {
         await resumeCodexConversation(session, threadId)
         if (epoch !== desktopEpoch) return
@@ -792,8 +854,8 @@ export const useApp = create<AppState>((set, get) => {
         }
         if (status !== 'idle' && !retry) throw new Error('上一轮未完成，队列已暂停')
       }
-      await startMessageTurn(session, address, next.input, next.overrides)
-      if (epoch === desktopEpoch) updateQueue(key, (list) => list.filter((item) => item.id !== next.id))
+      await startMessageTurn(session, address, queuedInput(agent, next), next.overrides)
+      if (epoch === desktopEpoch) void dropQueuedSend(key, next.id)
     } catch (err) {
       if (epoch === desktopEpoch) {
         updateQueue(key, (list) => list.map((item) => item.id === next.id
@@ -853,6 +915,8 @@ export const useApp = create<AppState>((set, get) => {
     reconnectTask = null
     submitting.clear()
     replacing.clear()
+    editingQueue.clear()
+    set({ compactingThreads: {} })
   }
 
   const serverReq = async <T>(targetId: string, method: string, params: unknown): Promise<T> => {
@@ -917,6 +981,7 @@ export const useApp = create<AppState>((set, get) => {
       rpc,
       transport,
       resumedCodexThreads: new Set(),
+      loadedThreads: new Set(),
       state: emptyState(),
       opened: false,
       opening: false,
@@ -944,8 +1009,17 @@ export const useApp = create<AppState>((set, get) => {
       }), session)
       if (agent === 'codex') {
         handleRateLimitNotification(targetId, notification)
+        if (typeof params?.threadId === 'string') {
+          if (method === 'thread/closed' || method === 'thread/deleted') {
+            session.resumedCodexThreads.delete(params.threadId)
+            session.loadedThreads.delete(params.threadId)
+          } else if (method === 'thread/reverted') {
+            session.loadedThreads.delete(params.threadId)
+          }
+        }
         if (method === 'thread/archived' && typeof params?.threadId === 'string') {
           session.resumedCodexThreads.delete(params.threadId)
+          session.loadedThreads.delete(params.threadId)
           recordArchive(conn.id, targetId, { id: params.threadId, agent })
         }
         if (method === 'thread/unarchived' && get().selectedTargetId === targetId) {
@@ -1029,6 +1103,8 @@ export const useApp = create<AppState>((set, get) => {
   const reloadConversation = async (session: AgentSession, threadId: string): Promise<void> => {
     try {
       const result = await readThread(session.rpc, threadId)
+      if (result?.thread?.id !== threadId) return
+      if (get().eventsConnected && get().sessions[session.key]?.opened) session.loadedThreads.add(threadId)
       patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
     } catch (err) {
       if (get().sessions[session.key]?.transport === session.transport) {
@@ -1111,6 +1187,10 @@ export const useApp = create<AppState>((set, get) => {
 
   return {
     page: 'connections',
+    targetsReturnPage: 'workspace',
+    projectsReturnPage: 'workspace',
+    chatReturnPage: 'threads',
+    threadsReturnPage: 'projects',
     booting: true,
     mock: false,
     connections: [],
@@ -1151,6 +1231,7 @@ export const useApp = create<AppState>((set, get) => {
     draftText: '',
     approvalSubmitting: {},
     sending: false,
+    compactingThreads: {},
     queuedSends: {},
     error: null,
     notice: null,
@@ -1174,6 +1255,7 @@ export const useApp = create<AppState>((set, get) => {
         onEvent: (event) => get().handleGatewayEvent(event),
         onOpen: (reconnected) => {
           if (reconnected) {
+            for (const session of Object.values(get().sessions)) session.loadedThreads.clear()
             const task = get().attachOpened()
             reconnectTask = task
             void task.finally(() => {
@@ -1197,7 +1279,7 @@ export const useApp = create<AppState>((set, get) => {
       void (async () => {
         try {
           const optional = (key: string) => gateway.storageGet(key).catch(() => null)
-          const [raw, active, legacyPrefs, prefs, storedDrafts, chats, archives] = await Promise.all([
+          const [raw, active, legacyPrefs, prefs, storedDrafts, chats, archives, queues] = await Promise.all([
             gateway.storageGet(STORAGE_CONNECTIONS),
             gateway.storageGet(STORAGE_ACTIVE),
             optional(STORAGE_MODEL_PREFS),
@@ -1205,6 +1287,7 @@ export const useApp = create<AppState>((set, get) => {
             optional(STORAGE_DRAFTS),
             optional(STORAGE_SAVED_CHATS),
             optional(STORAGE_ARCHIVED_THREADS),
+            optional(QUEUE_STORAGE_KEY),
           ])
           const connections = parseConnections(raw)
           const activeId = active && connections.some((item) => item.id === active) ? active : null
@@ -1218,7 +1301,7 @@ export const useApp = create<AppState>((set, get) => {
           }
           const archivedThreads = Object.fromEntries(Object.entries(parseStoredRecord(archives))
             .flatMap(([key, value]) => value === true ? [[key, true] as const] : []))
-          set({ connections, archivedThreads, booting: false })
+          set({ connections, archivedThreads, queuedSends: restoreQueues(queues, connections, archivedThreads), booting: false })
           if (activeId) await get().activate(activeId)
           else void get().refreshStatuses()
         } catch (err) {
@@ -1560,11 +1643,17 @@ export const useApp = create<AppState>((set, get) => {
       void get().refreshStatuses()
     },
 
-    activate: async (id) => {
-      const conn = get().connections.find((item) => item.id === id)
+    activate: async (id, page = 'workspace') => {
+      const state = get()
+      const conn = state.connections.find((item) => item.id === id)
       if (!conn) return
-      if (get().needsRepair[id]) {
-        get().beginRepair(id)
+      if (state.needsRepair[id] || (page === 'targets' && state.connectionStatus[id] === 'mismatch')) {
+        state.beginRepair(id)
+        return
+      }
+      if (page === 'targets' && id === state.activeId && state.eventsConnected) {
+        state.cancelPendingNavigation()
+        set({ page, targetsReturnPage: 'connections' })
         return
       }
       controller?.stop()
@@ -1573,11 +1662,12 @@ export const useApp = create<AppState>((set, get) => {
       refreshToken += 1
       viewerToken += 1
       resetSessions()
-      pendingRestore = savedChats[id] ?? null
+      pendingRestore = page === 'workspace' ? savedChats[id] ?? null : null
       restoreTask = null
       set({
         activeId: id,
-        page: 'workspace',
+        page,
+        targetsReturnPage: page === 'targets' ? 'connections' : 'workspace',
         eventsConnected: false,
         eventsError: null,
         targets: [],
@@ -1725,7 +1815,8 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     selectTarget: async (id) => {
-      const conn = activeConnection(get())
+      const state = get()
+      const conn = activeConnection(state)
       if (!conn) return
       const navigation = beginNavigation()
       pendingRestore = null
@@ -1740,6 +1831,7 @@ export const useApp = create<AppState>((set, get) => {
         threads: [],
         agentErrors: {},
         page: 'projects',
+        projectsReturnPage: state.page === 'targets' ? 'targets' : 'workspace',
       })
       showDraft()
       saveActiveChat()
@@ -1757,12 +1849,13 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     selectProject: async (id, workspace) => {
-      const conn = activeConnection(get())
-      const project = workspace?.project ?? get().projects.find((item) => item.id === id)
+      const source = get()
+      const conn = activeConnection(source)
+      const project = workspace?.project ?? source.projects.find((item) => item.id === id)
       if (!conn || !project) return
       beginNavigation()
       pendingRestore = null
-      const changedTarget = get().selectedTargetId !== project.targetId
+      const changedTarget = source.selectedTargetId !== project.targetId
       set({
         selectedProjectId: id,
         selectedThreadId: null,
@@ -1772,6 +1865,7 @@ export const useApp = create<AppState>((set, get) => {
         ...(workspace ? workspaceSelection(conn.id, workspace) : {}),
         threadsLoading: true,
         page: 'threads',
+        threadsReturnPage: source.page === 'workspace' ? 'workspace' : 'projects',
         error: null,
       })
       showDraft()
@@ -1878,6 +1972,7 @@ export const useApp = create<AppState>((set, get) => {
           threads: [],
           agentErrors: {},
           page: 'threads',
+          threadsReturnPage: 'projects',
         }))
         await get().refreshThreads()
       } catch (err) {
@@ -1902,7 +1997,7 @@ export const useApp = create<AppState>((set, get) => {
         return false
       }
       const session = sessionFor(targetId, agent)
-      patchSession(key, (value) => ({ ...value, opening: true, openError: null }), session)
+      patchSession(key, (value) => ({ ...value, opening: true, openError: null, openErrorCode: undefined }), session)
       const task = (async () => {
         try {
           // 可执行文件路径由网关按电脑设置补上，手机不传路径。
@@ -1951,6 +2046,7 @@ export const useApp = create<AppState>((set, get) => {
             opened: false,
             opening: false,
             openError: openFailureMessage(agent, err),
+            openErrorCode: errorCode(err),
           }), session)
           return false
         } finally {
@@ -2124,6 +2220,7 @@ export const useApp = create<AppState>((set, get) => {
           selectedThreadId: result.thread.id,
           selectedAgent: picked,
           page: 'chat',
+          chatReturnPage: chatReturnPage(source),
           error: null,
         })
         showDraft()
@@ -2143,43 +2240,18 @@ export const useApp = create<AppState>((set, get) => {
       const targetId = workspace?.project.targetId ?? source.selectedTargetId
       if (!conn || !targetId) return false
       const picked = agent ?? source.threads.find((item) => item.id === id)?.agent ?? DEFAULT_AGENT
+      const key = sessionKey(targetId, picked)
       const archived = () => isArchived(conn.id, targetId, { id, agent: picked })
       if (archived()) return false
+      const cached = source.sessions[key]
+      const hasFreshHistory = cached?.opened && cached.loadedThreads.has(id) && cached.state.threads[id]
+        && source.eventsConnected && !reconnectTask
       const openingThread = { desktopId: conn.id, targetId, agent: picked, threadId: id }
-      const navigation = beginNavigation(openingThread)
+      const navigation = beginNavigation(hasFreshHistory ? null : openingThread)
       if (workspace) pendingRestore = null
-      const isCurrent = () => navigation === navigationEpoch && get().page === source.page
-      set({ error: null })
-      try {
-        // 工作台历史可能来自已断开的目标，先恢复目标链路再读取会话。
-        try {
-          await getGateway().rpc(conn, 'server.req', { targetId, method: 'ping' })
-        } catch (err) {
-          if (!isCurrent()) return false
-          if (errorCode(err) !== 'not_connected') throw err
-          patchSession(sessionKey(targetId, picked), (session) => ({ ...session, opened: false }))
-          await connectSavedTarget(conn, targetId)
-        }
-        if (!isCurrent() || archived()) return false
-        const session = await withSession(targetId, picked, navigation)
-        if (!session || !isCurrent() || archived()) return false
-        let result: { thread: Parameters<typeof loadThread>[1] }
-        let resumed = true
-        try {
-          result = await resumeThread(session.rpc, id)
-        } catch (err) {
-          if (!isCurrent() || archived()) return false
-          if (picked !== 'codex') throw err
-          resumed = false
-          result = await readThread(session.rpc, id)
-        }
-        if (!isCurrent() || archived()) return false
-        if (picked === 'codex') {
-          if (resumed) session.resumedCodexThreads.add(id)
-          else session.resumedCodexThreads.delete(id)
-        }
-        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
-        // 切换项目前保留当前页面和内容，避免历史读取期间渲染中间页面。
+      const isCurrent = () => navigation === navigationEpoch
+        && get().openingThread === openingThread && get().page === source.page
+      const showConversation = () => {
         const movedProject = workspace &&
           (source.selectedTargetId !== targetId || source.selectedProjectId !== workspace.project.id)
         set({
@@ -2187,12 +2259,71 @@ export const useApp = create<AppState>((set, get) => {
           selectedThreadId: id,
           selectedAgent: picked,
           page: 'chat',
+          chatReturnPage: chatReturnPage(source),
           error: null,
         })
         showDraft()
         saveActiveChat()
         if (movedProject) void recordProjectVisit(conn, workspace.project)
+      }
+      if (hasFreshHistory) {
+        showConversation()
         return true
+      }
+      set({ error: null })
+      const loadHistory = async (): Promise<boolean> => {
+        const ready = await get().ensureOpen(targetId, picked)
+        if (!isCurrent() || archived()) return false
+        const session = get().sessions[key]
+        if (!ready || !session) {
+          throw new NativeRequestError(session?.openError ?? `${agentLabel(picked)} 未就绪`, session?.openErrorCode)
+        }
+        if (!get().eventsConnected) throw new Error('电脑事件连接已断开，恢复后请重新打开会话')
+        let result: { thread: Thread }
+        let resumed = true
+        try {
+          result = await resumeThread(session.rpc, id)
+        } catch (err) {
+          if (!isCurrent() || archived()) return false
+          if (isTargetDisconnected(err) || picked !== 'codex') throw err
+          if (!get().eventsConnected) throw new Error('电脑事件连接已断开，恢复后请重新打开会话')
+          resumed = false
+          result = await readThread(session.rpc, id)
+        }
+        if (!isCurrent() || archived()) return false
+        if (result?.thread?.id !== id) throw new Error('电脑返回的会话与所选会话不一致，请重试')
+        if (get().eventsConnected && !reconnectTask && get().sessions[key]?.opened) session.loadedThreads.add(id)
+        if (picked === 'codex') {
+          if (resumed) session.resumedCodexThreads.add(id)
+          else session.resumedCodexThreads.delete(id)
+        }
+        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
+        showConversation()
+        return true
+      }
+      const openHistory = async (): Promise<boolean> => {
+        try {
+          return await loadHistory()
+        } catch (err) {
+          if (!isCurrent() || archived()) return false
+          if (!isTargetDisconnected(err)) throw err
+          // 用实际请求判断目标是否断开，连接正常时少一次往返。
+          patchSession(key, (session) => {
+            session.loadedThreads.clear()
+            session.resumedCodexThreads.clear()
+            return { ...session, opened: false }
+          })
+          await connectSavedTarget(conn, targetId)
+          return isCurrent() && !archived() ? loadHistory() : false
+        }
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        // 目标连接、恢复会话和历史兜底共用一次等待，迟到的回包不能再切换页面。
+        const deadline = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('打开会话超时，请检查电脑连接后重试')), OPEN_THREAD_TIMEOUT_MS)
+        })
+        return await Promise.race([openHistory(), deadline])
       } catch (err) {
         if (isCurrent()) {
           markRepairError(conn, desktopEpoch, err)
@@ -2200,6 +2331,7 @@ export const useApp = create<AppState>((set, get) => {
         }
         return false
       } finally {
+        clearTimeout(timer)
         if (get().openingThread === openingThread) set({ openingThread: null })
       }
     },
@@ -2232,6 +2364,7 @@ export const useApp = create<AppState>((set, get) => {
         if (!ready || !session) throw new Error(session?.openError ?? '会话连接未就绪')
         await archiveThread(session.rpc, thread.id)
         session.resumedCodexThreads.delete(thread.id)
+        session.loadedThreads.delete(thread.id)
         if (stillPaired()) recordArchive(conn.id, targetId, thread)
       } finally {
         archiveFlights.delete(key)
@@ -2241,6 +2374,69 @@ export const useApp = create<AppState>((set, get) => {
     setDraftText: (text) => {
       const key = currentDraftKey()
       if (key) saveDraft(key, { text, annotations: get().annotations })
+    },
+
+    compactConversation: async () => {
+      const initial = get()
+      const address = selectedSendAddress(initial)
+      if (!address || selectedCompactionBlockedReason(initial)) return false
+      const key = sendKey(address)
+      if (submitting.has(key) || reconnectTask) {
+        set({ error: '会话正在处理消息或恢复连接，请稍后再压缩' })
+        return false
+      }
+      const { targetId, agent, threadId } = address
+      const session = initial.sessions[sessionKey(targetId, agent)]!
+      const epoch = desktopEpoch
+      const navigation = navigationEpoch
+      const isCurrent = () => {
+        const state = get()
+        const selected = selectedSendAddress(state)
+        return epoch === desktopEpoch && navigation === navigationEpoch && state.page === 'chat'
+          && selected !== null && sendKey(selected) === key
+      }
+      let unsubscribe = () => {}
+      let timer: ReturnType<typeof setTimeout> | undefined
+      set((state) => ({ compactingThreads: { ...state.compactingThreads, [key]: true }, error: null }))
+      try {
+        if (!session.resumedCodexThreads.has(threadId)) await resumeCodexConversation(session, threadId)
+        if (!isCurrent()) return false
+        const state = get()
+        const current = state.sessions[session.key]
+        if (!state.eventsConnected || !current?.opened || current.transport !== session.transport || reconnectTask) {
+          throw new Error('会话连接已中断，请重新打开后再压缩')
+        }
+        const thread = current.state.threads[threadId]
+        if (!thread || isArchived(address.desktopId, targetId, { agent, id: threadId })) throw new Error('请重新打开会话')
+        if (thread.status === 'running' || thread.pendingApprovals.length > 0) throw new Error('请先等待当前一轮结束')
+        if (queueLimited(address)) throw new Error('当前额度已用完')
+
+        // 请求只确认已提交。先监听同一会话的事件，以免快速回包留下重复触发的空档。
+        const started = new Promise<boolean>((resolve) => {
+          unsubscribe = session.rpc.onNotification((note) => {
+            if ((note.method === 'turn/started' || note.method === 'turn/completed'
+              || (note.method === 'item/started' && note.params.item.type === 'contextCompaction'))
+              && note.params.threadId === threadId) resolve(true)
+          })
+          timer = setTimeout(() => resolve(false), 30_000)
+        })
+        await session.rpc.request('thread/compact/start', { threadId })
+        if (!(await started)) throw new Error('尚未收到压缩进度，请检查当前会话')
+        return true
+      } catch (err) {
+        if (isCurrent()) set({ error: `压缩会话失败。${friendlyError(err, '请稍后重试')}` })
+        return false
+      } finally {
+        unsubscribe()
+        clearTimeout(timer)
+        if (epoch === desktopEpoch) {
+          set((state) => {
+            const compactingThreads = { ...state.compactingThreads }
+            delete compactingThreads[key]
+            return { compactingThreads }
+          })
+        }
+      }
     },
 
     send: async (text, attachments = [], delegate = false, mode = 'queue', { keepDraft = false } = {}) => {
@@ -2255,6 +2451,7 @@ export const useApp = create<AppState>((set, get) => {
         set({ error: '请先选择目标' })
         return false
       }
+      if (!keepDraft && queueingDrafts.has(key)) return false
       if (mode === 'steer' && agent !== 'codex') {
         set({ error: '当前 Agent 不支持引导' })
         return false
@@ -2266,6 +2463,7 @@ export const useApp = create<AppState>((set, get) => {
       let address = selectedSendAddress(initial)
       if (keepDraft && !address) return false
       let queueKey = address ? sendKey(address) : null
+      if (queueKey && initial.compactingThreads[queueKey]) return false
       const view = address ? initial.sessions[sessionId]?.state.threads[address.threadId] : undefined
       const models = initial.models[sessionId]?.models ?? []
       const prefs = initial.modelPrefs[sessionId] ?? EMPTY_PREFS
@@ -2275,21 +2473,15 @@ export const useApp = create<AppState>((set, get) => {
         set({ error: '当前 Agent 或模型不支持此图片附件' })
         return false
       }
-      const userInput = buildMobileTurnInput(agent, finalText, attachments)
-      const input = delegate && supportsSubagentRequests(agent) ? requestSubagents(userInput) : userInput
-      // 手机网关的完整 JSON（含方法、目标和参数）有 1 MiB 上限，预留尚未创建的会话 ID。
+      const message = { ...draft, attachments, delegate }
+      const input = queuedInput(agent, message)
       const overrides = overridesFor(agent, models, prefs)
-      const wire = { method: 'codex.send', params: {
-        targetId, agent,
-        msg: { id: Number.MAX_SAFE_INTEGER, method: 'turn/start',
-          params: { threadId: initial.selectedThreadId ?? 'x'.repeat(256), input, ...overrides } },
-      } }
-      const steerWire = view?.activeTurnId && mode === 'steer'
-        ? { ...wire, params: { targetId, agent, msg: { id: Number.MAX_SAFE_INTEGER, method: 'turn/steer',
-          params: { threadId: initial.selectedThreadId, expectedTurnId: view.activeTurnId, input } } } }
-        : null
-      const encoder = new TextEncoder()
-      if ([wire, steerWire].some((request) => request && encoder.encode(JSON.stringify(request)).length > 1_048_576)) {
+      const expectedTurnId = mode === 'steer' && view?.status === 'running' ? view.activeTurnId : null
+      if (mode === 'steer' && !expectedTurnId) {
+        set({ error: '当前一轮已结束，请选择排队或发送' })
+        return false
+      }
+      if (!mobileTurnFits(targetId, agent, initial.selectedThreadId, input, overrides, expectedTurnId ?? undefined)) {
         set({ error: '消息和附件合计超过 1 MiB，请移除部分内容后再发送' })
         return false
       }
@@ -2301,12 +2493,19 @@ export const useApp = create<AppState>((set, get) => {
           saveDraft(sentDraftKey, { text: '', annotations: [] })
         }
       }
-      const enqueue = (chat: SendAddress, sentDraftKey: string) => {
+      const enqueue = async (chat: SendAddress, sentDraftKey: string) => {
         const chatKey = sendKey(chat)
-        const imageCount = attachments.filter((attachment) => attachment.type === 'image').length
-        const item = { id: makeId(), text: finalText.trim(), imageCount, input, overrides }
-        updateQueue(chatKey, (list) => [...list, item])
-        if (!get().eventsConnected) pauseQueue(chatKey, '连接中断，队列已暂停')
+        const item = { ...message, id: makeId(), overrides, saving: true, error: !get().eventsConnected ? '连接中断，队列已暂停' : undefined }
+        if (!keepDraft) queueingDrafts.add(sentDraftKey)
+        try {
+          await updateQueue(chatKey, (list) => [...list, item])
+        } catch {
+          void dropQueuedSend(chatKey, item.id)
+          return false
+        } finally {
+          if (!keepDraft) queueingDrafts.delete(sentDraftKey)
+        }
+        void updateQueue(chatKey, (list) => list.map((entry) => entry.id === item.id ? { ...entry, saving: undefined } : entry), false)
         clearSentDraft(sentDraftKey)
         void flushQueue(chat)
         return true
@@ -2349,15 +2548,18 @@ export const useApp = create<AppState>((set, get) => {
         }
         if (!address || !queueKey) return false
         const current = get().sessions[session.key]?.state.threads[threadId]
+        if (expectedTurnId) {
+          if (current?.status !== 'running' || current.activeTurnId !== expectedTurnId) {
+            throw new Error('当前一轮已结束或切换，消息已保留')
+          }
+          await steerTurn(session.rpc, threadId, expectedTurnId, input)
+          if (epoch === desktopEpoch) clearSentDraft(sentDraftKey)
+          return true
+        }
         if (current?.status === 'running') {
-          if (mode === 'queue') return enqueue(address, sentDraftKey)
+          if (mode === 'queue') return await enqueue(address, sentDraftKey)
           const turnId = current.activeTurnId
           if (!turnId) throw new Error('暂未收到当前轮次，请稍后重试')
-          if (mode === 'steer') {
-            await steerTurn(session.rpc, threadId, turnId, input)
-            if (epoch === desktopEpoch) clearSentDraft(sentDraftKey)
-            return true
-          }
           replacing.add(queueKey)
           await interruptAndWait(session, threadId, turnId)
           if (epoch !== desktopEpoch) return false
@@ -2395,14 +2597,88 @@ export const useApp = create<AppState>((set, get) => {
       const address = selectedSendAddress(get())
       if (!address) return
       const key = sendKey(address)
-      updateQueue(key, (list) => {
-        const first = list[0]
-        const remaining = list.filter((item) => item.id !== id || item.sending)
-        if (first?.id === id && first.error && remaining[0] && !first.sending) {
-          remaining[0] = { ...remaining[0], error: remaining[0].error ?? '队列已暂停' }
+      const item = get().queuedSends[key]?.find((entry) => entry.id === id)
+      if (item && !item.sending && !item.saving && !editingQueue.has(id) && !savingQueue.has(id)) void dropQueuedSend(key, id)
+    },
+
+    beginQueuedEdit: (id) => {
+      const address = selectedSendAddress(get())
+      if (!address) return null
+      const item = get().queuedSends[sendKey(address)]?.find((entry) => entry.id === id)
+      if (!item || item.sending || item.saving || savingQueue.has(id) || editingQueue.has(id)) return null
+      editingQueue.add(id)
+      return () => {
+        if (editingQueue.delete(id)) void flushQueue(address)
+      }
+    },
+
+    editQueuedSend: async (id, text) => {
+      const address = selectedSendAddress(get())
+      if (!address || !editingQueue.has(id) || savingQueue.has(id)) return false
+      const key = sendKey(address)
+      const item = get().queuedSends[key]?.find((entry) => entry.id === id)
+      if (!item || item.sending) return false
+      const edited = { ...item, text }
+      const input = queuedInput(address.agent, edited)
+      if ((!formatQuotedMessage(item.annotations, text).trim() && !item.attachments.length)
+        || !mobileTurnFits(address.targetId, address.agent, address.threadId, input, item.overrides)) return false
+      savingQueue.add(id)
+      try {
+        await updateQueue(key, (list) => list.map((entry) => entry.id === id ? edited : entry))
+        return true
+      } catch {
+        void updateQueue(key, (list) => list.map((entry) => entry.id === id ? { ...entry, text: item.text } : entry))
+        return false
+      } finally {
+        savingQueue.delete(id)
+      }
+    },
+
+    steerQueuedSend: async (id) => {
+      const state = get()
+      const address = selectedSendAddress(state)
+      if (!address || address.agent !== 'codex' || !state.eventsConnected) return false
+      const { targetId, agent, threadId } = address
+      const key = sendKey(address)
+      const session = state.sessions[sessionKey(targetId, agent)]
+      const view = session?.state.threads[threadId]
+      const turnId = view?.status === 'running' ? view.activeTurnId : null
+      const item = state.queuedSends[key]?.find((entry) => entry.id === id)
+      if (!session?.opened || !turnId || !item || item.sending || item.saving
+        || submitting.has(key) || editingQueue.has(id) || savingQueue.has(id)) return false
+      const input = queuedInput(agent, item)
+      if (!mobileTurnFits(targetId, agent, threadId, input, {}, turnId)) {
+        set({ error: '消息和附件合计超过 1 MiB，请重新编辑后再引导' })
+        return false
+      }
+      const epoch = desktopEpoch
+      const navigation = navigationEpoch
+      submitting.add(key)
+      set({ error: null })
+      try {
+        await updateQueue(key, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: true } : entry))
+        if (epoch !== desktopEpoch) return false
+        const current = get().sessions[session.key]
+        if (!get().eventsConnected || !current?.opened || current.state.threads[threadId]?.activeTurnId !== turnId) {
+          throw new Error('当前一轮已结束或切换，排队消息已保留')
         }
-        return remaining
-      })
+        if (queueLimited(address)) throw new Error('当前额度已用完，排队消息已保留')
+        await steerTurn(session.rpc, threadId, turnId, input)
+        if (epoch === desktopEpoch) void dropQueuedSend(key, id)
+        return true
+      } catch (err) {
+        if (epoch === desktopEpoch) {
+          const error = friendlyError(err, '未确认引导成功，排队消息已保留')
+          void updateQueue(key, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: false, error } : entry))
+          if (navigation === navigationEpoch) set({ error })
+        }
+        return false
+      } finally {
+        if (epoch === desktopEpoch) {
+          submitting.delete(key)
+          void flushQueue(address)
+        }
+      }
     },
 
     retryQueuedSend: async () => {
@@ -2410,7 +2686,8 @@ export const useApp = create<AppState>((set, get) => {
       if (!address) return
       const key = sendKey(address)
       const first = get().queuedSends[key]?.[0]
-      if (!first?.error || submitting.has(key) || !get().eventsConnected) return
+      if (!first?.error || first.sending || first.saving || editingQueue.has(first.id) || savingQueue.has(first.id)
+        || submitting.has(key) || !get().eventsConnected) return
       const epoch = desktopEpoch
       const navigation = navigationEpoch
       submitting.add(key)
@@ -2434,26 +2711,10 @@ export const useApp = create<AppState>((set, get) => {
 
     interrupt: async () => {
       const { selectedTargetId, selectedThreadId, selectedAgent, sessions } = get()
-      if (!selectedTargetId || !selectedThreadId) {
-        set({ notice: '当前没有运行中的 turn' })
-        return
-      }
+      if (!selectedTargetId || !selectedThreadId) return
       const session = sessions[sessionKey(selectedTargetId, selectedAgent)]
-      if (!session) return
-      const view = session.state.threads[selectedThreadId]
-      const turnId = view?.activeTurnId
-      if (!turnId) {
-        set({ notice: '当前没有运行中的 turn' })
-        return
-      }
-      const epoch = desktopEpoch
-      const navigation = navigationEpoch
-      try {
-        await interruptTurn(session.rpc, selectedThreadId, turnId)
-        if (epoch === desktopEpoch && navigation === navigationEpoch) set({ notice: '已请求中断当前轮' })
-      } catch (err) {
-        if (epoch === desktopEpoch && navigation === navigationEpoch) set({ error: friendlyError(err, '中断失败') })
-      }
+      const turnId = session?.state.threads[selectedThreadId]?.activeTurnId
+      if (session && turnId) await interruptTurn(session.rpc, selectedThreadId, turnId)
     },
 
     respondApproval: async (requestId, decision) => {
@@ -2735,9 +2996,10 @@ export const useApp = create<AppState>((set, get) => {
             if (desktopId) pauseQueues([desktopId, id], '目标连接中断，队列已暂停')
             // 链路断过之后 agent 进程可能已经换了，下次操作必须重新 codex.open。
             for (const session of Object.values(get().sessions)) {
-              if (session.targetId === id && session.opened) {
-                patchSession(session.key, (value) => ({ ...value, opened: false }))
-              }
+              if (session.targetId !== id) continue
+              session.loadedThreads.clear()
+              session.resumedCodexThreads.clear()
+              if (session.opened) patchSession(session.key, (value) => ({ ...value, opened: false }))
             }
           }
           if (record?.state === 'error') {
@@ -2776,6 +3038,7 @@ export const useApp = create<AppState>((set, get) => {
             }
             for (const session of Object.values(get().sessions)) {
               if (session.targetId !== targetId || (agent !== null && session.agent !== agent)) continue
+              session.loadedThreads.clear()
               session.resumedCodexThreads.clear()
               clearPendingApprovals(session)
               patchSession(session.key, (value) => ({
@@ -2823,25 +3086,28 @@ export const useApp = create<AppState>((set, get) => {
         return true
       }
       if (page === 'chat') {
-        beginNavigation()
-        set({ page: 'threads', selectedThreadId: null })
-        showDraft()
-        saveActiveChat()
+        leaveChat()
         return true
       }
       if (page === 'threads') {
+        const page = get().threadsReturnPage
         beginNavigation()
-        set({ page: 'projects', selectedProjectId: null, selectedThreadId: null })
+        set({
+          page,
+          ...(page === 'workspace' ? { selectedTargetId: null } : {}),
+          selectedProjectId: null,
+          selectedThreadId: null,
+        })
         return true
       }
       if (page === 'projects') {
         beginNavigation()
-        set({ page: 'workspace', selectedTargetId: null, directory: null })
+        set({ page: get().projectsReturnPage, selectedTargetId: null, directory: null })
         return true
       }
       if (page === 'targets') {
         beginNavigation()
-        set({ page: 'workspace' })
+        set({ page: get().targetsReturnPage })
         return true
       }
       if (page === 'workspace') {

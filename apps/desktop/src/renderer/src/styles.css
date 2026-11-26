@@ -367,6 +367,10 @@ body.qn-resizing webview {
   font-size: inherit;
 }
 
+.qn-markdown .qn-pre {
+  font-size: 0.9em;
+}
+
 .qn-markdown > :first-child {
   margin-top: 0;
 }

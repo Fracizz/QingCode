@@ -11,11 +11,11 @@ export const qnEditorTheme = EditorView.theme(
       height: '100%',
       color: 'var(--color-qn-text)',
       backgroundColor: '#141414',
-      fontSize: '12.5px',
+      fontSize: 'var(--qn-editor-font-size, 12.5px)',
     },
     '.cm-scroller': {
       fontFamily: 'var(--font-mono)',
-      lineHeight: '20px',
+      lineHeight: '1.6',
       overflow: 'auto',
     },
     '.cm-content': {

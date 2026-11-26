@@ -4,6 +4,8 @@ import { RouterError } from './router'
 import { TargetManager, retryDelay } from './targets'
 import type { LinkHooks, LocalLinkContext, SshLinkContext, TargetLink } from './types'
 
+vi.mock('./sshTarget', () => ({ connectSshTarget: vi.fn(), runRemoteServerCommands: vi.fn(), testSshTarget: vi.fn() }))
+
 class FakeLink implements TargetLink {
   readonly requests: Array<{ method: string; params?: unknown }> = []
   readonly sent: unknown[] = []
@@ -266,15 +268,17 @@ describe('TargetManager 直连加速', () => {
     direct,
   }
 
-  function make(directOk: boolean, saved: Record<string, string>) {
+  function make(directOk: boolean, saved: Record<string, string>, sshOk = true) {
     const used: string[] = []
     const directSeen: unknown[] = []
+    const verify = vi.fn(async () => true)
+    const emit = vi.fn()
     const manager = new TargetManager({
       userData: '',
       resourcesPath: '',
       electronPath: '',
       appVersion: '1',
-      emit: () => {},
+      emit,
       loadSecret: async () => saved,
       createDirect: async (ctx) => {
         directSeen.push({ host: ctx.target.host, port: ctx.target.port, token: ctx.token, timeout: ctx.connectTimeoutMs })
@@ -282,13 +286,15 @@ describe('TargetManager 直连加速', () => {
         used.push('direct')
         return new FakeLink()
       },
-      createSsh: async () => {
+      createSsh: async ({ gate }) => {
         used.push('ssh')
+        await gate.verify(target.host, target.port, 'SHA256:known')
+        if (!sshOk) throw new Error('SSH 不可用')
         return new FakeLink()
       },
-      gate: { verify: async () => true, respond: () => true, close: () => {} },
+      gate: { verify, respond: () => true, close: () => {} },
     })
-    return { manager, used, directSeen }
+    return { manager, used, directSeen, verify, emit }
   }
 
   it('有直连配置和 token 时先走直连', async () => {
@@ -313,6 +319,94 @@ describe('TargetManager 直连加速', () => {
     await manager.connect(target, {})
     expect(directSeen).toEqual([])
     expect(used).toEqual(['ssh'])
+    manager.shutdown()
+  })
+
+  it('启动时经 SSH 部署，指纹验证使用后台模式', async () => {
+    const { manager, used, verify } = make(true, { directToken: 'token' })
+    await manager.connect(target, {}, false, true)
+    expect(used).toEqual(['ssh'])
+    expect(verify).toHaveBeenCalledWith(target.host, target.port, 'SHA256:known', false)
+    expect(manager.getState(target.id)).toBe('ready')
+    manager.shutdown()
+  })
+
+  it('启动时 SSH 更新失败后用已有直连，并显示更新结果', async () => {
+    const { manager, used, emit } = make(true, { directToken: 'token' }, false)
+    await manager.connect(target, {}, false, true)
+    expect(used).toEqual(['ssh', 'direct'])
+    expect(await manager.request(target.id, 'ping')).toEqual({ method: 'ping', params: undefined })
+    expect(emit).toHaveBeenCalledWith('target.state', {
+      id: target.id, state: 'ready', detail: 'SSH 更新未完成（SSH 不可用），已通过直连连接',
+    })
+    manager.shutdown()
+  })
+
+  it('SSH 部署超时后本机仍可用，手动重试成功后忽略迟到的结果', async () => {
+    vi.useFakeTimers()
+    const emit = vi.fn()
+    const staleLink = new FakeLink()
+    const liveLink = new FakeLink()
+    let finish!: (link: TargetLink) => void
+    const pending = new Promise<TargetLink>((resolve) => { finish = resolve })
+    const createSsh = vi.fn<(ctx: SshLinkContext) => Promise<TargetLink>>()
+      .mockImplementationOnce(({ hooks }) => {
+        hooks.onState('deploying', '正在上传 server')
+        return pending
+      })
+      .mockResolvedValueOnce(liveLink)
+    const manager = new TargetManager({
+      userData: '', resourcesPath: '', electronPath: '', appVersion: '1', emit, createSsh,
+      loadSecret: async () => ({ password: 'saved' }),
+      createLocal: async () => new FakeLink(),
+    })
+    const sshTarget = { ...target, direct: undefined }
+    try {
+      const startup = manager.connect(sshTarget, {}, false, true)
+      await vi.advanceTimersByTimeAsync(0)
+      const context = createSsh.mock.calls[0]?.[0]
+      expect(context?.credentials).toEqual({ password: 'saved' })
+      expect(manager.getState(target.id)).toBe('deploying')
+      await manager.connect(LOCAL_TARGET, {})
+      expect(manager.getState('local')).toBe('ready')
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      await startup
+      expect(context?.signal?.aborted).toBe(true)
+      expect(emit).toHaveBeenLastCalledWith('target.state', {
+        id: target.id, state: 'error', detail: expect.stringContaining('超时'),
+      })
+
+      await manager.connect(sshTarget, {})
+      finish(staleLink)
+      context?.hooks.onState('deploying', '迟到的进度')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(staleLink.closed).toBe(true)
+      expect(liveLink.closed).toBe(false)
+      expect(manager.getState(target.id)).toBe('ready')
+      expect(createSsh).toHaveBeenCalledTimes(2)
+    } finally {
+      manager.shutdown()
+      vi.useRealTimers()
+    }
+  })
+
+  it('读取启动凭据期间手动断开，迟到的数据不会恢复连接', async () => {
+    let finish!: (credentials: { password: string }) => void
+    const pending = new Promise<{ password: string }>((resolve) => { finish = resolve })
+    const createSsh = vi.fn(async () => new FakeLink())
+    const manager = new TargetManager({
+      userData: '', resourcesPath: '', electronPath: '', appVersion: '1', emit: vi.fn(),
+      loadSecret: () => pending,
+      createSsh,
+    })
+    const startup = manager.connect(target, {}, false, true)
+    manager.disconnect(target.id)
+    await startup
+    finish({ password: 'saved' })
+    await pending
+    expect(createSsh).not.toHaveBeenCalled()
+    expect(manager.getState(target.id)).toBe('idle')
     manager.shutdown()
   })
 

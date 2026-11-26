@@ -2,7 +2,7 @@
 import type { CodexTransport } from '@qn/codex-client'
 import type { Gateway } from './client'
 import type { NativeStreamClosed, NativeStreamEvent } from './native'
-import { connectionRepairReason, friendlyError, type RepairReason } from './state'
+import { connectionRepairReason, errorCode, friendlyError, makeId, type RepairReason } from './state'
 import type { AgentKind, Connection, GatewayEvent } from './types'
 
 type JsonRecord = Record<string, unknown>
@@ -69,6 +69,7 @@ type MessageListener = (msg: unknown, seq: number | null) => void
 export class MobileCodexTransport implements CodexTransport {
   private readonly listeners = new Set<MessageListener>()
   private readonly seen = new Set<number>()
+  private readonly requestPrefix = `mobile-${makeId()}:`
   private lastSeq: number | null = null
   private disposed = false
 
@@ -80,7 +81,11 @@ export class MobileCodexTransport implements CodexTransport {
 
   send(msg: unknown): void {
     if (this.disposed) return
-    void this.sendMessage(msg).catch((err: unknown) => this.handleSendError(msg, err))
+    // 网关和桌面共用目标通道，新会话从 c1 开始时不能接到其他客户端的回包。
+    const request = isRecord(msg) && typeof msg.method === 'string' && typeof msg.id === 'string'
+      ? { ...msg, id: this.requestPrefix + msg.id }
+      : msg
+    void this.sendMessage(request).catch((err: unknown) => this.handleSendError(msg, err))
   }
 
   async respond(id: string | number, result: unknown): Promise<void> {
@@ -98,6 +103,13 @@ export class MobileCodexTransport implements CodexTransport {
   handleRecv(payload: unknown): void {
     const recv = filterRecv(payload, this.targetId, this.agent)
     if (!recv) return
+    const { msg } = recv
+    if (recv.seq === null && isRecord(msg) && ('result' in msg || 'error' in msg)) {
+      if (typeof msg.id === 'string' && msg.id.startsWith(this.requestPrefix)) {
+        this.emit({ ...msg, id: msg.id.slice(this.requestPrefix.length) }, null)
+      }
+      return
+    }
     if (recv.seq !== null) {
       if (this.seen.has(recv.seq)) return
       this.seen.add(recv.seq)
@@ -129,10 +141,9 @@ export class MobileCodexTransport implements CodexTransport {
 
   private handleSendError(msg: unknown, err: unknown): void {
     // 网关拒绝 codex.send 时不会回帧，补一条本地错误响应，避免 RPC 一直挂起。
-    const id = isRecord(msg) ? msg.id : undefined
-    if (typeof id !== 'string' && typeof id !== 'number') return
+    if (!isRecord(msg) || typeof msg.method !== 'string' || typeof msg.id !== 'string') return
     this.emit(
-      { id, error: { code: -32000, message: friendlyError(err, '发送 Codex 消息失败') } },
+      { id: msg.id, error: { code: -32000, message: friendlyError(err, '发送 Codex 消息失败'), data: { code: errorCode(err) } } },
       null,
     )
   }

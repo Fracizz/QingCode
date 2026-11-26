@@ -2,7 +2,7 @@ import { isThreadOutcome, sessionStatus } from '@qn/codex-client'
 import { create } from 'zustand'
 import { archivedThreadKey, sessionKey } from './agents'
 import { getGateway } from './client'
-import { parseProjects, type ThreadSummary } from './state'
+import { parseProjects, parseStoredRecord, type ThreadSummary } from './state'
 import { useApp } from './store'
 import type { Project, Target } from './types'
 
@@ -20,12 +20,12 @@ export type WorkspaceThread = ThreadSummary & {
   projectId: string
   unread?: boolean
 }
-type ProjectList = { items: Project[]; loading: boolean; error: boolean }
+type ProjectList = { items: Project[]; loading: boolean; error: boolean; loaded: boolean }
 type WorkspaceGroup = { project: Project; threads: WorkspaceThread[] }
 
 const STORE_KEY = 'workspace.sessions'
 const MAX_SESSIONS = 100
-const defaultProjects: ProjectList = { items: [], loading: false, error: false }
+const defaultProjects: ProjectList = { items: [], loading: false, error: false, loaded: false }
 const stack: Array<() => void> = []
 
 export function registerBackHandler(close: () => void): () => void {
@@ -51,11 +51,12 @@ export function visibleWorkspaceThreads(threads: WorkspaceThread[], desktopId: s
   return desktopId ? threads.filter((thread) => !archived[archivedThreadKey(desktopId, thread.targetId, thread)]) : threads
 }
 
-export function filterProjects(projects: Project[], targets: Target[], query: string): Project[] {
+export function filterProjects(projects: Project[], targets: Target[], query: string, targetId: string | null = null): Project[] {
+  const scoped = targetId === null ? projects : projects.filter((project) => project.targetId === targetId)
   const needle = query.trim().toLocaleLowerCase()
-  if (!needle) return projects
+  if (!needle) return scoped
   const byId = new Map(targets.map((target) => [target.id, target]))
-  return projects.filter((project) => {
+  return scoped.filter((project) => {
     const target = byId.get(project.targetId)
     return [project.name, project.path, target?.name, target?.kind === 'ssh' ? `远端 ${target.host}` : target?.name]
       .some((value) => value?.toLocaleLowerCase().includes(needle))
@@ -107,17 +108,33 @@ function mergeThreads(
     .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_SESSIONS)
 }
 
-let writeTimer: ReturnType<typeof setTimeout> | undefined
+function projectsFromThreads(threads: WorkspaceThread[]): Project[] {
+  const projects = new Map<string, Pick<Project, 'id' | 'path' | 'targetId'>>()
+  for (const { projectId: id, cwd: path, targetId } of threads) {
+    if (path) projects.set(JSON.stringify([targetId, id]), { id, path, targetId })
+  }
+  return parseProjects([...projects.values()])
+}
+
+let storageRead = Promise.resolve()
 let storageWrites = Promise.resolve()
-function persistThreads() {
-  clearTimeout(writeTimer)
-  writeTimer = setTimeout(() => {
-    const stored = Object.fromEntries(Object.entries(useWorkspace.getState().threads).map(([id, rows]) => [
-      id,
-      rows.map(({ activity: _activity, ...thread }) => ({ ...thread, preview: '' })),
-    ]))
-    storageWrites = storageWrites.then(() => getGateway().storageSet(STORE_KEY, JSON.stringify(stored))).catch(() => undefined)
-  }, 200)
+function persistWorkspace() {
+  const gateway = getGateway()
+  const read = storageRead
+  // 先合并旧缓存，避免启动阶段的第一次刷新覆盖其他电脑的历史。
+  storageWrites = storageWrites.then(async () => {
+    await read
+    const { projects, threads } = useWorkspace.getState()
+    const desktops = new Set([...Object.keys(projects), ...Object.keys(threads)])
+    const stored = Object.fromEntries([...desktops].map((id) => {
+      const rows = threads[id] ?? []
+      return [id, {
+        projects: projects[id]?.items ?? projectsFromThreads(rows),
+        threads: rows.map(({ activity: _activity, ...thread }) => ({ ...thread, preview: '' })),
+      }]
+    }))
+    await gateway.storageSet(STORE_KEY, JSON.stringify(stored))
+  }).catch(() => undefined)
 }
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
@@ -143,39 +160,51 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     try {
       const data = await getGateway().rpc(connection, 'projects.list', {})
       if (!useApp.getState().connections.includes(connection)) {
-        patch({ loading: false })
+        if (get().projects[desktopId]) patch({ loading: false })
         return
       }
       const items = parseProjects(data)
-      patch({ items, loading: false })
+      patch({ items, loading: false, loaded: true })
+      persistWorkspace()
       if (get().tab !== 'sessions' || useApp.getState().activeId !== desktopId) return
       const discovered = await useApp.getState().discoverWorkspaceSessions(items)
-      if (useApp.getState().activeId === desktopId && discovered.length) {
+      if (useApp.getState().activeId === desktopId && useApp.getState().connections.includes(connection) && discovered.length) {
         const archived = useApp.getState().archivedThreads
         set((state) => ({
           threads: { ...state.threads, [desktopId]: mergeThreads(desktopId, state.threads[desktopId] ?? [], discovered, archived) },
         }))
-        persistThreads()
+        persistWorkspace()
       }
     } catch {
-      patch({ loading: false, error: true })
+      if (get().projects[desktopId]) patch({ loading: false, error: true })
     }
   },
 }))
 
 export function startWorkspaceObserver(): () => void {
   let stop = false
-  void getGateway().storageGet(STORE_KEY).then((raw) => {
+  const removedDesktops = new Set<string>()
+  storageRead = getGateway().storageGet(STORE_KEY).then((raw) => {
     if (!raw || stop) return
-    const data: unknown = JSON.parse(raw)
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return
     const archived = useApp.getState().archivedThreads
     useWorkspace.setState((state) => {
       const threads = { ...state.threads }
-      for (const [id, rows] of Object.entries(data)) {
-        if (Array.isArray(rows)) threads[id] = mergeThreads(id, rows.filter(isThread), threads[id] ?? [], archived)
+      const projects = { ...state.projects }
+      for (const [id, entry] of Object.entries(parseStoredRecord(raw))) {
+        if (removedDesktops.has(id)) continue
+        const snapshot = entry as { threads?: unknown; projects?: unknown } | null
+        const rows = Array.isArray(entry) ? entry : snapshot?.threads
+        if (!Array.isArray(rows)) continue
+        threads[id] = mergeThreads(id, rows.filter(isThread), threads[id] ?? [], archived)
+        if (!projects[id]?.loaded) {
+          // 旧版只存了会话，离线时用会话目录补出项目分组。
+          const cached = Array.isArray(snapshot?.projects) ? parseProjects(snapshot.projects) : projectsFromThreads(threads[id])
+          const items = new Map([...cached, ...(projects[id]?.items ?? [])]
+            .map((project) => [JSON.stringify([project.targetId, project.id]), project]))
+          projects[id] = { ...(projects[id] ?? defaultProjects), items: [...items.values()] }
+        }
       }
-      return { threads }
+      return { threads, projects }
     })
   }).catch(() => undefined)
 
@@ -194,7 +223,7 @@ export function startWorkspaceObserver(): () => void {
         thread.unread && visibleChat(state, thread) ? { ...thread, unread: false } : thread
       )) },
     }))
-    persistThreads()
+    persistWorkspace()
   }
   if (typeof document !== 'undefined') document.addEventListener('visibilitychange', clearViewed)
 
@@ -206,12 +235,13 @@ export function startWorkspaceObserver(): () => void {
           const threads = { ...state.threads }
           const projects = { ...state.projects }
           for (const item of removed) {
+            removedDesktops.add(item.id)
             delete threads[item.id]
             delete projects[item.id]
           }
           return { threads, projects }
         })
-        persistThreads()
+        persistWorkspace()
       }
     }
 
@@ -235,10 +265,14 @@ export function startWorkspaceObserver(): () => void {
     }
 
     if (snapshots.length) {
-      useWorkspace.setState((state) => ({
-        threads: { ...state.threads, [desktopId]: mergeThreads(desktopId, desktopThreads, snapshots, now.archivedThreads) },
-      }))
-      persistThreads()
+      const project = now.projects.find((item) => item.targetId === targetId && item.id === projectId)
+      useWorkspace.setState((state) => {
+        const threads = { ...state.threads, [desktopId]: mergeThreads(desktopId, desktopThreads, snapshots, now.archivedThreads) }
+        const list = state.projects[desktopId] ?? defaultProjects
+        if (!project || list.items.some((item) => item.id === project.id && item.targetId === project.targetId)) return { threads }
+        return { threads, projects: { ...state.projects, [desktopId]: { ...list, items: [...list.items, project] } } }
+      })
+      persistWorkspace()
     }
   })
   return () => {

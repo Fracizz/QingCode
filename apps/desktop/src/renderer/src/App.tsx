@@ -40,6 +40,7 @@ export default function App() {
   const selectedId = useTargets((s) => s.selectedId)
   const prompts = useTargets((s) => s.prompts)
   const load = useTargets((s) => s.load)
+  const restoreLast = useTargets((s) => s.restoreLast)
   const select = useTargets((s) => s.select)
   const connect = useTargets((s) => s.connect)
   const disconnect = useTargets((s) => s.disconnect)
@@ -181,40 +182,27 @@ export default function App() {
       if (credentials.remember) void load()
     })
 
-  const onSelect = (id: string) => {
+  const selectTarget = (id: string) => {
+    autoConnectDone.current = true
     select(id)
+  }
+
+  const onSelect = (id: string) => {
+    selectTarget(id)
     requestConnect(id)
   }
 
-  // 记住上次使用的目标；设置里开了"启动时自动连接上次目标"时，目标与设置都加载完后连一次。
-  useEffect(() => {
-    try {
-      localStorage.setItem('qn-last-target', selectedId)
-    } catch {
-      // 存储不可用时只是不能自动连接。
-    }
-  }, [selectedId])
   const settingsLoaded = useSettings((s) => s.loaded)
   const autoConnectLast = useSettings((s) => s.settings.general.autoConnectLast)
   useEffect(() => {
     if (autoConnectDone.current || !settingsLoaded || targets.length === 0 || window.qn?.isSmoke) return
     autoConnectDone.current = true
-    if (!autoConnectLast) return
-    let last: string | null = null
-    try {
-      last = localStorage.getItem('qn-last-target')
-    } catch {
-      last = null
-    }
-    if (!last || last === 'local' || !targets.some((item) => item.id === last)) return
-    select(last)
-    requestConnect(last)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在首次满足条件时执行一次
-  }, [settingsLoaded, targets, autoConnectLast])
+    if (autoConnectLast) restoreLast()
+  }, [settingsLoaded, targets, autoConnectLast, restoreLast])
 
   const onSaved = (target: SshTarget | DirectTarget, credentials: ConnectCredentials) => {
     setRememberPrefs((prefs) => ({ ...prefs, [target.id]: credentials.remember === true }))
-    select(target.id)
+    selectTarget(target.id)
     // 走到这里说明试连已通过（密码来自输入或已保存），直接连接即可。
     void (async () => {
       // 改过配置的活动连接要先断开，否则 backend 认为已就绪而沿用旧配置。

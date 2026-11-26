@@ -37,10 +37,11 @@ export class HostKeyGate implements HostKeyDecider {
 
   constructor(private readonly options: HostKeyGateOptions) {}
 
-  async verify(host: string, port: number, fingerprint: string): Promise<boolean> {
+  async verify(host: string, port: number, fingerprint: string, interactive = true): Promise<boolean> {
     const store = await readKnownHosts(this.options.userData)
     const verdict = checkHostKey(store, host, port, fingerprint)
     if (verdict === 'match') return true
+    if (!interactive) return false
 
     const previous = previousHostKey(store, host, port)
     if (this.options.autoAcceptNew === true && verdict === 'new') {

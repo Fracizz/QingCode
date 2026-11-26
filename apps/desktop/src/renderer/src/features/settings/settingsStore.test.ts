@@ -4,9 +4,10 @@ import { BackendCallError } from '../../lib/backend'
 import { defaultAppSettings, mergeAppSettings } from './settingsModel'
 import { applyDensity, useSettings } from './settingsStore'
 
-const { callMock, setAttribute } = vi.hoisted(() => ({
+const { callMock, setAttribute, setProperty } = vi.hoisted(() => ({
   callMock: vi.fn(),
   setAttribute: vi.fn(),
+  setProperty: vi.fn(),
 }))
 
 vi.mock('../../lib/backend', async (importOriginal) => {
@@ -38,8 +39,9 @@ beforeEach(() => {
   stored = defaultAppSettings()
   callMock.mockReset()
   setAttribute.mockReset()
+  setProperty.mockReset()
   fakeBackend()
-  vi.stubGlobal('document', { documentElement: { setAttribute } })
+  vi.stubGlobal('document', { documentElement: { setAttribute, style: { setProperty } } })
   useSettings.setState({
     settings: defaultAppSettings(),
     appInfo: null,
@@ -56,7 +58,7 @@ afterEach(() => {
 
 describe('settingsStore', () => {
   it('load 读取设置与应用信息，并写入密度 token 钩子', async () => {
-    stored = mergeAppSettings(stored, { general: { density: 'compact' } })
+    stored = mergeAppSettings(stored, { general: { density: 'compact', chatFontSize: 18 } })
     await useSettings.getState().load()
     const state = useSettings.getState()
     expect(state.loaded).toBe(true)
@@ -64,6 +66,7 @@ describe('settingsStore', () => {
     expect(state.settings.general.density).toBe('compact')
     expect(state.error).toBeNull()
     expect(setAttribute).toHaveBeenCalledWith('data-density', 'compact')
+    expect(setProperty).toHaveBeenCalledWith('--qn-chat-font-size', '18px')
   })
 
   it('load 失败时给出友好错误且不覆盖已有值', async () => {
@@ -91,11 +94,14 @@ describe('settingsStore', () => {
       if (method === 'settings.save') throw new BackendCallError('internal', '磁盘已满')
       throw new Error(`未知方法 ${method}`)
     })
-    await useSettings.getState().update({ general: { density: 'compact', defaultAgent: 'pi' } })
+    const update = useSettings.getState().update({ general: { density: 'compact', defaultAgent: 'pi', editorFontSize: 16 } })
+    expect(setProperty).toHaveBeenLastCalledWith('--qn-editor-font-size', '16px')
+    await update
     expect(useSettings.getState().settings).toEqual(defaultAppSettings())
     expect(useSettings.getState().error).toContain('磁盘已满')
     expect(useSettings.getState().saving).toBe(false)
     expect(setAttribute).toHaveBeenLastCalledWith('data-density', 'comfortable')
+    expect(setProperty).toHaveBeenLastCalledWith('--qn-editor-font-size', '12.5px')
   })
 
   it('并发编辑中较早的失败不回滚更晚的编辑', async () => {

@@ -1,5 +1,6 @@
 appId: com.qingcode.next
 productName: QingCode Next
+extends: 'file:./build/package-config.mjs'
 # 直接用已解压的 Electron（经 10.87 中转），避免打包时再下载
 electronDist: node_modules/electron/dist
 electronVersion: 45.5.0
@@ -8,7 +9,6 @@ npmRebuild: false
 nodeGypRebuild: false
 
 directories:
-  output: release
   buildResources: build
 
 files:

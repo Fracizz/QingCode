@@ -46,6 +46,7 @@ export interface TargetManagerOptions {
 
 // SSH 目标开了直连加速时，直连只给较短的时间；不通就回退 SSH，避免每次重连都卡满默认超时。
 const DIRECT_FALLBACK_TIMEOUT_MS = 5_000
+const STARTUP_CONNECT_TIMEOUT_MS = 60_000
 
 /** SSH 目标上的直连配置换算成直连目标形状，复用 connectDirectTarget。 */
 export function directViewOf(target: SshTarget): DirectTarget | null {
@@ -75,6 +76,7 @@ interface Session {
   generation: number
   attempt: number
   retryTimer: ReturnType<typeof setTimeout> | null
+  startupController: AbortController | null
   credentials: TargetCredentials
   remember: boolean
   /** 渲染进程 open/attach 过的 agent；重连后逐个补 attach。 */
@@ -134,9 +136,12 @@ export class TargetManager {
     return this.sessions.get(id)?.state ?? 'idle'
   }
 
-  async connect(target: Target, credentials: TargetCredentials, remember = false): Promise<void> {
+  async connect(target: Target, credentials: TargetCredentials, remember = false, startup = false): Promise<void> {
     let session = this.sessions.get(target.id)
-    if (session?.desired && session.state === 'ready') return
+    if (session?.desired && session.state === 'ready') {
+      this.setState(session, 'ready', session.link?.notice)
+      return
+    }
     if (!session) {
       session = {
         id: target.id,
@@ -147,6 +152,7 @@ export class TargetManager {
         generation: 0,
         attempt: 0,
         retryTimer: null,
+        startupController: null,
         credentials: {},
         remember: false,
         codexOpened: new Set(),
@@ -162,16 +168,43 @@ export class TargetManager {
     session.remember = remember
     session.attempt = 0
     this.clearRetry(session)
+    const generation = ++session.generation
+    session.startupController?.abort()
+    const previousLink = session.link
+    session.link = null
+    previousLink?.close()
+    const controller = startup ? new AbortController() : null
+    session.startupController = controller
+    const signal = controller?.signal
+    const current = session
 
-    let effective = credentials
-    if (target.kind === 'ssh' || target.kind === 'direct') {
-      const saved = await this.readSecret(target.id, this.options.userData)
-      effective = { ...(saved ?? {}), ...credentials }
+    const loadAndOpen = async (): Promise<void> => {
+      const saved = target.kind === 'local' ? null : await this.readSecret(target.id, this.options.userData)
+      if (generation !== current.generation || signal?.aborted) return
+      current.credentials = { ...saved, ...credentials }
+      await this.open(current, generation, signal)
     }
-    session.credentials = effective
+    if (!controller) return loadAndOpen()
 
-    // open 内部自行处理失败与重试，避免过期的一次连接失败覆盖后续重连结果。
-    await this.open(session)
+    let stop!: () => void
+    const stopped = new Promise<void>((resolve) => { stop = resolve })
+    controller.signal.addEventListener('abort', stop, { once: true })
+    const timer = setTimeout(() => {
+      controller.abort()
+      if (generation !== current.generation) return
+      const link = current.link
+      current.link = null
+      link?.close()
+      this.handleFailure(current, new Error('启动时连接或更新远端 Server 超时，请手动重试'), false)
+    }, STARTUP_CONNECT_TIMEOUT_MS)
+    try {
+      this.setState(current, 'connecting', '正在后台连接…')
+      await Promise.race([loadAndOpen(), stopped])
+    } finally {
+      clearTimeout(timer)
+      controller.signal.removeEventListener('abort', stop)
+      if (current.startupController === controller) current.startupController = null
+    }
   }
 
   /** 试连一次，不影响现有会话；凭据合并规则与 connect 一致。 */
@@ -221,6 +254,8 @@ export class TargetManager {
     session.everReady = false
     this.clearRetry(session)
     session.generation++
+    session.startupController?.abort()
+    session.startupController = null
     const link = session.link
     session.link = null
     link?.close()
@@ -287,34 +322,33 @@ export class TargetManager {
     }
   }
 
-  private async open(session: Session): Promise<void> {
-    const generation = ++session.generation
+  private async open(session: Session, generation: number, signal?: AbortSignal): Promise<void> {
+    const isCurrent = () => generation === session.generation && session.desired && !signal?.aborted
+    let opened = false
     const hooks: LinkHooks = {
       onState: (state, detail) => {
-        if (generation === session.generation) this.setState(session, state, detail)
+        if (isCurrent()) this.setState(session, state, detail)
       },
       onEvent: (name, payload) => {
-        if (generation === session.generation) {
+        if (isCurrent()) {
           this.options.emit('server.evt', { targetId: session.id, name, payload })
         }
       },
       onCodexRecv: (seq, msg, agent) => {
-        if (generation !== session.generation) return
+        if (!isCurrent()) return
         if (typeof seq === 'number' && seq > session.lastSeq[agent]) session.lastSeq[agent] = seq
         this.options.emit('codex.recv', { targetId: session.id, agent, seq, msg })
       },
       onClose: (err) => {
-        if (generation !== session.generation) return
+        if (!isCurrent() || !opened) return
+        opened = false
         session.link = null
-        if (!session.desired) {
-          this.setState(session, 'idle')
-          return
-        }
+        const reconnect = session.everReady && (session.state === 'ready' || !signal)
         const detail = err ? describe(err) : '连接已断开'
         session.lastError = detail
         this.setState(session, 'error', detail)
         // 只有建立过的连接才自动重连；首次连接被拒绝（含拒绝指纹）不反复弹窗。
-        if (session.everReady) this.scheduleRetry(session)
+        if (reconnect) this.scheduleRetry(session)
         else this.rejectWaiters(session, new Error(detail))
       },
     }
@@ -326,6 +360,7 @@ export class TargetManager {
             token: requireToken(session.credentials.token),
             hooks,
             appVersion: this.options.appVersion,
+            signal,
           })
         : session.target.kind === 'local'
         ? await this.createLocal({
@@ -334,15 +369,14 @@ export class TargetManager {
             serverScript: join(this.options.resourcesPath, 'server', 'qn-server.cjs'),
             appVersion: this.options.appVersion,
           })
-        : await this.openSshPreferDirect(session, hooks)
+        : await this.openSsh(session, hooks, signal)
 
-      if (generation !== session.generation || !session.desired) {
+      if (!isCurrent()) {
         link.close()
         return
       }
+      opened = true
       session.link = link
-      session.everReady = true
-      session.attempt = 0
       // server 只向调用过 attach 的客户端广播 codex.recv，重连必须按 agent 各补一次。
       for (const agent of session.codexOpened) {
         try {
@@ -353,10 +387,12 @@ export class TargetManager {
           // attach 失败不阻断连接，渲染进程可再发一次。
         }
       }
-      if (generation !== session.generation || !session.desired) {
+      if (!isCurrent() || !opened) {
         link.close()
         return
       }
+      session.everReady = true
+      session.attempt = 0
       this.setState(session, 'ready', link.notice)
       this.resolveWaiters(session)
       if (session.remember && Object.keys(session.credentials).length > 0) {
@@ -365,46 +401,60 @@ export class TargetManager {
         await this.saveSecret(session.id, session.credentials, this.options.userData).catch(() => undefined)
       }
     } catch (err) {
-      if (generation !== session.generation || !session.desired || session.retryTimer) return
-      this.handleFailure(session, err)
+      if (!isCurrent() || session.retryTimer) return
+      this.handleFailure(session, err, !signal)
     }
   }
 
-  /** 开了直连加速的 SSH 目标先试 TLS 直连，失败（含指纹不符）回退 SSH，并把原因写进状态说明。 */
-  private async openSshPreferDirect(session: Session, hooks: LinkHooks): Promise<TargetLink> {
+  private async openSsh(session: Session, hooks: LinkHooks, signal?: AbortSignal): Promise<TargetLink> {
     const target = session.target as SshTarget
     const view = directViewOf(target)
     const token = session.credentials.directToken
-    if (view && token) {
-      try {
-        return await this.createDirect({
-          target: view,
-          token,
-          hooks,
-          appVersion: this.options.appVersion,
-          connectTimeoutMs: DIRECT_FALLBACK_TIMEOUT_MS,
-        })
-      } catch (err) {
-        hooks.onState('connecting', `直连不可用（${describe(err)}），改用 SSH`)
-      }
-    }
-    return this.createSsh({
+    const ssh = () => this.createSsh({
       target,
       credentials: session.credentials,
       hooks,
       userData: this.options.userData,
       resourcesPath: this.options.resourcesPath,
       appVersion: this.options.appVersion,
-      gate: this.gate,
+      gate: signal ? { verify: (host, port, fingerprint) => this.gate.verify(host, port, fingerprint, false) } : this.gate,
+      signal,
     })
+    if (view && token) {
+      const direct = () => this.createDirect({
+        target: view,
+        token,
+        hooks,
+        appVersion: this.options.appVersion,
+        connectTimeoutMs: DIRECT_FALLBACK_TIMEOUT_MS,
+        signal,
+      })
+      // 只有 SSH 能部署 Server，启动恢复时优先走 SSH；更新遇阻时仍可使用已有直连。
+      if (signal) {
+        try {
+          return await ssh()
+        } catch (err) {
+          signal.throwIfAborted()
+          const link = await direct()
+          link.notice = `SSH 更新未完成（${describe(err)}），已通过直连连接`
+          return link
+        }
+      }
+      try {
+        return await direct()
+      } catch (err) {
+        hooks.onState('connecting', `直连不可用（${describe(err)}），改用 SSH`)
+      }
+    }
+    return ssh()
   }
 
-  private handleFailure(session: Session, err: unknown): void {
+  private handleFailure(session: Session, err: unknown, retry: boolean): void {
     if (!session.desired) return
     const detail = describe(err)
     session.lastError = detail
     this.setState(session, 'error', detail)
-    if (session.everReady) this.scheduleRetry(session)
+    if (retry && session.everReady) this.scheduleRetry(session)
     else this.rejectWaiters(session, new Error(detail))
   }
 
@@ -415,7 +465,7 @@ export class TargetManager {
       session.retryTimer = null
       if (!session.desired) return
       this.setState(session, 'connecting', `重新连接（第 ${session.attempt} 次）`)
-      void this.open(session)
+      void this.open(session, ++session.generation)
     }, delay)
     timer.unref?.()
     session.retryTimer = timer

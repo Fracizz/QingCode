@@ -102,6 +102,7 @@ export function Composer({
   slash?: SlashProps
 }) {
   const sendKey = useSetting((settings) => settings.general.sendKey)
+  const fontSize = useSetting((settings) => settings.general.composerFontSize)
   const composing = useRef(false)
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -136,7 +137,7 @@ export function Composer({
       area.setSelectionRange(pendingCaret.current, pendingCaret.current)
       pendingCaret.current = null
     }
-  }, [value, contentWidthClassName])
+  }, [value, contentWidthClassName, fontSize])
 
   const token = slash && !imeActive ? slashToken(value, caret) : null
   const query = token?.query ?? null
@@ -310,7 +311,7 @@ export function Composer({
           <textarea
             ref={areaRef}
             className={cn(
-              'qn-scroll block w-full resize-none bg-transparent px-4 pt-3.5 text-[14px] leading-6 text-qn-text outline-none placeholder:text-qn-dim',
+              'qn-scroll block w-full resize-none bg-transparent px-4 pt-3.5 text-[length:var(--qn-composer-font-size,14px)] leading-[1.7] text-qn-text outline-none placeholder:text-qn-dim',
               compact ? 'min-h-[48px]' : 'min-h-[56px] max-h-[max(56px,25cqh)]',
             )}
             rows={1}

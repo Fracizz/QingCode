@@ -97,18 +97,17 @@ final class NativeInputs {
   }
 
   private Intent showImagePicker(int count) throws Exception {
-    if (Build.VERSION.SDK_INT >= 33) {
-      Intent intent = new Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*");
-      if (count > 1) intent.putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, count);
-      try {
-        return requests.choose(intent, "photo_picker_unavailable", "当前设备没有系统照片选择器");
-      } catch (BridgeException error) {
-        if (!"photo_picker_unavailable".equals(error.code)) throw error;
-      }
-    }
-    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*")
+    // 沿用旧版的文件入口，让用户从「最近」或截图目录找到刚保存的图片。
+    Intent documents = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*")
       .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_ALLOW_MULTIPLE, count > 1);
-    return requests.choose(intent, "photo_picker_unavailable", "当前设备无法打开系统图片选择界面");
+    try {
+      return requests.choose(documents, "photo_picker_unavailable", "当前设备无法打开系统文件选择界面");
+    } catch (BridgeException error) {
+      if (Build.VERSION.SDK_INT < 33 || !"photo_picker_unavailable".equals(error.code)) throw error;
+    }
+    Intent photos = new Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*");
+    if (count > 1) photos.putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, count);
+    return requests.choose(photos, "photo_picker_unavailable", "当前设备无法打开系统图片选择界面");
   }
 
   private Photo readPhoto(Uri uri, int limit) throws IOException {

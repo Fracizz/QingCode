@@ -106,26 +106,6 @@ body,
   margin-top: 2px;
 }
 
-.qn-threads-header-meta {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-}
-
-.qn-threads-header-meta .qn-badge {
-  display: block;
-  min-width: 0;
-  padding: 0;
-  padding-inline-start: 7px;
-  overflow: hidden;
-  border: 0;
-  border-inline-start: 1px solid var(--color-qn-border-strong);
-  border-radius: 0;
-  font-size: inherit;
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-}
-
 .qn-body {
   flex: 1;
   min-height: 0;
@@ -693,6 +673,21 @@ body,
   font-size: 20px;
 }
 
+.qn-project-filters {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 2px;
+  overflow-x: auto;
+}
+
+.qn-project-filters .qn-chip {
+  flex-shrink: 0;
+  max-width: min(16rem, 100%);
+  min-width: 44px;
+  min-height: 44px;
+}
+
 .qn-workspace-group {
   margin-top: 16px;
 }
@@ -791,6 +786,10 @@ body,
   background: var(--color-qn-card);
   transition: transform 160ms ease-out;
   user-select: none;
+}
+
+.qn-list-row.qn-thread-content:active {
+  background: var(--color-qn-raised);
 }
 
 .qn-thread-content[data-dragging="true"] {
@@ -914,8 +913,13 @@ body,
   font-size: 16px;
 }
 
+.qn-composer .qn-textarea:focus-visible {
+  outline: none;
+}
+
 .qn-composer-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 8px;
   padding: 0 6px 6px;
@@ -923,8 +927,7 @@ body,
 
 .qn-composer-tools {
   display: flex;
-  flex: 1;
-  flex-wrap: wrap;
+  flex: 1 1 9rem;
   min-width: 0;
   align-items: center;
   gap: 4px;
@@ -932,13 +935,17 @@ body,
 }
 
 .qn-composer-model {
-  flex: 1 1 7rem;
+  flex: 1 1 0;
   min-width: 0;
   max-width: 13rem;
 }
 
 .qn-composer-model .qn-chip {
   min-height: 44px;
+}
+
+.qn-composer-tools > .qn-icon-button {
+  flex-shrink: 0;
 }
 
 .qn-icon-button {
@@ -952,6 +959,7 @@ body,
   flex-shrink: 0;
   align-items: center;
   gap: 4px;
+  margin-inline-start: auto;
 }
 
 .qn-send-button,
@@ -1024,7 +1032,8 @@ body,
   overflow-wrap: anywhere;
 }
 
-.qn-thinking {
+.qn-thinking,
+.qn-turn-interrupted {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1228,7 +1237,7 @@ body,
   color: var(--color-qn-text);
 }
 
-/* 会话行状态：运行中用转圈 + 文字，有新结果用强调色圆点 + 文字，不只靠颜色。 */
+/* 会话行打开时，窄屏也让转圈与文字保持在同一行。 */
 .qn-row-status {
   display: inline-flex;
   flex-shrink: 0;
@@ -1290,7 +1299,18 @@ body,
 .qn-tool-chevron { transition: transform var(--qn-motion-medium) var(--qn-ease-emphasized); }
 .qn-tool[open] > .qn-tool-row .qn-tool-chevron,
 .qn-tool-group[open] > .qn-tool-row .qn-tool-chevron { transform: rotate(90deg); }
-.qn-tool-group > div { padding-left: 12px; border-left: 1px solid var(--color-qn-border); margin-left: 16px; }
+.qn-tool-group-body {
+  max-height: min(18rem, 36dvh);
+  overflow-y: auto;
+  padding-left: 12px;
+  border-left: 1px solid var(--color-qn-border);
+  margin-left: 16px;
+}
+
+.qn-diff-preview {
+  max-height: min(8rem, 22dvh);
+  overflow: auto;
+}
 
 .qn-command-output { max-height: min(24rem, 48dvh); }
 

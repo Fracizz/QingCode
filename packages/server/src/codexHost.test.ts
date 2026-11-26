@@ -1,5 +1,5 @@
 import path from 'node:path'
-import type { ServerMessage } from '@qn/protocol'
+import { encodeFrame, MAX_FRAME_BYTES, type ServerMessage } from '@qn/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { agentConfigEnv, CodexHost, describeCodexExit, parseAgentConfigDir } from './codexHost'
 
@@ -10,6 +10,14 @@ const fakeCodex = JSON.stringify([process.execPath, '-e', `
     const { id, method, params } = JSON.parse(line);
     if (!id) return;
     if (method === 'initialize') return send({ id, result: { fakeHome: process.env.CODEX_HOME } });
+    if (method === 'thread/resume' && params.historySize) {
+      const history = '历史😀'.repeat(params.historySize);
+      const bytes = Buffer.from(JSON.stringify({ id, result: { thread: { id: params.threadId, history } } }) + '\\n');
+      const split = bytes.indexOf(Buffer.from('历')) + 1;
+      return process.stdout.write(bytes.subarray(0, split), () => {
+        setTimeout(() => process.stdout.write(bytes.subarray(split)), 10);
+      });
+    }
     if (method === 'thread/start') return send({ id, result: {
       thread: { id: 'thread' }, approvalPolicy: 'on-request',
       sandbox: { type: 'workspaceWrite', writableRoots: ['/work'], networkAccess: false },
@@ -24,7 +32,10 @@ const fakeCodex = JSON.stringify([process.execPath, '-e', `
 function harness() {
   const messages: ServerMessage[] = []
   const host = new CodexHost({
-    send: (_clientId, message) => messages.push(message),
+    send: (_clientId, message) => {
+      encodeFrame(message)
+      messages.push(message)
+    },
     broadcastRecv: () => {},
     broadcastEvt: () => {},
     log: () => {},
@@ -48,6 +59,36 @@ describe('codex 退出原因', () => {
     expect(describeCodexExit(null, 'spawn EACCES')).toBe('codex 启动失败: spawn EACCES')
     expect(describeCodexExit(1, null)).toBe('codex app-server 已退出（退出码 1）')
     expect(describeCodexExit(null, null)).toBe('codex app-server 已退出')
+  })
+})
+
+describe('Codex 历史回包', () => {
+  it('接收大于 1 MiB 的历史并保留跨 stdout 分块的 UTF-8 字符', async () => {
+    const { host, request } = harness()
+    try {
+      await host.open({ codexPath: fakeCodex })
+      const result = await request('history', 'thread/resume', { threadId: 'thread', historySize: 300_000 })
+      expect(result).toMatchObject({ result: { thread: { id: 'thread' } } })
+      const { history } = (result as { result: { thread: { history: string } } }).result.thread
+      expect(history.length).toBe(1_200_000)
+      expect(history.startsWith('历史😀')).toBe(true)
+      expect(history.includes('\ufffd')).toBe(false)
+    } finally {
+      host.shutdown()
+    }
+  })
+
+  it('历史超过协议帧时返回明确错误，后续请求仍可用', async () => {
+    const { host, request } = harness()
+    try {
+      await host.open({ codexPath: fakeCodex })
+      await expect(request('large', 'thread/resume', {
+        threadId: 'thread', historySize: Math.ceil(MAX_FRAME_BYTES / 10),
+      })).resolves.toMatchObject({ error: { message: '会话数据超过传输大小上限' } })
+      await expect(request('next', 'thread/read', { threadId: 'thread' })).resolves.toHaveProperty('result.threadId', 'thread')
+    } finally {
+      host.shutdown()
+    }
   })
 })
 

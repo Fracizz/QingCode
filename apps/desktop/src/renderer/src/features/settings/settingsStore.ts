@@ -24,6 +24,15 @@ export function applyDensity(density: SettingsDensity): void {
   document.documentElement.setAttribute('data-density', densityAttribute(density))
 }
 
+function applyAppearance(general: AppSettings['general']): void {
+  if (typeof document === 'undefined') return
+  applyDensity(general.density)
+  const { style } = document.documentElement
+  style.setProperty('--qn-chat-font-size', `${general.chatFontSize}px`)
+  style.setProperty('--qn-composer-font-size', `${general.composerFontSize}px`)
+  style.setProperty('--qn-editor-font-size', `${general.editorFontSize}px`)
+}
+
 type SettingsState = {
   settings: AppSettings
   appInfo: AppInfo | null
@@ -50,7 +59,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
     try {
       const [stored, appInfo] = await Promise.all([call('settings.get'), call('app.info')])
       const settings = sanitizeAppSettings(stored)
-      applyDensity(settings.general.density)
+      applyAppearance(settings.general)
       set({ settings, appInfo, loaded: true, error: null })
     } catch (err) {
       set({ error: friendlyError(err, '加载设置失败') })
@@ -65,28 +74,36 @@ export const useSettings = create<SettingsState>((set, get) => ({
     if (Object.keys(safePatch).length === 0) return
     const optimistic = mergeAppSettings(previous, safePatch)
     const currentRevision = ++revision
+    const overlapping = activeSaves > 0
     activeSaves += 1
-    applyDensity(optimistic.general.density)
+    applyAppearance(optimistic.general)
     set({ settings: optimistic, saving: true, error: null })
     try {
       const stored = await call('settings.save', safePatch)
-      const settings = sanitizeAppSettings(stored)
-      applyDensity(settings.general.density)
-      set({ settings })
+      if (revision === currentRevision) {
+        const settings = sanitizeAppSettings(stored)
+        applyAppearance(settings.general)
+        set({ settings })
+      }
     } catch (err) {
       const message = friendlyError(err, '保存设置失败')
-      if (revision === currentRevision) {
-        applyDensity(previous.general.density)
+      if (revision === currentRevision && !overlapping) {
+        applyAppearance(previous.general)
         set({ settings: previous, error: message })
-      } else {
-        // 更晚的编辑已经覆盖乐观值，整体回滚会丢掉它；以服务端为准重新同步。
+      } else if (revision === currentRevision || activeSaves === 1) {
+        // 多个补丁的乐观值可能交叠，需要以落盘结果为准。
+        const syncRevision = revision
         try {
           const settings = sanitizeAppSettings(await call('settings.get'))
-          applyDensity(settings.general.density)
-          set({ settings, error: message })
+          if (revision === syncRevision) {
+            applyAppearance(settings.general)
+            set({ settings, error: message })
+          }
         } catch {
           set({ error: message })
         }
+      } else {
+        set({ error: message })
       }
     } finally {
       activeSaves -= 1

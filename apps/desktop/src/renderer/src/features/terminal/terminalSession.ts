@@ -4,6 +4,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 import type { TermDataEvt, TermErrorEvt, TermExitEvt, TermExitInfo, TermInfo, TermOutputChunk, TermResizedEvt } from '@qn/protocol'
+import { DEFAULT_FONT_SIZES } from '../../../../shared/fontSizes'
 import { copyText } from '../../lib/clipboard'
 import { friendlyError } from '../../lib/errors'
 import { onServerEvt, serverCall } from '../workspace/serverCall'
@@ -65,7 +66,7 @@ export function mountTerminalSession(
     disableStdin: true,
     allowProposedApi: true,
     fontFamily: '"Cascadia Mono", Consolas, "Courier New", monospace',
-    fontSize: 13,
+    fontSize: DEFAULT_FONT_SIZES.terminalFontSize,
     scrollback: 3000,
     theme: {
       background: style.getPropertyValue('--color-qn-bg').trim(),
@@ -273,6 +274,10 @@ export function mountTerminalSession(
   observer.observe(host)
 
   return {
+    setFontSize(fontSize: number) {
+      terminal.options.fontSize = fontSize
+      scheduleFit()
+    },
     setReady(next: boolean) {
       if (ready === next) return
       ready = next

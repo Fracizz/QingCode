@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { AppSettings } from '../../shared/backendApi'
+import { DEFAULT_FONT_SIZES } from '../../shared/fontSizes'
 import { backendConfig } from '../config'
 import { registerSettingsMethods } from '../registerSettings'
 import { BackendRouter, RouterError } from '../router'
@@ -37,9 +38,10 @@ describe('registerSettingsMethods', () => {
     expect(await instance.invoke('settings.get', undefined)).toEqual({
       general: {
         sendKey: 'enter',
-        autoConnectLast: false,
+        autoConnectLast: true,
         defaultAgent: 'codex',
         density: 'comfortable',
+        ...DEFAULT_FONT_SIZES,
       },
       agents: {},
     })
@@ -52,10 +54,10 @@ describe('registerSettingsMethods', () => {
   it('settings.save 深合并、白名单过滤并原子落盘', async () => {
     const instance = router()
     const first = (await instance.invoke('settings.save', {
-      general: { sendKey: 'ctrlEnter', autoConnectLast: true },
+      general: { sendKey: 'ctrlEnter', autoConnectLast: false },
       agents: { local: { codex: { enabled: false, path: 'C:\\bin\\codex.exe' } } },
     })) as AppSettings
-    expect(first.general).toMatchObject({ sendKey: 'ctrlEnter', autoConnectLast: true, density: 'comfortable' })
+    expect(first.general).toMatchObject({ sendKey: 'ctrlEnter', autoConnectLast: false, density: 'comfortable' })
     expect(first.agents.local?.codex).toEqual({ enabled: false, path: 'C:\\bin\\codex.exe' })
 
     const second = (await instance.invoke('settings.save', {
@@ -71,6 +73,17 @@ describe('registerSettingsMethods', () => {
     expect(await instance.invoke('settings.get', undefined)).toEqual(second)
     const text = await readFile(join(userData, 'settings.json'), 'utf8')
     expect(JSON.parse(text)).toMatchObject({ general: { density: 'compact' } })
+  })
+
+  it('连续保存不同的字号时保留两个设置', async () => {
+    const instance = router()
+    await Promise.all([
+      instance.invoke('settings.save', { general: { chatFontSize: 18 } }),
+      instance.invoke('settings.save', { general: { terminalFontSize: 16 } }),
+    ])
+    expect(await instance.invoke('settings.get', undefined)).toMatchObject({
+      general: { ...DEFAULT_FONT_SIZES, chatFontSize: 18, terminalFontSize: 16 },
+    })
   })
 
   it('非对象补丁给出 invalid_params，且不改动已存设置', async () => {

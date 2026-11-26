@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { SearchField } from '../../components/SearchField'
 import { ErrorNote, IconButton } from '../../components/ui'
 import { cn } from '../../lib/cn'
+import { useSetting } from '../settings/settingsStore'
 import { initialTerminalStatus, mountTerminalSession } from './terminalSession'
 
 export default function TerminalView({
@@ -21,6 +22,7 @@ export default function TerminalView({
   const host = useRef<HTMLDivElement>(null)
   const session = useRef<ReturnType<typeof mountTerminalSession> | null>(null)
   const original = useRef(info)
+  const fontSize = useSetting((settings) => settings.general.terminalFontSize)
   const [status, setStatus] = useState(() => initialTerminalStatus(info))
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -43,6 +45,7 @@ export default function TerminalView({
   }, [targetId])
   useEffect(() => session.current?.setReady(ready), [ready])
   useEffect(() => session.current?.setVisible(visible), [visible])
+  useEffect(() => session.current?.setFontSize(fontSize), [fontSize, targetId])
 
   useEffect(() => {
     if (searchOpen && visible) searchInput.current?.focus()

@@ -132,7 +132,7 @@ function DiffBlock({ text }: { text: string }) {
       {all.length > lines.length && (
         <div className="mb-1 text-[10px] text-qn-muted">仅显示末尾 {lines.length} 行</div>
       )}
-      <pre className="qn-pre qn-scroll max-h-64 overflow-auto text-[11px] leading-5">
+      <pre className="qn-pre qn-scroll qn-diff-preview text-[11px] leading-5" tabIndex={0}>
         {lines.map((line, index) => {
           const tone = line.startsWith('+')
             ? 'text-emerald-300'
@@ -241,7 +241,7 @@ export function ToolGroup({ items, onQuote }: { items: ToolItem[]; onQuote: (tex
         <span className="min-w-0 flex-1 truncate">{toolSummary(items)}</span>
         <ChevronRight size={14} className="qn-tool-chevron shrink-0 text-qn-dim" aria-hidden />
       </summary>
-      <div className="mt-1 space-y-1">
+      <div className="qn-tool-group-body qn-scroll mt-1 space-y-1">
         {items.map((item) => <MessageItem key={item.id} item={item} onQuote={onQuote} />)}
       </div>
     </details>
@@ -359,11 +359,13 @@ export function MessageItem({
   item,
   onQuote,
   agentName,
+  active,
   onResend,
 }: {
   item: ItemView
   onQuote?: (text: string) => void
   agentName?: string
+  active?: boolean
   onResend?: Resend
 }) {
   const markdownRef = useRef<HTMLDivElement>(null)
@@ -404,6 +406,11 @@ export function MessageItem({
         )} />
       )
     case 'other':
+      if (item.type === 'contextCompaction') {
+        const busy = item.status === 'inProgress'
+        if (busy && !active) return null
+        return <div className="qn-thinking" role="status">{busy ? <LoadingIcon /> : <Check size={14} aria-hidden />}{item.summary}</div>
+      }
       return (
         <div className="qn-tool qn-tool-open text-xs">
           <div className="mb-1 text-[11px] text-qn-muted">{item.type}</div>

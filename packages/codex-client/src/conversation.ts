@@ -60,7 +60,7 @@ export type ItemView =
   | { kind: 'command'; id: string; command: string; cwd?: string; output: string; exitCode?: number | null; status: string }
   | { kind: 'fileChange'; id: string; changes: { path: string; kind: string; diff?: string }[]; status: string }
   | SubagentItemView
-  | { kind: 'other'; id: string; type: string; summary: string }
+  | { kind: 'other'; id: string; type: string; summary: string; status?: string }
 
 export type ApprovalView = {
   requestId: RequestId
@@ -508,6 +508,8 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
     }
     case 'fileChange':
       return { kind: 'fileChange', id, changes: fileChanges(item.changes), status }
+    case 'contextCompaction':
+      return { kind: 'other', id, type, status, summary: streaming ? '正在压缩会话…' : '已压缩会话上下文' }
     default: {
       const subagent = describeSubagentItem(item, id)
       if (subagent) return subagent

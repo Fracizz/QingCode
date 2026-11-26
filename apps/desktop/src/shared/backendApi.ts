@@ -180,6 +180,10 @@ export type AppSettings = {
     autoConnectLast: boolean
     defaultAgent: SettingsAgentKind
     density: SettingsDensity
+    chatFontSize: number
+    composerFontSize: number
+    editorFontSize: number
+    terminalFontSize: number
   }
   /** 按目标 id 分组，每个 agent 一份偏好 */
   agents: Record<string, Partial<Record<SettingsAgentKind, AgentPrefs>>>
@@ -195,7 +199,7 @@ export interface BackendMethods {
   'targets.save': { params: SshTargetInput | DirectTargetInput; result: SshTarget | DirectTarget }
   'targets.remove': { params: { id: string }; result: void }
   'target.connect': {
-    params: { id: string; password?: string; passphrase?: string; remember?: boolean }
+    params: { id: string; password?: string; passphrase?: string; remember?: boolean; startup?: boolean }
     result: void
   }
   /** 用表单里的当前值试连，不保存、不部署；带 id 时未填的密码/口令取已保存的。 */

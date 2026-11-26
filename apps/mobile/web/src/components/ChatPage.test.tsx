@@ -1,0 +1,69 @@
+// @vitest-environment jsdom
+import { CodexRpc, type ThreadView } from '@qn/codex-client'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { expect, it, vi } from 'vitest'
+import { type AgentSession, useApp } from '../store'
+import { MobileCodexTransport } from '../transport'
+import { ChatPage } from './ChatPage'
+
+it('中断请求失败可重试，确认中断后只显示一条状态，真正的轮次失败仍保留详情', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const initial = useApp.getState()
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const transport = new MobileCodexTransport('local', async () => undefined)
+  const rpc = new CodexRpc(transport)
+  const thread: ThreadView = {
+    id: 'thread', status: 'running', activity: 'running', activeTurnId: 'turn', pendingApprovals: [],
+    items: [{ kind: 'user', id: 'message', text: '开始' }],
+  }
+  const session: AgentSession = {
+    key: 'codex:local', agent: 'codex', targetId: 'local', rpc, transport,
+    opened: true, opening: false, openError: null, lastSeq: null,
+    resumedCodexThreads: new Set(), loadedThreads: new Set(), state: { threads: { thread } },
+  }
+  const interrupt = vi.fn<() => Promise<void>>()
+  let rejectStop: (error: Error) => void
+  interrupt.mockImplementation(() => new Promise((_, reject) => { rejectStop = reject }))
+
+  function setTurn(view: ThreadView) {
+    useApp.setState({ sessions: { [session.key]: { ...session, state: { threads: { thread: view } } } } })
+  }
+
+  function stopButton(label: string) {
+    const button = host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
+    if (!button) throw new Error(`缺少按钮 ${label}`)
+    return button
+  }
+
+  try {
+    await act(() => {
+      useApp.setState({ selectedTargetId: 'local', selectedThreadId: 'thread', eventsConnected: true, interrupt })
+      setTurn(thread)
+      root.render(<ChatPage />)
+    })
+    await act(() => stopButton('停止运行').click())
+    expect(stopButton('正在中断').disabled).toBe(true)
+    await act(() => rejectStop(new Error('连接超时')))
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('未能中断本轮。连接超时')
+
+    await act(() => stopButton('停止运行').click())
+    await act(() => setTurn({ ...thread, status: 'error', activity: 'interrupted', activeTurnId: null, error: 'Turn interrupted' }))
+    await act(() => rejectStop(new Error('迟到的中断请求错误')))
+    expect(host.textContent?.match(/本轮已中断/g)).toHaveLength(1)
+    expect(host.textContent).not.toMatch(/Turn interrupted|本轮失败|未能中断本轮/)
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+
+    await act(() => setTurn({ ...thread, status: 'error', activity: 'failed', activeTurnId: null, error: '503: upstream down' }))
+    const error = host.querySelector('[role="alert"]')?.textContent
+    expect(error).toContain('模型服务暂时不可用（503）')
+    expect(error).toContain('upstream down')
+  } finally {
+    await act(() => root.unmount())
+    useApp.setState(initial)
+    rpc.dispose()
+    vi.unstubAllGlobals()
+  }
+})

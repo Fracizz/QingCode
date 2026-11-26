@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { formatAddress } from '../link'
 import { useApp } from '../store'
 import type { TargetState } from '../types'
 import { Badge, Button, Dialog, Empty, Header, Loading, Note, StatusDot } from './ui'
-import { RateLimitBadge } from './RateLimitView'
+import { TargetRateLimits } from './RateLimitView'
 import { WorkspaceIcon } from './WorkspaceHome'
 
 const stateText: Record<TargetState, string> = {
@@ -35,6 +35,7 @@ export function TargetsPage() {
   const clearNotice = useApp((s) => s.clearNotice)
   const goBack = useApp((s) => s.goBack)
   const loadTargets = useApp((s) => s.loadTargets)
+  const loadAgentSettings = useApp((s) => s.loadAgentSettings)
   const requestConnect = useApp((s) => s.requestConnect)
   const disconnectTarget = useApp((s) => s.disconnectTarget)
   const selectTarget = useApp((s) => s.selectTarget)
@@ -43,10 +44,13 @@ export function TargetsPage() {
   const [menu, setMenu] = useState<string | null>(null)
   const selected = targets.find((target) => target.id === menu)
 
+  useEffect(() => { void loadAgentSettings() }, [loadAgentSettings])
+
   return (
     <>
-      <Header title="目标" subtitle={conn?.name} onBack={goBack}
-        right={<Button variant="ghost" onClick={() => void loadTargets()} aria-label="刷新目标"><WorkspaceIcon name="refresh" /></Button>} />
+      <Header title="目标与额度" subtitle={conn?.name} onBack={goBack}
+        right={<Button variant="ghost" onClick={() => void Promise.all([loadTargets(), loadAgentSettings()])}
+          aria-label="刷新目标"><WorkspaceIcon name="refresh" /></Button>} />
       <div className="qn-body qn-scroll">
         {repair && conn && <Note tone="error" message="请重新配对这台电脑。" actionLabel="重新配对" onAction={() => beginRepair(conn.id)} />}
         {error && <Note message={error} tone="error" onClose={clearError} />}
@@ -68,11 +72,11 @@ export function TargetsPage() {
                       <span className="qn-list-primary">{target.name}</span>
                       {target.kind === 'ssh' && <span className="qn-subtitle block">{formatAddress(target.host, target.port)}</span>}
                     </span>
-                    <RateLimitBadge targetId={target.id} hideWhenEmpty />
                     <Badge tone={stateTone(state)}>{canOpen ? '查看项目' : busy ? stateText[state] : '连接'}</Badge>
                   </button>
                   <Button variant="ghost" className="qn-list-action" onClick={() => setMenu(target.id)}
                     aria-label={`${target.name} 的目标操作`}><WorkspaceIcon name="more" /></Button>
+                  <TargetRateLimits targetId={target.id} targetName={target.name} available={eventsConnected && !repair && canOpen && !busy} />
                   {errors[target.id] && <p className="w-full break-words text-xs text-qn-danger">{errors[target.id]}</p>}
                 </div>
               )

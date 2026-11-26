@@ -16,8 +16,10 @@ export type ComposerProps = {
   onChangeText: (text: string) => void
   onSend: (text: string, attachments: UserInput[], mode: SendMode) => Promise<boolean>
   onInterrupt: () => void
+  interrupting?: boolean
   running: boolean
   sending: boolean
+  compacting?: boolean
   disabled?: boolean
   imageUnavailable?: string
   project?: Project
@@ -43,7 +45,7 @@ function rememberImages(key: string, images: DraftImage[]) {
 }
 
 export function Composer({
-  draftKey, text, onChangeText, onSend, onInterrupt, running, sending, disabled, imageUnavailable,
+  draftKey, text, onChangeText, onSend, onInterrupt, interrupting, running, sending, compacting, disabled, imageUnavailable,
   project, annotations, onUpdateAnnotation, onRemoveAnnotation, quoteDraft, onConfirmQuote,
   onCancelQuote, placeholder = '和 Codex 一起工作', toolbar, canSteer,
 }: ComposerProps) {
@@ -119,7 +121,7 @@ export function Composer({
     }
   }
 
-  const canSend = (!disabled && !sending && !picking &&
+  const canSend = (!disabled && !sending && !compacting && !picking &&
     (!imageUnavailable || images.length === 0) && Boolean(text.trim() || images.length || annotations.length))
 
   async function submit(mode: SendMode = 'queue') {
@@ -244,12 +246,12 @@ export function Composer({
               <ImagePlus size={19} strokeWidth={1.75} aria-hidden />
             </Button>
             {toolbar}
-            {picking && <span className="shrink-0 text-xs text-qn-muted" role="status">选图中…</span>}
           </div>
           <div className="qn-composer-actions">
             {running && (
-              <Button variant="danger" className="qn-stop-button" aria-label="停止运行" disabled={sending} onClick={onInterrupt}>
-                <Square size={12} fill="currentColor" aria-hidden />
+              <Button variant="danger" className="qn-stop-button" aria-label={interrupting ? '正在中断' : '停止运行'}
+                aria-busy={interrupting} disabled={sending || interrupting} onClick={onInterrupt}>
+                {interrupting ? <LoadingIcon size={14} /> : <Square size={12} fill="currentColor" aria-hidden />}
               </Button>
             )}
             <Button variant="primary" className={`qn-send-button${running ? ' qn-queue-button' : ''}`}
@@ -257,9 +259,10 @@ export function Composer({
               {sending ? <LoadingIcon size={18} /> : <ArrowUp size={19} strokeWidth={2.25} aria-hidden />}
               {running && <span>排队</span>}
             </Button>
-            {running && <SendOptions canSteer={canSteer} disabled={!canSend} onSelect={(mode) => void submit(mode)} />}
+            {running && !compacting && <SendOptions canSteer={canSteer} disabled={!canSend} onSelect={(mode) => void submit(mode)} />}
           </div>
         </div>
+        {picking && <div className="px-3 pb-2 text-xs text-qn-muted" role="status">选图中…</div>}
       </div>
     </div>
   )

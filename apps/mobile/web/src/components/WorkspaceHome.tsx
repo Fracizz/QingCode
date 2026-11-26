@@ -125,6 +125,8 @@ export function WorkspaceThreadRow({
   const gesture = useRef<{ id: number; x: number; y: number; axis: ReturnType<typeof threadSwipeAxis> } | null>(null)
   const suppressClick = useRef(false)
   const touchTap = useRef<number | undefined>(undefined)
+  const archiveTouch = useRef<{ id: number; x: number; y: number; cancelled: boolean } | null>(null)
+  const archivePending = useRef(false)
   const [revealedDesktop, setRevealedDesktop] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState<number | null>(null)
   const [archiving, setArchiving] = useState(false)
@@ -195,8 +197,36 @@ export function WorkspaceThreadRow({
     else if (!opening) onOpen()
   }
 
+  function startArchiveTouch(event: PointerEvent<HTMLButtonElement>) {
+    if (!event.isPrimary || event.button !== 0) return
+    archiveTouch.current = event.pointerType === 'touch'
+      ? { id: event.pointerId, x: event.clientX, y: event.clientY, cancelled: false }
+      : null
+    // WebView 的触摸轻点可能没有合成 click，直接处理手指抬起。
+    if (archiveTouch.current) event.preventDefault()
+  }
+
+  function trackArchiveTouch(event: PointerEvent<HTMLButtonElement>, cancelled = false) {
+    const touch = archiveTouch.current
+    if (!touch || touch.id !== event.pointerId || touch.cancelled) return
+    if (cancelled || threadSwipeAxis(event.clientX - touch.x, event.clientY - touch.y)) {
+      touch.cancelled = true
+    }
+  }
+
+  function finishArchiveTouch(event: PointerEvent<HTMLButtonElement>) {
+    trackArchiveTouch(event)
+    const touch = archiveTouch.current
+    if (!touch || touch.id !== event.pointerId || touch.cancelled) return
+    touch.cancelled = true
+    if (revealed && event.currentTarget.contains(document.elementFromPoint(event.clientX, event.clientY))) {
+      void archive()
+    }
+  }
+
   async function archive() {
-    if (archiving) return
+    if (archivePending.current) return
+    archivePending.current = true
     setArchiving(true)
     setArchiveError(null)
     try {
@@ -204,13 +234,15 @@ export function WorkspaceThreadRow({
     } catch (err) {
       setArchiveError(`归档失败。${friendlyError(err, '请重试')}`)
     } finally {
+      archivePending.current = false
       setArchiving(false)
     }
   }
 
   return (
     <div className="qn-thread-row" ref={row} onBlur={(event) => {
-      if (!event.currentTarget.contains(event.relatedTarget)) setRevealedDesktop(null)
+      // 触摸按钮时焦点可能暂时为空，点击行外由 pointerdown 处理。
+      if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setRevealedDesktop(null)
     }}>
       <div className="qn-thread-swipe">
         <button type="button" className="qn-row qn-list-row qn-thread-content" aria-current={selected ? 'true' : undefined}
@@ -231,21 +263,29 @@ export function WorkspaceThreadRow({
           <span className="qn-row-copy">
             <span className="qn-list-primary">
               <span className="truncate">{thread.title}</span>
-              <AgentTag agent={thread.agent} />
             </span>
             {preview && <span className="qn-subtitle block">{preview}</span>}
-            <span className="qn-subtitle block">{formatTime(thread.updatedAt)}</span>
+            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="qn-subtitle">{formatTime(thread.updatedAt)}</span>
+              <AgentTag agent={thread.agent} />
+            </span>
           </span>
           {opening ? (
             <span className="qn-row-status text-qn-accent" role="status"><LoadingIcon />打开中…</span>
           ) : status === 'running' ? (
-            <span className="qn-row-status text-qn-accent"><LoadingIcon />{sessionStatusLabels[status]}</span>
+            <LoadingIcon className="text-qn-accent" role="img" aria-hidden={false} aria-label={sessionStatusLabels[status]} />
           ) : <Badge tone={statusTone[status]}>{sessionStatusLabels[status]}</Badge>}
           <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />
         </button>
         <button type="button" className="qn-thread-archive" style={{ width: ARCHIVE_ACTION_WIDTH }}
           aria-label={`归档 ${thread.title}${thread.agent === 'codex' ? '' : '（仅此手机）'}`}
-          aria-disabled={archiving} onFocus={() => setRevealedDesktop(desktopId)} onClick={() => void archive()}>
+          aria-disabled={archiving} aria-busy={archiving} onFocus={() => setRevealedDesktop(desktopId)}
+          onPointerDown={startArchiveTouch} onPointerMove={trackArchiveTouch} onPointerUp={finishArchiveTouch}
+          onPointerCancel={(event) => trackArchiveTouch(event, true)}
+          onLostPointerCapture={(event) => trackArchiveTouch(event, true)}
+          onClick={(event) => {
+            if (!archiveTouch.current || event.detail === 0) void archive()
+          }}>
           {archiving ? '归档中…' : '归档'}
           {thread.agent !== 'codex' && !archiving && <small>仅此手机</small>}
         </button>
@@ -324,8 +364,14 @@ export function WorkspaceHome() {
   const projectList = useWorkspace((s) => desktopId ? s.projects[desktopId] : undefined)
   const threadList = useWorkspace((s) => desktopId ? s.threads[desktopId] : undefined) ?? emptyThreads
   const [query, setQuery] = useState('')
+  const [projectTargetId, setProjectTargetId] = useState<string | null>(null)
+  const activeProjectTarget = targets.some((target) => target.id === projectTargetId) ? projectTargetId : null
   const projects = projectList?.items ?? emptyProjects
-  const matchedProjects = useMemo(() => filterProjects(projects, targets, query), [projects, targets, query])
+  const projectGroups = useMemo(() => {
+    const matched = filterProjects(projects, targets, query, activeProjectTarget)
+    return targets.map((target) => ({ target, rows: matched.filter((item) => item.targetId === target.id) }))
+      .filter(({ rows }) => rows.length > 0)
+  }, [projects, targets, query, activeProjectTarget])
   const groups = useMemo(() => groupWorkspaceThreads(visibleWorkspaceThreads(threadList, desktopId, archived), projects, query),
     [threadList, desktopId, archived, projects, query])
 
@@ -339,7 +385,7 @@ export function WorkspaceHome() {
   const searching = query.trim().length > 0
   const showTargets = () => {
     useApp.getState().cancelPendingNavigation()
-    useApp.setState({ page: 'targets' })
+    useApp.setState({ page: 'targets', targetsReturnPage: 'workspace' })
   }
   return (
     <main className="qn-body qn-scroll qn-workspace qn-workspace-home qn-rise" aria-label={isSessions ? '会话' : '项目'}>
@@ -360,6 +406,17 @@ export function WorkspaceHome() {
             </div>
             {isSessions && <NewSessionButton projects={projects} iconOnly primary className="qn-header-icon" />}
           </div>
+          {!isSessions && (
+            <div className="qn-project-filters qn-scroll" role="group" aria-label="按连接筛选项目">
+              {[{ id: null, name: '全部' }, ...targets].map(({ id, name }) => (
+                <button type="button" key={id === null ? 'all' : `target:${id}`}
+                  className={`qn-chip${id === activeProjectTarget ? ' qn-chip-active' : ''}`}
+                  aria-pressed={id === activeProjectTarget} onClick={() => setProjectTargetId(id)}>
+                  <span className="truncate">{name}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {isSessions ? (
             groups.length ? groups.map(({ project, threads }) => (
               <section key={JSON.stringify([desktopId, project.targetId, project.id])} className="qn-workspace-group">
@@ -381,21 +438,21 @@ export function WorkspaceHome() {
               </Empty>
             )
           ) : (
-            matchedProjects.length ? targets.map((target) => {
-              const rows = matchedProjects.filter((item) => item.targetId === target.id)
-              if (!rows.length) return null
-              return (
-                <section key={target.id} className="qn-workspace-group">
-                  <div className="qn-group-heading">
-                    <h2><ProjectOrigin target={target} /></h2>
-                  </div>
-                  <div className="qn-list-group">
-                    {rows.map((project) => <WorkspaceProjectRow key={project.id} project={project} target={target}
-                      onOpen={() => void showWorkspaceProject(project)} />)}
-                  </div>
-                </section>
-              )
-            }) : <Empty>{query ? '没有匹配的项目。' : '在目标中选择或添加项目。'}</Empty>
+            projectGroups.length ? projectGroups.map(({ target, rows }) => (
+              <section key={target.id} className="qn-workspace-group">
+                <div className="qn-group-heading">
+                  <h2><ProjectOrigin target={target} /></h2>
+                </div>
+                <div className="qn-list-group">
+                  {rows.map((project) => <WorkspaceProjectRow key={project.id} project={project} target={target}
+                    onOpen={() => void showWorkspaceProject(project)} />)}
+                </div>
+              </section>
+            )) : (
+              <Empty>
+                {searching ? '没有匹配的项目。' : activeProjectTarget === null ? '在目标中选择或添加项目。' : '此连接下暂无项目。'}
+              </Empty>
+            )
           )}
           {(!isSessions || groups.length > 0) && (
             <Button className="mt-4 w-full" onClick={isSessions ? () => { setQuery(''); setTab('projects') } : showTargets}>

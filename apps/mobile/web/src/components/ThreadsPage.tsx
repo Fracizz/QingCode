@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { agentLabel, threadKey } from '../agents'
 import { targetAgents, useApp } from '../store'
 import { Button, Empty, Header, Loading, Note } from './ui'
-import { RateLimitBadge } from './RateLimitView'
 import { ProjectTools } from './ProjectTools'
 import { NewSessionButton } from './NewSessionButton'
 import { WorkspaceIcon, WorkspaceSearch, WorkspaceThreadRow } from './WorkspaceHome'
@@ -46,12 +45,7 @@ export function ThreadsPage() {
       <Header
         className="qn-threads-header"
         title={project?.name || '会话'}
-        subtitle={project && (
-          <span className="qn-threads-header-meta">
-            <span>会话</span>
-            <RateLimitBadge targetId={selectedTargetId} hideWhenEmpty />
-          </span>
-        )}
+        subtitle={project && '会话'}
         onBack={goBack}
         right={
           <>

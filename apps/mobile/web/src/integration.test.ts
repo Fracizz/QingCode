@@ -1,11 +1,11 @@
 // 浏览器开发模式的端到端冒烟：粘贴导入 → 配对 → 目标/项目/多 Agent 会话 → 流式对话 → 模型覆盖 → 只读查看文件/差异。
 import { describe, expect, it, vi } from 'vitest'
-import { archivedThreadKey } from './agents'
+import { archivedThreadKey, sessionKey } from './agents'
 import { createGateway, setGateway } from './client'
 import { buildConnectionInfo } from './link'
 import { MOCK_FP, type MockNativePort } from './mock'
 import { draftKey, parseConnections, serializeConnections } from './state'
-import { selectedQueuedSends, useApp } from './store'
+import { selectedCompactionStarting, selectedQueuedSends, useApp } from './store'
 import { EventStreamController } from './transport'
 import type { ProbeResult, Project } from './types'
 import { openWorkspaceThread, showWorkspaceProject, useWorkspace } from './workspace'
@@ -330,6 +330,12 @@ describe('模拟网关全链路', () => {
     rpc.mockRestore()
 
     const firstTransport = state().sessions['claude:local']!.transport
+    await state().activate(edited.id, 'targets')
+    expect(state()).toMatchObject({ activeId: edited.id, page: 'targets', eventsConnected: true })
+    expect(state().sessions['claude:local']?.transport).toBe(firstTransport)
+    expect(state().goBack()).toBe(true)
+    expect(state()).toMatchObject({ activeId: edited.id, page: 'connections' })
+
     const secondDesktop = { ...edited, id: 'second-desktop' }
     useApp.setState({ connections: [edited, secondDesktop] })
     let releaseProjects!: () => void
@@ -342,16 +348,25 @@ describe('模拟网关全链路', () => {
         : actualRpc(conn, method, params, agent, timeout)
     })
     const previousProjects = state().selectTarget('local')
-    await state().activate(secondDesktop.id)
+    await state().activate(secondDesktop.id, 'targets')
     releaseProjects()
     await previousProjects
     stale.mockRestore()
     expect(state().projects).toEqual([])
-    expect(state().page).toBe('workspace')
+    expect(state()).toMatchObject({ activeId: secondDesktop.id, page: 'targets' })
     expect(state().sessions).toEqual({})
     expect(state().rateLimits).toEqual({})
     expect(state().claudeRateLimits).toEqual({})
     expect(state().modelPrefs).toEqual({})
+    controller.start()
+    await vi.waitFor(() => expect(state().eventsConnected).toBe(true))
+    await state().selectTarget('local')
+    expect(state().page).toBe('projects')
+    expect(state().goBack()).toBe(true)
+    expect(state().page).toBe('targets')
+    expect(state().goBack()).toBe(true)
+    expect(state()).toMatchObject({ activeId: secondDesktop.id, page: 'connections' })
+    await state().activate(secondDesktop.id, 'targets')
     await state().selectTarget('local')
     await state().selectProject('p-local')
     await state().openThread(claudeThread!, 'claude')
@@ -359,6 +374,8 @@ describe('模拟网关全链路', () => {
     expect(state().draftText).toBe('')
 
     await state().activate(edited.id)
+    controller.start()
+    await vi.waitFor(() => expect(state().eventsConnected).toBe(true))
     await state().selectTarget('local')
     await state().selectProject('p-local')
     await state().openThread(claudeThread!, 'claude')
@@ -467,16 +484,19 @@ describe('模拟网关全链路', () => {
       await state().selectTarget('local')
       await state().selectProject('p-local')
       const rpc = gateway.rpc.bind(gateway)
+      let needsReconnect = true
       const disconnected = vi.spyOn(gateway, 'rpc').mockImplementation(async (...args) => {
         const [, method, params] = args
-        if (method === 'server.req' && (params as { method?: string }).method === 'ping') {
+        const request = params as { msg?: { method?: string } }
+        if (needsReconnect && method === 'codex.send' && request.msg?.method === 'thread/resume') {
+          needsReconnect = false
           throw Object.assign(new Error('目标未连接'), { code: 'not_connected' })
         }
         return rpc(...args)
       })
       try {
         await expect(state().openThread('c-demo', 'claude')).resolves.toBe(true)
-        expect(disconnected.mock.calls.map(([, method]) => method)).toContain('target.connect')
+        expect(disconnected.mock.calls.filter(([, method]) => method === 'target.connect')).toHaveLength(1)
         expect(state()).toMatchObject({ selectedThreadId: 'c-demo', openingThread: null, error: null })
       } finally {
         disconnected.mockRestore()
@@ -494,7 +514,10 @@ describe('模拟网关全链路', () => {
       expect(state().openingThread).toMatchObject({ threadId: 't-demo', agent: 'codex' })
 
       const latest = state().openThread('c-demo', 'claude')
-      expect(state().openingThread).toMatchObject({ threadId: 'c-demo', agent: 'claude' })
+      expect(state()).toMatchObject({ selectedThreadId: 'c-demo', openingThread: null })
+      expect(delayed.mock.calls.filter(([, method, params]) =>
+        method === 'codex.send' && (params as { agent?: string }).agent === 'claude',
+      )).toEqual([])
       await expect(latest).resolves.toBe(true)
       releaseHistory()
       await expect(first).resolves.toBe(false)
@@ -507,7 +530,37 @@ describe('模拟网关全链路', () => {
       releaseHistory()
       await expect(dismissed).resolves.toBe(false)
       expect(state()).toMatchObject({ selectedThreadId: 'c-demo', openingThread: null, error: null })
+
+      vi.useFakeTimers()
+      try {
+        const timedOut = state().openThread('t-demo', 'codex')
+        await vi.advanceTimersByTimeAsync(250)
+        expect(releaseResume).toBeTypeOf('function')
+        await vi.advanceTimersByTimeAsync(30_000)
+        await expect(timedOut).resolves.toBe(false)
+        expect(state()).toMatchObject({
+          selectedThreadId: 'c-demo', openingThread: null, error: expect.stringContaining('打开会话超时'),
+        })
+        expect(delayed.mock.calls.some(([, method, params]) =>
+          method === 'codex.send' && (params as { msg?: { method?: string } }).msg?.method === 'thread/read',
+        )).toBe(false)
+        releaseHistory()
+        await vi.advanceTimersByTimeAsync(250)
+        expect(state()).toMatchObject({ selectedThreadId: 'c-demo', openingThread: null })
+      } finally {
+        vi.useRealTimers()
+      }
       delayed.mockRestore()
+      await expect(state().openThread('t-demo', 'codex')).resolves.toBe(true)
+      expect(state()).toMatchObject({ selectedThreadId: 't-demo', openingThread: null, error: null })
+
+      state().handleGatewayEvent({
+        name: 'codex.recv',
+        payload: { targetId: 'local', seq: null, msg: { method: 'thread/closed', params: { threadId: 't-demo' } } },
+      })
+      const reopened = state().openThread('t-demo', 'codex')
+      expect(state().openingThread).toMatchObject({ threadId: 't-demo' })
+      await expect(reopened).resolves.toBe(true)
     } finally {
       releaseHistory()
       controller.stop()
@@ -515,6 +568,60 @@ describe('模拟网关全链路', () => {
         session.rpc.dispose()
         session.transport.dispose()
       }
+    }
+  })
+
+  it('压缩只发送一次并保留草稿，收到压缩事件后显示进度和结果', async () => {
+    const gateway = createGateway()
+    setGateway(gateway)
+    const state = useApp.getState
+    const conn = {
+      id: 'compact-desktop', name: '电脑', host: '192.168.1.2', port: 38500,
+      fp: MOCK_FP, token: 'mock-token', desktopName: '电脑', createdAt: Date.now(),
+    }
+    useApp.setState({ connections: [...state().connections, conn] })
+    await state().activate(conn.id)
+    const controller = new EventStreamController(gateway, () => conn, {
+      onEvent: (event) => state().handleGatewayEvent(event),
+      onOpen: () => useApp.setState({ eventsConnected: true }),
+      onClose: () => useApp.setState({ eventsConnected: false }),
+    })
+    const rpc = vi.spyOn(gateway, 'rpc')
+    controller.start()
+    try {
+      await vi.waitFor(() => expect(state().eventsConnected).toBe(true))
+      await state().selectTarget('local')
+      await state().selectProject('p-local')
+      await expect(state().openThread('t-demo', 'codex')).resolves.toBe(true)
+      state().setDraftText('保留草稿')
+      const thread = () => state().sessions[sessionKey('local', 'codex')]?.state.threads['t-demo']
+      const original = thread()?.items
+      expect(original?.length).toBeGreaterThan(0)
+
+      const started = state().compactConversation()
+      expect(selectedCompactionStarting(state())).toBe(true)
+      await expect(state().compactConversation()).resolves.toBe(false)
+      await expect(state().send('压缩尚未开始')).resolves.toBe(false)
+      await expect(started).resolves.toBe(true)
+      expect(thread()?.status).toBe('running')
+      await expect(state().compactConversation()).resolves.toBe(false)
+      await vi.waitFor(() => expect(thread()?.status).toBe('idle'))
+      expect(thread()?.items).toEqual([
+        ...original!,
+        expect.objectContaining({ type: 'contextCompaction', status: 'completed' }),
+      ])
+      expect(state().draftText).toBe('保留草稿')
+      const compactions = () => rpc.mock.calls.filter(([, method, params]) =>
+        method === 'codex.send' && (params as { msg?: { method?: string } }).msg?.method === 'thread/compact/start')
+      expect(compactions()).toHaveLength(1)
+      expect(compactions()[0]?.[2]).toMatchObject({ msg: { params: { threadId: 't-demo' } } })
+      await expect(state().openThread('c-demo', 'claude')).resolves.toBe(true)
+      await expect(state().compactConversation()).resolves.toBe(false)
+      expect(compactions()).toHaveLength(1)
+    } finally {
+      controller.stop()
+      rpc.mockRestore()
+      await state().removeConnection(conn.id)
     }
   })
 
@@ -561,6 +668,8 @@ describe('模拟网关全链路', () => {
       await expect(state().send('排队二')).resolves.toBe(true)
       expect(queue().map((message) => message.text)).toEqual(['排队一', '移除这条', '排队二'])
       state().removeQueuedSend(queue()[1]!.id)
+      const editId = queue()[0]!.id
+      const finishEdit = state().beginQueuedEdit(editId)!
       expect(turnMethods()).toEqual(['turn/start'])
 
       await expect(state().send('补充方向', [], false, 'steer')).resolves.toBe(true)
@@ -572,20 +681,27 @@ describe('模拟网关全链路', () => {
       expect(view()?.activeTurnId).toBe(firstTurn)
       expect(texts()).toContain('补充方向')
 
-      await vi.waitFor(() => expect(view()?.items).toContainEqual(expect.objectContaining({ text: '排队一', images: [png] })))
-      expect(queue().map((message) => message.text)).toEqual(['排队二'])
+      await vi.waitFor(() => expect(view()?.status).toBe('idle'))
+      expect(turnMethods()).toEqual(['turn/start', 'turn/steer'])
+      await expect(state().editQueuedSend(editId, '排队一（已编辑）')).resolves.toBe(true)
+      expect(queue().map((message) => message.text)).toEqual(['排队一（已编辑）', '排队二'])
+      finishEdit()
+      await vi.waitFor(() => expect(view()?.items).toContainEqual(expect.objectContaining({ text: '排队一（已编辑）', images: [png] })))
+      await vi.waitFor(() => expect(queue().map((message) => message.text)).toEqual(['排队二']))
       await expect(state().send('立即跟进', [], false, 'immediate')).resolves.toBe(true)
       expect(texts()).toContain('立即跟进')
       expect(queue()[0]?.error).toBeUndefined()
       expect(turnMethods()).toEqual(['turn/start', 'turn/steer', 'turn/start', 'turn/interrupt', 'turn/start'])
 
+      const noticeBeforeStop = state().notice
       await state().interrupt()
-      expect(view()?.status).toBe('error')
+      expect(view()?.activity).toBe('interrupted')
+      expect(state().notice).toBe(noticeBeforeStop)
       expect(queue()[0]).toMatchObject({ text: '排队二', error: '上一轮未完成，队列已暂停' })
       expect(texts()).not.toContain('排队二')
       await state().retryQueuedSend()
       await vi.waitFor(() => expect(view()?.status).toBe('idle'))
-      expect(texts()).toEqual(['你好', '第一条', '补充方向', '排队一', '立即跟进', '排队二'])
+      expect(texts()).toEqual(['你好', '第一条', '补充方向', '排队一（已编辑）', '立即跟进', '排队二'])
       expect(queue()).toEqual([])
 
       state().setDraftText('独立草稿')
@@ -615,6 +731,21 @@ describe('模拟网关全链路', () => {
       rejectQueued.mockRestore()
       state().removeQueuedSend(queue()[0]!.id)
 
+      await expect(state().send('再开一轮')).resolves.toBe(true)
+      const runningTurn = view()?.activeTurnId
+      await expect(state().send('排队后改为引导', [{ type: 'image', url: png }])).resolves.toBe(true)
+      const steering = vi.spyOn(gateway, 'rpc')
+      await expect(state().steerQueuedSend(queue()[0]!.id)).resolves.toBe(true)
+      expect(steering.mock.calls).toContainEqual([
+        conn, 'codex.send', expect.objectContaining({ msg: expect.objectContaining({
+          method: 'turn/steer', params: expect.objectContaining({ expectedTurnId: runningTurn }),
+        }) }),
+      ])
+      expect(view()?.activeTurnId).toBe(runningTurn)
+      expect(view()?.items).toContainEqual(expect.objectContaining({ text: '排队后改为引导', images: [png] }))
+      expect(queue()).toEqual([])
+      steering.mockRestore()
+
       await state().openThread('c-demo', 'claude')
       const unsupportedRpc = vi.spyOn(gateway, 'rpc')
       await expect(state().send('不支持引导', [], false, 'steer')).resolves.toBe(false)
@@ -629,7 +760,7 @@ describe('模拟网关全链路', () => {
     }
   }, 10_000)
 
-  it('从工作台直接打开项目或会话，切换标签后丢弃迟到的跳转', async () => {
+  it('从工作台进入后按来路返回，切换标签后丢弃迟到的跳转', async () => {
     const gateway = createGateway()
     setGateway(gateway)
     const state = useApp.getState
@@ -655,15 +786,21 @@ describe('模拟网关全链路', () => {
       const project = projects.find((item) => item.id === 'p-local')!
       const threads = await state().discoverWorkspaceSessions(projects)
       const thread = threads.find((item) => item.id === 't-demo')!
-      useWorkspace.setState({ tab: 'sessions', threads: { [conn.id]: threads } })
+      const another = threads.find((item) => item.id === 'c-demo')!
+      useWorkspace.setState({ tab: 'projects', threads: { [conn.id]: threads } })
 
       const openingProject = showWorkspaceProject(project)
       expect(pages).toEqual(['threads'])
       expect(state()).toMatchObject({ selectedTargetId: project.targetId, selectedProjectId: project.id })
       expect(state().threads).toContainEqual(thread)
       await openingProject
-      state().goBack()
-      state().goBack()
+      await expect(state().openThread(thread.id, thread.agent)).resolves.toBe(true)
+      expect(state().goBack()).toBe(true)
+      expect(state()).toMatchObject({ page: 'threads', selectedProjectId: project.id, selectedThreadId: null })
+      expect(state().goBack()).toBe(true)
+      expect(pages).toEqual(['threads', 'chat', 'threads', 'workspace'])
+      expect(useWorkspace.getState().tab).toBe('projects')
+      useWorkspace.getState().setTab('sessions')
       pages.length = 0
 
       let releaseResume!: () => void
@@ -676,7 +813,7 @@ describe('模拟网关全链路', () => {
         return sendRpc(connection, method, params, agent, timeout)
       })
       try {
-        const openingThread = openWorkspaceThread(thread, project)
+        const openingThread = openWorkspaceThread(another, project)
         await vi.waitFor(() => expect(rpc).toHaveBeenCalledWith(conn, 'codex.send', expect.objectContaining({
           msg: expect.objectContaining({ method: 'thread/resume' }),
         })))
@@ -693,14 +830,29 @@ describe('模拟网关全链路', () => {
         rpc.mockRestore()
       }
 
-      await openWorkspaceThread(thread, project)
+      const requests = vi.spyOn(gateway, 'rpc')
+      const reopened = openWorkspaceThread(thread, project)
       expect(pages).toEqual(['chat'])
       expect(state()).toMatchObject({
         selectedTargetId: thread.targetId, selectedProjectId: thread.projectId, selectedThreadId: thread.id,
       })
       expect(state().sessions['codex:local']?.state.threads[thread.id]?.items.length).toBeGreaterThan(0)
+      await expect(reopened).resolves.toBe(true)
+      expect(requests.mock.calls.map(([, method]) => method)).toEqual(['projects.save'])
+      requests.mockRestore()
+      await expect(openWorkspaceThread(another, project)).resolves.toBe(true)
       expect(state().goBack()).toBe(true)
-      expect(state().page).toBe('threads')
+      expect(pages).toEqual(['chat', 'workspace'])
+      expect(state()).toMatchObject({ page: 'workspace', selectedTargetId: null, selectedProjectId: null, selectedThreadId: null })
+      expect(useWorkspace.getState().tab).toBe('sessions')
+
+      await expect(state().newThread('codex', { project, projects, threads })).resolves.toBe(true)
+      const newThreadId = state().selectedThreadId
+      const savedChat = async () => JSON.parse(await gateway.storageGet('savedChats') ?? '{}')[conn.id]
+      await vi.waitFor(async () => expect((await savedChat())?.threadId).toBe(newThreadId))
+      expect(state().goBack()).toBe(true)
+      expect(pages).toEqual(['chat', 'workspace', 'chat', 'workspace'])
+      await vi.waitFor(async () => expect(await savedChat()).toBeUndefined())
     } finally {
       unsubscribe()
       controller.stop()
@@ -709,7 +861,7 @@ describe('模拟网关全链路', () => {
     }
   })
 
-  it('冷启动从加密存储恢复电脑的当前会话及对应草稿', async () => {
+  it('冷启动从加密存储恢复当前会话、草稿和暂停的发送队列', async () => {
     const gateway = createGateway()
     setGateway(gateway)
     const conn = {
@@ -718,18 +870,45 @@ describe('模拟网关全链路', () => {
     }
     const chat = { targetId: 'local', projectId: 'p-local', agent: 'codex', threadId: 't-demo' } as const
     const key = draftKey(conn.id, chat.targetId, chat.projectId, chat.agent, chat.threadId, conn.fp)
+    const queueKey = JSON.stringify([conn.id, chat.targetId, chat.agent, chat.threadId])
+    const queued = {
+      id: 'saved-message', text: '重启前排队的消息', annotations: [], delegate: false, overrides: {},
+      attachments: [{ type: 'image', url: 'data:image/png;base64,AA==' }],
+    }
     await Promise.all([
       gateway.storageSet('connections', serializeConnections([conn])),
       gateway.storageSet('active', conn.id),
       gateway.storageSet('savedChats', JSON.stringify({ [conn.id]: chat })),
       gateway.storageSet('chatDrafts', JSON.stringify({ [key]: { text: '冷启动草稿', annotations: [] } })),
+      gateway.storageSet('queuedSends', JSON.stringify({ [queueKey]: { fp: conn.fp, items: [queued] } })),
     ])
+    const rpc = gateway.rpc.bind(gateway)
+    let connected = false
+    const requests = vi.spyOn(gateway, 'rpc').mockImplementation(async (...args) => {
+      const [, method, params] = args
+      if (method === 'target.connect') connected = true
+      if (!connected && method === 'server.req' && (params as { method?: string }).method === 'codex.open') {
+        throw Object.assign(new Error('目标未连接'), { code: 'not_connected' })
+      }
+      return rpc(...args)
+    })
     useApp.getState().init()
     await vi.waitFor(() => {
       expect(useApp.getState()).toMatchObject({
         page: 'chat', selectedThreadId: chat.threadId, activeId: conn.id, draftText: '冷启动草稿',
       })
     })
+    expect(selectedQueuedSends(useApp.getState())).toEqual([
+      { ...queued, sending: false, error: '已恢复排队消息，等待继续发送' },
+    ])
+    expect(requests.mock.calls.some(([, method, params]) => method === 'codex.send'
+      && (params as { msg?: { method?: string } }).msg?.method === 'turn/start')).toBe(false)
+    expect(requests.mock.calls).not.toContainEqual([
+      conn, 'server.req', expect.objectContaining({ method: 'ping' }),
+    ])
+    expect(requests.mock.calls.filter(([, method]) => method === 'target.connect')).toHaveLength(1)
+    expect(useApp.getState().goBack()).toBe(true)
+    expect(useApp.getState().page).toBe('workspace')
     await useApp.getState().removeConnection(conn.id)
   })
 })

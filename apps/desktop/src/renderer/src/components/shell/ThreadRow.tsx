@@ -1,17 +1,24 @@
-import { isActiveThread, sessionStatus, sessionStatusLabels, type ThreadView } from '@qn/codex-client'
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentProps } from 'react'
+import { isActiveThread, sessionStatus, sessionStatusLabels, type SessionStatus, type ThreadView } from '@qn/codex-client'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentProps, type ComponentType } from 'react'
 import { ContextMenu } from 'radix-ui'
 import {
   Archive,
+  Check,
   ChevronRight,
+  Circle,
+  CircleAlert,
+  CirclePause,
   Copy,
   Eye,
   EyeOff,
   GitBranch,
+  MessageSquare,
   Pencil,
   Pin,
   PinOff,
+  ShieldAlert,
   Trash2,
+  type LucideProps,
 } from 'lucide-react'
 import { DEFAULT_AGENT } from '../../lib/agents'
 import { copyText } from '../../lib/clipboard'
@@ -22,9 +29,37 @@ import { useCodex } from '../../store/codex'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { AgentIcon } from '../AgentIcon'
 import { LoadingIcon } from '../LoadingIcon'
-import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, floatSurface, menuItemClass, MenuItemContent } from '../primitives'
+import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, floatSurface, menuItemClass, MenuItemContent, Tip } from '../primitives'
 import { IconButton, Modal } from '../ui'
-import { SessionStatusBadge } from './SessionStatusBadge'
+
+const statusIcons: Record<SessionStatus, { Icon: ComponentType<LucideProps>; className: string; size?: number }> = {
+  idle: { Icon: Circle, className: 'text-qn-dim' },
+  running: { Icon: LoadingIcon, className: 'text-qn-brand [animation-duration:2s]' },
+  pending: { Icon: ShieldAlert, className: 'text-amber-300' },
+  input: { Icon: MessageSquare, className: 'text-amber-300' },
+  completed: { Icon: Check, className: 'text-qn-muted' },
+  failed: { Icon: CircleAlert, className: 'text-qn-danger' },
+  interrupted: { Icon: CirclePause, className: 'text-qn-muted' },
+  unread: { Icon: Circle, className: 'fill-current text-qn-brand', size: 6 },
+}
+
+function ThreadStatusIcon({ status }: { status: SessionStatus }) {
+  const label = sessionStatusLabels[status]
+  const { Icon, className, size = 13 } = statusIcons[status]
+  return (
+    <Tip label={label}>
+      <span
+        className="absolute left-[14px] top-1/2 flex size-3.5 -translate-y-1/2 items-center justify-center"
+        role="img"
+        aria-label={label}
+        // 避免悬停图标时同时出现会话预览的原生提示。
+        title=""
+      >
+        <Icon size={size} strokeWidth={2.5} className={className} aria-hidden />
+      </span>
+    </Tip>
+  )
+}
 
 function ShortcutItem({ hint, ...props }: ComponentProps<typeof ContextMenuItem>) {
   // 菜单打开时按快捷字母直接触发，见 onMenuKeyDown。
@@ -170,22 +205,10 @@ export function ThreadRow({
               }
             }}
           >
-            {status === 'running' ? (
-              <LoadingIcon
-                size={13}
-                strokeWidth={2.5}
-                className="absolute left-[14px] top-1/2 -mt-[6.5px] text-qn-brand [animation-duration:2s]"
-                role="img"
-                aria-hidden={false}
-                aria-label={sessionStatusLabels.running}
-              />
-            ) : unread && (
-              <span className="absolute left-[18px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-qn-brand" aria-label="未读" />
-            )}
+            <ThreadStatusIcon status={status} />
             {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
             {thread.agent !== DEFAULT_AGENT && <AgentIcon agent={thread.agent} size={12} />}
             <span className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold text-qn-text')}>{thread.title}</span>
-            <SessionStatusBadge status={status} />
             {status !== 'pending' && status !== 'input' && (
               <>
                 <span className="shrink-0 text-[12px] text-qn-dim group-hover:hidden">

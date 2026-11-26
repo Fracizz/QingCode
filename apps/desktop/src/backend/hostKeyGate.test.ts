@@ -89,4 +89,17 @@ describe('HostKeyGate', () => {
     expect(gate.respond('nope', true)).toBe(false)
     gate.close()
   })
+
+  it('后台连接只接受已保存的指纹，遇到新主机或变更时不弹确认', async () => {
+    const dir = await tempDir()
+    await writeKnownHosts(dir, { 'h:22': 'SHA256:known' })
+    const prompts: unknown[] = []
+    const gate = new HostKeyGate({ userData: dir, emit: (prompt) => prompts.push(prompt), autoAcceptNew: true })
+    await expect(gate.verify('h', 22, 'SHA256:known', false)).resolves.toBe(true)
+    await expect(gate.verify('h', 22, 'SHA256:changed', false)).resolves.toBe(false)
+    await expect(gate.verify('new', 22, 'SHA256:new', false)).resolves.toBe(false)
+    expect(prompts).toEqual([])
+    expect(await readKnownHosts(dir)).toEqual({ 'h:22': 'SHA256:known' })
+    gate.close()
+  })
 })

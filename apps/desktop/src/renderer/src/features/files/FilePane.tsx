@@ -34,7 +34,7 @@ function MarkdownPreview({ content, targetId, cwd }: { content: string; targetId
   const link = useMemo(() => createMarkdownLink(() => ({ targetId, cwd })), [targetId, cwd])
   const components = useMemo<Components>(() => ({ a: link }), [link])
   return (
-    <div className="qn-scroll qn-markdown min-h-0 flex-1 overflow-auto px-4 py-3 text-[13px] leading-6 text-qn-text">
+    <div className="qn-scroll qn-markdown min-h-0 flex-1 overflow-auto px-4 py-3 text-[length:var(--qn-editor-font-size,12.5px)] leading-[1.8] text-qn-text">
       <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={qnUrlTransform} components={components}>
         {content}
       </ReactMarkdown>

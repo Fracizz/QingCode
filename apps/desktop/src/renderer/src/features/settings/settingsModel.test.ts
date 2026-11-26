@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_FONT_SIZES } from '../../../../shared/fontSizes'
 import {
   DEFAULT_AGENT_OPTIONS,
   DENSITY_OPTIONS,
@@ -22,9 +23,10 @@ describe('默认设置与白名单', () => {
     const first = defaultAppSettings()
     expect(first.general).toEqual({
       sendKey: 'enter',
-      autoConnectLast: false,
+      autoConnectLast: true,
       defaultAgent: 'codex',
       density: 'comfortable',
+      ...DEFAULT_FONT_SIZES,
     })
     first.agents.local = { codex: { enabled: false } }
     expect(defaultAppSettings().agents).toEqual({})
@@ -45,9 +47,10 @@ describe('默认设置与白名单', () => {
     })
     expect(result.general).toEqual({
       sendKey: 'enter',
-      autoConnectLast: false,
+      autoConnectLast: true,
       defaultAgent: 'pi',
       density: 'compact',
+      ...DEFAULT_FONT_SIZES,
     })
     expect(result.agents.local?.codex).toEqual({
       enabled: false,
@@ -144,6 +147,7 @@ describe('filterSettings', () => {
     expect(filterSettings('ctrl+enter').itemIds).toEqual(['sendKey'])
     expect(filterSettings('手机 证书').itemIds).toEqual(['mobile'])
     expect(filterSettings('codex_home').itemIds).toEqual(['agents'])
+    expect(filterSettings('字体大小 终端').itemIds).toEqual(['terminalFontSize'])
     expect(filterSettings('agent codex').sections.map((s) => s.id)).toContain('agents')
   })
 

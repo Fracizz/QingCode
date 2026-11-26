@@ -14,19 +14,23 @@ export class FingerprintMismatchError extends Error {
 }
 
 /** 自签证书不走 CA 校验，改为固定证书 DER 的 SHA-256；不符直接断开，绝不发送 token。 */
-export function openPinnedTls(host: string, port: number, fingerprint: string, timeoutMs = CONNECT_TIMEOUT_MS): Promise<tls.TLSSocket> {
+export function openPinnedTls(host: string, port: number, fingerprint: string, timeoutMs = CONNECT_TIMEOUT_MS, signal?: AbortSignal): Promise<tls.TLSSocket> {
   const expected = normalizeFingerprint(fingerprint)
   return new Promise((resolve, reject) => {
+    signal?.throwIfAborted()
     const socket = tls.connect({ host, port, rejectUnauthorized: false, minVersion: 'TLSv1.2' })
     let settled = false
     const fail = (err: Error): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
       socket.destroy()
       reject(err)
     }
+    const abort = () => fail(signal?.reason)
     const timer = setTimeout(() => fail(new Error(`连接 ${host}:${String(port)} 超时`)), timeoutMs)
+    signal?.addEventListener('abort', abort, { once: true })
     socket.once('secureConnect', () => {
       const cert = socket.getPeerCertificate()
       const actual = cert?.raw ? createHash('sha256').update(cert.raw).digest('hex') : ''
@@ -37,6 +41,7 @@ export function openPinnedTls(host: string, port: number, fingerprint: string, t
       if (settled) return
       settled = true
       clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
       socket.setNoDelay(true)
       socket.setKeepAlive(true, 30_000)
       resolve(socket)
@@ -46,10 +51,13 @@ export function openPinnedTls(host: string, port: number, fingerprint: string, t
 }
 
 export async function connectDirectTarget(context: DirectLinkContext): Promise<TargetLink> {
-  const { target } = context
+  const { target, signal } = context
   context.hooks.onState('connecting', `直连 ${target.host}:${String(target.port)}`)
-  const socket = await openPinnedTls(target.host, target.port, target.fingerprint, context.connectTimeoutMs)
+  const socket = await openPinnedTls(target.host, target.port, target.fingerprint, context.connectTimeoutMs, signal)
+  const abort = () => { socket.destroy() }
+  signal?.addEventListener('abort', abort, { once: true })
   try {
+    signal?.throwIfAborted()
     const server = await ServerClient.connect({
       stream: toFramedStream(socket),
       token: context.token,
@@ -72,5 +80,7 @@ export async function connectDirectTarget(context: DirectLinkContext): Promise<T
   } catch (err) {
     socket.destroy()
     throw err
+  } finally {
+    signal?.removeEventListener('abort', abort)
   }
 }

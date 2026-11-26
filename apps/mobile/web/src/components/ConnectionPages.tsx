@@ -6,7 +6,6 @@ import { getWindowNativePort } from '../native'
 import { friendlyError } from '../state'
 import { useApp } from '../store'
 import type { ConnectionStatus } from '../types'
-import { useWorkspace } from '../workspace'
 import { Badge, Button, Card, Dialog, Empty, Field, Header, Loading, Note, StatusDot } from './ui'
 import { WorkspaceIcon } from './WorkspaceHome'
 
@@ -132,7 +131,6 @@ export function ConnectionsPage() {
   const statuses = useApp((s) => s.connectionStatus)
   const latencies = useApp((s) => s.connectionLatencyMs)
   const activeId = useApp((s) => s.activeId)
-  const page = useApp((s) => s.page)
   const booting = useApp((s) => s.booting)
   const mock = useApp((s) => s.mock)
   const eventsConnected = useApp((s) => s.eventsConnected)
@@ -161,16 +159,6 @@ export function ConnectionsPage() {
     openAddForm()
     void pasteFromClipboard()
   }
-  const openComputer = (id: string) => {
-    if (needsRepair[id] || statuses[id] === 'mismatch') {
-      beginRepair(id)
-    } else if (id === activeId && page === 'workspace' && eventsConnected) {
-      useWorkspace.getState().setTab('sessions')
-    } else {
-      void activate(id)
-    }
-  }
-
   return (
     <>
       <main className="qn-body qn-scroll qn-workspace qn-rise" aria-label="连接">
@@ -178,6 +166,9 @@ export function ConnectionsPage() {
           <div className="qn-workspace-context">
             <span className="text-[13px]">{mock ? '浏览器预览' : connections.length ? `已配对 ${connections.length} 台电脑` : 'QingCode Next'}</span>
             <div className="flex">
+              {activeId && eventsConnected && !needsRepair[activeId] && (
+                <Button variant="ghost" className="px-2 text-xs" onClick={() => void activate(activeId, 'targets')}>目标与额度</Button>
+              )}
               {connections.length > 0 && (
                 <Button variant="ghost" className="qn-list-action" onClick={() => void refreshStatuses()} aria-label="刷新连接">
                   <WorkspaceIcon name="refresh" />
@@ -213,7 +204,7 @@ export function ConnectionsPage() {
                 const latency = !repair && status === 'online' ? latencies[conn.id] : null
                 return (
                   <div key={conn.id} className="qn-row qn-list-row">
-                    <button type="button" className="qn-row-trigger" onClick={() => openComputer(conn.id)}>
+                    <button type="button" className="qn-row-trigger" onClick={() => void activate(conn.id, 'targets')}>
                       <StatusDot tone={tone} />
                       <span className="qn-row-copy">
                         <span className="qn-list-primary">{conn.name}</span>
@@ -243,9 +234,6 @@ export function ConnectionsPage() {
         <Dialog title={selected.name} onClose={() => setMenu(null)}>
           <p className="mb-3 text-xs text-qn-muted">{formatAddress(selected.host, selected.port)}</p>
           <div className="grid gap-2">
-            {selected.id === activeId && eventsConnected && (
-              <Button onClick={() => { setMenu(null); useApp.setState({ page: 'targets' }) }}>查看目标</Button>
-            )}
             <Button onClick={() => { setMenu(null); openEditForm(selected.id) }}>编辑连接</Button>
             <Button onClick={() => { setMenu(null); beginRepair(selected.id) }}>重新配对</Button>
             <Button variant="danger" onClick={() => { setMenu(null); setPendingDelete(selected.id) }}>删除连接</Button>

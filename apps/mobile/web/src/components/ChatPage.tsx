@@ -1,12 +1,12 @@
-import { ArrowDown, ChevronDown, PanelLeft } from 'lucide-react'
-import { formatReset, remainingQuotaPercent, sessionStatus, sessionStatusLabels, type ItemView, type UserInput } from '@qn/codex-client'
+import { ArrowDown, ChevronDown, PanelLeft, Square } from 'lucide-react'
+import { sessionStatus, sessionStatusLabels, type ItemView, type UserInput } from '@qn/codex-client'
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { nearBottom } from '../composerLogic'
 import { EMPTY_PREFS, resolveSelection } from '../models'
-import { currentCwd, useApp } from '../store'
+import { currentCwd, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
 import { groupChatItems } from '../chatGroups'
-import { formatTurnError } from '../state'
+import { formatTurnError, friendlyError } from '../state'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
 import { ContextUsage } from './ContextUsage'
@@ -14,10 +14,9 @@ import { FileActionsContext, MessageItem, ToolGroup, type FileActions } from './
 import { ModelPicker } from './ModelSheet'
 import { NewSessionButton } from './NewSessionButton'
 import { QueuedMessages } from './QueuedMessages'
-import { RateLimitBadge, RateLimitDetails } from './RateLimitView'
 import { SessionSwitcher } from './SessionSwitcher'
 import { SubagentRpcContext } from './SubagentDetails'
-import { Badge, Button, Dialog, Empty, Header, LoadingIcon, Note } from './ui'
+import { Badge, Button, Empty, Header, LoadingIcon, Note } from './ui'
 
 const NO_ITEMS: ItemView[] = []
 
@@ -48,6 +47,9 @@ export function ChatPage() {
   const goBack = useApp((s) => s.goBack)
   const send = useApp((s) => s.send)
   const interrupt = useApp((s) => s.interrupt)
+  const compactConversation = useApp((s) => s.compactConversation)
+  const compactionBlockedReason = useApp(selectedCompactionBlockedReason)
+  const compactionStarting = useApp(selectedCompactionStarting)
   const respondApproval = useApp((s) => s.respondApproval)
   const approvalSubmitting = useApp((s) => s.approvalSubmitting)
   const addAnnotation = useApp((s) => s.addAnnotation)
@@ -56,16 +58,12 @@ export function ChatPage() {
   const ensureOpen = useApp((s) => s.ensureOpen)
   const clearError = useApp((s) => s.clearError)
   const clearNotice = useApp((s) => s.clearNotice)
-  const claudeLimit = useApp((s) => selectedTargetId ? s.claudeRateLimits[selectedTargetId] : undefined)
-  const claudeCost = useApp((s) => s.claudeCosts[JSON.stringify([selectedTargetId, selectedThreadId])])
-  const claudeUsed = claudeLimit?.primary?.usedPercent
-  const claudeReached = claudeLimit?.rateLimitReachedType || claudeLimit?.spendControlReached === true
-  const claudeQuota = claudeReached ? '已达额度上限'
-    : claudeUsed != null ? `上报剩余 ${Math.round(remainingQuotaPercent(claudeUsed))}%` : null
+  const claudeCost = useApp((s) => selectedAgent === 'claude'
+    ? s.claudeCosts[JSON.stringify([selectedTargetId, selectedThreadId])] : undefined)
 
   const chatKey = JSON.stringify([activeId, fingerprint, selectedTargetId, selectedAgent, selectedProjectId, selectedThreadId])
   const [quote, setQuote] = useState<{ key: string; text: string } | null>(null)
-  const [showRate, setShowRate] = useState(false)
+  const [stopRequest, setStopRequest] = useState<{ chatKey: string; turnId: string; error: string | null } | null>(null)
   const [switching, setSwitching] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -77,6 +75,14 @@ export function ChatPage() {
   const items = view?.items ?? NO_ITEMS
   const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
+  const interrupted = !running && view?.activity === 'interrupted'
+  const turnError = !running && !interrupted ? view?.error : undefined
+  const currentStop = running && stopRequest?.chatKey === chatKey && stopRequest.turnId === view.activeTurnId ? stopRequest : null
+  const stopping = currentStop !== null && currentStop.error === null
+  const stopError = currentStop?.error
+  const activeItemIds = running ? view.turns?.find((turn) => turn.id === view.activeTurnId)?.itemIds : undefined
+  const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
+    item.type === 'contextCompaction' && item.status === 'inProgress' && activeItemIds?.includes(item.id))
   const shownItems = useMemo(
     () => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'reasoning'),
     [items, view?.error, running],
@@ -118,7 +124,7 @@ export function ChatPage() {
     }
     const node = scrollRef.current
     if (node && following.current) node.scrollTop = node.scrollHeight
-  }, [chatKey, items, approvals.length])
+  }, [chatKey, items, approvals.length, interrupted, turnError])
 
   useLayoutEffect(() => {
     const node = scrollRef.current
@@ -151,6 +157,20 @@ export function ChatPage() {
     return sent
   }
 
+  async function stopTurn() {
+    const turnId = view?.activeTurnId
+    if (!running || !turnId || stopping) return
+    const request = { chatKey, turnId, error: null }
+    setStopRequest(request)
+    try {
+      await interrupt()
+      setStopRequest((current) => current === request ? null : current)
+    } catch (err) {
+      const error = `未能中断本轮。${friendlyError(err, '请重试')}`
+      setStopRequest((current) => current === request ? { ...request, error } : current)
+    }
+  }
+
   return (
     <>
       <Header
@@ -159,8 +179,6 @@ export function ChatPage() {
         onBack={goBack}
         right={
           <>
-            {selectedAgent === 'codex' && <RateLimitBadge targetId={selectedTargetId} onToggle={() => setShowRate(true)} />}
-            {selectedAgent === 'claude' && <Button variant="ghost" className="px-2 text-xs" onClick={() => setShowRate(true)}>{claudeQuota ?? '额度'}</Button>}
             {project && <NewSessionButton project={project} iconOnly className="qn-header-icon" />}
             <Button variant="ghost" className="qn-header-icon" onClick={() => setSwitching(true)} aria-label="切换会话">
               <PanelLeft size={20} strokeWidth={1.75} aria-hidden />
@@ -200,6 +218,7 @@ export function ChatPage() {
                     className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
                     {block.kind === 'item'
                       ? <MessageItem item={block.item} onQuote={(text) => setQuote({ key: chatKey, text })} agentName={agentLabel(selectedAgent)}
+                        active={activeItemIds?.includes(block.item.id)}
                         onResend={selectedThreadId ? resend : undefined} />
                       : <ToolGroup items={block.items} onQuote={(text) => setQuote({ key: chatKey, text })} />}
                   </div>
@@ -210,7 +229,8 @@ export function ChatPage() {
             {running && shownItems.at(-1)?.kind === 'user' && (
               <div className="qn-thinking" role="status"><LoadingIcon />{agentLabel(selectedAgent)} 正在处理…</div>
             )}
-            {!running && view?.error && <TurnErrorCard message={view.error} />}
+            {interrupted && <div className="qn-turn-interrupted" role="status"><Square size={13} aria-hidden />本轮已中断</div>}
+            {turnError && <TurnErrorCard message={turnError} />}
             {approvals.length > 0 && (
               <div ref={approvalsRef} className="space-y-3">
                 {approvals.map((approval) => (
@@ -227,13 +247,14 @@ export function ChatPage() {
           <Button className="absolute right-3 bottom-3 bg-qn-panel shadow-lg" onClick={jumpToLatest}>回到最新 <ArrowDown size={15} aria-hidden /></Button>
         )}
       </div>
-      {(error || notice) && (
+      {(error || notice || stopError) && (
         <div className="bg-qn-panel px-3 pt-1">
           {error && <Note message={error} tone="error" onClose={clearError} />}
           {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
+          {stopError && <div role="alert"><Note message={stopError} tone="error" onClose={() => setStopRequest(null)} /></div>}
         </div>
       )}
-      <QueuedMessages />
+      <QueuedMessages key={`queue:${chatKey}`} running={running} canSteer={selectedAgent === 'codex' && !!view?.activeTurnId} />
       <Composer
         key={chatKey}
         draftKey={chatKey}
@@ -244,9 +265,11 @@ export function ChatPage() {
           if (sent) jumpToLatest()
           return sent
         }}
-        onInterrupt={() => void interrupt()}
+        onInterrupt={() => void stopTurn()}
+        interrupting={stopping}
         running={running}
         sending={sending}
+        compacting={compacting}
         disabled={!selectedTargetId}
         imageUnavailable={imageUnavailable}
         project={project}
@@ -257,28 +280,20 @@ export function ChatPage() {
         onConfirmQuote={(text, comment) => { addAnnotation(text, comment); setQuote(null) }}
         onCancelQuote={() => setQuote(null)}
         placeholder={agentPlaceholder(selectedAgent)}
-        canSteer={selectedAgent === 'codex'}
+        canSteer={selectedAgent === 'codex' && !!view?.activeTurnId}
         toolbar={
           <>
             {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">工具直接执行</span>}
             {selectedTargetId && <ModelPicker targetId={selectedTargetId} agent={selectedAgent} />}
-            <ContextUsage tokenUsage={view?.tokenUsage} />
+            <ContextUsage tokenUsage={view?.tokenUsage} estimatedCostUsd={claudeCost} compact={selectedAgent === 'codex' && selectedThreadId ? {
+              busy: compacting,
+              blockedReason: compactionBlockedReason,
+              onConfirm: () => void compactConversation(),
+            } : undefined} />
           </>
         }
       />
       {switching && <SessionSwitcher onClose={() => setSwitching(false)} />}
-      {showRate && (
-        <Dialog title={`${agentLabel(selectedAgent)} 额度`} onClose={() => setShowRate(false)}>
-          {selectedAgent === 'claude' ? (
-            <div className="space-y-2 text-sm">
-              <p>{claudeQuota ?? '暂无限额事件'}</p>
-              {claudeLimit?.primary?.resetsAt != null && <p>{formatReset(claudeLimit.primary.resetsAt, Date.now())}</p>}
-              {claudeCost != null && <p>本设备已收到的会话费用估算 {new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(claudeCost)}</p>}
-              <p className="text-xs text-qn-muted">Claude 只在接近或触发限额时上报。</p>
-            </div>
-          ) : <RateLimitDetails targetId={selectedTargetId} />}
-        </Dialog>
-      )}
     </>
   )
 }

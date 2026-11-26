@@ -3,6 +3,7 @@ import { EditorView } from '@codemirror/view'
 import { MergeView, unifiedMergeView } from '@codemirror/merge'
 import { Spinner } from '../../../components/ui'
 import { cn } from '../../../lib/cn'
+import { useSetting } from '../../settings/settingsStore'
 import { mergeExtensions } from './extensions'
 import { loadLanguageForPath } from './languages'
 
@@ -33,6 +34,8 @@ export function MergeEditor({
   className,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const views = useRef<EditorView[]>([])
+  const fontSize = useSetting((settings) => settings.general.editorFontSize)
   const current = useRef(modified)
   const originalRef = useRef(original)
   const changeRef = useRef(onModifiedChange)
@@ -67,6 +70,7 @@ export function MergeEditor({
         })
         // .cm-mergeView 是编辑器的祖先，主题里的 scoped 选择器够不到它；高度必须直接给，否则外层无法滚动。
         merge.dom.style.height = '100%'
+        views.current = [merge.a, merge.b]
       } else {
         view = new EditorView({
           doc: current.current,
@@ -76,16 +80,22 @@ export function MergeEditor({
           ],
           parent: host,
         })
+        views.current = [view]
       }
       setLoading(false)
     })
 
     return () => {
       alive = false
+      views.current = []
       merge?.destroy()
       view?.destroy()
     }
   }, [layout, path, editableB, revertControls])
+
+  useEffect(() => {
+    for (const view of views.current) view.requestMeasure()
+  }, [fontSize])
 
   return (
     <div className={cn('relative min-h-0 flex-1', className)}>

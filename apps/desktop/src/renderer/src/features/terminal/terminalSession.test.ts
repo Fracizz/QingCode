@@ -6,7 +6,7 @@ const mocked = vi.hoisted(() => {
   class FakeTerminal {
     cols = 80
     rows = 24
-    options = { disableStdin: true }
+    options = { disableStdin: true, fontSize: 13 }
     unicode = { activeVersion: '' }
     output: string[] = []
     onInput = (_data: string) => {}
@@ -97,6 +97,9 @@ describe('桌面终端连接', () => {
     const terminal = mocked.state.current!
     expect(terminal.output).toEqual(['prompt'])
     expect(status?.writable).toBe(true)
+    session.setFontSize(18)
+    expect(terminal.options.fontSize).toBe(18)
+    expect(terminal.output).toEqual(['prompt'])
 
     emitData(2, 'other host', 'other')
     emitData(2, 'live')

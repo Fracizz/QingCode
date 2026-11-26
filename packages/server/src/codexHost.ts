@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { classifyJsonRpc, type JsonRpcId, type ServerMessage } from '@qn/protocol'
+import { classifyJsonRpc, FrameError, MAX_FRAME_BYTES, type JsonRpcId, type ServerMessage } from '@qn/protocol'
 import { IdMapper } from './idMapper'
 import { redact } from './log'
 import { PendingRequests } from './pendingRequests'
@@ -147,7 +147,8 @@ export function quoteCmdToken(value: string): string {
 }
 
 const INIT_TIMEOUT_MS = 10_000
-const MAX_LINE_BYTES = 1024 * 1024
+const MAX_STDERR_CHARS = 1024 * 1024
+const MAX_REPLAY_EVENT_BYTES = MAX_FRAME_BYTES - 128
 
 /**
  * 一个 agent 独占一套 id 映射 / 回放缓冲 / 未决请求 / turn 计数。
@@ -272,11 +273,20 @@ export abstract class JsonRpcAgentHost implements AgentHost {
     if (kind === 'response') {
       const forwarded = this.ids.take(msg.id)
       if (!forwarded) return
-      this.hub.send(forwarded.clientId, {
-        t: 'codex.recv',
-        seq: null,
-        msg: { ...msg, id: forwarded.originalId },
-      })
+      try {
+        this.hub.send(forwarded.clientId, {
+          t: 'codex.recv',
+          seq: null,
+          msg: { ...msg, id: forwarded.originalId },
+        })
+      } catch (err) {
+        if (!(err instanceof FrameError) || err.code !== 'oversize') throw err
+        this.hub.send(forwarded.clientId, {
+          t: 'codex.recv',
+          seq: null,
+          msg: { id: forwarded.originalId, error: { code: -32000, message: '会话数据超过传输大小上限' } },
+        })
+      }
       return
     }
 
@@ -350,6 +360,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
 export class CodexHost extends JsonRpcAgentHost {
   private child: ChildProcess | null = null
   private stdoutRemainder = ''
+  private skippingStdoutLine = false
   private stderrRemainder = ''
   private init: InitDeferred | null = null
   private initDone = false
@@ -474,6 +485,7 @@ export class CodexHost extends JsonRpcAgentHost {
     this.child = child
     this.codexHome = directory
     this.stdoutRemainder = ''
+    this.skippingStdoutLine = false
     this.stderrRemainder = ''
     this.initializeResult = null
 
@@ -481,8 +493,8 @@ export class CodexHost extends JsonRpcAgentHost {
     this.initDone = false
     this.init = makeDeferred(initId, INIT_TIMEOUT_MS)
 
-    child.stdout?.on('data', (chunk: unknown) => {
-      if (this.child === child) this.onStdout(toText(chunk))
+    child.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
+      if (this.child === child) this.onStdout(chunk)
     })
     child.stderr?.on('data', (chunk: unknown) => {
       if (this.child === child) this.onStderr(toText(chunk))
@@ -506,18 +518,32 @@ export class CodexHost extends JsonRpcAgentHost {
   }
 
   private onStdout(chunk: string): void {
-    this.stdoutRemainder += chunk
-    if (this.stdoutRemainder.length > MAX_LINE_BYTES) {
+    let start = 0
+    while (start < chunk.length) {
+      const newline = chunk.indexOf('\n', start)
+      const end = newline < 0 ? chunk.length : newline
+      if (!this.skippingStdoutLine) {
+        // 历史回包可接近协议帧上限，必须按整行计数，且跳过超长行的后续片段。
+        if (this.stdoutRemainder.length + end - start > MAX_FRAME_BYTES) {
+          this.stdoutRemainder = ''
+          this.skippingStdoutLine = true
+          this.hub.log('codex stdout 单行过长，已丢弃')
+        } else {
+          this.stdoutRemainder += chunk.slice(start, end)
+        }
+      }
+      if (newline < 0) return
+      const line = this.stdoutRemainder.trim()
       this.stdoutRemainder = ''
-      this.hub.log('codex stdout 单行过长，已丢弃')
-      return
+      this.skippingStdoutLine = false
+      if (line) this.consumeLine(line)
+      start = end + 1
     }
-    this.consumeLines()
   }
 
   private onStderr(chunk: string): void {
     this.stderrRemainder += chunk
-    if (this.stderrRemainder.length > MAX_LINE_BYTES) {
+    if (this.stderrRemainder.length > MAX_STDERR_CHARS) {
       this.hub.log(`codex stderr: ${redact(this.stderrRemainder)}`)
       this.stderrRemainder = ''
       return
@@ -530,22 +556,25 @@ export class CodexHost extends JsonRpcAgentHost {
     }
   }
 
-  private consumeLines(): void {
-    let index: number
-    while ((index = this.stdoutRemainder.indexOf('\n')) >= 0) {
-      const line = this.stdoutRemainder.slice(0, index).trim()
-      this.stdoutRemainder = this.stdoutRemainder.slice(index + 1)
-      if (!line) continue
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(line)
-      } catch {
-        this.hub.log('codex stdout 出现非 JSON 行')
-        continue
-      }
-      if (isRecord(parsed)) this.handleCodexMessage(parsed)
-      else this.hub.log('codex stdout 出现非对象消息')
+  private consumeLine(line: string): void {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      this.hub.log('codex stdout 出现非 JSON 行')
+      return
     }
+    if (!isRecord(parsed)) {
+      this.hub.log('codex stdout 出现非对象消息')
+      return
+    }
+    // 回放还会附加帧类型和序号，须在入缓冲前为这些字段留出空间。
+    if (line.length > MAX_REPLAY_EVENT_BYTES / 3
+        && classifyJsonRpc(parsed) !== 'response' && Buffer.byteLength(JSON.stringify(parsed)) > MAX_REPLAY_EVENT_BYTES) {
+      this.hub.log('codex stdout 事件超过传输大小上限')
+      return
+    }
+    this.handleCodexMessage(parsed)
   }
 
   private handleCodexMessage(msg: Record<string, unknown>): void {

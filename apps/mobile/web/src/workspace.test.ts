@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { archivedThreadKey } from './agents'
-import type { Project, Target } from './types'
-import { closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, recentThreadStatus, registerBackHandler, threadPreviewLine, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
+import { createGateway, setGateway } from './client'
+import { MOCK_FP } from './mock'
+import { useApp } from './store'
+import type { Connection, Project, Target } from './types'
+import { closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, recentThreadStatus, registerBackHandler, startWorkspaceObserver, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
 
 const laptop: Project = { id: 'laptop', targetId: 'local', name: 'sandbox', path: 'C:\\sandbox', lastOpenedAt: 1 }
 const remote: Project = { id: 'remote', targetId: 'ssh', name: 'sandbox', path: '/srv/sandbox', lastOpenedAt: 0 }
@@ -38,6 +41,16 @@ describe('移动工作台', () => {
     expect(filterProjects(projects, targets, '/srv')).toEqual([remote])
   })
 
+  it('默认显示所有连接的项目，指定连接后只搜索该连接下的项目', () => {
+    const otherRemote = { ...remote, id: 'other', targetId: 'other-ssh' }
+    const projects = [laptop, remote, otherRemote]
+    expect(filterProjects(projects, targets, '')).toEqual(projects)
+    expect(filterProjects(projects, targets, '', 'ssh')).toEqual([remote])
+    expect(filterProjects(projects, targets, 'sandbox', 'local')).toEqual([laptop])
+    expect(filterProjects(projects, targets, '本机', 'ssh')).toEqual([])
+    expect(filterProjects(projects, targets, '', 'missing')).toEqual([])
+  })
+
   it('按项目和目标分组，同名项目和同 id 会话互不覆盖', () => {
     const status = [thread(laptop), thread(remote, { updatedAt: 4 }), thread(remote, { agent: 'claude', updatedAt: 2 })]
     expect(groupWorkspaceThreads(status, [laptop, remote], '').map(({ project, threads }) => (
@@ -53,6 +66,59 @@ describe('移动工作台', () => {
     const archived = { [archivedThreadKey('desktop-a', laptop.targetId, archivedThread)]: true } as const
     expect(visibleWorkspaceThreads(all, 'desktop-a', archived)).toEqual(otherThreads)
     expect(visibleWorkspaceThreads(all, 'desktop-b', archived)).toEqual(all)
+  })
+
+  it('立即保存已读到的历史，重开后电脑离线也能按原项目分组', async () => {
+    const gateway = createGateway()
+    const app = useApp.getState()
+    const workspace = useWorkspace.getState()
+    const conn: Connection = {
+      id: 'desktop-a', name: '电脑', host: '192.168.1.2', port: 38500,
+      fp: MOCK_FP, token: 'mock-token', desktopName: '电脑', createdAt: 0,
+    }
+    const project = { ...laptop, name: '自定义项目名', lastOpenedAt: Date.UTC(2026, 10, 26) }
+    const row = thread(project, { preview: '上一条消息', activity: 'running' })
+    const savedRow = thread(project)
+    // 旧版缓存中另一台电脑的历史可能比本次更新更晚读到。
+    await gateway.storageSet('workspace.sessions', JSON.stringify({ 'desktop-b': [thread(remote)] }))
+    setGateway(gateway)
+    useApp.setState({
+      connections: [conn], activeId: conn.id,
+      selectedTargetId: project.targetId, selectedProjectId: project.id, projects: [project],
+    })
+    useWorkspace.setState({ threads: {}, projects: {} })
+    vi.useFakeTimers()
+    let stop = startWorkspaceObserver()
+    try {
+      const write = vi.spyOn(gateway, 'storageSet')
+      useApp.setState({ threads: [row] })
+      await vi.advanceTimersByTimeAsync(25)
+      const payload = write.mock.calls.find(([key]) => key === 'workspace.sessions')?.[1]
+      expect(JSON.parse(payload ?? '{}')).toEqual({
+        'desktop-a': { projects: [project], threads: [savedRow] },
+        'desktop-b': { projects: [remote], threads: [thread(remote)] },
+      })
+      stop()
+
+      useWorkspace.setState({ threads: {}, projects: {} })
+      vi.spyOn(gateway, 'rpc').mockRejectedValue(new Error('电脑离线'))
+      stop = startWorkspaceObserver()
+      await useWorkspace.getState().loadProjects(conn.id)
+      await vi.advanceTimersByTimeAsync(10)
+      const current = useWorkspace.getState()
+      const projects = current.projects[conn.id]!
+      expect(projects.error).toBe(true)
+      expect(groupWorkspaceThreads(current.threads[conn.id]!, projects.items, '')).toEqual([
+        { project, threads: [savedRow] },
+      ])
+      expect(current.threads['desktop-b']).toEqual([thread(remote)])
+    } finally {
+      stop()
+      vi.useRealTimers()
+      useApp.setState(app)
+      useWorkspace.setState(workspace)
+      setGateway(null)
+    }
   })
 
   it('实时审批高于运行状态并覆盖列表中的旧状态', () => {

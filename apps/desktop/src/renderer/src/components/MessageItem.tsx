@@ -62,7 +62,7 @@ function markdownComponents(streaming: boolean, context: LinkContext | null): Co
     },
     table: ({ children }) => (
       <div className="qn-scroll my-3 overflow-x-auto rounded-lg border border-qn-border">
-        <table className="w-full border-collapse text-[13px]">{children}</table>
+        <table className="w-full border-collapse text-[0.93em]">{children}</table>
       </div>
     ),
     th: ({ children }) => <th className="border-b border-qn-border bg-white/[0.03] px-3 py-1.5 text-left font-medium">{children}</th>,
@@ -227,7 +227,7 @@ function AgentMessage({ id, text, streaming, onFork }: { id: string; text: strin
   const components = useMemo(() => markdownComponents(streaming, context), [streaming, context])
   return (
     <div className="group/msg">
-      <div className={cn('qn-markdown break-words text-[14px] leading-[1.7] text-qn-prose', streaming && 'qn-streaming')}>
+      <div className={cn('qn-markdown break-words text-[length:var(--qn-chat-font-size,14px)] leading-[1.7] text-qn-prose', streaming && 'qn-streaming')}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={qnUrlTransform}>
           {text}
         </ReactMarkdown>
@@ -263,7 +263,7 @@ export const MessageItem = memo(function MessageItem({
           icon={<Lightbulb size={14} strokeWidth={1.75} className={item.streaming ? 'animate-pulse text-qn-brand' : ''} />}
           summary={item.streaming ? '正在思考…' : '思考过程'}
         >
-          <div className="whitespace-pre-wrap break-words border-l border-qn-border pl-3 text-[13px] leading-6 text-qn-muted">
+          <div className="whitespace-pre-wrap break-words border-l border-qn-border pl-3 text-[length:calc(var(--qn-chat-font-size,14px)_-_1px)] leading-[1.8] text-qn-muted">
             {item.summary || '（暂无摘要）'}
           </div>
         </ToolRow>
@@ -404,7 +404,7 @@ function UserMessage({ item, onEdit }: {
           <textarea
             ref={(area) => { area?.focus() }}
             aria-label="编辑已发送的消息"
-            className="qn-scroll block min-h-20 w-full resize-y bg-transparent px-1 text-[14px] leading-6 outline-none"
+            className="qn-scroll block min-h-20 w-full resize-y bg-transparent px-1 text-[length:var(--qn-composer-font-size,14px)] leading-[1.7] outline-none"
             value={edit}
             disabled={saving}
             onChange={(event) => setEdit(event.target.value)}
@@ -419,7 +419,7 @@ function UserMessage({ item, onEdit }: {
           </div>
         </form>
       ) : parsed.text.trim() && (
-        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-qn-elevated px-4 py-2.5 text-[14px] leading-6 text-qn-prose">
+        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-qn-elevated px-4 py-2.5 text-[length:var(--qn-chat-font-size,14px)] leading-[1.7] text-qn-prose">
           {parsed.text}
         </div>
       )}

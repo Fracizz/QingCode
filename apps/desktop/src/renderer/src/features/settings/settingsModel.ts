@@ -6,6 +6,7 @@ import type {
   SettingsDensity,
   SettingsSendKey,
 } from '../../../../shared/backendApi'
+import { DEFAULT_FONT_SIZES, sanitizeFontSizes, type FontSizeKey } from '../../../../shared/fontSizes'
 
 // 设置的纯逻辑：默认值/白名单/深合并与后端 settings/appSettings.ts 同形（两层各自独立，避免 renderer 打包 Node IO）。
 // 界面元数据与搜索索引也放这里，便于单测覆盖合规文案与过滤规则。
@@ -35,9 +36,10 @@ export function defaultAppSettings(): AppSettings {
   return {
     general: {
       sendKey: 'enter',
-      autoConnectLast: false,
+      autoConnectLast: true,
       defaultAgent: 'codex',
       density: 'comfortable',
+      ...DEFAULT_FONT_SIZES,
     },
     agents: {},
   }
@@ -105,6 +107,8 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
         ? general.defaultAgent
         : defaults.general.defaultAgent,
       density: isSettingsDensity(general.density) ? general.density : defaults.general.density,
+      ...DEFAULT_FONT_SIZES,
+      ...sanitizeFontSizes(general),
     },
     agents,
   }
@@ -114,7 +118,7 @@ export function sanitizeSettingsPatch(raw: unknown): AppSettingsPatch {
   const root = isRecord(raw) ? raw : {}
   const patch: AppSettingsPatch = {}
   const general = isRecord(root.general) ? root.general : {}
-  const nextGeneral: Partial<AppSettings['general']> = {}
+  const nextGeneral: Partial<AppSettings['general']> = sanitizeFontSizes(general)
   if (isSettingsSendKey(general.sendKey)) nextGeneral.sendKey = general.sendKey
   if (typeof general.autoConnectLast === 'boolean') nextGeneral.autoConnectLast = general.autoConnectLast
   if (isSettingsAgent(general.defaultAgent)) nextGeneral.defaultAgent = general.defaultAgent
@@ -236,6 +240,18 @@ export const DENSITY_OPTIONS: ReadonlyArray<{ value: SettingsDensity; label: str
   { value: 'compact', label: '紧凑' },
 ]
 
+export const FONT_SIZE_SETTINGS: ReadonlyArray<{
+  id: FontSizeKey
+  title: string
+  description: string
+  keywords: readonly string[]
+}> = [
+  { id: 'chatFontSize', title: '对话字号', description: '用户消息、回复正文和推理摘要。', keywords: ['对话', '聊天', '消息', 'chat'] },
+  { id: 'composerFontSize', title: '输入框字号', description: '主对话和侧边聊天的消息输入框，以及编辑历史消息时的输入框。', keywords: ['输入框', '编辑消息', 'composer'] },
+  { id: 'editorFontSize', title: '文件与差异字号', description: '代码编辑器、文件预览和差异内容。', keywords: ['文件', '编辑器', '代码', '差异', 'editor', 'diff'] },
+  { id: 'terminalFontSize', title: '终端字号', description: '集成终端的命令输入和输出。', keywords: ['终端', '命令行', 'terminal'] },
+]
+
 export const THEME_OPTIONS: ReadonlyArray<{ value: string; label: string; disabled?: boolean; hint?: string }> = [
   { value: 'dark', label: '深色' },
   { value: 'light', label: '浅色', disabled: true, hint: '即将支持' },
@@ -303,6 +319,12 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     title: '主题',
     keywords: ['主题', '深色', '浅色', '外观', 'theme', 'dark', 'light', '即将支持'],
   },
+  ...FONT_SIZE_SETTINGS.map(({ id, title, keywords }) => ({
+    id,
+    section: 'general' as const,
+    title,
+    keywords: ['字体', '字体大小', '字号', 'font size', ...keywords],
+  })),
   {
     id: 'agents',
     section: 'agents',

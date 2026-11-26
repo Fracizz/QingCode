@@ -10,7 +10,7 @@ export type ChatBlock =
 export type ToolStatus = 'running' | 'failed' | 'done'
 
 const isTool = (item: ItemView): item is ToolItem =>
-  item.kind === 'command' || item.kind === 'fileChange' || item.kind === 'other'
+  item.kind === 'command' || item.kind === 'fileChange' || (item.kind === 'other' && item.type !== 'contextCompaction')
 
 export function toolStatus(item: ToolItem): ToolStatus {
   const status = 'status' in item && typeof item.status === 'string' ? item.status : ''

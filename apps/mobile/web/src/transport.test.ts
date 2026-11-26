@@ -74,17 +74,19 @@ describe('seq 与回放解析', () => {
 
 describe('MobileCodexTransport', () => {
   it('send 转发消息、handleRecv 只投递本目标并推进 lastSeq', () => {
-    const send = vi.fn(async () => null)
+    const send = vi.fn(async (_msg: unknown) => null)
     const transport = new MobileCodexTransport('local', send)
     const seen: Array<{ msg: unknown; seq: number | null }> = []
     transport.onMessage((msg, seq) => seen.push({ msg, seq }))
 
     transport.send({ id: 'c1', method: 'thread/list' })
-    expect(send).toHaveBeenCalledWith({ id: 'c1', method: 'thread/list' })
+    const sent = send.mock.calls[0]?.[0] as { id: string }
+    expect(sent).toMatchObject({ id: expect.stringMatching(/^mobile-.+:c1$/), method: 'thread/list' })
 
     transport.handleRecv({ targetId: 'local', seq: 7, msg: { method: 'turn/started' } })
     transport.handleRecv({ targetId: 'other', seq: 8, msg: { method: 'ignored' } })
-    transport.handleRecv({ targetId: 'local', seq: null, msg: { id: 'c1', result: {} } })
+    transport.handleRecv({ targetId: 'local', seq: null, msg: { id: 'c1', result: { unrelated: true } } })
+    transport.handleRecv({ targetId: 'local', seq: null, msg: { id: sent.id, result: {} } })
     expect(seen).toEqual([
       { msg: { method: 'turn/started' }, seq: 7 },
       { msg: { id: 'c1', result: {} }, seq: null },
@@ -97,6 +99,29 @@ describe('MobileCodexTransport', () => {
     transport.dispose()
     transport.send({ id: 'c2' })
     expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it('同一电脑的两台手机分别接收自己的回包，审批编号保持原样', async () => {
+    const send = vi.fn(async (_msg: unknown) => null)
+    const first = new MobileCodexTransport('local', send)
+    const second = new MobileCodexTransport('local', send)
+    const firstListener = vi.fn()
+    const secondListener = vi.fn()
+    first.onMessage(firstListener)
+    second.onMessage(secondListener)
+    first.send({ id: 'c1', method: 'thread/list' })
+    second.send({ id: 'c1', method: 'thread/resume' })
+    const firstId = (send.mock.calls[0]?.[0] as { id: string }).id
+    const secondId = (send.mock.calls[1]?.[0] as { id: string }).id
+    expect(firstId).not.toBe(secondId)
+    for (const transport of [first, second]) {
+      transport.handleRecv({ targetId: 'local', seq: null, msg: { id: secondId, result: 'second' } })
+      transport.handleRecv({ targetId: 'local', seq: null, msg: { id: firstId, result: 'first' } })
+    }
+    expect(firstListener).toHaveBeenCalledExactlyOnceWith({ id: 'c1', result: 'first' }, null)
+    expect(secondListener).toHaveBeenCalledExactlyOnceWith({ id: 'c1', result: 'second' }, null)
+    await first.respond('approval-id', { decision: 'decline' })
+    expect(send).toHaveBeenLastCalledWith({ id: 'approval-id', result: { decision: 'decline' } })
   })
 
   it('发送被网关拒绝时补本地错误响应，避免 RPC 挂起', async () => {
