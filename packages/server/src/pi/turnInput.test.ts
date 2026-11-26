@@ -16,19 +16,53 @@ describe('pi prompt 输入映射', () => {
     expect(promptFromContent(content())).toEqual({ message: '列出当前目录' })
   })
 
-  it('base64 图片转成 pi 的 ImageContent；URL 图片忽略（pi 只接受 base64）', () => {
+  it('base64 图片转成 pi 的 ImageContent，顺序保持', () => {
     const result = promptFromContent(
       content({
         blocks: [
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
-          { type: 'image', source: { type: 'url', url: 'https://example.com/a.png' } },
+          { type: 'image', source: { type: 'base64', media_type: 'image/webp', data: 'BBBB' } },
           { type: 'text', text: '看图' },
         ],
         text: '看图',
       }),
     )
-    expect(result.images).toEqual([{ type: 'image', data: 'AAAA', mimeType: 'image/png' }])
+    expect(result.images).toEqual([
+      { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+      { type: 'image', data: 'BBBB', mimeType: 'image/webp' },
+    ])
     expect(result.message).toBe('看图')
+  })
+
+  it('URL 图片 pi 无法接收，报 -32602 而不是静默丢弃', () => {
+    expect(() =>
+      promptFromContent(
+        content({
+          blocks: [
+            { type: 'image', source: { type: 'url', url: 'https://example.com/a.png' } },
+            { type: 'text', text: '看图' },
+          ],
+          text: '看图',
+        }),
+      ),
+    ).toThrow(expect.objectContaining({ code: -32602 }))
+  })
+
+  it('v2 data URL 图片：data URL 头被剥掉，只把 base64 交给 pi', async () => {
+    const resolved = await resolvePiPrompt([
+      { type: 'image', url: 'data:image/JPEG;base64,QUJD' },
+      { type: 'text', text: '@src/a.ts 这是什么', text_elements: [] },
+    ])
+    expect(resolved.prompt).toEqual({
+      message: '@src/a.ts 这是什么',
+      images: [{ type: 'image', data: 'QUJD', mimeType: 'image/jpeg' }],
+    })
+  })
+
+  it('不支持的图片类型由共用解析拒绝', async () => {
+    await expect(resolvePiPrompt([{ type: 'image', url: 'data:image/bmp;base64,AAAA' }])).rejects.toMatchObject({
+      code: -32602,
+    })
   })
 
   it('v2 UserInput → pi prompt，并保留回显内容', async () => {

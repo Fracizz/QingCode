@@ -20,14 +20,14 @@ export function seqOf(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-/** 只接收当前目标（以及当前 agent）的 codex.recv；响应帧的 seq 为 null。 */
+/** 只接收当前目标（以及当前 agent）的 codex.recv；响应帧的 seq 为 null。缺 agent 的帧视为 codex（旧 server）。 */
 export function filterRecv(
   payload: unknown,
   targetId: string,
   agent?: AgentKind,
 ): RecvMessage | null {
   if (!isRecord(payload) || payload.targetId !== targetId) return null
-  if (agent !== undefined && payload.agent !== undefined && payload.agent !== agent) return null
+  if (agent !== undefined && (payload.agent ?? 'codex') !== agent) return null
   if (!Object.prototype.hasOwnProperty.call(payload, 'msg')) return null
   const agentValue =
     payload.agent === 'codex' || payload.agent === 'claude' || payload.agent === 'pi'

@@ -14,7 +14,10 @@ import {
 
 const PREFS_KEY = 'qn-model-prefs'
 
-type ModelList = { models: ModelOption[]; loading: boolean; error: string | null }
+type ModelList = { models: ModelOption[]; loading: boolean; error: string | null; loadedAt?: number }
+
+// pi 等 Agent 在会话进程启动前返回空列表（不为取列表而起进程），空列表隔一段时间允许重取。
+const EMPTY_RETRY_MS = 15_000
 
 type ModelsState = {
   /** 按 sessionKey（agent + 目标）缓存：不同目标上的 Codex 版本可能给出不同模型。 */
@@ -40,13 +43,15 @@ export const useModels = create<ModelsState>((set, get) => ({
   load: async (targetId, agent, rpc, force = false) => {
     const key = sessionKey(targetId, agent)
     const current = get().lists[key]
-    if (current?.loading || (current && !current.error && !force)) return
+    const staleEmpty =
+      current !== undefined && current.models.length === 0 && Date.now() - (current.loadedAt ?? 0) > EMPTY_RETRY_MS
+    if (current?.loading || (current && !current.error && !force && !staleEmpty)) return
     set((state) => ({
       lists: { ...state.lists, [key]: { models: current?.models ?? [], loading: true, error: null } },
     }))
     try {
       const models = toModelOptions(await listModels(rpc))
-      set((state) => ({ lists: { ...state.lists, [key]: { models, loading: false, error: null } } }))
+      set((state) => ({ lists: { ...state.lists, [key]: { models, loading: false, error: null, loadedAt: Date.now() } } }))
     } catch (err) {
       const error = err instanceof Error ? err.message : '加载模型列表失败'
       set((state) => ({

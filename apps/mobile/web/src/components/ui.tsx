@@ -1,4 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { agentLabel } from '../agents'
+import type { AgentKind } from '../types'
 
 type Tone = 'muted' | 'ok' | 'warn' | 'danger' | 'accent'
 
@@ -163,4 +165,10 @@ export function Dialog({
 
 export function Loading({ text = '正在加载…' }: { text?: string }) {
   return <div className="py-6 text-center text-sm text-qn-muted">{text}</div>
+}
+
+/** 会话所属 Agent 的小标签；用中性文字而非厂商 Logo（docs/agent-adapters.md §5）。 */
+export function AgentTag({ agent }: { agent: AgentKind }) {
+  const cls = agent === 'claude' ? 'qn-agent-tag-claude' : agent === 'pi' ? 'qn-agent-tag-pi' : ''
+  return <span className={`qn-agent-tag ${cls}`}>{agentLabel(agent)}</span>
 }

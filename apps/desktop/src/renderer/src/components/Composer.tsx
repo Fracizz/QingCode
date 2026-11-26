@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ArrowUp, CircleAlert, FileText, LoaderCircle, Paperclip, Slash, Square, Wand2, X } from 'lucide-react'
+import { ArrowUp, CircleAlert, FileText, ImageOff, LoaderCircle, Paperclip, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder } from '../lib/agents'
 import {
@@ -12,6 +12,17 @@ import {
   type SlashItem,
 } from '../lib/attachments'
 import { useSetting } from '../features/settings'
+import {
+  applyMention,
+  imageSendBlock,
+  mentionToken,
+  MentionMenu,
+  screenFiles,
+  useImageSupport,
+  useMentionSearch,
+  type MentionCandidate,
+} from '../features/composer'
+import { useCodex } from '../store/codex'
 import { cn } from '../lib/cn'
 import { Tip } from './primitives'
 import { ErrorNote } from './ui'
@@ -39,7 +50,8 @@ type SlashProps = {
 
 /**
  * 输入框（参考 Codex）：圆角卡片里是附件托盘 + 自动增高的文本框，底部一行左侧放附件按钮/上下文工具、右侧放模型选择/上下文占用/发送。
- * 支持粘贴/拖入图片与文件；行首输入 `/` 弹出命令与技能菜单。运行中发送键变成停止键；卡片下方一行放环境信息。
+ * 支持粘贴/拖入图片与文件；行首输入 `/` 弹出命令与技能菜单，输入 `@` 搜索并引用项目文件。
+ * 运行中发送键变成停止键；卡片下方一行放环境信息。
  */
 export function Composer({
   onSend,
@@ -88,24 +100,44 @@ export function Composer({
   const [caret, setCaret] = useState(0)
   const [dismissed, setDismissed] = useState(false)
   const [active, setActive] = useState(0)
+  // composing 是 ref，组合期间要让菜单收起需要一个能触发重渲染的状态。
+  const [imeActive, setImeActive] = useState(false)
+  const pendingCaret = useRef<number | null>(null)
+  // `@` 引用相对当前项目根；没有项目上下文时不启用。
+  const targetId = useCodex((s) => s.currentTargetId)
+  const root = useCodex((s) => s.currentCwd)
 
   useLayoutEffect(() => {
     const area = areaRef.current
     if (!area) return
     area.style.height = 'auto'
     area.style.height = `${Math.min(area.scrollHeight, Math.round(window.innerHeight * MAX_HEIGHT_RATIO))}px`
+    // 插入 `@路径` 后把光标放到插入内容之后（受控 textarea 改值后光标会跳到末尾）。
+    if (pendingCaret.current !== null) {
+      area.setSelectionRange(pendingCaret.current, pendingCaret.current)
+      pendingCaret.current = null
+    }
   }, [value])
 
-  const token = slash ? slashToken(value, caret) : null
+  const token = slash && !imeActive ? slashToken(value, caret) : null
   const query = token?.query ?? null
   const menuOpen = query !== null && !dismissed && !disabled
   const matches = menuOpen && slash ? filterSlashItems(slash.items, query) : []
 
-  useEffect(() => setActive(0), [query])
+  const mention = !disabled && !imeActive && targetId && root ? mentionToken(value, caret) : null
+  const mentionOpen = mention !== null && !dismissed && !menuOpen
+  const mentionQuery = mentionOpen ? mention.query : null
+  const mentionSearch = useMentionSearch(targetId, root, mentionQuery)
+  const candidates = mentionSearch.items
+
+  useEffect(() => setActive(0), [query, mentionQuery])
 
   const attachments = attach?.attachments ?? []
+  const images = attachments.flatMap((item) => (item.kind === 'image' ? [item.dataUrl] : []))
+  const imageSupport = useImageSupport(targetId, agent, !!attach)
+  const imageBlock = imageSendBlock(images, imageSupport.allowed, imageSupport.reason ?? undefined)
   const hasExtras = attachments.length > 0 || (slash?.skills.length ?? 0) > 0 || annotationCount > 0
-  const blocked = attach?.blockedReason ?? null
+  const blocked = attach?.blockedReason ?? imageBlock
   const canSend = !disabled && !sending && !blocked && (value.trim() !== '' || hasExtras)
 
   const submit = () => {
@@ -129,8 +161,36 @@ export function Composer({
     areaRef.current?.focus()
   }
 
+  const chooseMention = (item: MentionCandidate | undefined) => {
+    if (!item || !mention) return
+    // 只插入相对路径文本，不在客户端读文件内容；Agent 自己按路径读取。
+    const next = applyMention(value, mention, item.relative)
+    pendingCaret.current = next.caret
+    onChange(next.value)
+    setCaret(next.caret)
+    areaRef.current?.focus()
+  }
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing || composing.current) return
+    if (mentionOpen) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        const delta = event.key === 'ArrowDown' ? 1 : -1
+        setActive((index) => (candidates.length ? (index + delta + candidates.length) % candidates.length : 0))
+        return
+      }
+      if ((event.key === 'Enter' || event.key === 'Tab') && candidates.length > 0) {
+        event.preventDefault()
+        chooseMention(candidates[active])
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setDismissed(true)
+        return
+      }
+    }
     if (menuOpen) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
@@ -164,13 +224,28 @@ export function Composer({
     }
   }
 
+  /** 粘贴/选择的文件先按图片规则筛一遍；被拒的逐个提示原因，不悄悄丢掉。 */
+  const addFiles = (files: File[]) => {
+    if (!attach) return
+    const { accepted, rejected } = screenFiles(files, {
+      existingImages: images.length,
+      imagesAllowed: imageSupport.allowed,
+      unsupportedReason: imageSupport.reason ?? undefined,
+    })
+    if (rejected.length > 0) {
+      const detail = rejected.map((item) => `${item.name}：${item.reason}`).join('；')
+      useCodex.setState({ notice: `未添加 ${rejected.length} 张图片（${detail}）` })
+    }
+    if (accepted.length > 0) attach.onAddFiles(accepted)
+  }
+
   const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
     if (!attach) return
     const files = [...event.clipboardData.files]
     if (files.length === 0) return
     // 只有文件（截图、资源管理器里复制的文件）时拦下默认粘贴，避免把文件名当文字贴进来。
     if (!event.clipboardData.getData('text/plain')) event.preventDefault()
-    attach.onAddFiles(files)
+    addFiles(files)
   }
 
   const syncCaret = () => setCaret(areaRef.current?.selectionStart ?? 0)
@@ -189,9 +264,26 @@ export function Composer({
         {menuOpen && slash && (
           <SlashMenu items={matches} active={active} loading={slash.loading} onHover={setActive} onChoose={choose} />
         )}
+        {mentionOpen && mentionQuery !== null && (
+          <MentionMenu
+            items={candidates}
+            active={active}
+            query={mentionQuery}
+            searching={mentionSearch.searching}
+            error={mentionSearch.error}
+            onHover={setActive}
+            onChoose={chooseMention}
+          />
+        )}
 
         {noApprovals && (
           <div className="mb-1.5 px-3 text-[12px] text-qn-dim">pi 不经审批直接执行工具</div>
+        )}
+        {attach && !imageSupport.allowed && (
+          <div className="mb-1.5 flex items-center gap-1.5 px-3 text-[12px] text-qn-dim">
+            <ImageOff size={12} className="shrink-0" />
+            {imageSupport.reason}，图片附件已禁用
+          </div>
         )}
         <div
           className={cn(
@@ -202,7 +294,12 @@ export function Composer({
           {attachments.length > 0 && attach && (
             <div className="flex flex-wrap gap-2 px-3 pt-3">
               {attachments.map((item) => (
-                <AttachmentChip key={item.id} item={item} onRemove={() => attach.onRemoveAttachment(item.id)} />
+                <AttachmentChip
+                  key={item.id}
+                  item={item}
+                  problem={item.kind === 'image' && !imageSupport.allowed ? imageSupport.reason : null}
+                  onRemove={() => attach.onRemoveAttachment(item.id)}
+                />
               ))}
             </div>
           )}
@@ -219,7 +316,7 @@ export function Composer({
               disabled
                 ? '请先连接目标'
                 : slash
-                  ? `${agentPlaceholder(agent)}，输入 / 使用命令和技能`
+                  ? `${agentPlaceholder(agent)}，输入 / 使用命令和技能${targetId && root ? '，@ 引用文件' : ''}`
                   : agentPlaceholder(agent)
             }
             onChange={(event) => {
@@ -232,16 +329,18 @@ export function Composer({
             onPaste={onPaste}
             onCompositionStart={() => {
               composing.current = true
+              setImeActive(true)
             }}
             onCompositionEnd={() => {
               composing.current = false
+              setImeActive(false)
               syncCaret()
             }}
           />
           <div className="flex items-center gap-1 px-2 pb-2 pt-1">
             {attach && (
               <>
-                <Tip label="添加图片或文件（也可粘贴、拖入）">
+                <Tip label={imageSupport.allowed ? '添加图片或文件（也可粘贴、拖入）' : `${imageSupport.reason}，只能添加文件`}>
                   <button
                     type="button"
                     className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
@@ -260,7 +359,7 @@ export function Composer({
                   onChange={(event) => {
                     const files = [...(event.target.files ?? [])]
                     event.target.value = ''
-                    if (files.length) attach.onAddFiles(files)
+                    if (files.length) addFiles(files)
                   }}
                 />
               </>
@@ -322,7 +421,16 @@ export function Composer({
   )
 }
 
-function AttachmentChip({ item, onRemove }: { item: Attachment; onRemove: () => void }) {
+function AttachmentChip({
+  item,
+  problem,
+  onRemove,
+}: {
+  item: Attachment
+  /** 不能随消息发送的原因（如当前模型不支持图片），有值时标红提示。 */
+  problem?: string | null
+  onRemove: () => void
+}) {
   const remove = (
     <button
       type="button"
@@ -335,9 +443,16 @@ function AttachmentChip({ item, onRemove }: { item: Attachment; onRemove: () => 
   )
   if (item.kind === 'image') {
     return (
-      <Tip label={`${item.name} · ${formatBytes(item.size)}`}>
+      <Tip label={problem ? `${item.name} · ${problem}` : `${item.name} · ${formatBytes(item.size)}`}>
         <div className="group/att relative h-14 w-14">
-          <img src={item.dataUrl} alt={item.name} className="h-14 w-14 rounded-lg border border-qn-border object-cover" />
+          <img
+            src={item.dataUrl}
+            alt={item.name}
+            className={cn(
+              'h-14 w-14 rounded-lg border object-cover',
+              problem ? 'border-qn-danger/70 opacity-50' : 'border-qn-border',
+            )}
+          />
           {remove}
         </div>
       </Tip>

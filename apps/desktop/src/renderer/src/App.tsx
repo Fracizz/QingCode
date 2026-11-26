@@ -13,6 +13,7 @@ import { TitleBar } from './components/shell/TitleBar'
 import { TargetForm } from './components/TargetForm'
 import { useWorkspaceScope, WorkspaceDock } from './components/shell/WorkspaceDock'
 import { QuickOpen } from './features/explorer'
+import { CommandPalette, defaultCommands, registerCommands, storeCommandDeps, toggleCommandPalette } from './features/palette'
 import { closeSettings, openSettings, SettingsDialog, useSettings, useSettingsDialog } from './features/settings'
 import { useWorkspaceWatch } from './hooks/useWorkspaceWatch'
 import { useDock } from './store/dock'
@@ -57,8 +58,25 @@ export default function App() {
   const workspace = useWorkspaceScope()
   const settingsDialog = useSettingsDialog()
   const autoConnectDone = useRef(false)
+  // 命令只登记一次，快速打开是否可用通过 ref 读最新的工作区状态。
+  const workspaceReadyRef = useRef(false)
+  workspaceReadyRef.current = !('reason' in workspace)
 
   useWorkspaceWatch()
+
+  useEffect(
+    () =>
+      registerCommands(
+        defaultCommands({
+          ...storeCommandDeps(),
+          quickOpen: () => setQuickOpen(true),
+          canQuickOpen: () => workspaceReadyRef.current,
+          addTarget: () => setTargetForm({ open: true, editing: null }),
+          openMobile: () => setMobileOpen(true),
+        }),
+      ),
+    [],
+  )
 
   useEffect(() => useRateLimits.getState().init(), [])
 
@@ -81,12 +99,22 @@ export default function App() {
   }, [selectedId])
 
   // 全局快捷键：Ctrl+B 侧栏、Ctrl+N 新会话（草稿态，发第一条消息时才创建）、Ctrl+P 快速打开文件；
-  // Ctrl+Shift+E/F/G 切换右侧资源管理器 / 搜索 / 源代码管理。
+  // Ctrl+Shift+E/F/G 切换右侧资源管理器 / 搜索 / 源代码管理；Ctrl+Shift+P / F1 命令面板。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'F1' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        event.preventDefault()
+        toggleCommandPalette()
+        return
+      }
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return
       const key = event.key.toLowerCase()
       if (event.shiftKey) {
+        if (key === 'p') {
+          event.preventDefault()
+          toggleCommandPalette()
+          return
+        }
         const tool = key === 'e' ? 'explorer' : key === 'f' ? 'search' : key === 'g' ? 'git' : null
         if (tool) {
           event.preventDefault()
@@ -269,6 +297,7 @@ export default function App() {
           onClose={() => setQuickOpen(false)}
         />
       )}
+      <CommandPalette onError={(message) => useCodex.setState({ notice: message })} />
       <Notice />
     </div>
     </TooltipProvider>

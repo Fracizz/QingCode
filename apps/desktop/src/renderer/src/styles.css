@@ -35,6 +35,15 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* 紧凑密度：Tailwind v4 的间距工具类都按 --spacing 计算，整体收紧约 12%；字号不动，避免小字难读。 */
+html[data-density="compact"] {
+  --spacing: 0.22rem;
+}
+
+html[data-density="compact"] .qn-input {
+  padding: 5px 9px;
+}
+
 html,
 body,
 #root {

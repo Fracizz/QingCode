@@ -21,7 +21,7 @@
 | `thread/resume` / `thread/read` | 支持 | `switch_session {sessionPath}` + `get_messages`，历史按用户消息切分 turns |
 | `turn/start` | 支持**纯文本与 base64 图片** | `prompt {message, images?}`；`disposition=handled` 时不启动 run，桥自行收尾 |
 | `turn/interrupt` | 支持 | `abort`；以 `agent_settled {aborted:true}` 映射 `turn/completed {status:'interrupted'}`，另设 1.5s 兜底 |
-| `model/list` | **返回空列表**（刻意不代理模型切换） | 模型/提供方由用户在 pi 自己配置；不给 UI 一个点了不生效的开关，也不为列模型额外拉起 pi 进程 |
+| `model/list` | 借用运行中的会话进程调用 `get_available_models` / `get_state` / `get_available_thinking_levels`，结果缓存；无运行中进程时返回缓存或空列表 | R9：不为列模型额外拉起 pi 进程；`turn/start` 的 `model`/`effort` 经 `set_model` / `set_thinking_level` 切换 |
 | `skills/list` | **不支持** → `-32601` | pi 的 `/skill:name`、提示模板仍可直接在文本里输入，QingCode 不枚举私有资源目录 |
 | `account/read`、`account/rateLimits/read` | **不支持** → `-32601` | pi 没有官方额度接口；`capabilities.rateLimits=false`，前端不显示额度徽标 |
 | `thread/name/set`、`thread/archive`、`thread/delete`、`thread/fork` | **不支持** → `-32601` | pi RPC 没有等价的官方命令 |
@@ -44,8 +44,10 @@ pi 未安装时抛 `AgentHostError('agent_unavailable', …)`，文案只提示�
   其它工具 → `dynamicToolCall`。`thread/tokenUsage/updated` 来自 assistant 消息的 `usage`（估算）。
 - `fixtures/fake-pi.mjs` 是测试用假 pi 进程，回放同一份 fixture，`e2e.test.ts` 用它跑 daemon 全链路。
   真实 pi 的集成测试默认跳过，需 `QN_PI_E2E=1` 显式开启（会消耗用户账号额度）。
-- 图片：pi 的 `prompt` 只接受 `ImageContent`（base64 + mimeType）；v2 `UserInput` 里的
-  `http(s):` 图片 URL 无法转换，**忽略**（不自动下载、不外链）；`localImage` 会读取用户指定的本地文件。
+- 图片：pi 的 `prompt` 只接受 `ImageContent`（base64 + mimeType）；v2 `image` 的 data URL 去掉头部后放进
+  `images`，`localImage` 会读取用户指定的本地文件。`http(s):` 图片 URL 无法转换，返回 `-32602`
+  （不自动下载、不外链，也不静默丢弃）。`model/list` 把 pi 模型的 `input` 映射为 `inputModalities`，
+  模型声明不含 `image` 时桌面端禁用图片附件并提示。
 
 ## 合规检查清单（`docs/agent-adapters.md` §8）
 

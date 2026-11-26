@@ -119,6 +119,19 @@ describe('buildTurnContent', () => {
     const onlyMention = buildTurnContent(parseTurnInput([{ type: 'mention', name: 'n', path: '/p' }]))
     expect(onlyMention.text).toBe('附件文件（请按需读取）：\n- n: /p')
   })
+
+  it('输入框的 @ 引用保持为原文本（Claude 自己按路径读取）；粘贴的 webp 转 base64 块', () => {
+    const content = buildTurnContent(
+      parseTurnInput([
+        { type: 'text', text: '看下 @src/a.ts 和 @"docs/b c.md"', text_elements: [] },
+        { type: 'image', url: 'data:image/webp;base64,UklG' },
+      ]),
+    )
+    expect(content.blocks).toEqual([
+      { type: 'image', source: { type: 'base64', media_type: 'image/webp', data: 'UklG' } },
+      { type: 'text', text: '看下 @src/a.ts 和 @"docs/b c.md"' },
+    ])
+  })
 })
 
 describe('imageBlockToEcho', () => {

@@ -1,4 +1,4 @@
-// 手机端全局状态：连接、目标、项目、会话、对话、额度与事件流。IO 全部经 Gateway 注入。
+// 手机端全局状态：连接、目标、项目、会话（按目标 + Agent）、对话、模型、文件查看、额度与事件流。IO 全部经 Gateway 注入。
 import {
   applyNotification,
   applyRateLimitsUpdate,
@@ -7,6 +7,7 @@ import {
   CodexRpc,
   emptyState,
   interruptTurn,
+  listModels,
   listThreads,
   loadThread,
   pickAccount,
@@ -25,7 +26,20 @@ import {
   type ServerRequest,
 } from '@qn/codex-client'
 import { create } from 'zustand'
+import {
+  agentLabel,
+  DEFAULT_AGENT,
+  enabledAgents,
+  exitedAgent,
+  mergeThreadSummaries,
+  parseMobileAgents,
+  pickDefaultAgent,
+  recvSessionKey,
+  sessionKey,
+  type MobileAgentSettings,
+} from './agents'
 import { getGateway, isMockGateway } from './client'
+import { isImagePath, type FileLocation } from './fileLinks'
 import {
   draftFromInfo,
   isValidHost,
@@ -35,6 +49,14 @@ import {
   parsePairingLink,
   parsePort,
 } from './link'
+import {
+  EMPTY_PREFS,
+  overridesFor,
+  parsePrefs,
+  toModelOptions,
+  type ModelList,
+  type ModelPrefs,
+} from './models'
 import {
   applyTargetState,
   formatQuotedMessage,
@@ -74,6 +96,7 @@ import type {
   Target,
   TargetStateEvent,
 } from './types'
+import { appendRead, nextOffset, parseFsRead, READ_CHUNK_BYTES, viewerError, type FsReadView } from './viewer'
 
 type JsonRecord = Record<string, unknown>
 const isRecord = (value: unknown): value is JsonRecord =>
@@ -81,7 +104,10 @@ const isRecord = (value: unknown): value is JsonRecord =>
 
 const STORAGE_CONNECTIONS = 'connections'
 const STORAGE_ACTIVE = 'active'
+const STORAGE_MODEL_PREFS = 'modelPrefs'
 const REFRESH_INTERVAL_MS = 60_000
+// pi 等 Agent 在会话进程启动前返回空模型列表，空列表隔一段时间允许重取。
+const EMPTY_MODELS_RETRY_MS = 15_000
 const DEVICE_NAME = 'QingCode Next 手机'
 const FINGERPRINT_MISMATCH_HINT =
   '地址指向了另一台电脑或证书已重新生成，请从电脑重新复制连接信息'
@@ -119,7 +145,11 @@ export type RateLimitEntry = {
   error: string | null
 }
 
-export type TargetSession = {
+/** 一个目标上一个 Agent 的会话通道（键 = sessionKey(targetId, agent)）。 */
+export type AgentSession = {
+  key: string
+  targetId: string
+  agent: AgentKind
   rpc: CodexRpc
   transport: MobileCodexTransport
   state: ConversationState
@@ -129,6 +159,25 @@ export type TargetSession = {
   lastSeq: number | null
   lastTurnId: string | null
 }
+
+/** 只读查看页：文件（fs.read）或差异（git.diff，失败回退到改动卡片自带 diff）。 */
+export type ViewerState = {
+  mode: 'file' | 'diff'
+  targetId: string
+  path: string
+  cwd: string
+  line: number | null
+  loading: boolean
+  loadingMore: boolean
+  error: string | null
+  file: FsReadView | null
+  diff: string | null
+  diffSource: 'git' | 'card' | null
+  diffTruncated: boolean
+  notice: string | null
+}
+
+export type DiffRequest = { path: string; diff?: string | null }
 
 type AppState = {
   page: Page
@@ -150,12 +199,21 @@ type AppState = {
   projectsLoading: boolean
   selectedTargetId: string | null
   selectedProjectId: string | null
+  /** null = 桌面不支持 mobile.agents（旧版本），只用 Codex。 */
+  agentSettings: MobileAgentSettings | null
   threads: ThreadSummary[]
   threadsLoading: boolean
   threadsError: string | null
+  /** 单个 Agent 打开或列会话失败的提示，不影响其他 Agent。 */
+  agentErrors: Partial<Record<AgentKind, string>>
   selectedThreadId: string | null
-  sessions: Record<string, TargetSession>
+  /** 当前对话（或待建会话）所属 Agent。 */
+  selectedAgent: AgentKind
+  sessions: Record<string, AgentSession>
+  models: Record<string, ModelList>
+  modelPrefs: Record<string, ModelPrefs>
   rateLimits: Record<string, RateLimitEntry>
+  viewer: ViewerState | null
   annotations: Annotation[]
   sending: boolean
   error: string | null
@@ -177,6 +235,7 @@ type AppState = {
   activate: (id: string) => Promise<void>
   deactivate: () => void
   loadTargets: () => Promise<void>
+  loadAgentSettings: () => Promise<void>
   requestConnect: (id: string) => void
   submitCredentials: (password: string, remember: boolean) => Promise<void>
   cancelCredentials: () => void
@@ -188,15 +247,21 @@ type AppState = {
   browseDirectory: (path: string) => Promise<void>
   closeDirectory: () => void
   chooseDirectory: () => Promise<void>
-  ensureOpen: (targetId: string) => Promise<boolean>
+  ensureOpen: (targetId: string, agent?: AgentKind) => Promise<boolean>
   attachOpened: () => Promise<void>
   refreshThreads: () => Promise<void>
-  newThread: () => Promise<void>
-  openThread: (id: string) => Promise<void>
+  newThread: (agent?: AgentKind) => Promise<void>
+  openThread: (id: string, agent?: AgentKind) => Promise<void>
   send: (text: string) => Promise<void>
   interrupt: () => Promise<void>
   respondApproval: (requestId: RequestId, decision: ApprovalDecision) => void
+  loadModels: (targetId: string, agent: AgentKind, force?: boolean) => Promise<void>
+  setModelPrefs: (targetId: string, agent: AgentKind, prefs: ModelPrefs) => void
   refreshRateLimits: (targetId: string) => Promise<void>
+  openFile: (location: FileLocation) => Promise<void>
+  loadMoreFile: () => Promise<void>
+  openDiff: (request: DiffRequest) => Promise<void>
+  closeViewer: () => void
   addAnnotation: (quote: string, comment?: string) => void
   updateAnnotation: (id: string, comment: string) => void
   removeAnnotation: (id: string) => void
@@ -229,8 +294,45 @@ const emptyForm = (mode: 'add' | 'edit', editId: string | null, draft: Connectio
 const activeConnection = (state: AppState): Connection | null =>
   state.connections.find((item) => item.id === state.activeId) ?? null
 
+/** 当前项目目录：相对路径解析、新建会话、git.diff 的 cwd 都以它为准。 */
+export const currentCwd = (state: Pick<AppState, 'projects' | 'selectedProjectId'>): string =>
+  state.projects.find((item) => item.id === state.selectedProjectId)?.path ?? ''
+
+/** 当前目标上启用的 Agent（旧桌面只有 Codex）。 */
+export const targetAgents = (state: Pick<AppState, 'agentSettings'>, targetId: string | null): AgentKind[] =>
+  targetId ? enabledAgents(state.agentSettings, targetId) : [DEFAULT_AGENT]
+
+/** 已确认打开失败的 Agent；新建会话的默认选择会跳过它们。 */
+export const unavailableAgents = (
+  state: Pick<AppState, 'sessions'>,
+  targetId: string,
+  agents: readonly AgentKind[],
+): Set<AgentKind> =>
+  new Set(
+    agents.filter((agent) => {
+      const session = state.sessions[sessionKey(targetId, agent)]
+      return Boolean(session && !session.opened && !session.opening && session.openError)
+    }),
+  )
+
+export const defaultAgentFor = (
+  state: Pick<AppState, 'agentSettings' | 'sessions'>,
+  targetId: string,
+): AgentKind => {
+  const agents = targetAgents(state, targetId)
+  return pickDefaultAgent(state.agentSettings?.defaultAgent ?? DEFAULT_AGENT, agents, unavailableAgents(state, targetId, agents))
+}
+
+const openFailureMessage = (agent: AgentKind, err: unknown): string =>
+  friendlyError(
+    err,
+    agent === 'codex' ? 'Codex 未就绪，请确认目标已连接' : `${agentLabel(agent)} 打开失败，请确认目标机已安装并登录`,
+  )
+
 let initialized = false
 let controller: EventStreamController | null = null
+let refreshToken = 0
+let viewerToken = 0
 const opening = new Map<string, Promise<boolean>>()
 const rateRefresh = new Map<string, Promise<void>>()
 
@@ -244,15 +346,12 @@ export const useApp = create<AppState>((set, get) => {
     }
   }
 
-  const patchSession = (
-    targetId: string,
-    update: (session: TargetSession) => TargetSession,
-  ): void => {
+  const patchSession = (key: string, update: (session: AgentSession) => AgentSession): void => {
     set((state) => {
-      const session = state.sessions[targetId]
+      const session = state.sessions[key]
       if (!session) return state
       const next = update(session)
-      return next === session ? state : { sessions: { ...state.sessions, [targetId]: next } }
+      return next === session ? state : { sessions: { ...state.sessions, [key]: next } }
     })
   }
 
@@ -265,6 +364,11 @@ export const useApp = create<AppState>((set, get) => {
     }))
   }
 
+  const patchViewer = (token: number, changes: Partial<ViewerState>): void => {
+    if (token !== viewerToken) return
+    set((state) => (state.viewer ? { viewer: { ...state.viewer, ...changes } } : state))
+  }
+
   const resetSessions = (): void => {
     for (const session of Object.values(get().sessions)) {
       session.rpc.dispose()
@@ -272,6 +376,12 @@ export const useApp = create<AppState>((set, get) => {
     }
     opening.clear()
     rateRefresh.clear()
+  }
+
+  const serverReq = <T>(targetId: string, method: string, params: unknown): Promise<T> => {
+    const conn = activeConnection(get())
+    if (!conn) return Promise.reject(new Error('尚未选择电脑'))
+    return getGateway().rpc<T>(conn, 'server.req', { targetId, method, params })
   }
 
   const handleRateLimitNotification = (targetId: string, msg: unknown): void => {
@@ -289,8 +399,9 @@ export const useApp = create<AppState>((set, get) => {
     }
   }
 
-  const sessionFor = (targetId: string): TargetSession => {
-    const existing = get().sessions[targetId]
+  const sessionFor = (targetId: string, agent: AgentKind): AgentSession => {
+    const key = sessionKey(targetId, agent)
+    const existing = get().sessions[key]
     if (existing) return existing
 
     const transport = new MobileCodexTransport(
@@ -298,12 +409,16 @@ export const useApp = create<AppState>((set, get) => {
       (msg) => {
         const conn = activeConnection(get())
         if (!conn) return Promise.reject(new Error('尚未选择电脑'))
-        return getGateway().rpc(conn, 'codex.send', { targetId, msg })
+        // agent 直接放进 params：网关与 backend 都按 params.agent 路由，旧桌面会忽略它。
+        return getGateway().rpc(conn, 'codex.send', { targetId, agent, msg })
       },
-      'codex' as AgentKind,
+      agent,
     )
     const rpc = new CodexRpc(transport, { timeoutMs: 30_000 })
-    const session: TargetSession = {
+    const session: AgentSession = {
+      key,
+      targetId,
+      agent,
       rpc,
       transport,
       state: emptyState(),
@@ -313,26 +428,44 @@ export const useApp = create<AppState>((set, get) => {
       lastSeq: null,
       lastTurnId: null,
     }
-    set((state) => ({ sessions: { ...state.sessions, [targetId]: session } }))
+    set((state) => ({ sessions: { ...state.sessions, [key]: session } }))
 
     rpc.onNotification((notification: ServerNotification) => {
-      patchSession(targetId, (current) => ({
+      patchSession(key, (current) => ({
         ...current,
         state: applyNotification(current.state, notification),
       }))
-      handleRateLimitNotification(targetId, notification)
+      // 额度面板只展示 Codex 账号（mvp §10），其他 Agent 的限额事件不混进来。
+      if (agent === 'codex') handleRateLimitNotification(targetId, notification)
       const method = (notification as unknown as JsonRecord).method
       if (method === 'turn/completed' || method === 'thread/started') {
         if (get().selectedTargetId === targetId) void get().refreshThreads()
       }
     })
     rpc.onServerRequest((request: ServerRequest) => {
-      patchSession(targetId, (current) => ({
+      // 审批只入队等用户点；手机端任何路径都不自动应答（docs/agent-adapters.md R7）。
+      patchSession(key, (current) => ({
         ...current,
         state: applyServerRequest(current.state, request),
       }))
     })
     return session
+  }
+
+  const persistModelPrefs = (prefs: Record<string, ModelPrefs>): void => {
+    void getGateway()
+      .storageSet(STORAGE_MODEL_PREFS, JSON.stringify(prefs))
+      .catch(() => undefined)
+  }
+
+  /** 确认会话通道可用后执行；失败把原因写到 error。 */
+  const withSession = async (targetId: string, agent: AgentKind): Promise<AgentSession | null> => {
+    if (!(await get().ensureOpen(targetId, agent))) {
+      const key = sessionKey(targetId, agent)
+      set({ error: get().sessions[key]?.openError ?? `${agentLabel(agent)} 未就绪` })
+      return null
+    }
+    return get().sessions[sessionKey(targetId, agent)] ?? null
   }
 
   return {
@@ -355,12 +488,18 @@ export const useApp = create<AppState>((set, get) => {
     projectsLoading: false,
     selectedTargetId: null,
     selectedProjectId: null,
+    agentSettings: null,
     threads: [],
     threadsLoading: false,
     threadsError: null,
+    agentErrors: {},
     selectedThreadId: null,
+    selectedAgent: DEFAULT_AGENT,
     sessions: {},
+    models: {},
+    modelPrefs: {},
     rateLimits: {},
+    viewer: null,
     annotations: [],
     sending: false,
     error: null,
@@ -384,13 +523,14 @@ export const useApp = create<AppState>((set, get) => {
       })
       void (async () => {
         try {
-          const [raw, active] = await Promise.all([
+          const [raw, active, prefs] = await Promise.all([
             gateway.storageGet(STORAGE_CONNECTIONS),
             gateway.storageGet(STORAGE_ACTIVE),
+            gateway.storageGet(STORAGE_MODEL_PREFS).catch(() => null),
           ])
           const connections = parseConnections(raw)
           const activeId = active && connections.some((item) => item.id === active) ? active : null
-          set({ connections, activeId, booting: false })
+          set({ connections, activeId, booting: false, modelPrefs: parsePrefs(prefs) })
           if (activeId) await get().activate(activeId)
           else void get().refreshStatuses()
         } catch (err) {
@@ -399,8 +539,8 @@ export const useApp = create<AppState>((set, get) => {
       })()
       setInterval(() => {
         if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-        for (const [targetId, session] of Object.entries(get().sessions)) {
-          if (session.opened) void get().refreshRateLimits(targetId)
+        for (const session of Object.values(get().sessions)) {
+          if (session.opened && session.agent === 'codex') void get().refreshRateLimits(session.targetId)
         }
       }, REFRESH_INTERVAL_MS)
       // WebView 生命周期内不拆除事件流，避免 React 开发态重复挂载造成重连风暴。
@@ -606,12 +746,17 @@ export const useApp = create<AppState>((set, get) => {
       if (wasActive) {
         controller?.stop()
         resetSessions()
+        viewerToken += 1
         set({
           sessions: {},
+          models: {},
           rateLimits: {},
           targets: [],
           projects: [],
           threads: [],
+          agentErrors: {},
+          agentSettings: null,
+          viewer: null,
           targetStates: {},
           selectedTargetId: null,
           selectedProjectId: null,
@@ -638,13 +783,16 @@ export const useApp = create<AppState>((set, get) => {
         selectedProjectId: null,
         selectedThreadId: null,
         threads: [],
+        agentErrors: {},
+        agentSettings: null,
+        viewer: null,
         error: null,
         notice: null,
       })
       void persist(get().connections, id)
       controller?.stop()
       controller?.start()
-      await get().loadTargets()
+      await Promise.all([get().loadTargets(), get().loadAgentSettings()])
     },
 
     deactivate: () => set({ page: 'connections' }),
@@ -657,6 +805,18 @@ export const useApp = create<AppState>((set, get) => {
         set({ targets: parseTargets(result), connectionStatus: { ...get().connectionStatus, [conn.id]: 'online' } })
       } catch (err) {
         set({ error: friendlyError(err, '读取目标列表失败') })
+      }
+    },
+
+    loadAgentSettings: async () => {
+      const conn = activeConnection(get())
+      if (!conn) return
+      try {
+        const result = await getGateway().rpc<unknown>(conn, 'mobile.agents', {})
+        if (activeConnection(get())?.id === conn.id) set({ agentSettings: parseMobileAgents(result) })
+      } catch {
+        // 旧桌面版本没有 mobile.agents：只用 Codex。
+        if (activeConnection(get())?.id === conn.id) set({ agentSettings: null })
       }
     },
 
@@ -733,8 +893,11 @@ export const useApp = create<AppState>((set, get) => {
         projects: [],
         projectsLoading: true,
         threads: [],
+        agentErrors: {},
         page: 'projects',
       })
+      // 启用状态可能在电脑上刚改过，每次进入目标都重新取一次（失败不阻断）。
+      void get().loadAgentSettings()
       try {
         const result = await getGateway().rpc<unknown>(conn, 'projects.list', { targetId: id })
         set({ projects: parseProjects(result), projectsLoading: false })
@@ -758,11 +921,14 @@ export const useApp = create<AppState>((set, get) => {
       } catch {
         // 刷新失败不阻断打开会话。
       }
-      set({ selectedProjectId: id, selectedThreadId: null, threads: [], threadsError: null, page: 'threads' })
-      if (!(await get().ensureOpen(project.targetId))) {
-        set({ threadsError: get().sessions[project.targetId]?.openError ?? 'Codex 未就绪' })
-        return
-      }
+      set({
+        selectedProjectId: id,
+        selectedThreadId: null,
+        threads: [],
+        threadsError: null,
+        agentErrors: {},
+        page: 'threads',
+      })
       await get().refreshThreads()
     },
 
@@ -845,88 +1011,95 @@ export const useApp = create<AppState>((set, get) => {
           projects: [...state.projects.filter((item) => item.id !== project.id), project],
           directory: null,
           selectedProjectId: project.id,
+          threads: [],
+          agentErrors: {},
           page: 'threads',
         }))
-        if (await get().ensureOpen(targetId)) await get().refreshThreads()
+        await get().refreshThreads()
       } catch (err) {
         const current = get().directory
         if (current) set({ directory: { ...current, saving: false, error: friendlyError(err, '添加项目失败') } })
       }
     },
 
-    ensureOpen: async (targetId) => {
-      const existing = get().sessions[targetId]
+    ensureOpen: async (targetId, agent = DEFAULT_AGENT) => {
+      const key = sessionKey(targetId, agent)
+      const existing = get().sessions[key]
       if (existing?.opened) return true
-      const busy = opening.get(targetId)
+      const busy = opening.get(key)
       if (busy) return busy
       const conn = activeConnection(get())
       if (!conn) {
         set({ error: '尚未选择电脑' })
         return false
       }
-      const session = sessionFor(targetId)
-      patchSession(targetId, (value) => ({ ...value, opening: true, openError: null }))
+      const session = sessionFor(targetId, agent)
+      patchSession(key, (value) => ({ ...value, opening: true, openError: null }))
       const task = (async () => {
         try {
+          // 可执行文件路径由网关按电脑设置补上，手机不传路径。
           const opened = await getGateway().rpc<unknown>(conn, 'server.req', {
             targetId,
             method: 'codex.open',
-            params: {},
+            params: { agent },
           })
           let lastSeq = maxSeq(openSeq(opened), session.transport.getLastSeq())
           try {
+            // 每个 agent 有独立的回放缓冲，attach 必须带上 agent。
             const attached = await getGateway().rpc<unknown>(conn, 'server.req', {
               targetId,
               method: 'codex.attach',
-              params: { sinceSeq: lastSeq ?? 0 },
+              params: { agent, sinceSeq: lastSeq ?? 0 },
             })
             const info = attachResult(attached)
             lastSeq = maxSeq(lastSeq, info.lastSeq)
-            if (info.truncated) set({ notice: '服务端历史缓冲已裁剪，请重新打开会话加载完整记录' })
+            if (info.truncated) {
+              set({ notice: `${agentLabel(agent)} 历史缓冲已裁剪，请重新打开会话加载完整记录` })
+            }
           } catch {
             // 旧版 daemon 没有 attach 时仍能正常对话。
           }
           session.transport.setLastSeq(lastSeq)
-          patchSession(targetId, (value) => ({
+          patchSession(key, (value) => ({
             ...value,
             opened: true,
             opening: false,
             openError: null,
             lastSeq,
           }))
-          void get().refreshRateLimits(targetId)
+          if (agent === 'codex') void get().refreshRateLimits(targetId)
           return true
         } catch (err) {
-          patchSession(targetId, (value) => ({
+          patchSession(key, (value) => ({
             ...value,
             opened: false,
             opening: false,
-            openError: friendlyError(err, 'Codex 未就绪，请确认目标已连接'),
+            openError: openFailureMessage(agent, err),
           }))
           return false
         } finally {
-          opening.delete(targetId)
-          patchSession(targetId, (value) => ({ ...value, opening: false }))
+          opening.delete(key)
+          patchSession(key, (value) => ({ ...value, opening: false }))
         }
       })()
-      opening.set(targetId, task)
+      opening.set(key, task)
       return task
     },
 
     attachOpened: async () => {
       const conn = activeConnection(get())
       if (!conn) return
-      for (const [targetId, session] of Object.entries(get().sessions)) {
+      for (const [key, session] of Object.entries(get().sessions)) {
         if (!session.opened) continue
         try {
           const result = await getGateway().rpc<unknown>(conn, 'server.req', {
-            targetId,
+            targetId: session.targetId,
             method: 'codex.attach',
-            params: { sinceSeq: session.transport.getLastSeq() ?? 0 },
+            params: { agent: session.agent, sinceSeq: session.transport.getLastSeq() ?? 0 },
           })
           const info = attachResult(result)
           session.transport.setLastSeq(info.lastSeq)
-          patchSession(targetId, (value) => ({ ...value, lastSeq: maxSeq(value.lastSeq, info.lastSeq) }))
+          patchSession(key, (value) => ({ ...value, lastSeq: maxSeq(value.lastSeq, info.lastSeq) }))
           if (info.truncated) set({ notice: '事件流重连后有历史消息被裁剪，请重新打开会话' })
         } catch {
           // 下次操作会再尝试，不打断页面。
@@ -935,55 +1108,77 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     refreshThreads: async () => {
+      const token = ++refreshToken
       const targetId = get().selectedTargetId
       if (!targetId) {
-        set({ threads: [], threadsLoading: false, threadsError: null })
+        set({ threads: [], threadsLoading: false, threadsError: null, agentErrors: {} })
         return
       }
-      if (!(await get().ensureOpen(targetId))) {
-        set({ threadsLoading: false, threadsError: get().sessions[targetId]?.openError ?? 'Codex 未就绪' })
-        return
-      }
-      const session = get().sessions[targetId]
-      if (!session) return
-      const cwd = get().projects.find((item) => item.id === get().selectedProjectId)?.path
+      const cwd = currentCwd(get()) || undefined
+      const agents = targetAgents(get(), targetId)
       set({ threadsLoading: true, threadsError: null })
-      try {
-        const result = await listThreads(session.rpc, cwd)
-        set({ threads: toThreadSummaries(result), threadsLoading: false })
-      } catch (err) {
-        set({ threadsLoading: false, threadsError: friendlyError(err, '加载会话列表失败') })
-      }
+      // 各 Agent 并行打开、各自列会话；某个失败只记在它自己名下。
+      const results = await Promise.all(
+        agents.map(async (agent): Promise<{ agent: AgentKind; threads: ThreadSummary[]; error: string | null }> => {
+          if (!(await get().ensureOpen(targetId, agent))) {
+            const message = get().sessions[sessionKey(targetId, agent)]?.openError ?? `${agentLabel(agent)} 未就绪`
+            return { agent, threads: [], error: message }
+          }
+          const session = get().sessions[sessionKey(targetId, agent)]
+          if (!session) return { agent, threads: [], error: `${agentLabel(agent)} 未就绪` }
+          try {
+            return { agent, threads: toThreadSummaries(await listThreads(session.rpc, cwd), agent), error: null }
+          } catch (err) {
+            return { agent, threads: [], error: friendlyError(err, '加载会话列表失败') }
+          }
+        }),
+      )
+      if (token !== refreshToken || get().selectedTargetId !== targetId) return
+      const agentErrors: Partial<Record<AgentKind, string>> = {}
+      for (const result of results) if (result.error) agentErrors[result.agent] = result.error
+      const allFailed = results.length > 0 && results.every((result) => result.error !== null)
+      set({
+        threads: mergeThreadSummaries(results.map((result) => result.threads)),
+        threadsLoading: false,
+        agentErrors,
+        threadsError: allFailed
+          ? results.map((result) => `${agentLabel(result.agent)}：${result.error}`).join('\n')
+          : null,
+      })
     },
 
-    newThread: async () => {
+    newThread: async (agent) => {
       const targetId = get().selectedTargetId
       if (!targetId) return
-      if (!(await get().ensureOpen(targetId))) {
-        set({ error: get().sessions[targetId]?.openError ?? 'Codex 未就绪' })
+      const picked = agent ?? defaultAgentFor(get(), targetId)
+      if (!targetAgents(get(), targetId).includes(picked)) {
+        set({ error: `${agentLabel(picked)} 已在电脑设置中关闭` })
         return
       }
-      const session = get().sessions[targetId]
+      const session = await withSession(targetId, picked)
       if (!session) return
-      const cwd = get().projects.find((item) => item.id === get().selectedProjectId)?.path
+      const cwd = currentCwd(get())
       try {
         const result = await startThread(session.rpc, cwd ? { cwd } : {})
-        patchSession(targetId, (value) => ({ ...value, state: loadThread(value.state, result.thread) }))
-        set({ selectedThreadId: result.thread.id, page: 'chat', error: null })
+        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }))
+        set({
+          selectedThreadId: result.thread.id,
+          selectedAgent: picked,
+          page: 'chat',
+          error: null,
+          annotations: [],
+        })
         void get().refreshThreads()
       } catch (err) {
         set({ error: friendlyError(err, '新建会话失败') })
       }
     },
 
-    openThread: async (id) => {
+    openThread: async (id, agent) => {
       const targetId = get().selectedTargetId
       if (!targetId) return
-      if (!(await get().ensureOpen(targetId))) {
-        set({ error: get().sessions[targetId]?.openError ?? 'Codex 未就绪' })
-        return
-      }
-      const session = get().sessions[targetId]
+      const picked = agent ?? get().threads.find((item) => item.id === id)?.agent ?? DEFAULT_AGENT
+      const session = await withSession(targetId, picked)
       if (!session) return
       try {
         let result: { thread: Parameters<typeof loadThread>[1] }
@@ -992,8 +1187,8 @@ export const useApp = create<AppState>((set, get) => {
         } catch {
           result = await readThread(session.rpc, id)
         }
-        patchSession(targetId, (value) => ({ ...value, state: loadThread(value.state, result.thread) }))
-        set({ selectedThreadId: id, page: 'chat', error: null })
+        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }))
+        set({ selectedThreadId: id, selectedAgent: picked, page: 'chat', error: null, annotations: [] })
       } catch (err) {
         set({ error: friendlyError(err, '打开会话失败') })
       }
@@ -1008,30 +1203,29 @@ export const useApp = create<AppState>((set, get) => {
         set({ error: '请先选择目标' })
         return
       }
-      if (!(await get().ensureOpen(targetId))) {
-        set({ error: get().sessions[targetId]?.openError ?? 'Codex 未就绪' })
-        return
-      }
-      const session = get().sessions[targetId]
+      const agent = get().selectedAgent
+      const session = await withSession(targetId, agent)
       if (!session) return
       set({ sending: true, error: null })
       try {
         let threadId = get().selectedThreadId
         if (!threadId) {
-          const cwd = get().projects.find((item) => item.id === get().selectedProjectId)?.path
+          const cwd = currentCwd(get())
           const created = await startThread(session.rpc, cwd ? { cwd } : {})
-          patchSession(targetId, (value) => ({ ...value, state: loadThread(value.state, created.thread) }))
+          patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, created.thread) }))
           threadId = created.thread.id
           set({ selectedThreadId: threadId })
           void get().refreshThreads()
         }
-        const started = await sendText(session.rpc, threadId, finalText)
+        const models = get().models[session.key]?.models ?? []
+        const prefs = get().modelPrefs[session.key] ?? EMPTY_PREFS
+        const started = await sendText(session.rpc, threadId, finalText, overridesFor(agent, models, prefs))
         // turn/started 通知可能晚于响应，先按返回值把状态置为运行中，保证中断按钮可用。
         const synthetic = {
           method: 'turn/started',
           params: { threadId, turnId: started.turn.id, turn: started.turn },
         } as unknown as ServerNotification
-        patchSession(targetId, (value) => ({
+        patchSession(session.key, (value) => ({
           ...value,
           lastTurnId: started.turn.id || value.lastTurnId,
           state: applyNotification(value.state, synthetic),
@@ -1043,12 +1237,12 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     interrupt: async () => {
-      const { selectedTargetId, selectedThreadId, sessions } = get()
+      const { selectedTargetId, selectedThreadId, selectedAgent, sessions } = get()
       if (!selectedTargetId || !selectedThreadId) {
         set({ notice: '当前没有运行中的 turn' })
         return
       }
-      const session = sessions[selectedTargetId]
+      const session = sessions[sessionKey(selectedTargetId, selectedAgent)]
       if (!session) return
       const view = session.state.threads[selectedThreadId]
       const turnId = view?.activeTurnId ?? session.lastTurnId
@@ -1067,31 +1261,70 @@ export const useApp = create<AppState>((set, get) => {
     respondApproval: (requestId, decision) => {
       const targetId = get().selectedTargetId
       if (!targetId) return
-      const session = get().sessions[targetId]
-      if (!session) return
-      const approval = Object.values(session.state.threads)
-        .flatMap((thread) => thread.pendingApprovals)
-        .find((item) => item.requestId === requestId)
-      if (!approval) {
-        set({ error: '该审批请求已失效' })
+      // 先找当前 Agent，再找同目标的其他 Agent；只响应用户点过的这一条。
+      const preferred = sessionKey(targetId, get().selectedAgent)
+      const candidates = Object.values(get().sessions)
+        .filter((session) => session.targetId === targetId)
+        .sort((a, b) => (a.key === preferred ? -1 : b.key === preferred ? 1 : 0))
+      for (const session of candidates) {
+        const approval = Object.values(session.state.threads)
+          .flatMap((thread) => thread.pendingApprovals)
+          .find((item) => item.requestId === requestId)
+        if (!approval) continue
+        try {
+          session.rpc.respond(approval.requestId, approvalResponse(approval, decision))
+          patchSession(session.key, (value) => ({
+            ...value,
+            state: resolveServerRequest(value.state, approval.requestId),
+          }))
+          set({ error: null })
+        } catch (err) {
+          set({ error: friendlyError(err, '提交审批失败') })
+        }
         return
       }
+      set({ error: '该审批请求已失效' })
+    },
+
+    loadModels: async (targetId, agent, force = false) => {
+      const key = sessionKey(targetId, agent)
+      const current = get().models[key]
+      const staleEmpty =
+        current !== undefined &&
+        current.models.length === 0 &&
+        Date.now() - (current.loadedAt ?? 0) > EMPTY_MODELS_RETRY_MS
+      if (current?.loading || (current && !current.error && !force && !staleEmpty)) return
+      const session = get().sessions[key]
+      if (!session?.opened) return
+      set((state) => ({
+        models: { ...state.models, [key]: { models: current?.models ?? [], loading: true, error: null } },
+      }))
       try {
-        session.rpc.respond(approval.requestId, approvalResponse(approval, decision))
-        patchSession(targetId, (value) => ({
-          ...value,
-          state: resolveServerRequest(value.state, approval.requestId),
+        const models = toModelOptions(await listModels(session.rpc))
+        set((state) => ({
+          models: { ...state.models, [key]: { models, loading: false, error: null, loadedAt: Date.now() } },
         }))
-        set({ error: null })
       } catch (err) {
-        set({ error: friendlyError(err, '提交审批失败') })
+        // 不支持 model/list 的 Agent 视为没有可选模型，界面不显示选择器。
+        set((state) => ({
+          models: {
+            ...state.models,
+            [key]: { models: current?.models ?? [], loading: false, error: friendlyError(err, '加载模型列表失败'), loadedAt: Date.now() },
+          },
+        }))
       }
+    },
+
+    setModelPrefs: (targetId, agent, prefs) => {
+      const next = { ...get().modelPrefs, [sessionKey(targetId, agent)]: prefs }
+      set({ modelPrefs: next })
+      persistModelPrefs(next)
     },
 
     refreshRateLimits: async (targetId) => {
       const busy = rateRefresh.get(targetId)
       if (busy) return busy
-      const session = get().sessions[targetId]
+      const session = get().sessions[sessionKey(targetId, 'codex')]
       if (!session?.opened) return
       patchRate(targetId, { loading: true })
       const task = (async () => {
@@ -1121,6 +1354,117 @@ export const useApp = create<AppState>((set, get) => {
       return task
     },
 
+    openFile: async (location) => {
+      const targetId = get().selectedTargetId
+      if (!targetId || !location.path) return
+      const token = ++viewerToken
+      set({
+        viewer: {
+          mode: 'file',
+          targetId,
+          path: location.path,
+          cwd: currentCwd(get()),
+          line: location.line ?? null,
+          loading: true,
+          loadingMore: false,
+          error: null,
+          file: null,
+          diff: null,
+          diffSource: null,
+          diffTruncated: false,
+          notice: null,
+        },
+      })
+      try {
+        // 图片直接按 base64 读（server 上限 10 MiB），其他文件按块读文本。
+        const params = isImagePath(location.path)
+          ? { path: location.path, encoding: 'base64' }
+          : { path: location.path, length: READ_CHUNK_BYTES }
+        const result = parseFsRead(await serverReq<unknown>(targetId, 'fs.read', params), location.path)
+        if (!result) throw new Error('电脑返回的文件内容格式不正确')
+        patchViewer(token, { loading: false, file: result })
+      } catch (err) {
+        patchViewer(token, { loading: false, error: viewerError(err, '读取文件失败') })
+      }
+    },
+
+    loadMoreFile: async () => {
+      const viewer = get().viewer
+      const file = viewer?.file
+      if (!viewer || viewer.mode !== 'file' || !file || !file.truncated || viewer.loadingMore) return
+      const token = viewerToken
+      patchViewer(token, { loadingMore: true, error: null })
+      try {
+        const raw = await serverReq<unknown>(viewer.targetId, 'fs.read', {
+          path: viewer.path,
+          offset: nextOffset(file),
+          length: READ_CHUNK_BYTES,
+        })
+        const next = parseFsRead(raw, viewer.path)
+        if (!next) throw new Error('电脑返回的文件内容格式不正确')
+        const current = token === viewerToken ? get().viewer?.file : null
+        patchViewer(token, { loadingMore: false, file: current ? appendRead(current, next) : next })
+      } catch (err) {
+        patchViewer(token, { loadingMore: false, error: viewerError(err, '加载更多失败') })
+      }
+    },
+
+    openDiff: async (request) => {
+      const targetId = get().selectedTargetId
+      if (!targetId || !request.path) return
+      const cwd = currentCwd(get())
+      const fallback = typeof request.diff === 'string' && request.diff.trim() ? request.diff : null
+      const token = ++viewerToken
+      set({
+        viewer: {
+          mode: 'diff',
+          targetId,
+          path: request.path,
+          cwd,
+          line: null,
+          loading: true,
+          loadingMore: false,
+          error: null,
+          file: null,
+          diff: null,
+          diffSource: null,
+          diffTruncated: false,
+          notice: null,
+        },
+      })
+      const useFallback = (notice: string | null, error: string | null) =>
+        patchViewer(token, fallback
+          ? { loading: false, diff: fallback, diffSource: 'card', notice }
+          : { loading: false, error })
+      if (!cwd) {
+        useFallback('没有项目目录，显示改动卡片自带的差异', '没有项目目录，无法读取 Git 差异')
+        return
+      }
+      try {
+        const raw = await serverReq<unknown>(targetId, 'git.diff', { cwd, path: request.path })
+        const diff = isRecord(raw) && typeof raw.diff === 'string' ? raw.diff : ''
+        if (diff.trim()) {
+          patchViewer(token, {
+            loading: false,
+            diff,
+            diffSource: 'git',
+            diffTruncated: isRecord(raw) && raw.truncated === true,
+          })
+        } else {
+          // 已提交或已被还原的改动在工作区里没有差异，回退到 Agent 当时给出的 diff。
+          useFallback('Git 工作区中没有该文件的未提交差异，显示改动卡片自带的差异', 'Git 工作区中没有该文件的未提交差异')
+        }
+      } catch (err) {
+        const message = viewerError(err, '读取 Git 差异失败')
+        useFallback(`${message}，显示改动卡片自带的差异`, message)
+      }
+    },
+
+    closeViewer: () => {
+      viewerToken += 1
+      set({ viewer: null })
+    },
+
     addAnnotation: (quote, comment = '') => {
       const value = quote.trim()
       if (!value) return
@@ -1148,6 +1492,14 @@ export const useApp = create<AppState>((set, get) => {
           const record = isRecord(payload) ? payload : null
           const id = typeof record?.id === 'string' ? record.id : ''
           if (!id) return
+          if (record?.state !== 'ready') {
+            // 链路断过之后 agent 进程可能已经换了，下次操作必须重新 codex.open。
+            for (const session of Object.values(get().sessions)) {
+              if (session.targetId === id && session.opened) {
+                patchSession(session.key, (value) => ({ ...value, opened: false }))
+              }
+            }
+          }
           if (record?.state === 'error') {
             const detail = typeof record.detail === 'string' ? record.detail : '连接失败'
             const message = hostKeyMessage({ message: detail }, '连接失败')
@@ -1162,33 +1514,31 @@ export const useApp = create<AppState>((set, get) => {
               return { targetErrors: errors }
             })
             const state = get()
-            const session = state.sessions[id]
-            if (
-              state.selectedTargetId === id &&
-              state.selectedProjectId &&
-              session &&
-              !session.opened &&
-              !session.opening
-            ) {
-              void get().ensureOpen(id).then(() => void get().refreshThreads())
+            if (state.selectedTargetId === id && state.selectedProjectId) {
+              void get().refreshThreads()
             }
           }
           return
         }
         case 'codex.recv': {
-          for (const session of Object.values(get().sessions)) session.transport.handleRecv(event.payload)
+          const key = recvSessionKey(event.payload)
+          if (key) get().sessions[key]?.transport.handleRecv(event.payload)
           return
         }
         case 'server.evt': {
           const payload = isRecord(event.payload) ? event.payload : null
           const targetId = typeof payload?.targetId === 'string' ? payload.targetId : ''
           if (payload?.name === 'codex.exited' && targetId) {
-            patchSession(targetId, (session) => ({
-              ...session,
-              opened: false,
-              openError: 'Codex 进程已退出，下次操作将重新启动',
-            }))
-            patchRate(targetId, emptyRateLimit())
+            const agent = exitedAgent(payload)
+            for (const session of Object.values(get().sessions)) {
+              if (session.targetId !== targetId || (agent !== null && session.agent !== agent)) continue
+              patchSession(session.key, (value) => ({
+                ...value,
+                opened: false,
+                openError: `${agentLabel(value.agent)} 进程已退出，下次操作将重新启动`,
+              }))
+            }
+            if (agent === null || agent === 'codex') patchRate(targetId, emptyRateLimit())
           }
           return
         }
@@ -1211,6 +1561,10 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     goBack: () => {
+      if (get().viewer) {
+        get().closeViewer()
+        return true
+      }
       const page = get().page
       if (page === 'form') {
         get().closeForm()
@@ -1240,5 +1594,3 @@ export const useApp = create<AppState>((set, get) => {
     clearNotice: () => set({ notice: null }),
   }
 })
-
-

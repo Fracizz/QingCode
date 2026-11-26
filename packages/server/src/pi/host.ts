@@ -86,6 +86,8 @@ export class PiHost extends JsonRpcAgentHost {
   private readonly sessionFiles = new Map<string, string>()
   private readonly idleTimeoutMs: number
   private counter = 0
+  // 最近一次从运行中进程取到的模型列表，daemon 生命周期内复用
+  private cachedModels: Json | null = null
 
   constructor(
     hub: AgentHostHub,
@@ -279,7 +281,7 @@ export class PiHost extends JsonRpcAgentHost {
   }
 
   private async modelList(): Promise<Json> {
-    // 借用任一已运行的会话进程；没有就起一个 --no-session 临时进程，读完即关。
+    // 只借用已运行的会话进程（R9：后台取列表不为此启动 pi）；没有时返回上次缓存，首次则为空列表。
     let rpc: PiRpcProcess | null = null
     for (const session of this.sessions.values()) {
       if (session.rpc?.running) {
@@ -287,32 +289,19 @@ export class PiHost extends JsonRpcAgentHost {
         break
       }
     }
-    let probe: PiSession | null = null
-    if (!rpc) {
-      probe = {
-        meta: { id: `qn-pi-models-${++this.counter}`, cwd: process.cwd(), preview: '', ephemeral: true },
-        rpc: null,
-        turnId: null,
-        state: emptyMapState(),
-        idleTimer: null,
-      }
-      rpc = await this.ensureRpc(probe)
-    }
-    try {
-      const models = asRecord((await rpc.command('get_available_models')).data)?.models
-      const state = asRecord((await rpc.command('get_state')).data) ?? {}
-      const levels = await rpc
-        .command('get_available_thinking_levels')
-        .then((response) => asRecord(response.data)?.levels)
-        .catch(() => undefined)
-      return piModelList(Array.isArray(models) ? models : [], {
-        model: state.model,
-        thinkingLevel: state.thinkingLevel,
-        levels,
-      })
-    } finally {
-      if (probe) this.closeRpc(probe)
-    }
+    if (!rpc) return this.cachedModels ?? piModelList([], {})
+    const models = asRecord((await rpc.command('get_available_models')).data)?.models
+    const state = asRecord((await rpc.command('get_state')).data) ?? {}
+    const levels = await rpc
+      .command('get_available_thinking_levels')
+      .then((response) => asRecord(response.data)?.levels)
+      .catch(() => undefined)
+    this.cachedModels = piModelList(Array.isArray(models) ? models : [], {
+      model: state.model,
+      thinkingLevel: state.thinkingLevel,
+      levels,
+    })
+    return this.cachedModels
   }
 
   /** 按 turn/start 的 model/effort 切换；与当前一致时不发命令。切换失败让本轮失败，避免用错模型。 */

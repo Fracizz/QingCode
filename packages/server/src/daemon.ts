@@ -32,6 +32,7 @@ import {
 import { SocketStream } from './socketStream'
 import { checkHello } from './validation'
 import { WorkspaceError, findWorkspaceHandler, type WorkspaceContext } from './workspace/index'
+import { terminalManager } from './terminal/index'
 
 export interface DaemonOptions {
   stateDir?: string
@@ -248,6 +249,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     logger.info(`daemon 退出: ${reason}`)
     clearInterval(idleTimer)
     for (const host of allHosts) host.shutdown()
+    terminalManager().shutdown()
     server.close()
     void direct.close()
     for (const session of clients.values()) session.conn.close()
@@ -268,7 +270,9 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   const idleTimer = setInterval(() => {
     const activeTurns = allHosts.reduce((total, host) => total + host.activeTurns, 0)
     // 开着直连时 daemon 就是对外服务，不能空闲退出（否则远端客户端无处可连）。
-    const idle = clients.size === 0 && activeTurns === 0 && !direct.listening
+    // 终端归 daemon 所有：还有运行中的终端时不回收，否则断线期间的会话会丢。
+    const idle =
+      clients.size === 0 && activeTurns === 0 && !direct.listening && terminalManager().activeCount === 0
     if (!idle) {
       idleSince = null
       return

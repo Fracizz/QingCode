@@ -1,6 +1,6 @@
 // 手机端状态纯逻辑：未知 JSON 的归一化、事件折叠、注释拼接。无 DOM / 网络依赖。
 import { isValidHost, normalizeFingerprint, parsePort } from './link'
-import type { Connection, Project, SshAuth, Target, TargetState, TargetStateEvent } from './types'
+import type { AgentKind, Connection, Project, SshAuth, Target, TargetState, TargetStateEvent } from './types'
 
 type JsonRecord = Record<string, unknown>
 const isRecord = (value: unknown): value is JsonRecord =>
@@ -22,6 +22,8 @@ export type ThreadSummary = {
   preview: string
   cwd: string
   updatedAt: number
+  /** 会话所属 Agent；打开会话时必须用它对应的会话通道。 */
+  agent: AgentKind
 }
 
 export type Annotation = { id: string; quote: string; comment: string }
@@ -187,7 +189,7 @@ export function hostKeyMessage(err: unknown, fallback = '连接失败'): string 
   return isHostKeyError(err) ? HOST_KEY_HINT : friendlyError(err, fallback)
 }
 
-export function toThreadSummaries(value: unknown): ThreadSummary[] {
+export function toThreadSummaries(value: unknown, agent: AgentKind = 'codex'): ThreadSummary[] {
   const data = Array.isArray(value)
     ? value
     : isRecord(value) && Array.isArray(value.data)
@@ -204,7 +206,8 @@ export function toThreadSummaries(value: unknown): ThreadSummary[] {
       title: text(entry.name) || preview.split('\n')[0]?.trim() || '未命名会话',
       preview: preview.length > 160 ? `${preview.slice(0, 160)}…` : preview,
       cwd: text(entry.cwd),
-      updatedAt: toTimestamp(entry.updatedAt ?? entry.createdAt),
+      updatedAt: toTimestamp(entry.updatedAt ?? entry.recencyAt ?? entry.createdAt),
+      agent,
     })
   }
   return summaries.sort((a, b) => b.updatedAt - a.updatedAt)

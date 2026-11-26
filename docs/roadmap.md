@@ -23,29 +23,50 @@
 | 终端 | 本机 + SSH PTY、后台托管与接回、手机端终端 | 无 |
 | 其他 | 运行配置（RunPanel）、qingcode-cli 子命令、工作区信任、文件上传下载、命令面板、远端 server 管理（日志/重启/更新）、远端系统指标、多窗口、自动更新、Windows 远端 | 无 |
 
-## 进度总览（2026-11-26 更新）
+## 进度总览（2026-11-26 04:10 更新）
 
-| 卡 | 内容 | 状态 |
-|---|---|---|
-| T16 / T17 | server 文件、Git 协议 | 完成，已在 10.87（Windows）经直连实测 `git.status`、`fs.read` |
-| T18 / T19 / T20 | 文件查看面板、Git 面板、文件树与搜索 | 完成，已接入右侧停靠栏（Ctrl+P、Ctrl+Shift+E/F/G） |
-| T21 | 终端技术验证 | 完成，结论见 `docs/spikes/terminal.md`：远端 python3 pty；本机 Windows 需预编译 node-pty 类包 |
-| 直连 | 服务端直连（TLS + 证书指纹固定），已在 10.87 跑通 Claude | 后端完成；直连界面、并入 daemon、每客户端授权由 qingcode-next-cc 负责 |
-| T22 | pi 适配（`pi --mode rpc`） | 进行中 |
-| T23 | 设置界面 | 进行中 |
-| T24 | Windows 目标 server 行为补齐 + 本机验收 | 进行中（**优先**） |
-| T25 | CodeMirror 6 编辑与保存、冲突合并、差异视图 | 进行中（**优先**） |
-| T26 | 运行配置（兼容旧版 `.qingcode/run.json`，daemon 托管进程） | 进行中（**优先**） |
-| T27 | Claude 模型与推理强度选择（pi 的同类功能在 T22 完成后追加） | 进行中（**优先**） |
-| — | 远程连接记住密码、密码框显示/隐藏 | 完成（总管） |
+状态说明：✅ 完成（已通过 typecheck/测试）　🔄 进行中　⏸ 未开始　❌ 不做　— 验收指在真实目标机上跑通。
 
-下一步（按优先级）：
-1. 收尾 T22–T27，统一审查提交；在 10.87（Windows，直连）与 93（Linux，SSH）完整验收。
-2. 终端：先远端（python3 pty）+ daemon 托管与接回 + xterm 界面，再本机 Windows ConPTY。
-3. 旧版迁移能力：CLI 子命令（`qingcode-cli` 技能依赖）、工作区信任。
-4. 对话输入增强：`@` 文件引用、访问模式选择器、命令面板。
-5. 其余 P3：文件传输、远端 server 管理、手机端文件/Git、扫码配对、自动更新、多窗口、浅色主题。
-6. 发版闸门：Claude 订阅登录的合规确认（`docs/agent-adapters.md` §3.3）。
+### 第二波（T16–T28）
+
+| 卡 | 内容 | 状态 | 备注 |
+|---|---|---|---|
+| T16 / T17 | server 文件、Git 协议 | ✅ | 10.87（Windows）经直连实测 `git.status`、`fs.read` |
+| T18 / T19 / T20 | 文件查看面板、Git 面板、文件树与搜索 | ✅ | 已接入右侧停靠栏（Ctrl+P、Ctrl+Shift+E/F/G） |
+| T21 | 终端技术验证 | ✅ | 结论见 `docs/spikes/terminal.md` |
+| 直连 | 服务端直连（TLS + 证书指纹固定） | ✅ | 10.87 跑通 Claude；直连界面、并入 daemon、每客户端授权由 qingcode-next-cc 完成 |
+| T22 | pi 适配（`pi --mode rpc`） | ✅ | 模型列表改为只借用运行中的进程（见第三波 A5） |
+| T23 | 设置界面 | ✅ | 已接入侧栏与 Ctrl+,；配置目录生效见第三波 A3 |
+| T24 | Windows 目标 server 行为补齐 | ✅ | 本机验收清单 `docs/windows-acceptance.md` §7 待在 10.87 跑 |
+| T25 | CodeMirror 6 编辑与保存、冲突合并、差异视图 | ✅ | 编码（BOM/UTF-16）保存透传已补；界面待人工过一遍 |
+| T26 | 运行配置（兼容旧版 `.qingcode/run.json`） | 🔄 | pi 首次执行未产出（测试中启动 `pnpm dev` 卡住后配额用尽），改由 Claude 子代理重做；完成后总管接入停靠栏 |
+| T27 | Claude 模型与推理强度选择 | ✅ | 无会话时返回官方别名静态列表 |
+| T28 | 手机端补齐：多 Agent、模型选择、只读查看文件 | 🔄 | Claude 子代理执行中；完成后总管重打 APK |
+| — | 远程连接记住密码、密码框显示/隐藏 | ✅ | 总管 |
+
+### 第三波（清单见 `docs/next-wave.md`）
+
+| 编号 | 内容 | 状态 | 备注 |
+|---|---|---|---|
+| A1 | 运行面板接入、T28 审查与 APK 重打 | ⏸ | 等 T26 / T28 |
+| A2 | 10.87 + 93 完整验收、统一提交 | ⏸ | 等第二波收尾 |
+| A3 | 设置生效：紧凑密度 | ✅ | `styles.css` 按 `html[data-density="compact"]` 收紧间距；界面待人工确认 |
+| A3 / T38 | 设置生效：配置目录 → `CODEX_HOME` / `CLAUDE_CONFIG_DIR` | 🔄 | 与 T36 合卡（`docs/tasks/T36-access-mode.md` 第二部分），Claude 子代理执行中，未完成 |
+| A4 | pi 模型/思考强度选择 | ✅ | 选择器本已通用；空列表每 15 秒可重取，pi 会话启动后自动出现 |
+| A5 | pi 模型列表不再临时起进程 | ✅ | 只借用运行中的会话进程并缓存（`packages/server/src/pi/host.ts`） |
+| T29 | 终端 server：协议、daemon 托管、python3 pty、接回 | 🔄 | Claude 子代理执行中，含 93 实测 |
+| T30 | 桌面终端界面（xterm） | ⏸ | 依赖已装（`@xterm/xterm` + fit/search/web-links/unicode11）；等 T29 协议定稿后写卡 |
+| T31 | 本机 Windows ConPTY | ⏸ | 需安装预编译 node-pty 类包并验证打包 |
+| T32 | 手机端终端 | ❌ | 本波不做 |
+| T33 / T34 | CLI 子命令、工作区信任（旧版迁移） | ❌ | 用户决定不做 |
+| T35 | 输入框 `@` 引用文件、粘贴/拖入图片 | ✅ | `features/composer/`；模型声明不支持图片时禁用附件；Codex 文件附件改为正文说明（原 `mention` 模型看不到）；pi 收到图片 URL 返回 -32602。遗留：拖入图片走 ChatPanel 旧流程（>5 MiB 压缩而非拒绝），发送前校验兜底 |
+| T36 | 访问模式选择器 | 🔄 | Claude 子代理执行中，未完成 |
+| T37 | 命令面板（Ctrl+Shift+P / F1） | ✅ | `features/palette/`，已接入 App.tsx；界面待人工确认 |
+| E / F 组 | 远端运维、自动更新、浅色主题等 | ❌ | 本波不做 |
+
+本次提交说明（2026-11-26）：按用户要求，未完成项（T26、T28、T29、T36/T38）不再等待，以当前工作区状态一并提交；这些卡的文件可能是半成品，后续继续完成后再提交，状态以上表为准。
+
+执行资源：pi（OpenCode Go）周额度 2026-11-26 用尽，约 3.5 天后恢复；期间任务卡由 Claude 子代理执行，总管审查、接入、提交。
 
 ## 3. 架构原则
 

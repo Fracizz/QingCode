@@ -27,6 +27,16 @@ export function isPiLevel(value: unknown): value is string {
   return typeof value === 'string' && (LEVELS as readonly string[]).includes(value)
 }
 
+/**
+ * pi 模型的 `input`（"text" | "image"）原样映射为 v2 inputModalities，前端据此禁用图片附件。
+ * 没有该字段时不输出，表示"未声明"，不替 pi 推断能力。
+ */
+export function modalitiesOf(input: unknown): { inputModalities?: string[] } {
+  if (!Array.isArray(input)) return {}
+  const modalities = input.filter((item): item is string => item === 'text' || item === 'image')
+  return modalities.length > 0 ? { inputModalities: modalities } : {}
+}
+
 export function piModelList(
   models: unknown[],
   current: { model?: unknown; thinkingLevel?: unknown; levels?: unknown },
@@ -56,6 +66,7 @@ export function piModelList(
             ? 'medium'
             : null,
       serviceTiers: [],
+      ...modalitiesOf(record.input),
     })
   }
   return { data, nextCursor: null }

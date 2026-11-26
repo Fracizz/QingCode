@@ -52,6 +52,8 @@ export type RpcMethod =
   | 'server.req'
   | 'codex.send'
   | 'target.disconnect'
+  /** 网关自有：返回各目标的 Agent 启用状态（不含路径）。 */
+  | 'mobile.agents'
 
 export type ServerReqMethod =
   | 'ping'
@@ -60,6 +62,10 @@ export type ServerReqMethod =
   | 'codex.open'
   | 'codex.attach'
   | 'codex.status'
+  // 只读文件 / Git，用于手机端查看文件与差异；写方法一律不在白名单内。
+  | 'fs.read'
+  | 'git.status'
+  | 'git.diff'
 
 export type FsEntry = { name: string; kind: 'dir' | 'file' | 'symlink' }
 export type FsListResult = { path: string; entries: FsEntry[] }

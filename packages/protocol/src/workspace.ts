@@ -15,6 +15,7 @@ export type WorkspaceErrorCode =
   | 'auth_required'
   | 'git_failed'
   | 'internal'
+  | TermErrorCode
 
 export type FsKind = 'dir' | 'file' | 'symlink'
 
@@ -214,4 +215,201 @@ export type AgentProbeResult = {
   path: string
   version?: string
   error?: string
+}
+
+// ---- 终端 term.*（docs/spikes/terminal.md §6，T29 定稿） ----
+// PTY 字节一律 base64；终端归 daemon 所有，连接断开只取消订阅、不关终端。
+
+export type TermErrorCode =
+  /** 目标上没有可用的 PTY 后端（远端缺 python3 与 util-linux script；Windows 未接 ConPTY） */
+  | 'pty_unavailable'
+  | 'term_not_found'
+  /** 终端已退出（缓冲仍可 attach），不能再写入 */
+  | 'term_exited'
+  /** 写入队列积压，客户端应稍后重试 */
+  | 'term_backpressure'
+  /** term.write 单次超过 1 MiB 原始字节 */
+  | 'term_input_too_large'
+  | 'term_spawn_failed'
+  /** 同时存活的终端数达到上限 */
+  | 'term_limit'
+
+export type TermBackend = 'python' | 'script' | 'conpty'
+export type TermBackendPreference = 'auto' | TermBackend
+
+export type TermOpenParams = {
+  /** 留空由 server 生成；已存在则直接接回（created:false），忽略其余参数 */
+  termId?: string
+  /** 必须是绝对路径且存在 */
+  cwd: string
+  /** 默认 $SHELL，否则 /bin/sh */
+  shell?: string
+  args?: string[]
+  /** 默认 80×24，规整到 1..1000 */
+  cols?: number
+  rows?: number
+  /** 叠加到 daemon 环境上；LD_*、DYLD_*、PYTHON*、QN_* 等被拒绝 */
+  env?: Record<string, string>
+  backend?: TermBackendPreference
+}
+
+export type TermExitInfo = {
+  code: number | null
+  /** 信号名，如 'SIGHUP' */
+  signal: string | null
+}
+
+export type TermInfo = {
+  termId: string
+  cwd: string
+  shell: string
+  args: string[]
+  pid: number | null
+  backend: TermBackend
+  /** script 兜底为 false：运行时改尺寸无效 */
+  supportsResize: boolean
+  alive: boolean
+  exit?: TermExitInfo
+  lastSeq: number
+  cols: number
+  rows: number
+  /** 毫秒时间戳 */
+  startedAt: number
+  exitedAt?: number
+}
+
+export type TermOpenResult = TermInfo & { created: boolean }
+
+export type TermOutputChunk = { seq: number; data: string }
+
+/** 渲染端序列化的屏幕快照（如 @xterm/addon-serialize），代表 seq ≤ snapshot.seq 的全部输出 */
+export type TermSnapshot = { seq: number; data: string; cols: number; rows: number }
+
+export type TermAttachParams = {
+  termId: string
+  /** 客户端已收到的最大 seq；首次接回传 0 */
+  sinceSeq?: number
+}
+
+export type TermAttachResult = TermInfo & {
+  /**
+   * replay：chunks 即缺失的增量，直接写入；
+   * snapshot：先清屏写 snapshot，再写 chunks；
+   * resync：缓冲已截断且无可用快照，清屏后写 chunks 并提示历史输出已丢失
+   */
+  mode: 'replay' | 'snapshot' | 'resync'
+  truncated: boolean
+  chunks: TermOutputChunk[]
+  snapshot?: TermSnapshot
+}
+
+/** evt `term.data`：只发给订阅了该终端（open/attach 过且未 detach）的连接 */
+export type TermDataEvt = { termId: string; seq: number; data: string }
+/** evt `term.exit`：在最后一块 term.data 之后发出 */
+export type TermExitEvt = { termId: string } & TermExitInfo
+/** evt `term.resized`：by 为发起改尺寸的连接 clientId */
+export type TermResizedEvt = { termId: string; cols: number; rows: number; by: number | null }
+/** evt `term.error`：终端运行中的异步错误（同步错误走 res.error） */
+export type TermErrorEvt = { termId: string; code: TermErrorCode | 'internal'; message: string }
+
+// 用接口合并追加 term.* 条目，避免与其他任务在同一接口体内交叉编辑。
+export interface WorkspaceMethods {
+  'term.open': { params: TermOpenParams; result: TermOpenResult }
+  /** data 为 base64；返回实际接受的原始字节数 */
+  'term.write': { params: { termId: string; data: string }; result: { acceptedBytes: number } }
+  /** applied:false 表示后端不支持运行时改尺寸（script 兜底），尺寸保持不变 */
+  'term.resize': {
+    params: { termId: string; cols: number; rows: number }
+    result: { applied: boolean; cols: number; rows: number }
+  }
+  /** 终止并释放缓冲；未知或已关闭的 termId 也返回成功（幂等） */
+  'term.close': { params: { termId: string }; result: Record<string, never> }
+  /** 订阅并取回缺失输出；之后的输出经 evt term.data 推送 */
+  'term.attach': { params: TermAttachParams; result: TermAttachResult }
+  /** 仅取消本连接的订阅，终端继续运行 */
+  'term.detach': { params: { termId: string }; result: Record<string, never> }
+  /** 上传屏幕快照供缓冲截断后的接回使用；seq 比已存快照旧时 stored:false */
+  'term.snapshot': { params: { termId: string } & TermSnapshot; result: { stored: boolean } }
+  'term.list': { params: Record<string, never>; result: { terminals: TermInfo[] } }
+}
+
+// ---- 运行配置 run.*（docs/tasks/T26-run-configs.md） ----
+// 运行配置是用户自己的命令：只有用户点击才 run.start，server 不自动执行任何命令。
+// 进程归 daemon 所有，客户端断开不停止；输出以 utf8 文本推送，保留 ANSI 转义。
+
+export type RunTaskType = 'command' | 'ps1' | 'bat' | 'sh' | 'script'
+export type RunOs = 'windows' | 'linux' | 'macos'
+
+/** 旧版 run.json 中 `task.os.<系统>` 的覆盖字段 */
+export type RunTaskOverride = {
+  type?: RunTaskType
+  target?: string
+  cwd?: string
+  env?: Record<string, string>
+}
+
+export type RunStartTask = {
+  type: RunTaskType
+  /** command 为命令行；其余类型为脚本路径（相对 task.cwd） */
+  target: string
+  /** 相对 params.cwd，也可为绝对路径 */
+  cwd?: string
+  env?: Record<string, string>
+  /** 可选：按 server 所在系统合并覆盖后再执行（客户端已解析时不传） */
+  os?: Partial<Record<RunOs, RunTaskOverride>>
+}
+
+export type RunStartParams = {
+  /** 项目根，绝对路径 */
+  cwd: string
+  task: RunStartTask
+  /** 显示名 */
+  label?: string
+  /** 客户端自定义关联键（如 `<configId>/<taskId>`），原样出现在 RunInfo 中 */
+  key?: string
+}
+
+export type RunInfo = {
+  runId: string
+  label: string
+  key?: string
+  /** run.start 的 params.cwd（项目根） */
+  cwd: string
+  /** 实际工作目录 */
+  workdir: string
+  /** 便于展示的完整命令行 */
+  command: string
+  pid: number | null
+  startedAt: number
+  /** 运行中为 undefined；被信号结束时为 null */
+  exitCode?: number | null
+  signal?: string | null
+  endedAt?: number
+  lastSeq: number
+}
+
+export type RunOutputChunk = { seq: number; stream: 'stdout' | 'stderr'; data: string }
+
+export type RunOutputResult = {
+  runId: string
+  chunks: RunOutputChunk[]
+  /** 缓冲（每个 run 1 MiB）已丢弃了 seq > sinceSeq 的部分旧输出 */
+  truncated: boolean
+  lastSeq: number
+  running: boolean
+}
+
+/** evt `run.data`：广播给调用过任意 run.* 的连接，前端按 runId 过滤 */
+export type RunDataEvt = { runId: string } & RunOutputChunk
+/** evt `run.exit`：在该 run 最后一块 run.data 之后发出 */
+export type RunExitEvt = { runId: string; exitCode: number | null; signal: string | null }
+
+// 用接口合并追加 run.* 条目，避免与其他任务在同一接口体内交叉编辑。
+export interface WorkspaceMethods {
+  'run.start': { params: RunStartParams; result: { runId: string; pid: number | null } }
+  /** 未知或已结束的 runId 也返回成功（幂等） */
+  'run.stop': { params: { runId: string }; result: Record<string, never> }
+  /** 运行中的全部 + 最近结束的 20 条；platform 供客户端按 task.os 过滤 */
+  'run.list': { params: Record<string, never>; result: { platform: RunOs; runs: RunInfo[] } }
+  'run.output': { params: { runId: string; sinceSeq?: number }; result: RunOutputResult }
 }

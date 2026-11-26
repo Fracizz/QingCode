@@ -47,6 +47,7 @@ import {
 } from '../lib/agents'
 import { quoteBlock } from '../lib/annotations'
 import { agentPrefs, useSettings } from '../features/settings'
+import { adaptTurnInput } from '../features/composer/agentInput'
 import { useAgentPrefs } from './agentPrefs'
 import { overridesFor } from './models'
 import { useTargets } from './targets'
@@ -681,7 +682,8 @@ export const useCodex = create<CodexState>((set, get) => {
           set({ currentThreadId: threadId, currentAgent: agent })
           void get().refreshThreads()
         }
-        const started = await sendInput(session.rpc, threadId, input, overridesFor(targetId, agent))
+        // 文件类 mention 对 Codex 改成正文里的路径说明（Codex 的 mention 只认 app/plugin）。
+        const started = await sendInput(session.rpc, threadId, adaptTurnInput(agent, input), overridesFor(targetId, agent))
         // turn/started 通知可能晚于响应，先按返回值把状态置为运行中，保证中断按钮可用。
         const synthetic = {
           method: 'turn/started',

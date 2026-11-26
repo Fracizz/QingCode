@@ -1,7 +1,7 @@
-// 浏览器开发模式：无 window.QnNative 时用内存假数据把全部页面点通（不触网、不打印凭据）。
+// 浏览器开发模式：无 window.QnNative 时用内存假数据把全部页面点通（多 Agent、只读文件/差异；不触网、不打印凭据）。
 import { buildConnectionInfo, normalizeFingerprint } from './link'
 import type { NativeCallbacks, NativePort } from './native'
-import type { GatewayEvent, Project, Target } from './types'
+import type { AgentKind, GatewayEvent, Project, Target } from './types'
 
 export const MOCK_FP = '0123456789abcdef'.repeat(4)
 export const MOCK_CODE = 'mock1234'
@@ -69,19 +69,159 @@ const MOCK_PROJECTS: Project[] = [
 
 type Stream = { id: string; heartbeat: ReturnType<typeof setInterval> | null }
 
+/** 本机启用 Codex / Claude / pi（pi 模拟未安装），93 上关闭 Claude。 */
+export const MOCK_AGENT_SETTINGS = {
+  defaultAgent: 'codex',
+  agents: {
+    local: { codex: { enabled: true }, claude: { enabled: true }, pi: { enabled: true } },
+    'ssh-93': { claude: { enabled: false }, pi: { enabled: false } },
+  },
+}
+
+const effort = (reasoningEffort: string, description = '') => ({ reasoningEffort, description })
+
+const MOCK_MODELS: Record<AgentKind, JsonRecord[]> = {
+  codex: [
+    {
+      id: 'gpt-5.5-codex',
+      model: 'gpt-5.5-codex',
+      displayName: 'GPT-5.5 Codex',
+      description: 'Our most capable model for complex coding and professional work.',
+      isDefault: true,
+      hidden: false,
+      supportedReasoningEfforts: [effort('low'), effort('medium'), effort('high'), effort('xhigh')],
+      defaultReasoningEffort: 'medium',
+      serviceTiers: [{ id: 'priority', name: 'Fast', description: '' }],
+    },
+    {
+      id: 'gpt-5.5-mini',
+      model: 'gpt-5.5-mini',
+      displayName: 'GPT-5.5 Mini',
+      description: 'Fast, go-to model for coding and everyday work.',
+      isDefault: false,
+      hidden: false,
+      supportedReasoningEfforts: [effort('minimal'), effort('low'), effort('medium')],
+      defaultReasoningEffort: 'low',
+      serviceTiers: [],
+    },
+  ],
+  claude: [
+    {
+      id: 'claude-default',
+      model: 'default',
+      displayName: '默认（跟随 Claude 设置）',
+      description: '',
+      isDefault: true,
+      hidden: false,
+      supportedReasoningEfforts: [effort('low'), effort('medium'), effort('high'), effort('max')],
+      defaultReasoningEffort: 'high',
+      serviceTiers: [],
+    },
+    {
+      id: 'claude-fast',
+      model: 'haiku',
+      displayName: 'Haiku',
+      description: 'Lightweight and cheap.',
+      isDefault: false,
+      hidden: false,
+      supportedReasoningEfforts: [],
+      defaultReasoningEffort: '',
+      serviceTiers: [],
+    },
+  ],
+  pi: [],
+}
+
+const agentOf = (value: unknown): AgentKind => (value === 'claude' || value === 'pi' ? value : 'codex')
+const agentName = (agent: AgentKind): string => (agent === 'claude' ? 'Claude' : agent === 'pi' ? 'pi' : 'Codex')
+
+/** 1×1 透明 PNG。 */
+const TINY_PNG =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+/** 每次最多返回 8 KiB，便于在浏览器里看到"已截断 / 加载更多"。 */
+const MOCK_READ_CAP = 8 * 1024
+
+function mockText(path: string): string {
+  const lines = [`// mock file: ${path}`]
+  for (let index = 2; index <= 800; index += 1) lines.push(`line ${index}: const value${index} = ${index * 7}`)
+  return `${lines.join('\n')}\n`
+}
+
+function mockRead(path: string, params: JsonRecord): JsonRecord {
+  if (!path) throw new MockError('params', '缺少 path')
+  if (/missing/i.test(path)) throw new MockError('not_found', '文件不存在')
+  const mtimeMs = Date.now()
+  if (/\.(png|jpe?g|gif|webp)$/i.test(path)) {
+    return { path, content: TINY_PNG, encoding: 'base64', size: 68, mtimeMs, offset: 0, length: 68, truncated: false, binary: true }
+  }
+  if (/\.(bin|exe|zip)$/i.test(path)) {
+    return { path, content: '', encoding: 'utf8', size: 4096, mtimeMs, offset: 0, length: 0, truncated: false, binary: true }
+  }
+  const text = mockText(path)
+  const offset = typeof params.offset === 'number' && params.offset > 0 ? Math.floor(params.offset) : 0
+  const requested = typeof params.length === 'number' && params.length > 0 ? Math.floor(params.length) : 2 * 1024 * 1024
+  const length = Math.max(0, Math.min(requested, MOCK_READ_CAP, text.length - offset))
+  return {
+    path,
+    content: text.slice(offset, offset + length),
+    encoding: 'utf8',
+    size: text.length,
+    mtimeMs,
+    offset,
+    length,
+    truncated: offset + length < text.length,
+    binary: false,
+  }
+}
+
+function mockDiff(path: string): string {
+  const name = path.replace(/\\/g, '/')
+  return [
+    `diff --git a/${name} b/${name}`,
+    'index 1111111..2222222 100644',
+    `--- a/${name}`,
+    `+++ b/${name}`,
+    '@@ -10,6 +10,7 @@ export function demo() {',
+    '   const a = 1',
+    '-  const b = 2',
+    '+  const b = 3',
+    '+  const c = a + b',
+    '   return a',
+    ' }',
+    '',
+  ].join('\n')
+}
+
 export class MockNativePort implements NativePort {
   private readonly streams = new Map<string, Stream>()
   private readonly memory = new Map<string, string>()
   private readonly projects: Project[] = [...MOCK_PROJECTS]
-  private readonly threads: JsonRecord[] = [
-    {
-      id: 't-demo',
-      preview: '帮我看看这个项目',
-      name: '示例会话',
-      cwd: 'D:\\code\\qingcode-next',
-      updatedAt: Math.floor(Date.now() / SECOND),
-    },
-  ]
+  private readonly threads = new Map<AgentKind, JsonRecord[]>([
+    [
+      'codex',
+      [
+        {
+          id: 't-demo',
+          preview: '帮我看看这个项目',
+          name: '示例会话',
+          cwd: 'D:\\code\\qingcode-next',
+          updatedAt: Math.floor(Date.now() / SECOND),
+        },
+      ],
+    ],
+    [
+      'claude',
+      [
+        {
+          id: 'c-demo',
+          preview: '用 Claude 审查一下改动',
+          name: 'Claude 示例会话',
+          cwd: 'D:\\code\\qingcode-next',
+          updatedAt: Math.floor(Date.now() / SECOND) - 60,
+        },
+      ],
+    ],
+  ])
   private seq = 0
   private counter = 0
   private nextStream = 1
@@ -169,6 +309,8 @@ export class MockNativePort implements NativePort {
       case 'target.disconnect':
         this.emit({ name: 'target.state', payload: { id: str(params.id), state: 'idle' } })
         return null
+      case 'mobile.agents':
+        return MOCK_AGENT_SETTINGS
       case 'projects.list': {
         const targetId = str(params.targetId)
         return targetId ? this.projects.filter((p) => p.targetId === targetId) : [...this.projects]
@@ -193,20 +335,18 @@ export class MockNativePort implements NativePort {
       case 'server.req':
         return this.serverReq(params)
       case 'codex.send': {
-        this.codexSend(params)
+        this.codexSend(params, agentOf(params.agent ?? request.agent))
         return null
       }
-      case 'target.forgetSecret':
-      case 'hostKey.respond':
-        return null
       default:
-        throw new MockError('gateway', '该方法不在手机网关白名单内')
+        throw new MockError('forbidden', '该方法不在手机网关白名单内')
     }
   }
 
   private serverReq(params: JsonRecord): unknown {
     const method = str(params.method)
     const inner = isRecord(params.params) ? params.params : {}
+    const agent = agentOf(inner.agent ?? params.agent)
     switch (method) {
       case 'ping':
         return { serverVersion: '0.0.1', protocol: 1 }
@@ -222,32 +362,54 @@ export class MockNativePort implements NativePort {
           ],
         }
       case 'codex.open':
-        return { initialize: { userAgent: 'mock' }, lastSeq: this.seq, codexVersion: '0.172.0' }
+        // 模拟"目标机上没装 pi"：只影响 pi，不影响其他 Agent。
+        if (agent === 'pi') throw new MockError('agent_unavailable', '未找到 pi（模拟）')
+        return { initialize: { userAgent: `mock-${agent}` }, lastSeq: this.seq, agentVersion: '0.0.0-mock' }
       case 'codex.attach':
         return { lastSeq: this.seq, truncated: false }
       case 'codex.status':
         return { running: true, pid: 4242, activeTurns: 0 }
+      case 'fs.read':
+        return mockRead(str(inner.path), inner)
+      case 'git.status':
+        return {
+          root: 'D:\\code\\qingcode-next',
+          branch: 'next',
+          head: 'abc1234',
+          ahead: 0,
+          behind: 0,
+          files: [{ path: 'apps/mobile/web/src/store.ts', index: '.', worktree: 'M', conflict: false }],
+        }
+      case 'git.diff': {
+        const path = str(inner.path)
+        if (!str(inner.cwd)) throw new MockError('params', '缺少 cwd')
+        // 名字里带 clean 的文件模拟"已提交、无工作区差异"，用于验证回退到卡片 diff。
+        if (/clean/i.test(path)) return { diff: '', truncated: false }
+        return { diff: mockDiff(path), truncated: false }
+      }
       default:
-        throw new MockError('gateway', '该 server.req 方法不在手机网关白名单内')
+        throw new MockError('forbidden', '该 server.req 方法不在手机网关白名单内')
     }
   }
 
-  private codexSend(params: JsonRecord): void {
+  private codexSend(params: JsonRecord, agent: AgentKind): void {
     const targetId = str(params.targetId, 'local')
     const msg = params.msg
     if (!isRecord(msg) || typeof msg.method !== 'string') return
     const id = msg.id
     const inner = isRecord(msg.params) ? msg.params : {}
-    const threadId = str(inner.threadId, 't-demo')
+    const threads = this.threadsFor(agent)
+    const threadId = str(inner.threadId, threads[0] ? str(threads[0].id) : 't-demo')
     const nowSec = Math.floor(Date.now() / SECOND)
+    const recv = (payload: unknown) => this.recv(targetId, agent, payload)
 
     switch (msg.method) {
       case 'thread/list':
-        this.recv(targetId, { id, result: { data: this.threads } })
+        recv({ id, result: { data: threads } })
         return
       case 'thread/start': {
         const created = {
-          id: `t-${++this.counter}`,
+          id: `${agent === 'codex' ? 't' : agent}-${++this.counter}`,
           cwd: str(inner.cwd),
           name: '',
           preview: '',
@@ -255,15 +417,15 @@ export class MockNativePort implements NativePort {
           turns: [],
           status: { type: 'idle' },
         }
-        this.threads.unshift(created)
+        threads.unshift(created)
         const thread = { ...created, ephemeral: inner.ephemeral === true }
-        this.recv(targetId, { id, result: { thread } })
-        this.recv(targetId, { method: 'thread/started', params: { thread } })
+        recv({ id, result: { thread } })
+        recv({ method: 'thread/started', params: { thread } })
         return
       }
       case 'thread/resume':
       case 'thread/read':
-        this.recv(targetId, {
+        recv({
           id,
           result: {
             thread: {
@@ -279,7 +441,11 @@ export class MockNativePort implements NativePort {
                   status: 'completed',
                   items: [
                     { type: 'userMessage', id: `u-${threadId}`, content: [{ type: 'text', text: '你好' }] },
-                    { type: 'agentMessage', id: `a-${threadId}`, text: '你好！这是模拟的历史消息。' },
+                    {
+                      type: 'agentMessage',
+                      id: `a-${threadId}`,
+                      text: `你好！这是 ${agentName(agent)} 的模拟历史消息，可点击 [README.md](README.md:3) 或 \`apps/mobile/web/src/store.ts:42\` 查看文件。`,
+                    },
                   ],
                 },
               ],
@@ -288,17 +454,25 @@ export class MockNativePort implements NativePort {
         })
         return
       case 'turn/start':
-        this.simulateTurn(targetId, threadId, id, inner)
+        this.lastTurnParams = { agent, ...inner }
+        this.simulateTurn(targetId, agent, threadId, id, inner)
         return
       case 'turn/interrupt':
-        this.recv(targetId, { id, result: {} })
-        this.recv(targetId, {
+        recv({ id, result: {} })
+        recv({
           method: 'turn/completed',
           params: { threadId, turn: { id: 'turn-mock', status: 'interrupted' } },
         })
         return
+      case 'model/list':
+        if (agent === 'pi') {
+          recv({ id, error: { code: -32601, message: 'Method not found' } })
+          return
+        }
+        recv({ id, result: { data: MOCK_MODELS[agent], nextCursor: null } })
+        return
       case 'account/rateLimits/read':
-        this.recv(targetId, {
+        recv({
           id,
           result: {
             rateLimitsByLimitId: {
@@ -313,30 +487,50 @@ export class MockNativePort implements NativePort {
         })
         return
       case 'account/read':
-        this.recv(targetId, {
+        recv({
           id,
           result: { account: { type: 'chatgpt', email: 'dev@example.com', planType: 'plus', workspaceName: '' } },
         })
         return
       default:
-        this.recv(targetId, { id, error: { code: -32601, message: 'Method not found' } })
+        recv({ id, error: { code: -32601, message: 'Method not found' } })
     }
   }
 
-  private simulateTurn(targetId: string, threadId: string, id: unknown, params: JsonRecord): void {
+  /** 最近一次 turn/start 的参数（含 agent），供单测核对模型覆盖项。 */
+  lastTurnParams: JsonRecord | null = null
+
+  private threadsFor(agent: AgentKind): JsonRecord[] {
+    let list = this.threads.get(agent)
+    if (!list) {
+      list = []
+      this.threads.set(agent, list)
+    }
+    return list
+  }
+
+  private simulateTurn(targetId: string, agent: AgentKind, threadId: string, id: unknown, params: JsonRecord): void {
     const turnId = `turn-${++this.counter}`
     const itemId = `item-${this.counter}`
+    const changeId = `change-${this.counter}`
     const input = Array.isArray(params.input) ? params.input : []
     const userText = input
       .map((entry) => (isRecord(entry) ? str(entry.text) : ''))
       .filter(Boolean)
       .join('\n')
-    const answer = `收到：${userText || '（空消息）'}\n\n这是模拟的 **Markdown** 回复，用来验证流式消息与折叠展示。`
+    const answer = `收到：${userText || '（空消息）'}\n\n这是 ${agentName(agent)} 模拟的 **Markdown** 回复，改动见 [store.ts](apps/mobile/web/src/store.ts#L12)，也可以点 \`README.md:3\`。`
     const chunks = answer.match(/[\s\S]{1,12}/g) ?? [answer]
     const nowSec = Math.floor(Date.now() / SECOND)
+    const change = {
+      type: 'fileChange',
+      id: changeId,
+      status: 'completed',
+      changes: [{ path: 'apps/mobile/web/src/store.ts', kind: { type: 'update' }, diff: mockDiff('apps/mobile/web/src/store.ts') }],
+    }
+    const recv = (payload: unknown) => this.recv(targetId, agent, payload)
 
-    this.recv(targetId, { id, result: { turn: { id: turnId, status: 'inProgress', items: [] } } })
-    this.recv(targetId, {
+    recv({ id, result: { turn: { id: turnId, status: 'inProgress', items: [] } } })
+    recv({
       method: 'turn/started',
       params: {
         threadId,
@@ -348,7 +542,8 @@ export class MockNativePort implements NativePort {
         },
       },
     })
-    this.recv(targetId, {
+    recv({ method: 'item/completed', params: { threadId, turnId, itemId: changeId, item: change } })
+    recv({
       method: 'item/started',
       params: {
         threadId,
@@ -359,14 +554,11 @@ export class MockNativePort implements NativePort {
     })
     let delay = 60
     for (const chunk of chunks) {
-      setTimeout(
-        () => this.recv(targetId, { method: 'item/agentMessage/delta', params: { threadId, itemId, delta: chunk } }),
-        delay,
-      )
+      setTimeout(() => recv({ method: 'item/agentMessage/delta', params: { threadId, itemId, delta: chunk } }), delay)
       delay += 35
     }
     setTimeout(() => {
-      this.recv(targetId, {
+      recv({
         method: 'item/completed',
         params: {
           threadId,
@@ -374,7 +566,7 @@ export class MockNativePort implements NativePort {
           item: { type: 'agentMessage', id: itemId, text: answer, status: 'completed' },
         },
       })
-      this.recv(targetId, {
+      recv({
         method: 'turn/completed',
         params: {
           threadId,
@@ -383,24 +575,24 @@ export class MockNativePort implements NativePort {
             status: 'completed',
             items: [
               { type: 'userMessage', id: `u-${turnId}`, content: [{ type: 'text', text: userText }] },
+              change,
               { type: 'agentMessage', id: itemId, text: answer, status: 'completed' },
             ],
           },
         },
       })
-      this.recv(targetId, {
-        method: 'thread/tokenUsage/updated',
-        params: { threadId, tokenUsage: { total: 128 } },
-      })
-      this.recv(targetId, {
-        method: 'account/rateLimits/updated',
-        params: {
-          rateLimits: {
-            primary: { usedPercent: 37, windowDurationMins: 300, resetsAt: nowSec + 5400 },
-            secondary: { usedPercent: 18, windowDurationMins: 10080, resetsAt: nowSec + 86_400 },
+      recv({ method: 'thread/tokenUsage/updated', params: { threadId, tokenUsage: { total: 128 } } })
+      if (agent === 'codex') {
+        recv({
+          method: 'account/rateLimits/updated',
+          params: {
+            rateLimits: {
+              primary: { usedPercent: 37, windowDurationMins: 300, resetsAt: nowSec + 5400 },
+              secondary: { usedPercent: 18, windowDurationMins: 10080, resetsAt: nowSec + 86_400 },
+            },
           },
-        },
-      })
+        })
+      }
     }, delay + 40)
   }
 
@@ -411,8 +603,8 @@ export class MockNativePort implements NativePort {
     setTimeout(() => this.emit({ name: 'target.state', payload: { id, state: 'ready' } }), 260)
   }
 
-  private recv(targetId: string, msg: unknown): void {
-    this.emit({ name: 'codex.recv', payload: { targetId, seq: ++this.seq, msg, agent: 'codex' } })
+  private recv(targetId: string, agent: AgentKind, msg: unknown): void {
+    this.emit({ name: 'codex.recv', payload: { targetId, seq: ++this.seq, msg, agent } })
   }
 
   private emit(event: GatewayEvent): void {

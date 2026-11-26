@@ -10,7 +10,9 @@ import type { SecretCipher } from '../secretStore'
 import { loadOrCreateCertificate, type MobileCertificate } from './cert'
 import {
   checkRpcWhitelist,
+  injectAgentPath,
   MAX_REQUEST_BYTES,
+  mobileAgentsFromSettings,
   MobileGateway,
   mobileEventFromRouter,
   parseBearerToken,
@@ -38,6 +40,17 @@ const cipher: SecretCipher = {
 
 const PAIR_CODE = 'Pair.Code!'
 const LOCAL_TARGET = { id: 'local' as const, kind: 'local' as const, name: '本机' }
+const APP_SETTINGS = {
+  general: { sendKey: 'enter', autoConnectLast: false, defaultAgent: 'claude', density: 'comfortable' },
+  agents: {
+    local: {
+      codex: { enabled: true, path: '  C:\\tools\\codex.exe  ', configDir: 'C:\\Users\\me\\.codex' },
+      claude: { enabled: true, path: 'C:\\Users\\me\\.local\\bin\\claude.exe', configDir: 'D:\\claude-cfg' },
+      pi: { enabled: false, path: '' },
+    },
+    'ssh-93': { claude: { enabled: false } },
+  },
+}
 
 let userData = ''
 let certificate: MobileCertificate | null = null
@@ -200,6 +213,7 @@ beforeAll(async () => {
   router.register('codex.send', (params) => {
     lastCodexSend = params
   })
+  router.register('settings.get', () => APP_SETTINGS)
   gateway = new MobileGateway({
     router,
     devices: deviceStore,
@@ -239,6 +253,93 @@ describe('手机网关纯逻辑', () => {
     const token = 'a'.repeat(64)
     expect(parseBearerToken(`Bearer ${token}`)).toBe(token)
     expect(parseBearerToken('Basic abc')).toBeNull()
+  })
+
+  it('server.req 只放行只读文件 / Git 方法，写方法一律拒绝', () => {
+    for (const method of ['fs.read', 'git.status', 'git.diff']) {
+      expect(checkRpcWhitelist('server.req', { targetId: 'local', method }).ok).toBe(true)
+    }
+    for (const method of [
+      'fs.write',
+      'fs.delete',
+      'fs.mkdir',
+      'fs.createFile',
+      'fs.rename',
+      'fs.watch',
+      'fs.search',
+      'git.stage',
+      'git.unstage',
+      'git.discard',
+      'git.commit',
+      'git.switch',
+      'git.push',
+      'git.pull',
+      'git.fetch',
+      'git.show',
+      'run.start',
+      'run.stop',
+      'agent.probe',
+      'direct.reload',
+    ]) {
+      expect(checkRpcWhitelist('server.req', { targetId: 'local', method })).toMatchObject({
+        ok: false,
+        code: 'forbidden',
+      })
+    }
+    expect(checkRpcWhitelist('mobile.agents', {}).ok).toBe(true)
+    expect(checkRpcWhitelist('settings.get', {})).toMatchObject({ ok: false, code: 'forbidden' })
+    expect(checkRpcWhitelist('settings.save', {})).toMatchObject({ ok: false, code: 'forbidden' })
+  })
+
+  it('mobile.agents 只返回启用状态与默认 Agent，不含路径与配置目录', () => {
+    const result = mobileAgentsFromSettings(APP_SETTINGS)
+    expect(result).toEqual({
+      defaultAgent: 'claude',
+      agents: {
+        local: { codex: { enabled: true }, claude: { enabled: true }, pi: { enabled: false } },
+        'ssh-93': { claude: { enabled: false } },
+      },
+    })
+    const text = JSON.stringify(result)
+    expect(text).not.toContain('path')
+    expect(text).not.toContain('configDir')
+    expect(text).not.toContain('codex.exe')
+    expect(mobileAgentsFromSettings(null)).toEqual({ defaultAgent: 'codex', agents: {} })
+    expect(mobileAgentsFromSettings({ general: { defaultAgent: 'gpt' }, agents: [] })).toEqual({
+      defaultAgent: 'codex',
+      agents: {},
+    })
+    const polluted = JSON.parse('{"agents":{"__proto__":{"codex":{"enabled":false}}}}') as unknown
+    expect(Object.keys(mobileAgentsFromSettings(polluted).agents)).toEqual(['__proto__'])
+    expect(({} as Record<string, unknown>).codex).toBeUndefined()
+  })
+
+  it('codex.open 按设置补可执行文件路径，忽略手机传入的路径', () => {
+    expect(injectAgentPath({ targetId: 'local', method: 'codex.open', params: { agent: 'codex' } }, APP_SETTINGS))
+      .toEqual({ targetId: 'local', method: 'codex.open', params: { agent: 'codex', codexPath: 'C:\\tools\\codex.exe' } })
+    expect(injectAgentPath({ targetId: 'local', method: 'codex.open', params: { agent: 'claude' } }, APP_SETTINGS))
+      .toEqual({
+        targetId: 'local',
+        method: 'codex.open',
+        params: { agent: 'claude', claudePath: 'C:\\Users\\me\\.local\\bin\\claude.exe' },
+      })
+    // 缺省 agent 视为 codex；手机自带的路径被丢弃并以设置为准。
+    expect(injectAgentPath(
+      { targetId: 'local', method: 'codex.open', params: { codexPath: '/tmp/evil', claudePath: '/tmp/x' } },
+      APP_SETTINGS,
+    )).toEqual({ targetId: 'local', method: 'codex.open', params: { codexPath: 'C:\\tools\\codex.exe' } })
+    // 设置里路径为空或没有该目标：不补路径，由 server 自动解析；手机路径同样丢弃。
+    expect(injectAgentPath(
+      { targetId: 'local', method: 'codex.open', params: { agent: 'pi', piPath: '/tmp/pi' } },
+      APP_SETTINGS,
+    )).toEqual({ targetId: 'local', method: 'codex.open', params: { agent: 'pi' } })
+    expect(injectAgentPath({ targetId: 'ssh-93', method: 'codex.open', params: { agent: 'claude' } }, APP_SETTINGS))
+      .toEqual({ targetId: 'ssh-93', method: 'codex.open', params: { agent: 'claude' } })
+    expect(injectAgentPath({ targetId: 'local', method: 'codex.open' }, null))
+      .toEqual({ targetId: 'local', method: 'codex.open', params: {} })
+    // 其他方法原样透传。
+    const attach = { targetId: 'local', method: 'codex.attach', params: { agent: 'claude', sinceSeq: 3 } }
+    expect(injectAgentPath(attach, APP_SETTINGS)).toBe(attach)
   })
 
   it('只转发手机可见事件，主机指纹确认不泄漏 promptId', () => {
@@ -344,6 +445,43 @@ describe('手机网关 HTTPS 集成', () => {
     )
     expect(agentRpc.status).toBe(200)
     expect(lastCodexSend).toMatchObject({ targetId: 'local', agent: 'claude' })
+
+    const agents = await requestJson('/rpc', 'POST', { method: 'mobile.agents', params: {} }, token)
+    expect(agents.status).toBe(200)
+    expect(agents.json()).toEqual(mobileAgentsFromSettings(APP_SETTINGS))
+    expect(agents.text).not.toContain('claude.exe')
+
+    const opened = await requestJson(
+      '/rpc',
+      'POST',
+      {
+        method: 'server.req',
+        params: { targetId: 'local', method: 'codex.open', params: { agent: 'claude', claudePath: '/tmp/evil' } },
+      },
+      token
+    )
+    expect(opened.status).toBe(200)
+    expect(lastServerReq).toEqual({
+      targetId: 'local',
+      method: 'codex.open',
+      params: { agent: 'claude', claudePath: 'C:\\Users\\me\\.local\\bin\\claude.exe' },
+    })
+
+    const fileRead = await requestJson(
+      '/rpc',
+      'POST',
+      { method: 'server.req', params: { targetId: 'local', method: 'fs.read', params: { path: 'C:\\a.txt' } } },
+      token
+    )
+    expect(fileRead.status).toBe(200)
+    const writeFile = await requestJson(
+      '/rpc',
+      'POST',
+      { method: 'server.req', params: { targetId: 'local', method: 'fs.write', params: { path: 'C:\\a.txt', content: 'x' } } },
+      token
+    )
+    expect(writeFile.status).toBe(403)
+    expect(lastServerReq).toMatchObject({ method: 'fs.read' })
 
     const tooLarge = await requestJson('/pair', 'POST', {
       code: PAIR_CODE,

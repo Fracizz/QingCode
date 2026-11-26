@@ -53,6 +53,8 @@ const RPC_METHODS = new Set([
   'projects.save',
   'server.req',
   'codex.send',
+  // 网关自有方法，不转发给同名 backend 方法。
+  'mobile.agents',
 ])
 
 const SERVER_REQ_METHODS = new Set([
@@ -62,6 +64,10 @@ const SERVER_REQ_METHODS = new Set([
   'codex.open',
   'codex.attach',
   'codex.status',
+  // 手机端只读查看文件与差异；fs.write / fs.delete / git.stage / git.commit / run.* 等写方法一律不放行。
+  'fs.read',
+  'git.status',
+  'git.diff',
 ])
 
 const FORWARDED_EVENTS = new Set(['target.state', 'codex.recv', 'server.evt'])
@@ -125,8 +131,64 @@ export function parseBearerToken(value: string | string[] | undefined): string |
   return matched?.[1]?.toLowerCase() ?? null
 }
 
-function isAgent(value: unknown): value is 'codex' | 'claude' | 'pi' {
+type AgentName = 'codex' | 'claude' | 'pi'
+const AGENT_NAMES: readonly AgentName[] = ['codex', 'claude', 'pi']
+
+function isAgent(value: unknown): value is AgentName {
   return value === 'codex' || value === 'claude' || value === 'pi'
+}
+
+/** 只读自有属性，避免 targetId 为 __proto__ 等键时读到原型链。 */
+function ownRecord(value: unknown, key: string): JsonRecord | null {
+  if (!isRecord(value) || !hasOwn(value, key)) return null
+  const item = value[key]
+  return isRecord(item) ? item : null
+}
+
+export type MobileAgentsResult = {
+  defaultAgent: AgentName
+  agents: Record<string, Partial<Record<AgentName, { enabled: boolean }>>>
+}
+
+/** settings.get → 手机可见的 Agent 启用状态；刻意丢弃路径、配置目录等其余字段。 */
+export function mobileAgentsFromSettings(settings: unknown): MobileAgentsResult {
+  const general = ownRecord(settings, 'general')
+  const defaultAgent = isAgent(general?.defaultAgent) ? general.defaultAgent : 'codex'
+  const agents: MobileAgentsResult['agents'] = Object.create(null) as MobileAgentsResult['agents']
+  const source = ownRecord(settings, 'agents') ?? {}
+  for (const targetId of Object.keys(source)) {
+    const prefs = ownRecord(source, targetId)
+    if (!prefs) continue
+    const picked: Partial<Record<AgentName, { enabled: boolean }>> = {}
+    for (const agent of AGENT_NAMES) {
+      const item = ownRecord(prefs, agent)
+      if (item) picked[agent] = { enabled: item.enabled !== false }
+    }
+    agents[targetId] = picked
+  }
+  return { defaultAgent, agents }
+}
+
+const AGENT_PATH_KEYS: Record<AgentName, 'codexPath' | 'claudePath' | 'piPath'> = {
+  codex: 'codexPath',
+  claude: 'claudePath',
+  pi: 'piPath',
+}
+
+/**
+ * 手机经 server.req 调 codex.open 时按电脑设置补可执行文件路径（与桌面 openParams 同义）。
+ * 手机传来的路径字段一律丢弃、以设置为准：不允许远端设备指定电脑/目标机上要执行的程序。
+ */
+export function injectAgentPath(serverReqParams: unknown, settings: unknown): unknown {
+  if (!isRecord(serverReqParams) || serverReqParams.method !== 'codex.open') return serverReqParams
+  const inner: JsonRecord = isRecord(serverReqParams.params) ? { ...serverReqParams.params } : {}
+  for (const key of Object.values(AGENT_PATH_KEYS)) delete inner[key]
+  const agent: AgentName = isAgent(inner.agent) ? inner.agent : 'codex'
+  const targetId = typeof serverReqParams.targetId === 'string' ? serverReqParams.targetId : ''
+  const prefs = targetId ? ownRecord(ownRecord(ownRecord(settings, 'agents'), targetId), agent) : null
+  const path = typeof prefs?.path === 'string' ? prefs.path.trim() : ''
+  if (path) inner[AGENT_PATH_KEYS[agent]] = path
+  return { ...serverReqParams, params: inner }
 }
 
 /** T14 的 agent 字段可能由原生桥放在 /rpc 顶层；补进目标方法的 params，不改 backend 类型。 */
@@ -388,7 +450,13 @@ export class MobileGateway {
       return this.sendError(res, status, allowed.code, allowed.message)
     }
     const method = body.method as string
-    const params = forwardRpcParams(body, method)
+    if (method === 'mobile.agents') {
+      return this.sendJson(res, 200, mobileAgentsFromSettings(await this.readSettings()))
+    }
+    let params = forwardRpcParams(body, method)
+    if (method === 'server.req' && isRecord(params) && params.method === 'codex.open') {
+      params = injectAgentPath(params, await this.readSettings())
+    }
     try {
       const result = await this.options.router.invoke(method, params)
       return this.sendJson(res, 200, result ?? null)
@@ -428,6 +496,15 @@ export class MobileGateway {
       const timer = setInterval(() => void this.heartbeat(client), this.heartbeatMs)
       timer.unref?.()
       client.timer = timer
+    }
+  }
+
+  /** 设置不可用（旧版本未注册 settings.get 或读取失败）时返回 null，调用方按默认处理。 */
+  private async readSettings(): Promise<unknown> {
+    try {
+      return await this.options.router.invoke('settings.get', {})
+    } catch {
+      return null
     }
   }
 

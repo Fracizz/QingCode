@@ -1,6 +1,7 @@
 /** turn/start 的 v2 UserInput[] → pi RPC prompt 命令参数（纯逻辑）。 */
 import { resolveTurnInput, type LocalImageIo, type TurnContent } from '../claude/userInput'
 import { asRecord, scalarText, type Json } from '../claude/v2'
+import { PiRpcError } from './errors'
 
 export interface PiImage {
   type: 'image'
@@ -19,13 +20,18 @@ export interface ResolvedPiPrompt {
   echo: Json[]
 }
 
-/** pi 的 prompt 只接受 base64 图片；http(s) URL 图片忽略并在 README 说明。 */
+/**
+ * pi 的 prompt 只接受 base64 ImageContent；http(s) URL 图片无法原样交给 pi，
+ * 直接报错让用户知道，而不是悄悄丢掉或替用户去下载。
+ */
 export function promptFromContent(content: TurnContent): PiPrompt {
   const images: PiImage[] = []
   for (const block of content.blocks) {
     if (block.type !== 'image') continue
     const source = asRecord(block.source)
-    if (source?.type !== 'base64') continue
+    if (source?.type !== 'base64') {
+      throw new PiRpcError(-32602, 'pi 只接受随消息附带的图片（base64），不支持图片链接')
+    }
     const data = scalarText(source.data)
     const mimeType = scalarText(source.media_type)
     if (data && mimeType) images.push({ type: 'image', data, mimeType })
