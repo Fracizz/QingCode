@@ -1,3 +1,4 @@
+import { Check, ChevronDown, Zap } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { sessionKey } from '../agents'
 import { EMPTY_PREFS, effortLabel, pickModel, resolveSelection, triggerLabel, visibleModels } from '../models'
@@ -32,9 +33,9 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
   return (
     <>
       <button type="button" className="qn-chip" onClick={() => setOpen(true)} aria-label="选择模型与推理强度">
-        {selection.fast && <span className="text-qn-warn">⚡</span>}
+        {selection.fast && <Zap size={13} className="shrink-0 text-qn-warn" aria-hidden />}
         <span className="truncate">{triggerLabel(selection) || '模型'}</span>
-        <span aria-hidden>▾</span>
+        <ChevronDown size={14} className="shrink-0" aria-hidden />
       </button>
       {open && (
         <Dialog title="模型与推理强度" onClose={() => setOpen(false)}>
@@ -57,7 +58,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                       <span className="block text-[11px] leading-4 text-qn-muted">{model.description}</span>
                     )}
                   </span>
-                  {selected && <span className="text-qn-accent">✓</span>}
+                  {selected && <Check size={16} className="shrink-0 text-qn-accent" aria-hidden />}
                 </button>
               )
             })}
@@ -95,7 +96,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                 className={`qn-chip ${selection.fast ? 'qn-chip-active' : ''}`}
                 onClick={() => setPrefs(targetId, agent, { ...prefs, fast: !selection.fast })}
               >
-                ⚡ 快速（响应更快，额度消耗更多）
+                <Zap size={14} className="inline align-[-2px] text-qn-warn" aria-hidden /> 快速（响应更快，额度消耗更多）
               </button>
             </div>
           )}

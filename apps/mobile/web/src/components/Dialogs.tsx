@@ -1,3 +1,4 @@
+import { ArrowUp, ChevronRight, Folder } from 'lucide-react'
 import { useState } from 'react'
 import { joinPath } from '../state'
 import { useApp } from '../store'
@@ -73,7 +74,7 @@ export function DirectoryDialog() {
               className="qn-row border-b border-qn-border"
               onClick={() => void browse(directory.parent ?? '')}
             >
-              <span>↑ 上一级</span>
+              <ArrowUp size={16} className="text-qn-muted" aria-hidden /><span>上一级</span>
             </button>
           )}
           {directory.entries.length === 0 && (
@@ -86,8 +87,9 @@ export function DirectoryDialog() {
               className="qn-row border-b border-qn-border"
               onClick={() => void browse(joinPath(directory.path, entry.name))}
             >
-              <span className="min-w-0 flex-1 truncate">📁 {entry.name}</span>
-              <span className="text-qn-muted">›</span>
+              <Folder size={18} strokeWidth={1.75} className="shrink-0 text-qn-accent" aria-hidden />
+              <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+              <ChevronRight size={16} className="text-qn-dim" aria-hidden />
             </button>
           ))}
         </div>

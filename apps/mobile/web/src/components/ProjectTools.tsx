@@ -1,3 +1,4 @@
+import { FileText, Folder, Terminal } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { callDevice } from '../client'
 import { getWindowNativePort, NativeRequestError } from '../native'
@@ -17,10 +18,10 @@ export function ProjectTools({ project }: { project: Project }) {
   return (
     <>
       <Button variant="ghost" className="px-2" onClick={() => setTool('files')} aria-label={`浏览 ${project.name} 的文件`} title="浏览文件">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M3 8a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+        <Folder size={19} strokeWidth={1.75} aria-hidden />
       </Button>
       <Button variant="ghost" className="px-2" onClick={() => setTool('terminal')} aria-label={`打开 ${project.name} 的终端`} title="终端">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m5 7 5 5-5 5m7 0h7" /></svg>
+        <Terminal size={19} strokeWidth={1.75} aria-hidden />
       </Button>
       {tool === 'files' && <ProjectFileBrowser key={`${desktopId}:${project.id}`} desktopId={desktopId} project={project} onClose={() => setTool(null)} />}
       {tool === 'terminal' && (
@@ -188,9 +189,9 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
                 onClick={() => entry.kind === 'dir' ? browse(entry.path) : setSelected(entry)}>
                 <span aria-hidden className={entry.kind === 'dir' ? 'text-qn-accent' : 'text-qn-muted'}>
                   {entry.kind === 'dir' ? (
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M3 8a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                    <Folder size={18} strokeWidth={1.75} />
                   ) : (
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z M14 3v5h5" /></svg>
+                    <FileText size={18} strokeWidth={1.75} />
                   )}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-sm">{query ? entry.path : entry.name}</span>

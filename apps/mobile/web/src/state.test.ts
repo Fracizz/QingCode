@@ -4,6 +4,7 @@ import {
   applyTargetState,
   availableApprovalDecisions,
   buildMobileTurnInput,
+  cleanThreadText,
   formatTurnError,
   connectionRepairReason,
   draftKey,
@@ -217,5 +218,14 @@ describe('formatTurnError Claude 格式', () => {
     expect(formatTurnError('API Error: Request rejected (429) · usage limit reached')).toEqual({
       title: '已达用量上限或请求过多（429）', detail: 'usage limit reached',
     })
+  })
+})
+
+describe('cleanThreadText', () => {
+  it('还原 Claude 斜杠命令标记，去掉其它标签', () => {
+    expect(cleanThreadText('<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>')).toBe('/clear')
+    expect(cleanThreadText('<command-name>/review</command-name><command-args>PR 12</command-args>')).toBe('/review PR 12')
+    expect(cleanThreadText('<local-command-stdout>ok</local-command-stdout>')).toBe('ok')
+    expect(cleanThreadText('a < b 且 c > d')).toBe('a < b 且 c > d')
   })
 })

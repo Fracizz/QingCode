@@ -48,6 +48,7 @@ import {
   classifyAgentOpenError,
   emptyAgentStatus,
   preferredAgent,
+  exitedAgentOf,
   sessionKey,
   type AgentAvailability,
 } from '../lib/agents'
@@ -675,23 +676,21 @@ export const useCodex = create<CodexState>((set, get) => {
       subscribed = true
       offEvents = [
         on('server.evt', (payload) => {
-          if (payload.name !== 'codex.exited') return
-          const exitedAgent = (payload.payload as { agent?: unknown } | null)?.agent
-          const keys = Object.entries(get().sessions)
-            .filter(([, session]) => session.targetId === payload.targetId)
-            .filter(([, session]) => exitedAgent === undefined || exitedAgent === session.agent)
-            .map(([key]) => key)
-          for (const key of keys) {
-            const agent = get().sessions[key]?.agent
-            patchSession(key, (value) => ({
-              ...value,
-              opened: false,
-              openError: `${agentLabel(value.agent)} 进程已退出，下次操作将重新启动`,
-            }))
-            if (agent) patchAgent(payload.targetId, agent, { state: 'unknown' })
-          }
-          if (get().currentTargetId === payload.targetId) {
-            set({ notice: 'Agent 进程已退出，请重试' })
+          const exitedAgent = exitedAgentOf(payload.name, payload.payload)
+          if (!exitedAgent) return
+          const key = sessionKey(payload.targetId, exitedAgent)
+          const session = get().sessions[key]
+          // 只有真正打开过的会话才算"进程退出"；探测/启动失败（如目标机没装 codex）不是退出，
+          // 否则在用 pi 时也会因为探测 codex 不停弹出提示。
+          if (!session?.opened) return
+          patchSession(key, (value) => ({
+            ...value,
+            opened: false,
+            openError: `${agentLabel(value.agent)} 进程已退出，下次操作将重新启动`,
+          }))
+          patchAgent(payload.targetId, exitedAgent, { state: 'unknown' })
+          if (get().currentTargetId === payload.targetId && get().currentAgent === exitedAgent) {
+            set({ notice: `${agentLabel(exitedAgent)} 进程已退出，请重试` })
           }
         }),
         on('target.state', (payload) => {

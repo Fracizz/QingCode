@@ -1,3 +1,4 @@
+import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useApp } from '../store'
 import { filterProjects } from '../workspace'
@@ -35,7 +36,7 @@ export function ProjectsPage() {
         )}
       </main>
       <div className="qn-footer">
-        <Button variant="primary" className="w-full" onClick={() => void openDirectory()}>＋ 添加项目</Button>
+        <Button variant="primary" className="w-full" onClick={() => void openDirectory()}><Plus size={17} aria-hidden />添加项目</Button>
       </div>
     </>
   )

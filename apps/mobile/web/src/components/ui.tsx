@@ -1,3 +1,4 @@
+import { ChevronLeft, X } from 'lucide-react'
 import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { agentLabel } from '../agents'
 import type { AgentKind } from '../types'
@@ -66,8 +67,8 @@ export function Header({
   return (
     <header className="qn-header">
       {onBack && (
-        <Button variant="ghost" className="px-2" onClick={onBack} aria-label="返回">
-          ‹
+        <Button variant="ghost" className="qn-header-icon" onClick={onBack} aria-label="返回">
+          <ChevronLeft size={22} strokeWidth={1.9} />
         </Button>
       )}
       <div className="min-w-0 flex-1">
@@ -125,7 +126,7 @@ export function Note({
       )}
       {onClose && (
         <button type="button" className="qn-button qn-button-ghost px-3 py-1 text-xs" aria-label="关闭提示" onClick={onClose}>
-          ✕
+          <X size={15} />
         </button>
       )}
     </div>
@@ -174,8 +175,8 @@ export function Dialog({
       <div className="qn-dialog-panel">
         <div className="mb-3 flex items-center gap-2">
           <h2 className="qn-title flex-1">{title}</h2>
-          <Button autoFocus variant="ghost" className="px-2" onClick={onClose} aria-label="关闭">
-            ×
+          <Button autoFocus variant="ghost" className="qn-header-icon" onClick={onClose} aria-label="关闭">
+            <X size={20} />
           </Button>
         </div>
         {children}

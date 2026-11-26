@@ -115,3 +115,16 @@ export function availabilityReason(agent: AgentKind, status: AgentAvailability |
   if (state === 'error') return status?.detail ?? '打开失败'
   return '等待连接后检测'
 }
+
+/**
+ * server.evt 里的 agent 退出事件对应哪个 agent；不是退出事件返回 null。
+ * 新 server 统一发 codex.exited{agent}；旧 server 发 `<agent>.exited`，codex 的不带 agent 字段。
+ */
+export function exitedAgentOf(name: string, payload: unknown): AgentKind | null {
+  if (!name.endsWith('.exited')) return null
+  const prefix = name.slice(0, -'.exited'.length)
+  if (!isAgentKind(prefix)) return null
+  const inner = typeof payload === 'object' && payload !== null ? (payload as { agent?: unknown }).agent : undefined
+  if (prefix === 'codex' && isAgentKind(inner)) return inner
+  return prefix
+}

@@ -36,6 +36,7 @@ import { SendQueue } from './SendQueue'
 import { MainHeader } from './shell/MainHeader'
 import { WelcomePane } from './shell/WelcomePane'
 import { SideChat } from './SideChat'
+import { TurnErrorNote } from './TurnErrorNote'
 import { EmptyState, ErrorNote } from './ui'
 
 export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) => void; onAddTarget: () => void }) {
@@ -357,7 +358,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
             )}
             {view?.error && (
               <div className="mb-3">
-                <ErrorNote message={`Turn 失败：${view.error}`} />
+                <TurnErrorNote error={view.error} />
               </div>
             )}
 

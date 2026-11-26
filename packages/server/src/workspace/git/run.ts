@@ -227,7 +227,11 @@ export async function runGit(
         stderr: result.stderr,
         stdout: result.stdout,
       })
-      if (failure) reject(new GitRunError(failure.code, failure.message, result))
+      if (failure) {
+        // 仓库被删除/移走时立即作废根缓存，下次请求重新探测。
+        if (failure.code === 'not_repo') forgetRoot(cwd)
+        reject(new GitRunError(failure.code, failure.message, result))
+      }
       else resolve(result)
     }
 
@@ -269,12 +273,43 @@ export async function runGit(
   })
 }
 
+// 面板每 5s 轮询，每个 git.* 都要先 rev-parse 取根；Windows 上 spawn 很贵，短期缓存并合并并发请求。
+const ROOT_TTL_MS = 30_000
+const rootCache = new Map<string, { root: Promise<string>; at: number }>()
+
+export function resetGitRootCache(): void {
+  rootCache.clear()
+}
+
+function forgetRoot(dir: string): void {
+  for (const [cwd, entry] of rootCache) {
+    void entry.root.then(
+      (root) => {
+        if (root === path.resolve(dir) && rootCache.get(cwd) === entry) rootCache.delete(cwd)
+      },
+      () => {},
+    )
+  }
+}
+
 /** 所有 git.* 方法先取仓库根，后续命令都在根下执行，保证路径是根相对路径。 */
 export async function gitRoot(cwd: string): Promise<string> {
-  const res = await runGit(cwd, ['rev-parse', '--show-toplevel'], { readOnly: true })
-  const root = res.stdout.trim()
-  if (!root) throw new WorkspaceError('not_repo', `不是 git 仓库: ${cwd}`)
-  return path.resolve(root)
+  const now = Date.now()
+  const cached = rootCache.get(cwd)
+  if (cached && now - cached.at < ROOT_TTL_MS) return cached.root
+  const root = (async () => {
+    const res = await runGit(cwd, ['rev-parse', '--show-toplevel'], { readOnly: true })
+    const value = res.stdout.trim()
+    if (!value) throw new WorkspaceError('not_repo', `不是 git 仓库: ${cwd}`)
+    return path.resolve(value)
+  })()
+  const entry = { root, at: now }
+  rootCache.set(cwd, entry)
+  // 失败不缓存：目录稍后 git init 后应立即可用。
+  root.catch(() => {
+    if (rootCache.get(cwd) === entry) rootCache.delete(cwd)
+  })
+  return root
 }
 
 /** 空仓库没有 HEAD：unstage / discard 需要走不同命令。 */

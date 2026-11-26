@@ -8,8 +8,8 @@ import { defineConfig, type Plugin } from 'vite'
 const webRoot = dirname(fileURLToPath(import.meta.url))
 const desktopRequire = createRequire(resolve(webRoot, '../../desktop/package.json'))
 
-// 终端和桌面共用现有 xterm 依赖；pnpm 隔离安装时从桌面包解析。
-const terminalAliases = ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-search', '@xterm/addon-unicode11']
+// 终端与图标（xterm、lucide）和桌面共用同一份依赖，图标因此与电脑版一致；pnpm 隔离安装时从桌面包解析。
+const terminalAliases = ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-search', '@xterm/addon-unicode11', 'lucide-react']
   .map((name) => {
     const manifest = desktopRequire.resolve(`${name}/package.json`)
     const { module, main } = desktopRequire(manifest) as { module?: string; main: string }
@@ -34,6 +34,8 @@ export default defineConfig({
   base: './',
   plugins: [react(), tailwindcss(), stripCrossOrigin()],
   resolve: {
+    // lucide 从桌面包解析，强制共用同一份 React，避免出现两份运行时。
+    dedupe: ['react', 'react-dom'],
     alias: [
       { find: '@xterm/xterm/css/xterm.css', replacement: desktopRequire.resolve('@xterm/xterm/css/xterm.css') },
       ...terminalAliases,

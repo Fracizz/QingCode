@@ -1,3 +1,4 @@
+import { Plus, Settings } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { callDevice, getGateway } from '../client'
 import { formatAddress, isValidPairingCode, normalizeFingerprint, parseAddress, parsePairingLink } from '../link'
@@ -167,10 +168,10 @@ export function ConnectionsPage() {
 
   return (
     <>
-      <main className="qn-body qn-scroll qn-workspace">
+      <main className="qn-body qn-scroll qn-workspace qn-rise">
         <header className="qn-workspace-title" data-connected={eventsConnected}>
           <div className="qn-workspace-context">
-            <span>{mock ? '浏览器预览' : 'QingCode Next'}</span>
+            <span className="text-[13px]">{mock ? '浏览器预览' : connections.length ? `已配对 ${connections.length} 台电脑` : 'QingCode Next'}</span>
             <div className="flex">
               {connections.length > 0 && (
                 <Button variant="ghost" className="qn-list-action" onClick={() => void refreshStatuses()} aria-label="刷新连接">
@@ -178,7 +179,7 @@ export function ConnectionsPage() {
                 </Button>
               )}
               <Button variant="ghost" className="qn-list-action" onClick={() => setSettings(true)} aria-label="应用设置">
-                ⚙
+                <Settings size={20} strokeWidth={1.75} />
               </Button>
             </div>
           </div>
@@ -192,7 +193,9 @@ export function ConnectionsPage() {
             <p>在电脑端「手机连接」复制连接信息。</p>
             <div className="mt-4 flex flex-col gap-2">
               <Button variant="primary" onClick={addFromClipboard}>从剪贴板导入</Button>
-              <Button variant="ghost" onClick={openAddForm}>添加连接</Button>
+              <button type="button" className="qn-dashed-action qn-pressable mt-0" onClick={openAddForm}>
+                <Plus size={17} aria-hidden />添加连接
+              </button>
             </div>
           </Empty>
         ) : (
@@ -220,8 +223,10 @@ export function ConnectionsPage() {
                 )
               })}
             </div>
-            <Button variant="primary" className="mt-4 w-full" onClick={addFromClipboard}>从剪贴板导入</Button>
-            <Button variant="ghost" className="mt-2 w-full" onClick={openAddForm}>添加连接</Button>
+            {/* 已有连接时这里不是主操作：只留虚线入口，导入方式在添加页里选。 */}
+            <button type="button" className="qn-dashed-action qn-pressable" onClick={openAddForm}>
+              <Plus size={17} aria-hidden />添加连接
+            </button>
           </>
         )}
       </main>

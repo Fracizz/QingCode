@@ -1,3 +1,4 @@
+import { X } from 'lucide-react'
 import {
   compactText,
   formatReset,
@@ -113,8 +114,8 @@ export function RateLimitDetails({
         <Button className="px-2 py-1 text-xs" onClick={() => targetId && void refresh(targetId)} disabled={!targetId}>
           刷新
         </Button>
-        <Button variant="ghost" className="px-2 py-1 text-xs" onClick={onClose}>
-          ✕
+        <Button variant="ghost" className="px-2 py-1 text-xs" onClick={onClose} aria-label="关闭">
+          <X size={15} />
         </Button>
       </div>
       {entry?.error && <p className="mb-2 text-xs text-qn-danger">{entry.error}</p>}
