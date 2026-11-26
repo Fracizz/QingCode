@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react'
 import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Modal, Spinner } from '../../components/ui'
+import { FeedbackRow } from '../../components/FeedbackRow'
 import { Tip } from '../../components/primitives'
 import { copyText } from '../../lib/clipboard'
 import { cn } from '../../lib/cn'
@@ -234,14 +235,11 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
         <ErrorNote message={view.runsError} onRetry={() => void init(targetId)} />
         <ErrorNote message={view.configError} onRetry={() => void loadConfigs(targetId, cwd)} />
         <ErrorNote message={error} onClose={() => setError(null)} />
-        {notice && (
-          <div className="flex items-start gap-2 rounded-lg bg-qn-warn/10 px-3 py-2 text-[12px] leading-5 text-qn-warn">
-            <span className="min-w-0 flex-1">{notice}</span>
-            <button type="button" aria-label="关闭提示" onClick={() => setNotice(null)}>
-              <X size={13} />
-            </button>
-          </div>
-        )}
+        <FeedbackRow
+          message={notice}
+          className="rounded-lg bg-qn-warn/10 px-3 py-2 text-[12px] leading-5 text-qn-warn"
+          onClose={() => setNotice(null)}
+        />
         {view.configSource === 'nestcode' && !view.configError && (
           <div className="rounded-lg bg-white/[0.04] px-3 py-2 text-[12px] leading-5 text-qn-muted">
             读取自旧版位置 .nestcode/run.json；保存后写入 {RUN_CONFIG_RELATIVE_PATH}。
@@ -594,17 +592,19 @@ function RunOutputArea({
                 />
                 <span className="truncate">{run.label}</span>
                 {!live && (
-                  <button
-                    type="button"
-                    aria-label="关闭输出"
-                    className="shrink-0 rounded text-qn-dim hover:text-qn-text"
+                  <IconButton
+                    label="关闭输出"
+                    size="sm"
+                    tooltip={false}
+                    className="size-4 rounded text-qn-dim"
+                    onKeyDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation()
                       hide(run.runId)
                     }}
                   >
                     <X size={12} />
-                  </button>
+                  </IconButton>
                 )}
               </div>
             )

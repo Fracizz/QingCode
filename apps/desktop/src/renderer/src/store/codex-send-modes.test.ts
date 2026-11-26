@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentKind } from '../../../shared/backendApi'
+import { sessionKey } from '../lib/agents'
 import { pendingSendKey, useCodex } from './codex'
 
 type RpcRequest = { id: string; method: string; params: Record<string, unknown> }
@@ -47,7 +48,10 @@ describe('聊天发送方式', () => {
       const result = method === 'turn/start' ? { turn: { id, status: 'inProgress', items: [] } } : {}
       receive(agent, { id, result })
     })
-    useCodex.setState({ sessions: {}, pendingSends: {}, sending: false })
+    useCodex.setState({
+      sessions: {}, pendingSends: {}, sending: false,
+      currentTargetId: null, currentThreadId: null, error: null, notice: null,
+    })
     await useCodex.getState().ensureOpen(targetId, 'codex')
     notifyTurn('turn/started', 'active', 'inProgress')
   })
@@ -88,9 +92,21 @@ describe('聊天发送方式', () => {
     const { send } = useCodex.getState()
     await send('等候', chat)
     const immediate = send('优先发送', { ...chat, mode: 'immediate' })
+    const items = () => useCodex.getState().sessions[sessionKey(targetId, 'codex')]?.state.threads[threadId]?.items
+    expect(useCodex.getState().sendingMessage).toMatchObject({
+      key: pendingSendKey(chat),
+      preview: { kind: 'user', text: '优先发送', pending: true },
+    })
     await vi.waitFor(() => expect(methods()).toEqual(['turn/interrupt']))
+    receive('codex', {
+      method: 'item/agentMessage/delta',
+      params: { threadId, turnId: 'active', itemId: 'old-reply', delta: '旧轮次的回复' },
+    })
+    expect(items()).toMatchObject([{ kind: 'agent', text: '旧轮次的回复' }])
     notifyTurn('turn/completed', 'active', 'interrupted')
     expect(await immediate).toBe(true)
+    expect(items()).toMatchObject([{ kind: 'agent', text: '旧轮次的回复' }, { kind: 'user', text: '优先发送' }])
+    expect(useCodex.getState().sendingMessage).toBeNull()
     expect(methods()).toEqual(['turn/interrupt', 'turn/start'])
     expect(pending().map((item) => item.text)).toEqual(['等候'])
     notifyTurn('turn/completed', 'c2', 'completed')
@@ -106,6 +122,36 @@ describe('聊天发送方式', () => {
     useCodex.getState().retryPendingSend(chat)
     await vi.waitFor(() => expect(pending()).toEqual([]))
     expect(methods()).toEqual(['turn/start'])
+  })
+
+  it('会话被其他 Codex 占用时可查看历史，释放后重新发送原会话', async () => {
+    useCodex.setState({ currentTargetId: targetId })
+    let occupied = true
+    const thread = { id: threadId, status: { type: 'idle' }, turns: [] }
+    backend.send.mockImplementation((agent, { id, method }) => {
+      if (method === 'thread/resume' && occupied) {
+        receive(agent, { id, error: { code: -32600, message: `thread ${threadId} already has an active writer` } })
+      } else {
+        const result = method === 'turn/start' ? { turn: { id, status: 'inProgress', items: [] } } : { thread }
+        receive(agent, { id, result })
+      }
+    })
+
+    const { openThread, send } = useCodex.getState()
+    await openThread(threadId, 'codex')
+    expect(useCodex.getState().currentThreadId).toBe(threadId)
+    expect(useCodex.getState().notice).toContain('可查看历史')
+    expect(await send('继续', { agent: 'codex' })).toBe(false)
+    expect(useCodex.getState().error).toContain('另一个 Codex 进程占用')
+    expect(methods()).toEqual(['thread/resume', 'thread/read', 'thread/resume'])
+
+    occupied = false
+    expect(await send('继续', { agent: 'codex' })).toBe(true)
+    expect(methods()).toEqual(['thread/resume', 'thread/read', 'thread/resume', 'thread/resume', 'turn/start'])
+    expect(backend.send.mock.lastCall?.[1].params).toMatchObject({
+      threadId,
+      input: [{ type: 'text', text: '继续', text_elements: [] }],
+    })
   })
 
   it('上一条在回包前已完成时，仍会派发下一条', async () => {

@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
-import { X } from 'lucide-react'
 import { useCodex } from '../store/codex'
 import { useTargets } from '../store/targets'
+import { FeedbackRow } from './FeedbackRow'
 
 export function Notice() {
   const targetNotice = useTargets((s) => s.notice)
@@ -19,20 +19,14 @@ export function Notice() {
     return () => clearTimeout(timer)
   }, [message, dismissTargets, dismissCodex])
 
-  if (!message) return null
   return (
-    <div className="qn-no-drag qn-pop qn-surface-float fixed right-4 top-12 z-40 flex max-w-sm items-start gap-2 px-3.5 py-2.5 text-[13px]">
-      <span className="min-w-0 flex-1 whitespace-pre-wrap">{message}</span>
-      <button
-        type="button"
-        aria-label="关闭提示"
-        onClick={() => {
-          dismissTargets()
-          dismissCodex()
-        }}
-      >
-        <X size={13} />
-      </button>
-    </div>
+    <FeedbackRow
+      message={message}
+      className="qn-no-drag qn-pop qn-surface-float fixed right-4 top-12 z-40 max-w-sm px-3.5 py-2.5 text-[13px] leading-5"
+      onClose={() => {
+        dismissTargets()
+        dismissCodex()
+      }}
+    />
   )
 }

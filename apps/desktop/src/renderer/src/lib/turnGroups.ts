@@ -12,6 +12,16 @@ export type TurnEntry =
   /** 已结束一轮的过程（思考、工具、中间说明）收成"工作了 4m 56s"，只露出最终回复。 */
   | { kind: 'work'; key: string; durationMs: number | null; entries: FlowEntry[] }
 
+export function hasPendingReply(items: ItemView[], running: boolean, submitting: boolean): boolean {
+  if (!running && !submitting) return false
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]!
+    if (item.kind === 'agent' && item.text.trim()) return false
+    if (item.kind === 'user') return running || (submitting && item.pending === true)
+  }
+  return false
+}
+
 /** 按用户消息切轮；进行中的那一轮保持展开，方便看实时进度。 */
 export function groupTurns(items: ItemView[], turns: TurnMeta[] | undefined, running: boolean): TurnEntry[] {
   const segments: ItemView[][] = []

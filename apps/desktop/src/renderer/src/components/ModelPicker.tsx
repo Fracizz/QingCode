@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, LoaderCircle, RotateCw, Search, Zap } from 'lucide-react'
+import { Check, ChevronDown, Zap } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { sessionKey } from '../lib/agents'
 import { cn } from '../lib/cn'
@@ -16,7 +16,11 @@ import {
 } from '../lib/models'
 import { useCodex } from '../store/codex'
 import { useModels } from '../store/models'
+import { ListOption } from './ListOption'
+import { LoadingIcon } from './LoadingIcon'
 import { PopoverContent, PopoverRoot, PopoverTrigger, Tip } from './primitives'
+import { SearchField } from './SearchField'
+import { EmptyState, ErrorNote, Spinner } from './ui'
 
 /**
  * 输入框里的模型选择器（参考 Codex）：搜索模型 → 选模型 → 推理强度分段 → 速度（Fast）开关。
@@ -66,7 +70,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
           aria-label="选择模型与推理强度"
         >
           {list?.loading && models.length === 0 ? (
-            <LoaderCircle size={13} className="animate-spin" />
+            <LoadingIcon size={13} />
           ) : (
             selection.fast && <Zap size={13} className="shrink-0 text-qn-warn" />
           )}
@@ -83,55 +87,42 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
           searchRef.current?.focus()
         }}
       >
-        <div className="flex items-center gap-2.5 border-b border-qn-border px-3.5 py-3">
-          <Search size={16} className="shrink-0 text-qn-dim" />
-          <input
-            ref={searchRef}
-            className="min-w-0 flex-1 bg-transparent text-[14px] text-qn-text outline-none placeholder:text-qn-dim"
-            placeholder="搜索模型…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && visible[0]) {
-                event.preventDefault()
-                pick(visible[0].model)
-                setQuery('')
-              }
-            }}
-          />
-        </div>
+        <SearchField
+          ref={searchRef}
+          label="搜索模型"
+          className="gap-2.5 border-b border-qn-border px-3.5 py-3"
+          inputClassName="text-[14px]"
+          placeholder="搜索模型…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && visible[0]) {
+              event.preventDefault()
+              pick(visible[0].model)
+              setQuery('')
+            }
+          }}
+        />
 
         <div className="qn-scroll max-h-[min(320px,45vh)] space-y-1 overflow-y-auto p-1.5" role="listbox" aria-label="模型">
-          {list?.error && (
-            <div className="flex items-center gap-2 px-2.5 py-2 text-[13px] text-qn-danger">
-              <span className="min-w-0 flex-1">{list.error}</span>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 text-qn-muted hover:text-qn-text"
-                onClick={() => session && void load(targetId, agent, session.rpc, true)}
-              >
-                <RotateCw size={13} /> 重试
-              </button>
-            </div>
-          )}
+          <ErrorNote
+            message={list?.error ?? null}
+            variant="compact"
+            onRetry={() => session && void load(targetId, agent, session.rpc, true)}
+          />
           {list?.loading && models.length === 0 && (
-            <div className="px-2.5 py-3 text-[13px] text-qn-muted">正在加载模型…</div>
+            <div className="px-2.5 py-3"><Spinner label="正在加载模型…" /></div>
           )}
           {!list?.loading && visible.length === 0 && models.length > 0 && (
-            <div className="px-2.5 py-3 text-center text-[13px] text-qn-muted">没有匹配的模型</div>
+            <EmptyState className="px-2.5 py-3 leading-5">没有匹配的模型</EmptyState>
           )}
           {visible.map((model) => {
             const selected = model.model === selection.model?.model
             return (
-              <button
+              <ListOption
                 key={model.id}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                className={cn(
-                  'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left outline-none focus-visible:bg-qn-hover',
-                  selected ? 'bg-qn-active' : 'hover:bg-qn-hover',
-                )}
+                selected={selected}
+                className="px-3 py-2.5"
                 onClick={() => pick(model.model)}
               >
                 <span className="min-w-0 flex-1">
@@ -143,7 +134,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                   )}
                 </span>
                 {selected && <Check size={16} className="shrink-0 text-qn-text" />}
-              </button>
+              </ListOption>
             )
           })}
         </div>

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { CircleAlert, Command, History, X } from 'lucide-react'
+import { Command, History } from 'lucide-react'
 import { Dialog, VisuallyHidden } from 'radix-ui'
+import { DialogFrame } from '../../components/DialogFrame'
+import { ListOption } from '../../components/ListOption'
+import { SearchField } from '../../components/SearchField'
+import { EmptyState, ErrorNote } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import {
   executeCommand,
@@ -119,110 +123,92 @@ function PaletteBody({ onError, registry }: Required<Pick<CommandPaletteProps, '
   const activeId = ranked[selected] ? `qn-palette-item-${selected}` : undefined
   const firstRest = ranked.findIndex((item) => !item.recent)
 
+  // 浮层用 flex 居中，避免与 qn-pop 动画共用 transform。
   return (
-    <Dialog.Root
-      open
-      onOpenChange={(next) => {
-        if (!next) close()
-      }}
+    <DialogFrame
+      onClose={close}
+      overlayClassName="flex items-start justify-center bg-black/40 px-4 pt-[12vh]"
+      className="qn-pop max-h-[min(520px,70vh)] w-full max-w-[640px] rounded-xl"
     >
-      <Dialog.Portal>
-        {/* 用 flex 居中而不是 translate：qn-pop 动画会改写 transform */}
-        <Dialog.Overlay className="qn-no-drag fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 pt-[12vh]">
-          <Dialog.Content
-            aria-describedby={undefined}
-            className="qn-pop flex max-h-[min(520px,70vh)] w-full max-w-[640px] flex-col overflow-hidden rounded-xl border border-qn-border-strong bg-qn-panel shadow-[0_24px_80px_rgba(0,0,0,0.55)] outline-none"
-          >
-            <VisuallyHidden.Root>
-              <Dialog.Title>命令面板</Dialog.Title>
-            </VisuallyHidden.Root>
-            <div className="flex shrink-0 items-center gap-2 border-b border-qn-border px-3 py-2.5">
-              <Command size={15} className="shrink-0 text-qn-muted" />
-              <input
-                autoFocus
-                className="min-w-0 flex-1 bg-transparent text-[14px] text-qn-text outline-none placeholder:text-qn-dim"
-                value={query}
-                placeholder="输入命令名称"
-                role="combobox"
-                aria-expanded
-                aria-controls="qn-palette-list"
-                aria-activedescendant={activeId}
-                aria-autocomplete="list"
-                spellCheck={false}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={onKeyDown}
-              />
-            </div>
-            {error && (
-              <div className="flex shrink-0 items-start gap-2 border-b border-qn-border bg-qn-danger/10 px-3 py-2 text-[12px] text-qn-danger">
-                <CircleAlert size={14} className="mt-px shrink-0" />
-                <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{error}</span>
-                <button
-                  type="button"
-                  aria-label="关闭错误提示"
-                  className="shrink-0 opacity-70 hover:opacity-100"
-                  onClick={() => useCommandPalette.getState().clearError()}
-                >
-                  <X size={13} />
-                </button>
-              </div>
+      <VisuallyHidden.Root>
+        <Dialog.Title>命令面板</Dialog.Title>
+      </VisuallyHidden.Root>
+      <SearchField
+        autoFocus
+        label="搜索命令"
+        icon={<Command size={15} className="text-qn-muted" />}
+        className="shrink-0 border-b border-qn-border px-3 py-2.5"
+        inputClassName="text-[14px]"
+        value={query}
+        placeholder="输入命令名称"
+        role="combobox"
+        aria-expanded
+        aria-controls="qn-palette-list"
+        aria-activedescendant={activeId}
+        aria-autocomplete="list"
+        spellCheck={false}
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={onKeyDown}
+      />
+      <ErrorNote
+        message={error}
+        variant="inline"
+        closeLabel="关闭错误提示"
+        onClose={() => useCommandPalette.getState().clearError()}
+      />
+      <div
+        ref={listRef}
+        id="qn-palette-list"
+        role="listbox"
+        aria-label="命令"
+        className="qn-scroll min-h-0 flex-1 overflow-y-auto p-1"
+      >
+        {ranked.length === 0 && (
+          <EmptyState>没有匹配的命令</EmptyState>
+        )}
+        {ranked.map((item, index) => (
+          <ListOption
+            key={item.command.id}
+            id={`qn-palette-item-${index}`}
+            data-index={index}
+            selected={index === selected}
+            tabIndex={-1}
+            className={cn(
+              'cursor-default gap-2 rounded-md py-1.5 text-[13px]',
+              index === selected ? 'bg-qn-accent/20 text-qn-text' : 'text-qn-text/90',
+              // 最近使用与其余命令之间画一道分隔线
+              index === firstRest && firstRest > 0 && 'mt-1 border-t border-qn-border pt-2',
             )}
-            <div
-              ref={listRef}
-              id="qn-palette-list"
-              role="listbox"
-              aria-label="命令"
-              className="qn-scroll min-h-0 flex-1 overflow-y-auto py-1"
-            >
-              {ranked.length === 0 && (
-                <div className="px-3 py-6 text-center text-[13px] text-qn-muted">没有匹配的命令</div>
+            // 用 mousemove 而非 mouseenter：键盘滚动列表时鼠标静止不应抢走选中项
+            onMouseMove={() => {
+              if (index !== selected) setSelected(index)
+            }}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => choose(item)}
+          >
+            <span className="min-w-0 flex-1 truncate">
+              {item.command.category && (
+                <span className="text-qn-muted">
+                  <Highlighted text={item.command.category} positions={item.categoryPositions} />
+                  {': '}
+                </span>
               )}
-              {ranked.map((item, index) => (
-                <div
-                  key={item.command.id}
-                  id={`qn-palette-item-${index}`}
-                  data-index={index}
-                  role="option"
-                  aria-selected={index === selected}
-                  className={cn(
-                    'mx-1 flex cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px]',
-                    index === selected ? 'bg-qn-accent/20 text-qn-text' : 'text-qn-text/90',
-                    // 最近使用与其余命令之间画一道分隔线
-                    index === firstRest && firstRest > 0 && 'mt-1 border-t border-qn-border pt-2',
-                  )}
-                  // 用 mousemove 而非 mouseenter：键盘滚动列表时鼠标静止不应抢走选中项
-                  onMouseMove={() => {
-                    if (index !== selected) setSelected(index)
-                  }}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => choose(item)}
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    {item.command.category && (
-                      <span className="text-qn-muted">
-                        <Highlighted text={item.command.category} positions={item.categoryPositions} />
-                        {': '}
-                      </span>
-                    )}
-                    <Highlighted text={item.command.title} positions={item.titlePositions} />
-                  </span>
-                  {item.recent && index === 0 && !normalizeQuery(query) && (
-                    <span className="flex shrink-0 items-center gap-1 text-[11px] text-qn-dim">
-                      <History size={11} />
-                      最近使用
-                    </span>
-                  )}
-                  {item.command.shortcut && <ShortcutKeys shortcut={item.command.shortcut} />}
-                </div>
-              ))}
-            </div>
-            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-qn-border px-3 py-1.5 text-[11px] text-qn-dim">
-              <span>↑↓ 选择 · PageUp/PageDown 翻页 · Enter 执行 · Esc 关闭</span>
-              <span>{ranked.length} 条命令</span>
-            </div>
-          </Dialog.Content>
-        </Dialog.Overlay>
-      </Dialog.Portal>
-    </Dialog.Root>
+              <Highlighted text={item.command.title} positions={item.titlePositions} />
+            </span>
+            {item.recent && index === 0 && !normalizeQuery(query) && (
+              <span className="flex shrink-0 items-center gap-1 text-[11px] text-qn-dim">
+                <History size={11} />
+                最近使用
+              </span>
+            )}
+            {item.command.shortcut && <ShortcutKeys shortcut={item.command.shortcut} />}
+          </ListOption>
+        ))}
+      </div>
+      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-qn-border px-3 py-1.5 text-[11px] text-qn-dim">
+        <span>↑↓ 选择 · PageUp/PageDown 翻页 · Enter 执行 · Esc 关闭</span>
+        <span>{ranked.length} 条命令</span>
+      </div>
+    </DialogFrame>
   )
 }

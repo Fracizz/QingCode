@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
-import { DropdownMenu, Popover, Select as RadixSelect, Tabs, Tooltip } from 'radix-ui'
+import { ContextMenu, DropdownMenu, Popover, Select as RadixSelect, Tabs, Tooltip } from 'radix-ui'
 import { cn } from '../lib/cn'
 
 /*
@@ -10,6 +10,23 @@ import { cn } from '../lib/cn'
 
 /** 浮层统一外观（见 styles.css 的 .qn-surface-float）；导出给非 Radix 浮层（斜杠菜单、划词工具条、右键菜单）复用。 */
 export const floatSurface = 'qn-no-drag qn-float qn-surface-float z-50 text-[13px]'
+
+export const menuItemClass =
+  'flex min-h-8 cursor-default select-none items-center gap-2.5 rounded-lg px-2.5 py-1 outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-qn-hover data-[state=open]:bg-qn-hover'
+
+const menuSeparatorClass = 'mx-1 my-1 h-px bg-qn-border'
+
+type MenuItemProps = { icon?: ReactNode; hint?: ReactNode; danger?: boolean; children?: ReactNode }
+
+export function MenuItemContent({ icon, hint, danger, children }: MenuItemProps) {
+  return (
+    <>
+      {icon && <span className={cn('flex w-4 shrink-0 justify-center', !danger && 'text-qn-muted')}>{icon}</span>}
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+      {hint && <span className="shrink-0 text-[12px] text-qn-dim">{hint}</span>}
+    </>
+  )
+}
 
 // ---------- 下拉菜单 ----------
 
@@ -43,19 +60,13 @@ export function MenuItem({
   danger,
   children,
   ...props
-}: ComponentProps<typeof DropdownMenu.Item> & { icon?: ReactNode; hint?: ReactNode; danger?: boolean }) {
+}: ComponentProps<typeof DropdownMenu.Item> & MenuItemProps) {
   return (
     <DropdownMenu.Item
-      className={cn(
-        'flex min-h-8 cursor-default select-none items-center gap-2.5 rounded-lg px-2.5 py-1 outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-qn-hover',
-        danger ? 'text-qn-danger' : 'text-qn-text',
-        className,
-      )}
+      className={cn(menuItemClass, danger ? 'text-qn-danger' : 'text-qn-text', className)}
       {...props}
     >
-      {icon && <span className={cn('flex w-4 shrink-0 justify-center', !danger && 'text-qn-muted')}>{icon}</span>}
-      <span className="min-w-0 flex-1 truncate">{children}</span>
-      {hint && <span className="shrink-0 text-[12px] text-qn-dim">{hint}</span>}
+      <MenuItemContent icon={icon} hint={hint} danger={danger}>{children}</MenuItemContent>
     </DropdownMenu.Item>
   )
 }
@@ -65,7 +76,34 @@ export function MenuLabel({ className, ...props }: ComponentProps<typeof Dropdow
 }
 
 export function MenuSeparator({ className, ...props }: ComponentProps<typeof DropdownMenu.Separator>) {
-  return <DropdownMenu.Separator className={cn('mx-1 my-1 h-px bg-qn-border', className)} {...props} />
+  return <DropdownMenu.Separator className={cn(menuSeparatorClass, className)} {...props} />
+}
+
+export function ContextMenuContent({ className, ...props }: ComponentProps<typeof ContextMenu.Content>) {
+  return (
+    <ContextMenu.Portal>
+      <ContextMenu.Content className={cn(floatSurface, 'min-w-48 p-1', className)} {...props} />
+    </ContextMenu.Portal>
+  )
+}
+
+export function ContextMenuItem({
+  className,
+  icon,
+  hint,
+  danger,
+  children,
+  ...props
+}: ComponentProps<typeof ContextMenu.Item> & MenuItemProps) {
+  return (
+    <ContextMenu.Item className={cn(menuItemClass, danger ? 'text-qn-danger' : 'text-qn-text', className)} {...props}>
+      <MenuItemContent icon={icon} hint={hint} danger={danger}>{children}</MenuItemContent>
+    </ContextMenu.Item>
+  )
+}
+
+export function ContextMenuSeparator({ className, ...props }: ComponentProps<typeof ContextMenu.Separator>) {
+  return <ContextMenu.Separator className={cn(menuSeparatorClass, className)} {...props} />
 }
 
 // ---------- 弹出面板 ----------
@@ -183,7 +221,7 @@ export function Select({
           <RadixSelect.Viewport className="qn-scroll p-1">
             {list.map((group, index) => (
               <RadixSelect.Group key={index}>
-                {index > 0 && <RadixSelect.Separator className="mx-1 my-1 h-px bg-qn-border" />}
+                {index > 0 && <RadixSelect.Separator className={menuSeparatorClass} />}
                 {group.label && (
                   <RadixSelect.Label className="px-2.5 pb-1 pt-1.5 text-[12px] text-qn-dim">{group.label}</RadixSelect.Label>
                 )}

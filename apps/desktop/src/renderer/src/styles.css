@@ -40,10 +40,6 @@ html[data-density="compact"] {
   --spacing: 0.22rem;
 }
 
-html[data-density="compact"] .qn-input {
-  padding: 5px 9px;
-}
-
 html,
 body,
 #root {
@@ -82,6 +78,10 @@ button:disabled {
     transition:
       border-color 120ms ease,
       box-shadow 120ms ease;
+  }
+
+  html[data-density="compact"] .qn-input {
+    padding: 5px 9px;
   }
 
   .qn-input:hover:not(:disabled, :focus) {
@@ -225,7 +225,7 @@ button:disabled {
 
 /*
  * 拖拽分隔条（components/ResizeHandle.tsx，全局唯一实现，沿用旧版 QingCode）：
- * 双向箭头光标；平时隐形，悬停出细线 + 三点握把，拖动/聚焦变青色；拖动时 body.qn-resizing 锁定全局光标。
+ * 双向箭头光标；平时隐形，悬停显示细线和三圆点，拖动/聚焦变青色；拖动时 body.qn-resizing 锁定全局光标。
  */
 body.qn-resizing,
 body.qn-resizing * {
@@ -289,7 +289,12 @@ body.qn-resizing webview {
 .qn-resizer-grip {
   position: relative;
   display: flex;
+  flex: none;
   gap: 4px;
+  border: 1px solid var(--color-qn-border-strong);
+  border-radius: 999px;
+  /* 托底遮住分隔线，避免细线从圆点之间穿过。 */
+  background: var(--color-qn-elevated);
   opacity: 0;
   pointer-events: none;
   transition: opacity 160ms ease;
@@ -297,20 +302,19 @@ body.qn-resizing webview {
 
 .qn-resizer[data-orientation="vertical"] .qn-resizer-grip {
   flex-direction: column;
-  padding: 6px 0;
+  padding: 5px 2px;
 }
 
 .qn-resizer[data-orientation="horizontal"] .qn-resizer-grip {
-  flex-direction: row;
-  padding: 0 6px;
+  padding: 2px 5px;
 }
 
-.qn-resizer-grip span {
-  width: 3px;
-  height: 3px;
-  border-radius: 999px;
-  background: var(--color-qn-dim);
-  transition: background 120ms ease, transform 120ms ease;
+.qn-resizer-grip > span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-qn-muted);
+  transition: background 120ms ease;
 }
 
 .qn-resizer:hover .qn-resizer-line,
@@ -335,9 +339,9 @@ body.qn-resizing webview {
   height: 2px;
 }
 
-.qn-resizer[data-active="true"] .qn-resizer-grip span {
+.qn-resizer:focus-visible .qn-resizer-grip > span,
+.qn-resizer[data-active="true"] .qn-resizer-grip > span {
   background: var(--color-qn-brand);
-  transform: scale(1.15);
 }
 
 @media (prefers-reduced-motion: reduce) {

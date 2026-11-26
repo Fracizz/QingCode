@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Search } from 'lucide-react'
-import { Checkbox, ErrorNote, Spinner } from '../../components/ui'
+import { FeedbackRow } from '../../components/FeedbackRow'
+import { SearchField } from '../../components/SearchField'
+import { Checkbox, EmptyState, ErrorNote, Spinner } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { openFile } from '../workspace/openers'
 import { groupContentMatches, highlightParts } from './searchModel'
@@ -39,9 +40,10 @@ export function SearchPanel({
     <div className={cn('flex min-h-0 flex-col bg-qn-sidebar text-qn-text', className)}>
       <div className="shrink-0 space-y-2 border-b border-qn-border px-3 py-2">
         <div className="flex items-center gap-2">
-          <Search size={15} className="shrink-0 text-qn-muted" />
-          <input
-            className="qn-input min-w-0 flex-1"
+          <SearchField
+            boxed
+            className="flex-1"
+            label="搜索文件内容"
             value={query}
             placeholder="搜索文件内容"
             onChange={(event) => setQuery(event.target.value)}
@@ -61,14 +63,13 @@ export function SearchPanel({
         </div>
       </div>
       <ErrorNote message={search.error} />
-      {truncated && (
-        <div className="border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-[12px] text-qn-warn">
-          结果已截断，请缩小查询范围或使用 glob 过滤
-        </div>
-      )}
+      <FeedbackRow
+        message={truncated ? '结果已截断，请缩小查询范围或使用 glob 过滤' : null}
+        className="border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-[12px] leading-5 text-qn-warn"
+      />
       <div className="qn-scroll min-h-0 flex-1 overflow-y-auto">
         {groups.length === 0 && (
-          <div className="px-3 py-6 text-center text-[13px] leading-6 text-qn-muted">
+          <EmptyState>
             {query.trim() === ''
               ? '输入关键字搜索项目内容'
               : search.searching
@@ -76,7 +77,7 @@ export function SearchPanel({
                 : search.done
                   ? '没有匹配结果'
                   : '准备搜索…'}
-          </div>
+          </EmptyState>
         )}
         {groups.map((group) => (
           <div key={group.path} className="border-b border-qn-border/60 py-1">

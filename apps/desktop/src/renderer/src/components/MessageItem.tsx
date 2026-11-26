@@ -1,7 +1,7 @@
 import { Children, isValidElement, memo, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, GitFork, ImageIcon, Lightbulb, ListChecks, LoaderCircle, Pencil, Terminal, Wand2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, GitFork, ImageIcon, Lightbulb, ListChecks, Pencil, Terminal, Wand2 } from 'lucide-react'
 import type { ItemView, UserInput } from '@qn/codex-client'
 import { basename, editUserText, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
@@ -12,6 +12,8 @@ import { formatDuration, isGroupRunning, summarizeTools, type FlowEntry } from '
 import { createMarkdownLink, FileChangeActions, PathText, qnUrlTransform, type LinkContext } from '../features/files'
 import { useCodex } from '../store/codex'
 import { CodeBlock } from './CodeBlock'
+import { FeedbackRow } from './FeedbackRow'
+import { LoadingIcon } from './LoadingIcon'
 import { MessageActions } from './MessageActions'
 import { MessageImage } from './MessageImage'
 import { Badge, IconButton } from './ui'
@@ -156,7 +158,7 @@ function CommandItem({ item }: { item: Extract<ItemView, { kind: 'command' }> })
   const failed = item.exitCode !== null && item.exitCode !== undefined && item.exitCode !== 0
   return (
     <ToolRow
-      icon={running ? <LoaderCircle size={14} className="animate-spin text-qn-brand" /> : <Terminal size={14} />}
+      icon={running ? <LoadingIcon className="text-qn-brand" /> : <Terminal size={14} />}
       summary={
         <>
           {running ? '正在运行 ' : '已运行 '}
@@ -234,6 +236,10 @@ function AgentMessage({ id, text, streaming, onFork }: { id: string; text: strin
   )
 }
 
+export function ReplyPending() {
+  return <FeedbackRow message="正在准备回复…" icon={<LoadingIcon />} className="text-[13px] leading-6 text-qn-muted" />
+}
+
 export const MessageItem = memo(function MessageItem({
   item,
   onFork,
@@ -247,7 +253,9 @@ export const MessageItem = memo(function MessageItem({
     case 'user':
       return <UserMessage item={item} onEdit={item.pending ? undefined : onEdit} />
     case 'agent':
-      return <AgentMessage id={item.id} text={item.text} streaming={item.streaming === true} onFork={onFork} />
+      return item.text.trim()
+        ? <AgentMessage id={item.id} text={item.text} streaming={item.streaming === true} onFork={onFork} />
+        : null
     case 'reasoning':
       return (
         <ToolRow
@@ -284,7 +292,7 @@ export const ToolGroup = memo(function ToolGroup({ items }: { items: ItemView[] 
   return (
     <details className="group/steps text-[13px]">
       <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden">
-        {running ? <LoaderCircle size={14} className="animate-spin text-qn-brand" /> : <ListChecks size={14} />}
+        {running ? <LoadingIcon className="text-qn-brand" /> : <ListChecks size={14} />}
         <span className="min-w-0 truncate">{summarizeTools(items)}</span>
         <ChevronRight size={14} className="shrink-0 text-qn-dim transition-transform group-open/steps:rotate-90" />
       </summary>

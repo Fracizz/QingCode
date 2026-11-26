@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DRAFT_THREAD_ID } from '@qn/codex-client'
 import { sessionKey } from '../lib/agents'
-import { useCodex } from './codex'
+import { pendingSendKey, useCodex } from './codex'
 
 const { callMock, listeners } = vi.hoisted(() => ({
   callMock: vi.fn(),
@@ -89,10 +89,12 @@ describe('发送时的乐观用户消息', () => {
     // 此刻 codex.open 还挂在网络上，气泡必须已经在草稿线程里。
     expect(viewItems(DRAFT_THREAD_ID)).toMatchObject([{ kind: 'user', text: '你好', pending: true }])
     expect(useCodex.getState().sending).toBe(true)
+    expect(useCodex.getState().sendingMessage?.key).toBe(pendingSendKey({ targetId: 'local', agent: 'codex', threadId: DRAFT_THREAD_ID }))
 
     gate.resolve?.({ initialize: {}, lastSeq: 0 })
     await expect(sending).resolves.toBe(true)
     expect(viewItems('t1')).toMatchObject([{ kind: 'user', text: '你好' }])
+    expect(useCodex.getState().sendingMessage).toBeNull()
   })
 
   it('服务端回显到达后替换占位，不会留下重复气泡', async () => {
@@ -125,6 +127,7 @@ describe('发送时的乐观用户消息', () => {
     })
     await expect(useCodex.getState().send('你好')).resolves.toBe(false)
     expect(useCodex.getState().sending).toBe(false)
+    expect(useCodex.getState().sendingMessage).toBeNull()
     expect(viewItems('t1').filter((item) => item.kind === 'user')).toEqual([])
   })
 })

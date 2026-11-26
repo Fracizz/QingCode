@@ -7,7 +7,6 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
-  Search,
   Server,
   Trash2,
   Unplug,
@@ -18,8 +17,8 @@ import type { DirectTarget, SshTarget, Target, TargetState } from '../../../../s
 import { isTargetActive, matchTarget, targetDotClass, targetStateLabel } from '../../lib/targetStatus'
 import { useTargets } from '../../store/targets'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, PopoverContent, PopoverRoot, PopoverTrigger } from '../primitives'
-import { RateLimitHint } from '../RateLimitHint'
-import { IconButton } from '../ui'
+import { SearchField } from '../SearchField'
+import { EmptyState, ErrorNote, IconButton } from '../ui'
 
 export type TargetActions = {
   onAdd: () => void
@@ -107,7 +106,6 @@ export function TargetSwitcher(actions: TargetActions) {
               <span className="mt-0.5 block truncate pl-3.5 text-[12px] leading-4 text-qn-muted">
                 <span className={currentState === 'error' ? 'text-qn-danger' : ''}>{targetStateLabel[currentState]}</span>
                 {currentDetail && currentState !== 'error' && <> · {currentDetail}</>}
-                {current && <RateLimitHint targetId={current.id} />}
               </span>
             </span>
           </button>
@@ -116,22 +114,21 @@ export function TargetSwitcher(actions: TargetActions) {
           className="flex max-h-[min(70vh,540px)] w-[var(--radix-popover-trigger-width)] min-w-72 flex-col overflow-hidden p-0"
           aria-label="切换目标"
         >
-          <div className="flex items-center gap-2 border-b border-qn-border px-3 py-2.5">
-            <Search size={15} className="shrink-0 text-qn-dim" />
-            <input
-              autoFocus
-              className="min-w-0 flex-1 bg-transparent text-[13px] text-qn-text outline-none placeholder:text-qn-dim"
-              placeholder={`搜索 ${targets.length} 个目标（名称 / 主机 / 用户）`}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && visible[0]) run(() => actions.onSelect(visible[0]!.id))
-              }}
-            />
-          </div>
+          <SearchField
+            autoFocus
+            label="搜索目标"
+            className="border-b border-qn-border px-3 py-2.5"
+            placeholder={`搜索 ${targets.length} 个目标（名称 / 主机 / 用户）`}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              const first = visible[0]
+              if (event.key === 'Enter' && first) run(() => actions.onSelect(first.id))
+            }}
+          />
 
           <div className="qn-scroll min-h-0 flex-1 space-y-1 overflow-y-auto p-1.5" role="listbox">
-            {visible.length === 0 && <div className="px-3 py-4 text-center text-[13px] text-qn-muted">没有匹配的目标</div>}
+            {visible.length === 0 && <EmptyState className="py-4 leading-5">没有匹配的目标</EmptyState>}
             {visible.map((target) => {
               const state = stateOf(target.id)
               const selected = target.id === current?.id
@@ -211,16 +208,14 @@ export function TargetSwitcher(actions: TargetActions) {
       </PopoverRoot>
 
       {current && currentError && (
-        <div className="mx-1 mt-1.5 flex items-start gap-2 rounded-lg bg-qn-danger/10 px-2.5 py-1.5 text-[12px] leading-4 text-qn-danger">
-          <span className="min-w-0 flex-1 break-words">{currentError}</span>
-          <button type="button" className="shrink-0 underline" onClick={() => actions.onConnect(current.id)}>
-            重试
-          </button>
-        </div>
+        <ErrorNote
+          message={currentError}
+          variant="compact"
+          className="mx-1 mt-1.5"
+          onRetry={() => actions.onConnect(current.id)}
+        />
       )}
-      {loadError && (
-        <div className="mx-1 mt-1.5 rounded-lg bg-qn-danger/10 px-2.5 py-1.5 text-[12px] text-qn-danger">{loadError}</div>
-      )}
+      <ErrorNote message={loadError} variant="compact" className="mx-1 mt-1.5" />
     </div>
   )
 }

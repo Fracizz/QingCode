@@ -19,8 +19,8 @@ import { screenFiles, useImageSupport } from '../features/composer'
 import { isAtBottom } from '../lib/diff'
 import type { Box } from '../lib/selection'
 import { targetDotClass } from '../lib/targetStatus'
-import { groupTurns } from '../lib/turnGroups'
-import { useCodex, type SendMode } from '../store/codex'
+import { groupTurns, hasPendingReply } from '../lib/turnGroups'
+import { pendingSendKey, useCodex, type SendMode } from '../store/codex'
 import { useProjects } from '../store/projects'
 import { skillsKey, useSkills } from '../store/skills'
 import { useTargets } from '../store/targets'
@@ -29,7 +29,7 @@ import { AgentPicker } from './AgentPicker'
 import { AnnotationBar } from './AnnotationBar'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
-import { MessageItem, ToolGroup, WorkGroup } from './MessageItem'
+import { MessageItem, ReplyPending, ToolGroup, WorkGroup } from './MessageItem'
 import { ContextRing, ModelPicker } from './ModelPicker'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
@@ -78,14 +78,18 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
 
   const session = currentTargetId ? sessions[sessionKey(currentTargetId, currentAgent)] : undefined
   // 草稿态没有 threadId，发送中的用户消息先放在草稿线程里，避免对话区空白。
-  const view = currentThreadId
-    ? session?.state.threads[currentThreadId]
-    : session?.state.threads[DRAFT_THREAD_ID]
-  const items: ItemView[] = useMemo(() => view?.items ?? [], [view?.items])
+  const visibleThreadId = currentThreadId ?? DRAFT_THREAD_ID
+  const chatKey = currentTargetId && pendingSendKey({ targetId: currentTargetId, agent: currentAgent, threadId: visibleThreadId })
+  const sendingMessage = useCodex((s) => s.sendingMessage?.key === chatKey ? s.sendingMessage : null)
+  const sendingQueued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.[0]?.sending))
+  const view = session?.state.threads[visibleThreadId]
+  const preview = sendingMessage?.preview
+  const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? []), preview] : view?.items ?? [], [preview, view?.items])
   const approvals: ApprovalView[] = currentThreadId && view
     ? view.pendingApprovals
     : Object.values(session?.state.threads ?? {}).flatMap((thread) => thread.pendingApprovals)
   const running = view?.status === 'running'
+  const showReplyPending = approvals.length === 0 && hasPendingReply(items, running && !session?.openError, !!sendingMessage || sendingQueued)
   const flow = useMemo(() => groupTurns(items, view?.turns, running), [items, view?.turns, running])
 
   // 宽度改变会让文字换行，旧的高亮坐标会指向别处。
@@ -124,6 +128,11 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }
 
+  const sendAndFollow: typeof send = (text, options) => {
+    scrollToBottom()
+    return send(text, options)
+  }
+
   const addAnnotation = (quote: string, comment: string, boxes: Box[]) => {
     annotationCounter.current += 1
     const id = `annotation-${annotationCounter.current}`
@@ -144,7 +153,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     const message = buildAnnotatedMessage(annotations, text)
     const input = buildUserInput(message, attachments, skills)
     if (input.length === 0) return false
-    if (!(await send(message, { input, mode, delegate }))) return false
+    if (!(await sendAndFollow(message, { input, mode, delegate }))) return false
     setDraft((current) => current === text ? '' : current)
     for (const annotation of annotations) removeAnnotation(annotation.id)
     setAttachments((current) => current.filter((item) => !attachments.some((sent) => sent.id === item.id)))
@@ -372,10 +381,11 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                       key={`${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`}
                       item={entry.item}
                       onFork={canFork ? forkFromMessage : undefined}
-                      onEdit={(text, input) => send(text, { input })}
+                      onEdit={(text, input) => sendAndFollow(text, { input })}
                     />
                   ),
                 )}
+                {showReplyPending && <ReplyPending />}
                 {approvals.map((approval) => (
                   <ApprovalCard
                     key={String(approval.requestId)}

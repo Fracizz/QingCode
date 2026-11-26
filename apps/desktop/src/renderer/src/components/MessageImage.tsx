@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { X } from 'lucide-react'
+import { IconButton } from './ui'
 
 export function MessageImage({ src, label }: { src: string; label: string }) {
   const previewRef = useRef<HTMLDialogElement>(null)
@@ -23,14 +24,14 @@ export function MessageImage({ src, label }: { src: string; label: string }) {
           if (event.target === event.currentTarget) event.currentTarget.close()
         }}
       >
-        <button
-          type="button"
-          aria-label="关闭图片预览"
-          className="absolute right-0 top-0 grid size-8 place-items-center rounded-lg bg-qn-panel text-qn-text hover:bg-qn-hover focus-visible:outline-2 focus-visible:outline-qn-accent"
+        <IconButton
+          label="关闭图片预览"
+          tooltip={false}
+          className="absolute right-0 top-0 bg-qn-panel text-qn-text"
           onClick={() => previewRef.current?.close()}
         >
           <X size={16} />
-        </button>
+        </IconButton>
         <img
           src={src}
           alt={label}

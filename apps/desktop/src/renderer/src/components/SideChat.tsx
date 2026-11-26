@@ -1,12 +1,15 @@
+import { useLayoutEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import type { ApprovalDecision, ItemView, RequestId } from '@qn/codex-client'
 import { DEFAULT_AGENT, sessionKey } from '../lib/agents'
 import { buildAnnotatedMessage } from '../lib/annotations'
-import { useCodex } from '../store/codex'
+import { isAtBottom } from '../lib/diff'
+import { hasPendingReply } from '../lib/turnGroups'
+import { pendingSendKey, useCodex } from '../store/codex'
 import { AgentIcon } from './AgentIcon'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
-import { MessageItem } from './MessageItem'
+import { MessageItem, ReplyPending } from './MessageItem'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
 import { Badge, EmptyState, ErrorNote, IconButton } from './ui'
@@ -29,14 +32,28 @@ export function SideChat() {
   const closeSideChat = useCodex((s) => s.closeSideChat)
   const interruptSide = useCodex((s) => s.interruptSide)
   const respondApproval = useCodex((s) => s.respondApproval)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const pinned = useRef(true)
 
-  if (!sideOpen || !sideTargetId || !sideAgent) return null
-  const session = sessions[sessionKey(sideTargetId, sideAgent)]
+  const session = sideTargetId && sideAgent ? sessions[sessionKey(sideTargetId, sideAgent)] : undefined
+  const chatKey = sideTargetId && sideAgent && sideThreadId && pendingSendKey({ targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId })
+  const sendingMessage = useCodex((s) => s.sendingMessage?.key === chatKey ? s.sendingMessage : null)
+  const sendingQueued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.[0]?.sending))
   const view = sideThreadId ? session?.state.threads[sideThreadId] : undefined
-  const items: ItemView[] = view?.items ?? []
+  const preview = sendingMessage?.preview
+  const items: ItemView[] = preview ? [...(view?.items ?? []), preview] : view?.items ?? []
   const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
+  const showReplyPending = approvals.length === 0 && hasPendingReply(items, running && !session?.openError, !!sendingMessage || sendingQueued)
   const agent = sideAgent ?? DEFAULT_AGENT
+
+  useLayoutEffect(() => { pinned.current = true }, [sideThreadId])
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current
+    if (scroll && pinned.current) scroll.scrollTop = scroll.scrollHeight
+  }, [sideOpen, sideThreadId, view?.items, view?.pendingApprovals, preview, showReplyPending])
+
+  if (!sideOpen || !sideTargetId || !sideAgent) return null
 
   return (
     <aside className="absolute bottom-0 right-0 top-0 z-20 flex w-[380px] max-w-[92vw] flex-col border-l border-qn-border bg-qn-panel shadow-2xl">
@@ -55,7 +72,11 @@ export function SideChat() {
         <div className="px-3 pt-2"><ErrorNote message={`Turn 失败：${view.error}`} /></div>
       )}
       <SelectionLayer
+        containerRef={scrollRef}
         className="qn-scroll min-h-0 flex-1 overflow-y-auto px-3 py-3"
+        onScroll={({ currentTarget }) => {
+          pinned.current = isAtBottom(currentTarget.scrollTop, currentTarget.scrollHeight, currentTarget.clientHeight)
+        }}
         showSideAction={false}
         onSide={() => undefined}
         onAdd={(quote, comment) => {
@@ -76,9 +97,13 @@ export function SideChat() {
             <MessageItem
               key={`${sideThreadId}:${item.id}`}
               item={item}
-              onEdit={sideThreadId ? (text, input) => send(text, { targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId, input }) : undefined}
+              onEdit={sideThreadId ? (text, input) => {
+                pinned.current = true
+                return send(text, { targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId, input })
+              } : undefined}
             />
           ))}
+          {showReplyPending && <ReplyPending />}
           {approvals.map((approval) => (
             <ApprovalCard
               key={String(approval.requestId)}
@@ -93,7 +118,10 @@ export function SideChat() {
       <SendQueue targetId={sideTargetId} agent={agent} threadId={sideThreadId} running={running} compact />
       <Composer
         compact
-        onSend={(text, mode) => void sendSide(text, mode)}
+        onSend={(text, mode) => {
+          pinned.current = true
+          void sendSide(text, mode)
+        }}
         onInterrupt={() => void interruptSide()}
         running={running}
         sending={sending}

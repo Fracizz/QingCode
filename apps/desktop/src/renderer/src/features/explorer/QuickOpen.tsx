@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
-import { File as FileIcon, Search } from 'lucide-react'
-import { ErrorNote, Modal, Spinner } from '../../components/ui'
+import { File as FileIcon } from 'lucide-react'
+import { ListOption } from '../../components/ListOption'
+import { SearchField } from '../../components/SearchField'
+import { EmptyState, ErrorNote, Modal, Spinner } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { openFile } from '../workspace/openers'
 import { rankNameHits } from './searchModel'
@@ -88,34 +90,32 @@ export function QuickOpen({
       }
     >
       <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Search size={15} className="shrink-0 text-qn-muted" />
-          <input
-            autoFocus
-            className="qn-input min-w-0 flex-1"
-            value={query}
-            placeholder="输入文件名，支持模糊匹配"
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={onKeyDown}
-          />
-        </div>
+        <SearchField
+          autoFocus
+          boxed
+          label="搜索文件名"
+          value={query}
+          placeholder="输入文件名，支持模糊匹配"
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={onKeyDown}
+        />
         <ErrorNote message={search.error} />
-        <div className="qn-scroll max-h-[360px] overflow-y-auto rounded-lg border border-qn-border bg-black/20">
+        <div className="qn-scroll max-h-[360px] overflow-y-auto rounded-lg border border-qn-border bg-black/20" role="listbox" aria-label="匹配文件">
           {ranked.length === 0 && (
-            <div className="px-3 py-6 text-center text-[13px] text-qn-muted">
+            <EmptyState>
               {query.trim() === ''
                 ? '输入文件名开始搜索'
                 : search.searching
                   ? '搜索中…'
                   : '未找到匹配文件'}
-            </div>
+            </EmptyState>
           )}
           {ranked.map((hit, index) => (
-            <button
+            <ListOption
               key={hit.path}
-              type="button"
+              selected={index === selected}
               className={cn(
-                'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px]',
+                'gap-2 rounded-none px-3 py-1.5 text-[12px]',
                 index === selected ? 'bg-qn-accent/20' : 'hover:bg-white/5',
               )}
               onMouseEnter={() => setSelected(index)}
@@ -126,7 +126,7 @@ export function QuickOpen({
               <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-qn-dim">
                 {hit.relative}
               </span>
-            </button>
+            </ListOption>
           ))}
         </div>
       </div>

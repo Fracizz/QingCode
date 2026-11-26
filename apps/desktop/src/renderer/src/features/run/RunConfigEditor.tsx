@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Plus, Trash2, X } from 'lucide-react'
+import { FormField } from '../../components/FormField'
 import { ErrorNote, IconButton, Modal } from '../../components/ui'
 import { Select } from '../../components/primitives'
 import {
@@ -97,16 +98,18 @@ export function RunConfigEditor({
     >
       <div className="flex flex-col gap-3">
         <ErrorNote message={saveError} onClose={() => setSaveError(null)} />
-        <label className="flex flex-col gap-1">
-          <span className="text-[12px] text-qn-muted">名称</span>
-          <input
-            autoFocus
-            className="qn-input"
-            value={draft.name}
-            placeholder="例如：前后端"
-            onChange={(event) => setDraft((d) => ({ ...d, name: event.target.value }))}
-          />
-        </label>
+        <FormField label="名称">
+          {(control) => (
+            <input
+              {...control}
+              autoFocus
+              className="qn-input"
+              value={draft.name}
+              placeholder="例如：前后端"
+              onChange={(event) => setDraft((d) => ({ ...d, name: event.target.value }))}
+            />
+          )}
+        </FormField>
 
         <div className="flex items-center justify-between">
           <span className="text-[12px] text-qn-muted">任务（同时启动）</span>
@@ -180,30 +183,31 @@ function TaskCard({
           <Trash2 size={14} />
         </IconButton>
       </div>
-      <label className="flex flex-col gap-1">
-        <span className="text-[12px] text-qn-muted">
-          {task.type === 'command' ? '命令' : '脚本路径'}
-          <span className="ml-2 text-qn-dim">{TYPE_HINT[task.type]}</span>
-        </span>
-        <input
-          className="qn-input font-mono text-[12px]"
-          value={task.target}
-          placeholder={task.type === 'command' ? 'pnpm dev' : 'scripts/start.ps1'}
-          spellCheck={false}
-          onChange={(event) => onChange({ target: event.target.value })}
-        />
-      </label>
-      <div className="flex gap-2">
-        <label className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="text-[12px] text-qn-muted">工作目录</span>
+      <FormField label={task.type === 'command' ? '命令' : '脚本路径'} hint={TYPE_HINT[task.type]}>
+        {(control) => (
           <input
+            {...control}
             className="qn-input font-mono text-[12px]"
-            value={task.cwd}
-            placeholder="相对项目根，留空为项目根"
+            value={task.target}
+            placeholder={task.type === 'command' ? 'pnpm dev' : 'scripts/start.ps1'}
             spellCheck={false}
-            onChange={(event) => onChange({ cwd: event.target.value })}
+            onChange={(event) => onChange({ target: event.target.value })}
           />
-        </label>
+        )}
+      </FormField>
+      <div className="flex gap-2">
+        <FormField label="工作目录" className="flex-1">
+          {(control) => (
+            <input
+              {...control}
+              className="qn-input font-mono text-[12px]"
+              value={task.cwd}
+              placeholder="相对项目根，留空为项目根"
+              spellCheck={false}
+              onChange={(event) => onChange({ cwd: event.target.value })}
+            />
+          )}
+        </FormField>
         <label className="flex w-40 flex-col gap-1">
           <span className="text-[12px] text-qn-muted">系统限制</span>
           <Select

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentProps } from 'react'
 import { ContextMenu } from 'radix-ui'
 import {
   Archive,
@@ -7,7 +7,6 @@ import {
   Eye,
   EyeOff,
   GitBranch,
-  LoaderCircle,
   Pencil,
   Pin,
   PinOff,
@@ -21,43 +20,14 @@ import { formatRelative } from '../../lib/time'
 import { useCodex } from '../../store/codex'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { AgentIcon } from '../AgentIcon'
-import { floatSurface } from '../primitives'
-import { IconButton, Modal } from '../ui'
+import { LoadingIcon } from '../LoadingIcon'
+import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, floatSurface, menuItemClass, MenuItemContent } from '../primitives'
+import { Badge, IconButton, Modal } from '../ui'
 
-const itemClass =
-  'flex min-h-8 cursor-default select-none items-center gap-2.5 rounded-lg px-2.5 py-1 text-[13px] outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-qn-hover data-[state=open]:bg-qn-hover'
-
-function Item({
-  icon,
-  hint,
-  danger,
-  disabled,
-  onSelect,
-  children,
-}: {
-  icon: ReactNode
-  hint?: string
-  danger?: boolean
-  disabled?: boolean
-  onSelect: () => void
-  children: ReactNode
-}) {
-  return (
-    <ContextMenu.Item
-      disabled={disabled}
-      onSelect={onSelect}
-      // 菜单打开时按快捷字母直接触发，见 onMenuKeyDown。
-      data-shortcut={hint?.toLowerCase()}
-      className={cn(itemClass, danger ? 'text-qn-danger' : 'text-qn-text')}
-    >
-      <span className={cn('flex w-4 shrink-0 justify-center', !danger && 'text-qn-muted')}>{icon}</span>
-      <span className="min-w-0 flex-1 truncate">{children}</span>
-      {hint && <span className="shrink-0 text-[12px] text-qn-dim">{hint}</span>}
-    </ContextMenu.Item>
-  )
+function ShortcutItem({ hint, ...props }: ComponentProps<typeof ContextMenuItem>) {
+  // 菜单打开时按快捷字母直接触发，见 onMenuKeyDown。
+  return <ContextMenuItem hint={hint} data-shortcut={typeof hint === 'string' ? hint.toLowerCase() : undefined} {...props} />
 }
-
-const Separator = () => <ContextMenu.Separator className="mx-1 my-1 h-px bg-qn-border" />
 
 /** 字母快捷键：找到带 data-shortcut 的项模拟点击，走 Radix 的 onSelect 并自动关闭菜单。 */
 function onMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
@@ -208,12 +178,14 @@ export function ThreadRow({
             {thread.agent !== DEFAULT_AGENT && <AgentIcon agent={thread.agent} size={12} />}
             <span className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold text-qn-text')}>{thread.title}</span>
             {waiting ? (
-              <span className="shrink-0 rounded-md bg-qn-warn/15 px-1.5 text-[11px] leading-5 text-qn-warn">待审批</span>
+              <Badge tone="warn">待审批</Badge>
             ) : running ? (
-              <LoaderCircle
+              <LoadingIcon
                 size={13}
                 strokeWidth={2.5}
-                className="shrink-0 animate-spin text-qn-muted [animation-duration:2s] motion-reduce:animate-none"
+                className="text-qn-muted [animation-duration:2s]"
+                role="img"
+                aria-hidden={false}
                 aria-label="运行中"
               />
             ) : (
@@ -237,74 +209,69 @@ export function ThreadRow({
             )}
           </div>
         </ContextMenu.Trigger>
-        <ContextMenu.Portal>
-          <ContextMenu.Content className={cn(floatSurface, 'min-w-52 p-1')} onKeyDown={onMenuKeyDown}>
-            <Item icon={<Pencil size={14} />} hint="R" onSelect={beginRename}>
-              重命名
-            </Item>
-            <Item
-              icon={pinned ? <PinOff size={14} /> : <Pin size={14} />}
-              hint="P"
-              onSelect={() => setPinned(targetId, key, !pinned)}
-            >
-              {pinned ? '取消置顶' : '置顶'}
-            </Item>
-            <Item
-              icon={unread ? <Eye size={14} /> : <EyeOff size={14} />}
-              hint="U"
-              disabled={current}
-              onSelect={() => setUnread(targetId, key, !unread)}
-            >
-              {unread ? '标记为已读' : '标记为未读'}
-            </Item>
-            <Separator />
-            <Item
-              icon={<GitBranch size={14} />}
-              hint="X"
-              disabled={!native || running}
-              onSelect={() => void forkThread(thread.id, thread.agent)}
-            >
-              {native ? '创建聊天分支' : '创建聊天分支（Claude 暂不支持）'}
-            </Item>
-            <ContextMenu.Sub>
-              <ContextMenu.SubTrigger className={cn(itemClass, 'text-qn-text')}>
-                <span className="flex w-4 shrink-0 justify-center text-qn-muted">
-                  <Copy size={14} />
-                </span>
-                <span className="min-w-0 flex-1 truncate">复制</span>
-                <ChevronRight size={14} className="shrink-0 text-qn-dim" />
-              </ContextMenu.SubTrigger>
-              <ContextMenu.Portal>
-                <ContextMenu.SubContent sideOffset={6} className={cn(floatSurface, 'min-w-44 p-1')}>
-                  <Item icon={<Copy size={14} />} onSelect={() => void copyText(thread.title)}>
-                    复制标题
-                  </Item>
-                  <Item icon={<Copy size={14} />} onSelect={() => void copyText(thread.id)}>
-                    复制会话 ID
-                  </Item>
-                  <Item icon={<Copy size={14} />} disabled={!thread.cwd} onSelect={() => void copyText(thread.cwd)}>
-                    复制工作目录
-                  </Item>
-                  <Item icon={<Copy size={14} />} onSelect={() => void copyText(resumeCommand)}>
-                    复制恢复命令
-                  </Item>
-                </ContextMenu.SubContent>
-              </ContextMenu.Portal>
-            </ContextMenu.Sub>
-            <Separator />
-            <Item icon={<Archive size={14} />} hint="A" disabled={running} onSelect={() => void archive()}>
-              归档
-            </Item>
-            <Item
-              icon={<Trash2 size={14} />}
-              danger
-              disabled={!native || running}
-              onSelect={() => setConfirmDelete(true)}
-            >
-              永久删除
-            </Item>
-          </ContextMenu.Content>
-        </ContextMenu.Portal>
+        <ContextMenuContent className="min-w-52" onKeyDown={onMenuKeyDown}>
+          <ShortcutItem icon={<Pencil size={14} />} hint="R" onSelect={beginRename}>
+            重命名
+          </ShortcutItem>
+          <ShortcutItem
+            icon={pinned ? <PinOff size={14} /> : <Pin size={14} />}
+            hint="P"
+            onSelect={() => setPinned(targetId, key, !pinned)}
+          >
+            {pinned ? '取消置顶' : '置顶'}
+          </ShortcutItem>
+          <ShortcutItem
+            icon={unread ? <Eye size={14} /> : <EyeOff size={14} />}
+            hint="U"
+            disabled={current}
+            onSelect={() => setUnread(targetId, key, !unread)}
+          >
+            {unread ? '标记为已读' : '标记为未读'}
+          </ShortcutItem>
+          <ContextMenuSeparator />
+          <ShortcutItem
+            icon={<GitBranch size={14} />}
+            hint="X"
+            disabled={!native || running}
+            onSelect={() => void forkThread(thread.id, thread.agent)}
+          >
+            {native ? '创建聊天分支' : '创建聊天分支（Claude 暂不支持）'}
+          </ShortcutItem>
+          <ContextMenu.Sub>
+            <ContextMenu.SubTrigger className={cn(menuItemClass, 'text-qn-text')}>
+              <MenuItemContent icon={<Copy size={14} />}>复制</MenuItemContent>
+              <ChevronRight size={14} className="shrink-0 text-qn-dim" />
+            </ContextMenu.SubTrigger>
+            <ContextMenu.Portal>
+              <ContextMenu.SubContent sideOffset={6} className={cn(floatSurface, 'min-w-44 p-1')}>
+                <ShortcutItem icon={<Copy size={14} />} onSelect={() => void copyText(thread.title)}>
+                  复制标题
+                </ShortcutItem>
+                <ShortcutItem icon={<Copy size={14} />} onSelect={() => void copyText(thread.id)}>
+                  复制会话 ID
+                </ShortcutItem>
+                <ShortcutItem icon={<Copy size={14} />} disabled={!thread.cwd} onSelect={() => void copyText(thread.cwd)}>
+                  复制工作目录
+                </ShortcutItem>
+                <ShortcutItem icon={<Copy size={14} />} onSelect={() => void copyText(resumeCommand)}>
+                  复制恢复命令
+                </ShortcutItem>
+              </ContextMenu.SubContent>
+            </ContextMenu.Portal>
+          </ContextMenu.Sub>
+          <ContextMenuSeparator />
+          <ShortcutItem icon={<Archive size={14} />} hint="A" disabled={running} onSelect={() => void archive()}>
+            归档
+          </ShortcutItem>
+          <ShortcutItem
+            icon={<Trash2 size={14} />}
+            danger
+            disabled={!native || running}
+            onSelect={() => setConfirmDelete(true)}
+          >
+            永久删除
+          </ShortcutItem>
+        </ContextMenuContent>
       </ContextMenu.Root>
 
       {confirmDelete && (

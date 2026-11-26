@@ -2,6 +2,7 @@ import '@xterm/xterm/css/xterm.css'
 import type { TermInfo } from '@qn/protocol'
 import { ChevronDown, ChevronUp, ClipboardPaste, Copy, Search, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { SearchField } from '../../components/SearchField'
 import { ErrorNote, IconButton } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { initialTerminalStatus, mountTerminalSession } from './terminalSession'
@@ -89,13 +90,15 @@ export default function TerminalView({
       )}
       {searchOpen && (
         <div className="flex shrink-0 items-center gap-1.5 border-b border-qn-border px-2 pb-1">
-          <input
+          <SearchField
             ref={searchInput}
+            boxed
+            label="搜索终端输出"
             type="search"
-            aria-label="搜索终端输出"
             value={query}
             placeholder="搜索终端输出"
-            className="h-7 min-w-0 flex-1 rounded border border-qn-border-strong bg-qn-bg px-2 text-[12px] outline-none focus:border-qn-accent"
+            className="flex-1"
+            inputClassName="h-7 rounded bg-qn-bg py-0 text-[12px]"
             onChange={(event) => {
               const value = event.target.value
               setQuery(value)

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { KeyRound } from 'lucide-react'
 import type { SshTarget } from '../../../shared/backendApi'
+import { FormField } from './FormField'
 import { PasswordInput } from './PasswordInput'
 import type { ConnectCredentials } from '../store/targets'
 import { Checkbox, ErrorNote, Modal } from './ui'
@@ -53,20 +54,20 @@ export function CredentialDialog({
         <span className="truncate">{target.username}@{target.host}:{target.port}</span>
       </div>
       <form id="credential-form" className="space-y-3" onSubmit={submit}>
-        <div>
-          <label className="mb-1 block text-xs text-qn-muted">
-            {isKey ? '私钥口令（没有口令可留空）' : '密码'}
-          </label>
-          <PasswordInput
-            autoFocus
-            value={secret}
-            placeholder={isKey ? '私钥口令' : 'SSH 密码'}
-            onChange={(event) => {
-              setSecret(event.target.value)
-              setError(null)
-            }}
-          />
-        </div>
+        <FormField label={isKey ? '私钥口令（没有口令可留空）' : '密码'}>
+          {(control) => (
+            <PasswordInput
+              {...control}
+              autoFocus
+              value={secret}
+              placeholder={isKey ? '私钥口令' : 'SSH 密码'}
+              onChange={(event) => {
+                setSecret(event.target.value)
+                setError(null)
+              }}
+            />
+          )}
+        </FormField>
         <Checkbox checked={remember} onChange={setRemember}>
           记住密码 / 口令（用本机系统加密保存）
         </Checkbox>

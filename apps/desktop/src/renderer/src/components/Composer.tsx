@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { supportsSubagentRequests } from '@qn/codex-client'
-import { ArrowUp, ChevronDown, CircleAlert, FileText, GitFork, ImageOff, LoaderCircle, Paperclip, Slash, Square, Wand2, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, CircleAlert, FileText, GitFork, ImageOff, Paperclip, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
 import {
@@ -24,11 +24,14 @@ import {
   type ImageSupport,
   type MentionCandidate,
 } from '../features/composer'
+import { Suggestions } from '../features/composer/Suggestions'
 import { pendingSendKey, useCodex } from '../store/codex'
 import { cn } from '../lib/cn'
 import type { SendMode } from '../store/codex'
+import { ListOption } from './ListOption'
+import { LoadingIcon } from './LoadingIcon'
 import { Menu, MenuContent, MenuItem, MenuTrigger, Tip } from './primitives'
-import { ErrorNote, IconButton } from './ui'
+import { EmptyState, ErrorNote, IconButton } from './ui'
 
 /** 输入框最高占视口 40%，再长就内部滚动，不把消息区挤没。 */
 const MAX_HEIGHT_RATIO = 0.4
@@ -260,11 +263,7 @@ export function Composer({
   return (
     <div className={cn('shrink-0', compact ? 'px-3 pb-3 pt-1' : 'px-6 pb-3 pt-1')}>
       <div className={cn('relative mx-auto', !compact && contentWidthClassName)}>
-        {error && (
-          <div className="mb-2">
-            <ErrorNote message={error} onClose={onClearError} />
-          </div>
-        )}
+        <ErrorNote message={error} className="mb-2" onClose={onClearError} />
 
         {menuOpen && slash && (
           <SlashMenu items={matches} active={active} loading={slash.loading} onHover={setActive} onChoose={choose} />
@@ -503,7 +502,7 @@ function AttachmentChip({
   const status =
     item.status === 'uploading' || item.status === 'pending' ? (
       <span className="flex items-center gap-1 text-qn-muted">
-        <LoaderCircle size={11} className="animate-spin" /> 上传中
+        <LoadingIcon size={11} /> 上传中
       </span>
     ) : item.status === 'error' ? (
       <span className="flex min-w-0 items-center gap-1 text-qn-danger">
@@ -545,60 +544,38 @@ function SlashMenu({
   onHover: (index: number) => void
   onChoose: (item: SlashItem) => void
 }) {
-  const listRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    listRef.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' })
-  }, [active])
-
   return (
-    <div
-      className="qn-no-drag qn-pop qn-surface-float absolute bottom-full left-0 right-0 z-30 mb-2 overflow-hidden"
-      role="listbox"
-      aria-label="命令与技能"
-    >
-      <div ref={listRef} className="qn-scroll max-h-[min(320px,45vh)] space-y-1 overflow-y-auto p-1.5">
-        {items.length === 0 && (
-          <div className="px-3 py-3 text-center text-[13px] text-qn-muted">
-            {loading ? '正在加载技能…' : '没有匹配的命令或技能'}
-          </div>
-        )}
-        {items.map((item, index) => (
-          <button
-            key={item.id}
-            type="button"
-            data-index={index}
-            role="option"
-            aria-selected={index === active}
+    <Suggestions label="命令与技能" active={active} confirmHint="确认" listClassName="space-y-1">
+      {items.length === 0 && (
+        <EmptyState className="py-3 leading-5">
+          {loading ? '正在加载技能…' : '没有匹配的命令或技能'}
+        </EmptyState>
+      )}
+      {items.map((item, index) => (
+        <ListOption
+          key={item.id}
+          data-index={index}
+          selected={index === active}
+          onMouseEnter={() => onHover(index)}
+          // 阻止输入框失焦，避免菜单在选择前关闭。
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onChoose(item)}
+        >
+          <span
             className={cn(
-              'flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left outline-none',
-              index === active ? 'bg-qn-active' : 'hover:bg-qn-hover',
+              'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
+              item.kind === 'skill' ? 'bg-qn-brand/10 text-qn-brand' : 'bg-white/[0.06] text-qn-muted',
             )}
-            onMouseEnter={() => onHover(index)}
-            // mousedown 时就阻止默认行为，避免输入框失焦后菜单先关掉。
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onChoose(item)}
           >
-            <span
-              className={cn(
-                'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
-                item.kind === 'skill' ? 'bg-qn-brand/10 text-qn-brand' : 'bg-white/[0.06] text-qn-muted',
-              )}
-            >
-              {item.kind === 'skill' ? <Wand2 size={14} /> : <Slash size={14} />}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] text-qn-text">/{item.name}</span>
-              {item.description && <span className="block truncate text-[12px] text-qn-dim">{item.description}</span>}
-            </span>
-            {item.scope && <span className="shrink-0 text-[11px] text-qn-dim">{item.scope}</span>}
-          </button>
-        ))}
-      </div>
-      <div className="flex items-center gap-3 border-t border-qn-border px-3 py-1.5 text-[11px] text-qn-dim">
-        <span>↑↓ 选择</span>
-        <span>Enter / Tab 确认</span>
-        <span>Esc 关闭</span>
-      </div>
-    </div>
+            {item.kind === 'skill' ? <Wand2 size={14} /> : <Slash size={14} />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13px] text-qn-text">/{item.name}</span>
+            {item.description && <span className="block truncate text-[12px] text-qn-dim">{item.description}</span>}
+          </span>
+          {item.scope && <span className="shrink-0 text-[11px] text-qn-dim">{item.scope}</span>}
+        </ListOption>
+      ))}
+    </Suggestions>
   )
 }

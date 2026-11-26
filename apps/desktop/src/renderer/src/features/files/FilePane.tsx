@@ -8,7 +8,6 @@ import {
   FileDiff,
   FileText,
   Image as ImageIcon,
-  LoaderCircle,
   LockKeyhole,
   PanelRightClose,
   RotateCw,
@@ -16,6 +15,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
+import { LoadingIcon } from '../../components/LoadingIcon'
 import { ErrorNote, IconButton, Spinner } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { copyText } from '../../lib/clipboard'
@@ -157,7 +157,7 @@ export function FilePane({ className }: { className?: string }) {
               )}
             >
               {tab.busy || tab.saving ? (
-                <LoaderCircle size={12} className="shrink-0 animate-spin text-qn-brand" />
+                <LoadingIcon size={12} className="text-qn-brand" />
               ) : tab.kind === 'diff' ? (
                 <FileDiff size={12} className="shrink-0 text-qn-dim" />
               ) : fileKind(tab.path) === 'image' ? (
@@ -173,17 +173,19 @@ export function FilePane({ className }: { className?: string }) {
               )}
               <span className="truncate">{basename(tab.path) || tab.path}</span>
               <span className="truncate text-[11px] text-qn-dim">{basename(dirname(tab.path))}</span>
-              <button
-                type="button"
-                aria-label={`关闭 ${basename(tab.path)}`}
-                className="ml-auto shrink-0 rounded-md p-0.5 text-qn-dim hover:bg-qn-hover hover:text-qn-text"
+              <IconButton
+                label={`关闭 ${basename(tab.path)}`}
+                size="sm"
+                tooltip={false}
+                className="ml-auto size-4 text-qn-dim"
+                onKeyDown={(event) => event.stopPropagation()}
                 onClick={(event) => {
                   event.stopPropagation()
                   requestClose(tab.id)
                 }}
               >
                 <X size={11} />
-              </button>
+              </IconButton>
             </div>
           ))}
         </div>

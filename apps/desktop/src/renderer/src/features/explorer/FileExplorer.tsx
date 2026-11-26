@@ -32,6 +32,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '../../components/primitives'
 import { Checkbox, ErrorNote, IconButton, Modal } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { openFile } from '../workspace/openers'
@@ -110,34 +111,6 @@ function entryIcon(name: string, kind: ExplorerEntryKind | 'placeholder', expand
   if (CODE_EXT.has(ext)) return <FileCode2 size={14} className="shrink-0 text-qn-accent" />
   if (ext === '') return <Braces size={14} className="shrink-0 text-qn-muted" />
   return <FileIcon size={14} className="shrink-0 text-qn-muted" />
-}
-
-function ContextItem({
-  icon,
-  children,
-  onSelect,
-  disabled,
-  danger,
-}: {
-  icon: ReactNode
-  children: ReactNode
-  onSelect: () => void
-  disabled?: boolean
-  danger?: boolean
-}) {
-  return (
-    <ContextMenu.Item
-      disabled={disabled}
-      onSelect={onSelect}
-      className={cn(
-        'flex min-h-8 cursor-default select-none items-center gap-2 rounded-lg px-2.5 py-1 text-[13px] outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-qn-hover',
-        danger ? 'text-qn-danger' : 'text-qn-text',
-      )}
-    >
-      <span className={cn('flex w-4 shrink-0 justify-center', !danger && 'text-qn-muted')}>{icon}</span>
-      <span className="min-w-0 flex-1 truncate">{children}</span>
-    </ContextMenu.Item>
-  )
 }
 
 /** 项目文件树：懒加载 + 定高虚拟滚动 + 右键操作；打开文件统一走 openers.openFile。 */
@@ -541,69 +514,67 @@ export function FileExplorer({
             </div>
           </div>
         </ContextMenu.Trigger>
-        <ContextMenu.Portal>
-          <ContextMenu.Content className="qn-no-drag qn-float qn-surface-float z-50 min-w-48 p-1 text-[13px]">
-            <ContextItem
-              icon={<FilePlus2 size={14} />}
-              onSelect={() => beginCreate(menuTarget.current.dir, 'file')}
-            >
-              新建文件
-            </ContextItem>
-            <ContextItem
-              icon={<FolderPlus size={14} />}
-              onSelect={() => beginCreate(menuTarget.current.dir, 'dir')}
-            >
-              新建文件夹
-            </ContextItem>
-            <ContextMenu.Separator className="mx-1 my-1 h-px bg-qn-border" />
-            <ContextItem
-              icon={<Pencil size={14} />}
-              disabled={!menuPath}
-              onSelect={() => {
-                const path = menuTarget.current.path
-                if (path) beginRename(path)
-              }}
-            >
-              重命名
-            </ContextItem>
-            <ContextItem
-              icon={<Trash2 size={14} />}
-              danger
-              disabled={!menuPath}
-              onSelect={() => {
-                const target = menuTarget.current
-                if (target.path && target.kind !== 'placeholder') {
-                  setDeleteTarget({ path: target.path, kind: target.kind })
-                  setRecursive(true)
-                  setDeleteError(null)
-                }
-              }}
-            >
-              删除
-            </ContextItem>
-            <ContextMenu.Separator className="mx-1 my-1 h-px bg-qn-border" />
-            <ContextItem
-              icon={<Copy size={14} />}
-              disabled={!menuPath}
-              onSelect={() => {
-                const path = menuTarget.current.path
-                if (path) void copy(path)
-              }}
-            >
-              复制路径
-            </ContextItem>
-            <ContextItem
-              icon={<Copy size={14} />}
-              disabled={!menuPath}
-              onSelect={() => {
-                const path = menuTarget.current.path
-                if (path) void copy(relativePath(root, path, style))
-              }}
-            >
-              复制相对路径
-            </ContextItem>
-          </ContextMenu.Content>
-        </ContextMenu.Portal>
+        <ContextMenuContent>
+          <ContextMenuItem
+            icon={<FilePlus2 size={14} />}
+            onSelect={() => beginCreate(menuTarget.current.dir, 'file')}
+          >
+            新建文件
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<FolderPlus size={14} />}
+            onSelect={() => beginCreate(menuTarget.current.dir, 'dir')}
+          >
+            新建文件夹
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            icon={<Pencil size={14} />}
+            disabled={!menuPath}
+            onSelect={() => {
+              const path = menuTarget.current.path
+              if (path) beginRename(path)
+            }}
+          >
+            重命名
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<Trash2 size={14} />}
+            danger
+            disabled={!menuPath}
+            onSelect={() => {
+              const target = menuTarget.current
+              if (target.path && target.kind !== 'placeholder') {
+                setDeleteTarget({ path: target.path, kind: target.kind })
+                setRecursive(true)
+                setDeleteError(null)
+              }
+            }}
+          >
+            删除
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            icon={<Copy size={14} />}
+            disabled={!menuPath}
+            onSelect={() => {
+              const path = menuTarget.current.path
+              if (path) void copy(path)
+            }}
+          >
+            复制路径
+          </ContextMenuItem>
+          <ContextMenuItem
+            icon={<Copy size={14} />}
+            disabled={!menuPath}
+            onSelect={() => {
+              const path = menuTarget.current.path
+              if (path) void copy(relativePath(root, path, style))
+            }}
+          >
+            复制相对路径
+          </ContextMenuItem>
+        </ContextMenuContent>
       </ContextMenu.Root>
 
       {deleteTarget && (

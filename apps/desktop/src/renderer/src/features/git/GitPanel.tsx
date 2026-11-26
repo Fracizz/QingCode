@@ -14,13 +14,14 @@ import {
   GitBranch,
   GitCommitHorizontal,
   History,
-  LoaderCircle,
   Minus,
   Plus,
   RotateCw,
   RotateCcw,
-  Search,
 } from 'lucide-react'
+import { ListOption } from '../../components/ListOption'
+import { LoadingIcon } from '../../components/LoadingIcon'
+import { SearchField } from '../../components/SearchField'
 import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Modal, Spinner } from '../../components/ui'
 import {
   PopoverContent,
@@ -236,47 +237,43 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             </button>
           </PopoverTrigger>
           <PopoverContent className="flex max-h-[min(70vh,480px)] w-80 flex-col overflow-hidden p-0" align="start">
-            <div className="flex shrink-0 items-center gap-2 border-b border-qn-border px-3 py-2">
-              <Search size={14} className="shrink-0 text-qn-dim" />
-              <input
-                autoFocus
-                className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-qn-dim"
-                placeholder="搜索分支"
-                value={branchQuery}
-                onChange={(event) => setBranchQuery(event.target.value)}
-              />
-            </div>
+            <SearchField
+              autoFocus
+              className="shrink-0 border-b border-qn-border px-3 py-2"
+              label="搜索分支"
+              placeholder="搜索分支"
+              value={branchQuery}
+              onChange={(event) => setBranchQuery(event.target.value)}
+            />
             <div className="qn-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1" role="listbox">
               <div className="px-2.5 py-1 text-[11px] text-qn-dim">本地分支</div>
               {localBranches.length === 0 && (
                 <div className="px-2.5 py-1.5 text-[12px] text-qn-dim">无匹配分支</div>
               )}
               {localBranches.map((branch) => (
-                <button
+                <ListOption
                   key={branch.name}
-                  type="button"
-                  role="option"
-                  aria-selected={branch.name === current}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] outline-none hover:bg-qn-hover focus-visible:bg-qn-hover"
+                  selected={branch.name === current}
+                  className="gap-2 py-1.5 text-[12px]"
                   onClick={() => void selectBranch(branch.name, false)}
                 >
                   <span className="min-w-0 flex-1 truncate">{branch.name}</span>
                   {branch.name === current && <Check size={13} className="shrink-0 text-qn-brand" />}
-                </button>
+                </ListOption>
               ))}
               <div className="mt-1 border-t border-qn-border px-2.5 py-1 text-[11px] text-qn-dim">远端分支</div>
               {remoteBranches.length === 0 && (
                 <div className="px-2.5 py-1.5 text-[12px] text-qn-dim">无匹配分支</div>
               )}
               {remoteBranches.map((branch) => (
-                <button
+                <ListOption
                   key={branch.name}
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] outline-none hover:bg-qn-hover focus-visible:bg-qn-hover"
+                  selected={false}
+                  className="gap-2 py-1.5 text-[12px]"
                   onClick={() => void selectBranch(branch.name, true)}
                 >
                   <span className="min-w-0 flex-1 truncate">{branch.name}</span>
-                </button>
+                </ListOption>
               ))}
             </div>
             <div className="shrink-0 border-t border-qn-border p-2">
@@ -533,7 +530,7 @@ function CommitBox({
           onClick={() => void submit()}
         >
           {committing ? (
-            <LoaderCircle size={13} className="animate-spin" />
+            <LoadingIcon size={13} />
           ) : (
             <GitCommitHorizontal size={13} />
           )}

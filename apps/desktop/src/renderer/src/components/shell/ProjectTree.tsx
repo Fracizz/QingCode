@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, RotateCw, SquarePen, X } from 'lucide-react'
+import { Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, SquarePen, X } from 'lucide-react'
 import { copyText } from '../../lib/clipboard'
 import type { Project } from '../../../../shared/backendApi'
 import { sessionKey } from '../../lib/agents'
@@ -11,7 +11,7 @@ import { useProjects } from '../../store/projects'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { useUi } from '../../store/ui'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../primitives'
-import { IconButton, Spinner } from '../ui'
+import { ErrorNote, IconButton, Spinner } from '../ui'
 import { ThreadRow } from './ThreadRow'
 
 const THREAD_PREVIEW_LIMIT = 8
@@ -104,14 +104,7 @@ export function ProjectTree({ targetId }: { targetId: string }) {
           )
         })}
 
-        {projectError && (
-          <div className="mx-1 mt-2 flex items-start gap-2 rounded-lg bg-qn-danger/10 px-2.5 py-1.5 text-[12px] text-qn-danger">
-            <span className="min-w-0 flex-1">{projectError}</span>
-            <button type="button" className="shrink-0 underline" onClick={() => void load(targetId)}>
-              重试
-            </button>
-          </div>
-        )}
+        <ErrorNote message={projectError} variant="compact" className="mx-1 mt-2" onRetry={() => void load(targetId)} />
       </div>
     </div>
   )
@@ -353,12 +346,13 @@ function ThreadList({ now }: { now: number }) {
 
       {/* 打开失败的原因已在对话区横幅展示，这里只在两者不同时补充。 */}
       {threadsError && threadsError !== openError && (
-        <div className="mx-1 mt-1 flex items-start gap-2 rounded-lg bg-qn-danger/10 px-2.5 py-1.5 text-[12px] text-qn-danger">
-          <span className="min-w-0 flex-1 break-words">{threadsError}</span>
-          <button type="button" className="shrink-0" aria-label="重试" onClick={() => void refreshThreads()}>
-            <RotateCw size={13} />
-          </button>
-        </div>
+        <ErrorNote
+          message={threadsError}
+          variant="compact"
+          className="mx-1 mt-1"
+          retryIcon
+          onRetry={() => void refreshThreads()}
+        />
       )}
       {threadsError && threadsError === openError && currentTargetId && (
         <div className="py-1 pl-[31px] text-[12px] text-qn-dim">会话列表不可用</div>

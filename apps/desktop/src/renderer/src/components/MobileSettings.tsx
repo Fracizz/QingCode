@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { Copy, Eye, EyeOff, Plus, QrCode, RotateCw, ShieldCheck, Smartphone, Trash2, Wifi, X } from 'lucide-react'
+import { Copy, Eye, EyeOff, Plus, QrCode, RotateCw, ShieldCheck, Smartphone, Trash2, Wifi } from 'lucide-react'
 import { call } from '../lib/backend'
 import {
   buildAddressOptions,
@@ -14,19 +14,10 @@ import {
   type SettingsDraft,
 } from '../lib/mobileSettings'
 import { useMobile } from '../store/mobile'
+import { FeedbackRow } from './FeedbackRow'
+import { FormField } from './FormField'
 import { Select, TabsContent, TabsList, TabsRoot, TabsTrigger } from './primitives'
 import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Modal, Spinner } from './ui'
-
-function Field({ label, hint, error, children }: { label: string; hint?: ReactNode; error?: string | null; children: ReactNode }) {
-  return (
-    <div>
-      <div className="mb-1.5 text-[13px] text-qn-muted">{label}</div>
-      {children}
-      {hint && <p className="mt-1.5 text-[12px] leading-5 text-qn-dim">{hint}</p>}
-      {error && <p className="mt-1 text-[12px] text-qn-danger">{error}</p>}
-    </div>
-  )
-}
 
 function Section({ title, action, children }: { title: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
@@ -194,14 +185,11 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
         {settings?.error && <ErrorNote message={settings.error} onRetry={() => void retry()} />}
         <ErrorNote message={error} onClose={dismissError} />
         <ErrorNote message={formError} onClose={() => setFormError(null)} />
-        {notice && (
-          <div className="flex items-start gap-2 rounded-lg border border-qn-warn/40 bg-qn-warn/10 px-3 py-2 text-[13px] text-qn-warn">
-            <span className="min-w-0 flex-1 whitespace-pre-wrap">{notice}</span>
-            <button type="button" aria-label="关闭提示" onClick={dismissNotice}>
-              <X size={14} />
-            </button>
-          </div>
-        )}
+        <FeedbackRow
+          message={notice}
+          className="rounded-lg border border-qn-warn/40 bg-qn-warn/10 px-3 py-2 text-[13px] leading-5 text-qn-warn"
+          onClose={dismissNotice}
+        />
       </div>
 
       <form id="mobile-settings-form" onSubmit={(event) => void submit(event)}>
@@ -221,33 +209,39 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               允许本人已配对的手机在项目中打开终端
             </Checkbox>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-[10rem_1fr]">
-              <Field label="监听端口" hint="端口修改后，可在手机端编辑已保存的连接。" error={portError}>
-                <input
-                  className="qn-input"
-                  inputMode="numeric"
-                  value={draft?.port ?? ''}
-                  onChange={(event) => patch({ port: event.target.value })}
-                />
-              </Field>
-              <Field label="配对密码" hint="6–20 位、区分大小写；用本机系统加密保存，不会写进日志。" error={passwordError}>
-                <div className="flex gap-1.5">
+              <FormField label="监听端口" hint="端口修改后，可在手机端编辑已保存的连接。" error={portError}>
+                {(control) => (
                   <input
-                    className="qn-input min-w-0 flex-1"
-                    type={showPassword ? 'text' : 'password'}
-                    autoComplete="off"
-                    placeholder={settings?.hasPassword ? '已设置，留空表示不修改' : '6–20 位，区分大小写'}
-                    value={draft?.password ?? ''}
-                    onChange={(event) => patch({ password: event.target.value })}
+                    {...control}
+                    className="qn-input"
+                    inputMode="numeric"
+                    value={draft?.port ?? ''}
+                    onChange={(event) => patch({ port: event.target.value })}
                   />
-                  <IconButton
-                    label={showPassword ? '隐藏配对密码' : '显示配对密码'}
-                    className="h-[36px] w-[36px]"
-                    onClick={() => setShowPassword((value) => !value)}
-                  >
-                    {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
-                  </IconButton>
-                </div>
-              </Field>
+                )}
+              </FormField>
+              <FormField label="配对密码" hint="6–20 位、区分大小写；用本机系统加密保存，不会写进日志。" error={passwordError}>
+                {(control) => (
+                  <div className="flex gap-1.5">
+                    <input
+                      {...control}
+                      className="qn-input min-w-0 flex-1"
+                      type={showPassword ? 'text' : 'password'}
+                      autoComplete="off"
+                      placeholder={settings?.hasPassword ? '已设置，留空表示不修改' : '6–20 位，区分大小写'}
+                      value={draft?.password ?? ''}
+                      onChange={(event) => patch({ password: event.target.value })}
+                    />
+                    <IconButton
+                      label={showPassword ? '隐藏配对密码' : '显示配对密码'}
+                      className="h-[36px] w-[36px]"
+                      onClick={() => setShowPassword((value) => !value)}
+                    >
+                      {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </IconButton>
+                  </div>
+                )}
+              </FormField>
             </div>
             <Section title="导入到手机" action={
               <button type="button" className="text-[12px] text-qn-accent hover:underline" onClick={() => setTab('addresses')}>

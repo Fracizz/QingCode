@@ -10,6 +10,8 @@ import type {
   SshTargetInput,
   TargetProbe,
 } from '../../../shared/backendApi'
+import { FeedbackRow } from './FeedbackRow'
+import { FormField } from './FormField'
 import { PasswordInput } from './PasswordInput'
 import type { ConnectCredentials } from '../store/targets'
 import { useTargets } from '../store/targets'
@@ -520,16 +522,18 @@ export function TargetForm({
                     经 SSH 在远端开启 TLS 直连，之后连接优先直连、失败自动回退 SSH
                   </p>
                   <div className="flex gap-2">
-                    <label className="min-w-0 flex-1">
-                      <span className="mb-1 block text-[12px] text-qn-muted">远端监听端口</span>
-                      <input className="qn-input" placeholder="47390" inputMode="numeric" value={directConfig.listen}
-                        onChange={(event) => setDirectConfig((value) => ({ ...value, listen: event.target.value }))} />
-                    </label>
-                    <label className="min-w-0 flex-1">
-                      <span className="mb-1 block text-[12px] text-qn-muted">拨号地址</span>
-                      <input className="qn-input" placeholder="可填 frp / Tailscale 地址" value={directConfig.host}
-                        onChange={(event) => setDirectConfig((value) => ({ ...value, host: event.target.value }))} />
-                    </label>
+                    <FormField label="远端监听端口" className="flex-1">
+                      {(control) => (
+                        <input {...control} className="qn-input" placeholder="47390" inputMode="numeric" value={directConfig.listen}
+                          onChange={(event) => setDirectConfig((value) => ({ ...value, listen: event.target.value }))} />
+                      )}
+                    </FormField>
+                    <FormField label="拨号地址" className="flex-1">
+                      {(control) => (
+                        <input {...control} className="qn-input" placeholder="可填 frp / Tailscale 地址" value={directConfig.host}
+                          onChange={(event) => setDirectConfig((value) => ({ ...value, host: event.target.value }))} />
+                      )}
+                    </FormField>
                   </div>
                   <Checkbox checked={directConfig.allowPublic}
                     onChange={(checked) => setDirectConfig((value) => ({ ...value, allowPublic: checked }))}>
@@ -545,12 +549,11 @@ export function TargetForm({
           )}
         </>
       )}
-      {passed && (
-        <div role="status" className="flex items-start gap-2 rounded-lg border border-qn-ok/30 bg-qn-ok/10 px-3 py-2 text-[13px] leading-5 text-qn-ok">
-          <CircleCheck size={15} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{passed}</span>
-        </div>
-      )}
+      <FeedbackRow
+        message={passed}
+        icon={<CircleCheck size={15} />}
+        className="rounded-lg border border-qn-ok/30 bg-qn-ok/10 px-3 py-2 text-[13px] leading-5 text-qn-ok"
+      />
       <ErrorNote message={error} onClose={() => setError(null)} />
       </form>
     </Modal>
