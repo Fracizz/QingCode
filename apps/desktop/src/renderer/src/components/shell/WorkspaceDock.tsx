@@ -1,8 +1,9 @@
-import { FolderTree, GitBranch, Search, X } from 'lucide-react'
+import { FolderTree, GitBranch, Play, Search, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { FileExplorer, SearchPanel } from '../../features/explorer'
 import { FilePane, useFiles } from '../../features/files'
 import { GitPanel } from '../../features/git'
+import { RunPanel } from '../../features/run'
 import { cn } from '../../lib/cn'
 import { useCodex } from '../../store/codex'
 import { FILES_MAX, FILES_MIN, TOOL_MAX, TOOL_MIN, useDock, type DockTool } from '../../store/dock'
@@ -14,6 +15,7 @@ export const DOCK_TOOLS: Array<{ id: DockTool; label: string; hint: string; icon
   { id: 'explorer', label: '资源管理器', hint: 'Ctrl Shift E', icon: <FolderTree size={15} /> },
   { id: 'search', label: '搜索', hint: 'Ctrl Shift F', icon: <Search size={15} /> },
   { id: 'git', label: '源代码管理', hint: 'Ctrl Shift G', icon: <GitBranch size={15} /> },
+  { id: 'run', label: '运行', hint: 'Ctrl Shift R', icon: <Play size={15} /> },
 ]
 
 /** 文件/Git 功能作用于当前项目；未选项目或目标未连接时给出提示。 */
@@ -35,6 +37,7 @@ function ToolBody({ tool }: { tool: DockTool }) {
   const key = `${scope.targetId}:${scope.cwd}`
   if (tool === 'explorer') return <FileExplorer key={key} targetId={scope.targetId} root={scope.cwd} className="min-h-0 flex-1" />
   if (tool === 'search') return <SearchPanel key={key} targetId={scope.targetId} root={scope.cwd} className="min-h-0 flex-1" />
+  if (tool === 'run') return <RunPanel key={key} targetId={scope.targetId} cwd={scope.cwd} />
   return <GitPanel key={key} targetId={scope.targetId} cwd={scope.cwd} />
 }
 

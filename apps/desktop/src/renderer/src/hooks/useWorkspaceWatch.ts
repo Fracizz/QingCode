@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { getExplorerWatchPaths, subscribeExplorerWatch } from '../features/explorer'
 import { getFileWatchPaths, subscribeFileWatch } from '../features/files'
+import { getRunWatchPaths, subscribeRunWatch } from '../features/run'
 import { serverCall } from '../features/workspace/serverCall'
 import { useTargets } from '../store/targets'
 
@@ -23,7 +24,7 @@ export function useWorkspaceWatch(): void {
           sent.delete(targetId)
           continue
         }
-        const paths = mergeWatchPaths(getFileWatchPaths(targetId), getExplorerWatchPaths(targetId))
+        const paths = mergeWatchPaths(getFileWatchPaths(targetId), getExplorerWatchPaths(targetId), getRunWatchPaths(targetId))
         const key = paths.join('\n')
         if (sent.get(targetId) === key) continue
         sent.set(targetId, key)
@@ -40,6 +41,7 @@ export function useWorkspaceWatch(): void {
 
     const offFiles = subscribeFileWatch(schedule)
     const offExplorer = subscribeExplorerWatch(schedule)
+    const offRun = subscribeRunWatch(schedule)
     const offTargets = useTargets.subscribe((state, previous) => {
       if (state.states !== previous.states) {
         for (const [id, info] of Object.entries(state.states)) {
@@ -53,6 +55,7 @@ export function useWorkspaceWatch(): void {
       if (timer) clearTimeout(timer)
       offFiles()
       offExplorer()
+      offRun()
       offTargets()
     }
   }, [])

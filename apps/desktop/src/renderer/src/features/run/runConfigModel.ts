@@ -222,6 +222,15 @@ export function samePath(a: string, b: string): boolean {
   return normalizePath(a) === normalizePath(b)
 }
 
+/** 变化路径是否落在 .qingcode / .nestcode 目录（含目录本身）。 */
+export function isConfigPath(root: string, changed: string): boolean {
+  const target = normalizePath(changed)
+  return ['.qingcode', '.nestcode'].some((dir) => {
+    const base = normalizePath(joinPath(root, dir))
+    return target === base || target.startsWith(`${base}/`)
+  })
+}
+
 // ---------- 按系统过滤 ----------
 
 export type ResolvedTask =

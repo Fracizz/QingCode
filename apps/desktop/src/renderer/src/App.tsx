@@ -115,7 +115,7 @@ export default function App() {
           toggleCommandPalette()
           return
         }
-        const tool = key === 'e' ? 'explorer' : key === 'f' ? 'search' : key === 'g' ? 'git' : null
+        const tool = key === 'e' ? 'explorer' : key === 'f' ? 'search' : key === 'g' ? 'git' : key === 'r' ? 'run' : null
         if (tool) {
           event.preventDefault()
           useDock.getState().toggleTool(tool)

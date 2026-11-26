@@ -28,7 +28,7 @@ export function runsForConfig(config: RunConfig, runs: RunInfo[]): RunInfo[] {
 export type ConfigStatus = 'running' | 'failed' | 'ok' | 'idle'
 
 /** 运行中优先；否则看每个任务最近一次运行，有非零退出即失败。 */
-export function configStatus(config: RunConfig, runs: RunInfo[]): ConfigStatus {
+export function configStatus(config: RunConfig, runs: RunInfo[], stopped: Record<string, true> = {}): ConfigStatus {
   const related = runsForConfig(config, runs)
   if (related.length === 0) return 'idle'
   if (related.some(isRunning)) return 'running'
@@ -37,11 +37,13 @@ export function configStatus(config: RunConfig, runs: RunInfo[]): ConfigStatus {
     const prev = latest.get(run.key!)
     if (!prev || run.startedAt >= prev.startedAt) latest.set(run.key!, run)
   }
-  return [...latest.values()].some((run) => run.exitCode !== 0) ? 'failed' : 'ok'
+  // 用户主动停止的不算失败（Windows taskkill /F 的退出码是 1）。
+  return [...latest.values()].some((run) => run.exitCode !== 0 && !stopped[run.runId]) ? 'failed' : 'ok'
 }
 
-export function runStatusText(run: RunInfo): string {
+export function runStatusText(run: RunInfo, stopped = false): string {
   if (isRunning(run)) return run.pid ? `运行中 · PID ${run.pid}` : '运行中'
+  if (stopped) return '已停止'
   if (run.exitCode === null || run.exitCode === undefined) return run.signal ? `已终止（${run.signal}）` : '已终止'
   return `已退出（${run.exitCode}）`
 }

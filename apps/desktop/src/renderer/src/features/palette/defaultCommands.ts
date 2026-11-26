@@ -3,7 +3,7 @@ import type { PaletteCommand } from './types'
 // 内置命令：动作全部通过依赖注入拿到，不引用 App.tsx，也不直接碰各 store，
 // 宿主没提供的动作对应命令就不生成。
 
-export type DockToolId = 'explorer' | 'search' | 'git'
+export type DockToolId = 'explorer' | 'search' | 'git' | 'run'
 
 /** S 为设置分区 id 类型，宿主可直接传 features/settings 的 openSettings 与 SETTINGS_SECTIONS。 */
 export type DefaultCommandDeps<S extends string = string> = {
@@ -43,6 +43,7 @@ const DOCK_TOOL_COMMANDS: ReadonlyArray<{ tool: DockToolId; title: string; short
   { tool: 'explorer', title: '切换资源管理器', shortcut: 'Ctrl+Shift+E', keywords: ['explorer', 'files', '文件树'] },
   { tool: 'search', title: '切换搜索', shortcut: 'Ctrl+Shift+F', keywords: ['search', 'find', '查找'] },
   { tool: 'git', title: '切换源代码管理', shortcut: 'Ctrl+Shift+G', keywords: ['git', 'scm', 'source control'] },
+  { tool: 'run', title: '切换运行面板', shortcut: 'Ctrl+Shift+R', keywords: ['run', '运行配置', 'task'] },
 ]
 
 export function defaultCommands<S extends string = string>(deps: DefaultCommandDeps<S>): PaletteCommand[] {
