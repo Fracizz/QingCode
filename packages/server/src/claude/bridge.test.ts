@@ -50,7 +50,7 @@ interface Harness {
   queries: FakeQuery[]
 }
 
-function harness(options: { failResolve?: boolean } = {}): Harness {
+function harness(options: { failResolve?: boolean; listSessions?: ClaudeDeps['listSessions'] } = {}): Harness {
   const sent: Harness['sent'] = []
   const recv: Harness['recv'] = []
   const events: Harness['events'] = []
@@ -61,15 +61,15 @@ function harness(options: { failResolve?: boolean } = {}): Harness {
     broadcastEvt: (name, payload) => events.push({ name, payload }),
     log: () => {},
   }
+  const oldSession = { sessionId: 'old-1', summary: '历史会话', cwd: '/work', lastModified: 1_700_000_000_000 }
   const deps: ClaudeDeps = {
     query: (params) => {
       const query = new FakeQuery(params.prompt, params.options)
       queries.push(query)
       return query
     },
-    listSessions: async () => [
-      { sessionId: 'old-1', summary: '历史会话', cwd: '/work', lastModified: 1_700_000_000_000 },
-    ],
+    listSessions: options.listSessions ?? (async () => [oldSession]),
+    getSessionInfo: async (id) => id === oldSession.sessionId ? oldSession : undefined,
     getSessionMessages: async () => [
       {
         message: { id: 'm1', role: 'user', content: [{ type: 'text', text: '历史问题' }] },
@@ -134,6 +134,38 @@ function note(h: Harness, method: string): Json {
 }
 
 describe('ClaudeBridge 端到端（假 query 工厂）', () => {
+  it('跨项目查询按更新时间合并，并保留原项目目录', async () => {
+    const h = harness({ listSessions: async (options) => {
+      expect(options).toMatchObject({ limit: 2, includeWorktrees: false })
+      return options?.dir === '/first' ? [
+        { sessionId: 'a', lastModified: 1_000 },
+        { sessionId: 'b', lastModified: 3_000 },
+      ] : [
+        { sessionId: 'c', lastModified: 2_000 },
+      ]
+    } })
+    await h.bridge.open({})
+    request(h, 'list', 'thread/list', { cwd: ['/first', '/second'], limit: 2 })
+    expect((await response(h, 'list')).result).toMatchObject({
+      data: [{ id: 'b', cwd: '/first' }, { id: 'c', cwd: '/second' }],
+      nextCursor: null,
+    })
+    expect(h.queries).toHaveLength(0)
+  })
+
+  it('直接打开历史 ID 时找到原项目，找不到的 ID 返回错误', async () => {
+    const h = harness()
+    await h.bridge.open({})
+
+    request(h, 'old', 'thread/resume', { threadId: 'old-1', cwd: '/another-project' })
+    expect((await response(h, 'old')).result).toMatchObject({
+      thread: { id: 'old-1', cwd: '/work', turns: [{ status: 'completed' }] },
+    })
+    request(h, 'missing', 'thread/read', { threadId: 'missing' })
+    expect((await response(h, 'missing')).error).toMatchObject({ message: '未找到 Claude 会话' })
+    expect(h.queries).toHaveLength(0)
+  })
+
   it('open / thread / turn / delta / approval / completed / interrupt / attach', async () => {
     const h = harness()
     const opened = await h.bridge.open({})

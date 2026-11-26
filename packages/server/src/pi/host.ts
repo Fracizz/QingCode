@@ -445,7 +445,7 @@ export class PiHost extends JsonRpcAgentHost {
           throw new PiRpcError(-32603, '切换到 pi 历史会话失败')
         }
         const state = await rpc.command('get_state')
-        if (asRecord(state.data)?.sessionId !== session.meta.id) {
+        if (state.success !== true || asRecord(state.data)?.sessionId !== session.meta.id) {
           throw new PiRpcError(-32603, 'pi 返回的会话与所选会话不一致')
         }
       }

@@ -846,18 +846,21 @@ export const useCodex = create<CodexState>((set, get) => {
       if (!session) return
       try {
         let result: { thread: Parameters<typeof loadThread>[1] }
+        let readOnly = false
         let writerConflict = false
         try {
           result = await resumeThread(session.rpc, threadId)
         } catch (err) {
-          writerConflict = picked === 'codex' && isActiveWriterError(err)
+          if (picked !== 'codex') throw err
+          readOnly = true
+          writerConflict = isActiveWriterError(err)
           if (token !== openThreadToken) return
           result = await readThread(session.rpc, threadId)
         }
         if (token !== openThreadToken) return
         patchSession(key, (value) => {
           const threadsAwaitingResume = new Set(value.threadsAwaitingResume)
-          if (writerConflict) threadsAwaitingResume.add(threadId)
+          if (readOnly) threadsAwaitingResume.add(threadId)
           else threadsAwaitingResume.delete(threadId)
           return { ...value, threadsAwaitingResume, state: loadThread(value.state, result.thread) }
         })

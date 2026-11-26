@@ -253,6 +253,12 @@ describe('pi 桥端到端（daemon + 假 pi RPC）', () => {
   }, 40_000)
 
   it('不支持的方法返回 -32601，thread/list 与 thread/read 可用', async () => {
+    const cwd = path.join(root, 'past-project')
+    fs.mkdirSync(cwd)
+    const historyId = 'old-pi-session'
+    fs.writeFileSync(path.join(root, 'sessions', `${historyId}.jsonl`), JSON.stringify({
+      type: 'session', id: historyId, cwd, version: 3, timestamp: '2026-11-25T10:00:00.000Z',
+    }) + '\n')
     const client = new Client(endpoint)
     expect((await client.hello(token)).t).toBe('welcome')
     await client.req('codex.open', { agent: 'pi', piPath })
@@ -270,22 +276,26 @@ describe('pi 桥端到端（daemon + 假 pi RPC）', () => {
     client.send({
       t: 'codex.send',
       agent: 'pi',
-      msg: { id: 'list', method: 'thread/list', params: { cwd: root } },
+      msg: { id: 'list', method: 'thread/list', params: { cwd: [root, cwd] } },
     })
     const listed = await client.wait(
       (f) => f.t === 'codex.recv' && (f.msg as Frame)?.id === 'list',
     )
-    expect(((listed.msg as Frame).result as Frame).data).toEqual([])
+    expect(((listed.msg as Frame).result as Frame).data).toEqual([expect.objectContaining({ id: historyId, cwd })])
 
     client.send({
       t: 'codex.send',
       agent: 'pi',
-      msg: { id: 'read', method: 'thread/read', params: { threadId: 'fake-pi-session' } },
+      msg: { id: 'read', method: 'thread/read', params: { threadId: historyId } },
     })
     const read = await client.wait(
       (f) => f.t === 'codex.recv' && (f.msg as Frame)?.id === 'read',
     )
-    expect((((read.msg as Frame).result as Frame).thread as Frame).id).toBe('fake-pi-session')
+    expect(((read.msg as Frame).result as Frame).thread).toMatchObject({
+      id: historyId,
+      cwd,
+      turns: [{ items: [expect.objectContaining({ type: 'userMessage' }), expect.objectContaining({ type: 'agentMessage' })] }],
+    })
     client.close()
   }, 30_000)
 })

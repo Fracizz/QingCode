@@ -83,6 +83,14 @@ describe('模拟网关全链路', () => {
     expect(workspaceThreads.map((thread) => [thread.projectId, thread.agent]).sort()).toEqual([
       ['p-local', 'claude'], ['p-local', 'codex'],
     ])
+    const historyRequests = discovery.mock.calls.filter(([, method]) => method === 'codex.send')
+    for (const agent of ['claude', 'codex']) {
+      expect(historyRequests).toContainEqual([
+        edited, 'codex.send', expect.objectContaining({ agent, msg: expect.objectContaining({
+          method: 'thread/list', params: { cwd: ['D:\\code\\qingcode-next'], limit: 100, sortKey: 'updated_at' },
+        }) }),
+      ])
+    }
     const discoveryRequests = discovery.mock.calls.flatMap(([, method, params]) => method === 'server.req' ? [params] : [])
     expect(discoveryRequests).toContainEqual({
       targetId: 'local', method: 'codex.status', params: { agent: 'pi' },
@@ -124,6 +132,28 @@ describe('模拟网关全链路', () => {
     expect(state().selectedAgent).toBe('claude')
     expect(state().sessions['claude:local']?.state.threads['c-demo']?.items.length).toBeGreaterThan(0)
     expect(state().sessions['codex:local']?.state.threads['c-demo']).toBeUndefined()
+    state().goBack()
+
+    const gatewayRpc = gateway.rpc.bind(gateway)
+    let blockResume = true
+    const historyRpc = vi.spyOn(gateway, 'rpc').mockImplementation((conn, method, params, agent, timeout) => {
+      const request = params as { msg?: { method?: string } }
+      if (method === 'codex.send' && request.msg?.method === 'thread/resume' && blockResume) {
+        blockResume = false
+        return Promise.reject(new Error('会话正被另一个客户端占用'))
+      }
+      return gatewayRpc(conn, method, params, agent, timeout)
+    })
+    await state().openThread('t-demo', 'codex')
+    expect(state().sessions['codex:local']?.state.threads['t-demo']?.items.length).toBeGreaterThan(0)
+    await expect(state().send('接着聊')).resolves.toBe(true)
+    const historyMethods = historyRpc.mock.calls.flatMap(([, method, params]) => {
+      const msg = (params as { msg?: { method?: string } })?.msg
+      return method === 'codex.send' && msg?.method && /^(thread\/(resume|read)|turn\/start)$/.test(msg.method)
+        ? [msg.method] : []
+    })
+    expect(historyMethods).toEqual(['thread/resume', 'thread/read', 'thread/resume', 'turn/start'])
+    historyRpc.mockRestore()
     state().goBack()
 
     await state().newThread()

@@ -71,7 +71,7 @@ export function parseSessionLines(lines: string[]): ParsedSessionHeader | null {
       header = record
       continue
     }
-    if (record.type === 'session_info') name = scalarText(record.name) || name
+    if (record.type === 'session_info' && !name) name = scalarText(record.name)
     if (record.type === 'message' && !preview) {
       const message = asRecord(record.message)
       if (scalarText(message?.role) !== 'user') continue
@@ -127,6 +127,7 @@ export function listPiSessions(
   threadId?: string,
 ): PiSessionInfo[] {
   const cwds = cwd === undefined ? undefined : Array.isArray(cwd) ? cwd : [cwd]
+  if (cwds?.length === 0) return []
   const rootEntries = readEntries(io, root)
   const groupKey = (dir: string) => process.platform === 'win32' ? dir.toLowerCase() : dir
   const groups = cwds && new Set(cwds.map((dir) => groupKey(encodeCwdDir(path.resolve(dir)))))

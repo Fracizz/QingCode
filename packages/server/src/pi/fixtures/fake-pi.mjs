@@ -28,6 +28,7 @@ const history = [
 
 let running = false
 let remainder = ''
+let sessionId = 'fake-pi-session'
 
 const replay = () => {
   for (const line of events) {
@@ -44,12 +45,13 @@ const handle = (record) => {
       return respond(id, type, { cancelled: false })
     case 'get_state':
       return respond(id, type, {
-        sessionId: 'fake-pi-session',
+        sessionId,
         sessionFile: path.join(here, 'fake-pi-session.jsonl'),
         messageCount: 0,
         isStreaming: running,
       })
     case 'switch_session':
+      sessionId = path.basename(record.sessionPath, '.jsonl')
       return respond(id, type, { cancelled: false })
     case 'get_messages':
       return respond(id, type, { messages: history })

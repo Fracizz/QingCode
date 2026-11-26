@@ -177,6 +177,7 @@ export type AgentSession = {
   agent: AgentKind
   rpc: CodexRpc
   transport: MobileCodexTransport
+  resumedCodexThreads: Set<string>
   state: ConversationState
   opened: boolean
   opening: boolean
@@ -615,6 +616,7 @@ export const useApp = create<AppState>((set, get) => {
       agent,
       rpc,
       transport,
+      resumedCodexThreads: new Set(),
       state: emptyState(),
       opened: false,
       opening: false,
@@ -1568,6 +1570,7 @@ export const useApp = create<AppState>((set, get) => {
           const reset = seen !== null && hostSeq !== null && hostSeq < seen
           if (reset) {
             session.transport.resetSequence()
+            session.resumedCodexThreads.clear()
             clearPendingApprovals(session)
           }
           let lastSeq = reset ? hostSeq : seen ?? hostSeq
@@ -1634,6 +1637,7 @@ export const useApp = create<AppState>((set, get) => {
           const restarted = info.lastSeq !== null && info.lastSeq < cursor
           if (restarted) {
             session.transport.resetSequence()
+            session.resumedCodexThreads.clear()
             clearPendingApprovals(session)
             // 接回用户正在看的一条对话时才允许启动重启后还没恢复的 Agent。
             if (showsConversation(session)) {
@@ -1757,6 +1761,7 @@ export const useApp = create<AppState>((set, get) => {
       try {
         const result = await startThread(session.rpc, cwd ? { cwd } : {})
         if (navigation !== navigationEpoch) return
+        if (picked === 'codex') session.resumedCodexThreads.add(result.thread.id)
         patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
         set({
           selectedThreadId: result.thread.id,
@@ -1781,12 +1786,19 @@ export const useApp = create<AppState>((set, get) => {
       if (!session || navigation !== navigationEpoch) return
       try {
         let result: { thread: Parameters<typeof loadThread>[1] }
+        let resumed = true
         try {
           result = await resumeThread(session.rpc, id)
-        } catch {
+        } catch (err) {
+          if (picked !== 'codex') throw err
+          resumed = false
           result = await readThread(session.rpc, id)
         }
         if (navigation !== navigationEpoch) return
+        if (picked === 'codex') {
+          if (resumed) session.resumedCodexThreads.add(id)
+          else session.resumedCodexThreads.delete(id)
+        }
         patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
         set({ selectedThreadId: id, selectedAgent: picked, page: 'chat', error: null })
         showDraft()
@@ -1855,12 +1867,21 @@ export const useApp = create<AppState>((set, get) => {
           if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
           patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, created.thread) }), session)
           threadId = created.thread.id
+          if (agent === 'codex') session.resumedCodexThreads.add(threadId)
           set({ selectedThreadId: threadId })
           sentDraftKey = draftKey(conn.id, targetId, initial.selectedProjectId, agent, threadId, conn.fp)
           saveDraft(sentDraftKey, drafts[key] ?? draft)
           saveDraft(key, { text: '', annotations: [] })
           saveActiveChat()
           void get().refreshThreads({ skipFailed: true })
+        } else if (agent === 'codex' && !session.resumedCodexThreads.has(threadId)) {
+          const { thread } = await resumeThread(session.rpc, threadId)
+          if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
+          session.resumedCodexThreads.add(threadId)
+          patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }), session)
+          if (get().sessions[session.key]?.state.threads[threadId]?.status === 'running') {
+            throw new Error('会话正在运行，请等当前回复完成或先中断')
+          }
         }
         const started = await sendInput(session.rpc, threadId, input, overrides)
         if (epoch !== desktopEpoch) return true
@@ -2229,6 +2250,7 @@ export const useApp = create<AppState>((set, get) => {
             const agent = exitedAgent(payload)
             for (const session of Object.values(get().sessions)) {
               if (session.targetId !== targetId || (agent !== null && session.agent !== agent)) continue
+              session.resumedCodexThreads.clear()
               clearPendingApprovals(session)
               patchSession(session.key, (value) => ({
                 ...value,
