@@ -4,6 +4,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { Options, PermissionMode, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { ThreadStatus } from '../../../../vendor/codex-protocol/ts/v2/ThreadStatus'
 import { classifyJsonRpc, type JsonRpcId } from '@qn/protocol'
 import {
   AgentHostError,
@@ -88,6 +89,7 @@ interface BridgeSession {
 }
 
 interface PendingApproval {
+  threadId: string
   resolve(result: PermissionResult): void
   suggestions: unknown
 }
@@ -283,7 +285,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
             this.metas.set(meta.id, meta)
           }
         }
-        return threadListResponse([...metas.values()], limit)
+        return threadListResponse([...metas.values()], limit, (id) => this.threadStatus(id))
       }
       case 'thread/start': {
         const id = randomUUID()
@@ -304,7 +306,12 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         const session = await this.sessionFor(threadId, deps, typeof params.cwd === 'string' ? params.cwd : undefined)
         const messages = await deps.getSessionMessages(threadId, { dir: session.meta.cwd })
         const history = sessionMessagesToThread(session.meta, messages, threadModelConfig(session.settings))
-        return { thread: history.thread }
+        const turnId = session.turnId
+        return { thread: turnId ? {
+          ...history.thread,
+          status: this.threadStatus(threadId),
+          turns: [...history.turns, buildTurn(turnId, [], 'inProgress')],
+        } : history.thread }
       }
       case 'turn/start': {
         const threadId = scalarText(params.threadId)
@@ -587,6 +594,12 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     this.touch(session)
   }
 
+  private threadStatus(threadId: string): ThreadStatus {
+    if (!this.sessions.get(threadId)?.turnId) return { type: 'idle' }
+    const waiting = [...this.approvals.values()].some((pending) => pending.threadId === threadId)
+    return { type: 'active', activeFlags: waiting ? ['waitingOnApproval'] : [] }
+  }
+
   private onCanUseTool(
     session: BridgeSession,
     toolName: string,
@@ -611,7 +624,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       ...(extra.decisionReason ? { reason: extra.decisionReason } : {}),
     })
     return new Promise<PermissionResult>((resolve) => {
-      this.approvals.set(requestId, { resolve, suggestions: extra.suggestions })
+      this.approvals.set(requestId, { threadId: session.meta.id, resolve, suggestions: extra.suggestions })
       if (extra.signal) {
         extra.signal.addEventListener(
           'abort',

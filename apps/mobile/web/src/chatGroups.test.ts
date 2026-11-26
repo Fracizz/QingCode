@@ -15,6 +15,11 @@ describe('groupChatItems', () => {
     const tools = blocks[3]
     expect(tools?.kind === 'tools' && tools.items.map((item) => item.id)).toEqual(['c2', 'f'])
   })
+
+  it('子代理详情入口独立于命令分组', () => {
+    const subagent: ItemView = { kind: 'subagent', id: 'child', status: '运行中', title: '启动子代理', detail: '' }
+    expect(groupChatItems([command('c1'), command('c2'), subagent]).at(-1)).toEqual({ kind: 'item', item: subagent })
+  })
 })
 
 describe('toolSummary', () => {

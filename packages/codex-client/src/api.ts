@@ -16,6 +16,7 @@ import type {
   UserInput,
 } from './codex-types'
 import type { CodexRpc } from './rpc'
+import { emptyState, loadThread } from './conversation'
 
 export type CodexRpcLike = Pick<CodexRpc, 'request'>
 
@@ -67,6 +68,15 @@ export function readThread(
   threadId: string,
 ): Promise<ThreadReadResponse> {
   return rpc.request('thread/read', { threadId, includeTurns: true })
+}
+
+export async function readSubagentThread(rpc: CodexRpcLike, threadId: string) {
+  const { thread } = await readThread(rpc, threadId)
+  if (thread?.id !== threadId) throw new Error('返回的子代理会话与请求不一致')
+  return {
+    name: thread.agentNickname || thread.name || thread.agentRole,
+    view: loadThread(emptyState(), thread).threads[threadId],
+  }
 }
 
 export function setThreadName(rpc: CodexRpcLike, threadId: string, name: string): Promise<unknown> {

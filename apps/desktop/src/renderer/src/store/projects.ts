@@ -71,6 +71,7 @@ export const useProjects = create<ProjectsState>((set, get) => ({
 
   select: async (project) => {
     set({ selectedId: project.id, error: null })
+    useCodex.getState().setContext(project.targetId, project.path, true)
     // 打开项目时刷新 lastOpenedAt；后端暂未实现时仍然允许进入对话。
     try {
       const saved = await call('projects.save', {
@@ -88,7 +89,6 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     } catch (err) {
       set({ error: friendlyError(err, '刷新项目时间失败') })
     }
-    useCodex.getState().setContext(project.targetId, project.path, true)
   },
 
   add: async (targetId, path) => {

@@ -1,17 +1,16 @@
-import { X } from 'lucide-react'
 import {
   compactText,
   formatReset,
+  remainingQuotaPercent,
   severity,
   severityForPercent,
   tightestPercent,
   windowLabel,
-  type RateLimitSnapshot,
   type RateLimitWindow,
 } from '@qn/codex-client'
 import { useEffect, useState } from 'react'
-import { useApp, type RateLimitEntry } from '../store'
-import { Badge, Button, Card, Empty } from './ui'
+import { useApp } from '../store'
+import { Badge, Button } from './ui'
 
 function toneText(level: 'ok' | 'warn' | 'danger'): string {
   return level === 'danger' ? 'text-qn-danger' : level === 'warn' ? 'text-qn-warn' : 'text-qn-muted'
@@ -25,12 +24,6 @@ function barColor(level: 'ok' | 'warn' | 'danger'): string {
       : 'var(--color-qn-accent)'
 }
 
-export function barWidth(percent: number | null | undefined): number {
-  return typeof percent === 'number' && Number.isFinite(percent)
-    ? Math.min(100, Math.max(0, percent))
-    : 0
-}
-
 export function RateLimitBadge({
   targetId,
   onToggle,
@@ -41,52 +34,44 @@ export function RateLimitBadge({
   hideWhenEmpty?: boolean
 }) {
   const entry = useApp((s) => (targetId ? s.rateLimits[targetId] : undefined))
-  const level = severity(entry?.snapshot)
-  const text = entry?.snapshot ? compactText(entry.snapshot) : '暂无额度数据'
-  if (hideWhenEmpty && !entry?.snapshot) return null
+  const snapshot = entry?.snapshot
+  const level = severity(snapshot)
+  const hasWindow = Boolean(snapshot?.primary || snapshot?.secondary)
+  const reached = snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true
+  if (!targetId || (hideWhenEmpty && !hasWindow && !reached)) return null
+  const text = hasWindow ? compactText(snapshot, 'remaining') : reached ? '已达额度上限' : '额度'
   if (!onToggle) return <Badge tone={level === 'ok' ? 'muted' : level}>{text}</Badge>
   return (
-    <button type="button" className={`qn-badge qn-badge-button ${toneText(level)}`} onClick={onToggle}>
+    <button type="button" className={`qn-badge qn-badge-button ${toneText(level)}`} onClick={onToggle}
+      aria-label={`Codex 额度详情，${hasWindow || reached ? text : '暂无额度数据'}`}>
       {text}
     </button>
   )
 }
 
-function WindowRow({ title, window, now }: { title: string; window: RateLimitWindow | null; now: number }) {
-  const percent = window?.usedPercent ?? null
-  const level = severityForPercent(percent)
+function WindowRow({ label, window, now }: { label: string; window: RateLimitWindow; now: number }) {
+  const level = severityForPercent(window.usedPercent)
+  const remaining = remainingQuotaPercent(window.usedPercent)
   return (
     <div className="mb-3">
       <div className="mb-1 flex items-center justify-between text-xs">
-        <span>
-          {title} · {window ? windowLabel(window.windowDurationMins) : '未知窗口'}
-        </span>
-        <span className={toneText(level)}>{percent === null ? '—' : `${Math.round(percent)}%`}</span>
+        <span>{label}</span>
+        <span className={toneText(level)}>剩余 {Math.round(remaining)}%</span>
       </div>
       <div className="qn-bar">
         <div
           className="qn-bar-fill"
-          style={{ width: `${barWidth(percent)}%`, background: barColor(level) }}
+          style={{ width: `${remaining}%`, background: barColor(level) }}
         />
       </div>
-      <div className="mt-1 text-[11px] text-qn-muted">
-        {window ? formatReset(window.resetsAt, now) : '暂无数据'}
-      </div>
+      {window.resetsAt !== null && (
+        <div className="mt-1 text-[11px] text-qn-muted">{formatReset(window.resetsAt, now)}</div>
+      )}
     </div>
   )
 }
 
-function snapshotOf(entry: RateLimitEntry | undefined): RateLimitSnapshot | null {
-  return entry?.snapshot ?? null
-}
-
-export function RateLimitDetails({
-  targetId,
-  onClose,
-}: {
-  targetId: string | null
-  onClose: () => void
-}) {
+export function RateLimitDetails({ targetId }: { targetId: string | null }) {
   const entry = useApp((s) => (targetId ? s.rateLimits[targetId] : undefined))
   const refresh = useApp((s) => s.refreshRateLimits)
   const [now, setNow] = useState(() => Date.now())
@@ -96,54 +81,51 @@ export function RateLimitDetails({
     return () => clearInterval(timer)
   }, [])
 
-  const snapshot = snapshotOf(entry)
+  const snapshot = entry?.snapshot
   const account = entry?.account ?? null
   const level = severity(snapshot)
+  const tightest = tightestPercent(snapshot)
 
   return (
-    <Card className="mb-3">
+    <div>
       <div className="mb-2 flex items-center gap-2">
-        <span className="flex-1 text-sm font-medium">Codex 额度</span>
-        <Badge tone={level === 'ok' ? 'muted' : level}>
-          {entry?.loading
-            ? '刷新中…'
-            : tightestPercent(snapshot) === null
-              ? '详情'
-              : `最紧张 ${Math.round(tightestPercent(snapshot) ?? 0)}%`}
-        </Badge>
-        <Button className="px-2 py-1 text-xs" onClick={() => targetId && void refresh(targetId)} disabled={!targetId}>
-          刷新
-        </Button>
-        <Button variant="ghost" className="px-2 py-1 text-xs" onClick={onClose} aria-label="关闭">
-          <X size={15} />
+        {tightest !== null && (
+          <Badge tone={level === 'ok' ? 'muted' : level}>
+            最低剩余 {Math.round(remainingQuotaPercent(tightest))}%
+          </Badge>
+        )}
+        <Button className="ml-auto px-2 py-1 text-xs" onClick={() => targetId && void refresh(targetId)} disabled={!targetId || entry?.loading}>
+          {entry?.loading ? '刷新中…' : '刷新'}
         </Button>
       </div>
       {entry?.error && <p className="mb-2 text-xs text-qn-danger">{entry.error}</p>}
-      {!snapshot ? (
-        <Empty>codex.open 后会自动读取额度；若目标未登录 Codex，这里保持为空。</Empty>
-      ) : (
-        <>
-          <WindowRow title="主窗口" window={snapshot.primary} now={now} />
-          <WindowRow title="次窗口" window={snapshot.secondary} now={now} />
-          {snapshot.credits?.hasCredits === true && (
-            <p className="mb-2 text-xs text-qn-muted">余额：{snapshot.credits.balance ?? '—'}</p>
-          )}
-          {snapshot.rateLimitReachedType && (
-            <p className="mb-2 text-xs text-qn-danger">已触发限额：{snapshot.rateLimitReachedType}</p>
-          )}
-        </>
+      {snapshot?.primary && (
+        <WindowRow label={windowLabel(snapshot.primary.windowDurationMins ?? 300)} window={snapshot.primary} now={now} />
+      )}
+      {snapshot?.secondary && (
+        <WindowRow label={windowLabel(snapshot.secondary.windowDurationMins ?? 10080)} window={snapshot.secondary} now={now} />
+      )}
+      {!snapshot?.primary && !snapshot?.secondary && !entry?.loading && !entry?.error && (
+        <p className="mb-2 text-sm text-qn-muted">暂无额度数据</p>
+      )}
+      {snapshot?.credits?.hasCredits && (
+        <p className="mb-2 text-xs text-qn-muted">积分：{snapshot.credits.unlimited ? '不限量' : (snapshot.credits.balance ?? '有余额')}</p>
+      )}
+      {(snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true) && (
+        <p className="mb-2 text-xs text-qn-danger">已达额度上限{snapshot.rateLimitReachedType ? `（${snapshot.rateLimitReachedType}）` : ''}</p>
       )}
       <div className="mt-2 border-t border-qn-border pt-2 text-[11px] text-qn-muted">
         {account ? (
           <>
             <div>账号：{account.email ?? account.type}</div>
             <div>套餐：{account.planType ?? '—'}</div>
+            {account.workspaceName && <div className="break-words">工作区：{account.workspaceName}</div>}
           </>
         ) : (
           <div>账号信息不可用</div>
         )}
         <div>最后更新：{entry?.updatedAt ? new Date(entry.updatedAt).toLocaleTimeString('zh-CN') : '—'}</div>
       </div>
-    </Card>
+    </div>
   )
 }

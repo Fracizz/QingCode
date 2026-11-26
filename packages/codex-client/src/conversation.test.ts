@@ -9,12 +9,14 @@ import {
   clearDraftThread,
   dropOptimisticUsers,
   emptyState,
+  failActiveThreads,
   loadThread,
   moveOptimisticUsers,
   resolveServerRequest,
   userItemFromInput,
 } from './conversation'
 import type { ConversationState, ItemView, LoadableThread } from './conversation'
+import { sessionStatus } from './threadStatus'
 
 type Params = Record<string, unknown>
 
@@ -52,6 +54,40 @@ const userItem = item('userMessage', 'i-user', {
   content: [{ type: 'text', text: '请执行命令', text_elements: [] }],
 })
 
+describe('跨端会话状态', () => {
+  it('从状态事件区分待审批、待输入和运行中', () => {
+    const change = (activeFlags: string[]) => note('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags } })
+    const pending = applyNotification(emptyState(), change(['waitingOnApproval']))
+    expect(sessionStatus(threadOf(pending))).toBe('pending')
+    const waiting = applyNotification(pending, change(['waitingOnUserInput']))
+    expect(sessionStatus(threadOf(waiting))).toBe('input')
+    expect(sessionStatus(threadOf(applyNotification(waiting, change([]))))).toBe('running')
+  })
+
+  it('进程退出时结束正在运行的会话并清除旧审批', () => {
+    const state = applyServerRequest(emptyState(), request('item/commandExecution/requestApproval', 'r', { threadId: 't1', turnId: 'a', command: 'echo test' }))
+    const exited = threadOf(failActiveThreads(state, 'Agent 进程已退出'))
+    expect(exited).toMatchObject({ activity: 'failed', activeTurnId: null, pendingApprovals: [], error: 'Agent 进程已退出' })
+    expect(sessionStatus(exited)).toBe('failed')
+  })
+
+  it.each(['completed', 'failed', 'interrupted'] as const)('idle 通知保留 %s，下一轮开始时恢复运行中', (status) => {
+    const turn = { id: 'a', status, items: [], error: status === 'failed' ? { message: '发送失败' } : null }
+    const finished = reduce(emptyState(), [
+      note('turn/started', { threadId: 't1', turn: { ...turn, status: 'inProgress' } }),
+      note('turn/completed', { threadId: 't1', turn }),
+      note('thread/status/changed', { threadId: 't1', status: { type: 'idle' } }),
+    ])
+    expect(sessionStatus(threadOf(finished), 'running')).toBe(status)
+    if (status === 'failed') expect(threadOf(finished).error).toBe('发送失败')
+    const reloaded = loadThread(emptyState(), { id: 't1', status: { type: 'idle' }, turns: [turn] } as unknown as LoadableThread)
+    expect(sessionStatus(threadOf(reloaded))).toBe(status)
+    const next = applyNotification(finished, note('turn/started', { threadId: 't1', turn: { ...turn, id: 'b', status: 'inProgress' } }))
+    expect(sessionStatus(threadOf(next), undefined, true)).toBe('running')
+    expect(threadOf(next).error).toBeUndefined()
+  })
+})
+
 describe('子代理条目', () => {
   it('区分调用已返回和子代理自己的状态', () => {
     const spawn = item('collabAgentToolCall', 'spawn', { tool: 'spawnAgent', status: 'inProgress' })
@@ -61,7 +97,10 @@ describe('子代理条目', () => {
       ...spawn, status: 'completed', agentsStates: { child: { status: 'running', message: null } },
     }
     const atReturn = applyNotification(atStart, note('item/completed', { threadId: 't1', item: completed }))
-    expect(itemOf(atReturn, 'spawn')).toMatchObject({ status: '调用已返回', detail: 'child · 运行中' })
+    expect(itemOf(atReturn, 'spawn')).toMatchObject({
+      status: '调用已返回',
+      agents: [{ threadId: 'child', status: '运行中' }],
+    })
   })
 
   it('从历史还原 Codex 子代理活动和 Claude 委派', () => {

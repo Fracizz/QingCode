@@ -1,5 +1,5 @@
-import { ArrowDown, ChevronDown, LoaderCircle, PanelLeft } from 'lucide-react'
-import { formatReset, supportsSubagentRequests, type ItemView } from '@qn/codex-client'
+import { ArrowDown, ChevronDown, PanelLeft } from 'lucide-react'
+import { formatReset, remainingQuotaPercent, sessionStatus, sessionStatusLabels, type ItemView, type UserInput } from '@qn/codex-client'
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { nearBottom } from '../composerLogic'
@@ -9,11 +9,15 @@ import { groupChatItems } from '../chatGroups'
 import { formatTurnError } from '../state'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
+import { ContextUsage } from './ContextUsage'
 import { FileActionsContext, MessageItem, ToolGroup, type FileActions } from './MessageItem'
 import { ModelPicker } from './ModelSheet'
+import { NewSessionButton } from './NewSessionButton'
+import { QueuedMessages } from './QueuedMessages'
 import { RateLimitBadge, RateLimitDetails } from './RateLimitView'
 import { SessionSwitcher } from './SessionSwitcher'
-import { AgentTag, Badge, Button, Dialog, Empty, Header, Note } from './ui'
+import { SubagentRpcContext } from './SubagentDetails'
+import { Badge, Button, Dialog, Empty, Header, LoadingIcon, Note } from './ui'
 
 const NO_ITEMS: ItemView[] = []
 
@@ -54,6 +58,10 @@ export function ChatPage() {
   const clearNotice = useApp((s) => s.clearNotice)
   const claudeLimit = useApp((s) => selectedTargetId ? s.claudeRateLimits[selectedTargetId] : undefined)
   const claudeCost = useApp((s) => s.claudeCosts[JSON.stringify([selectedTargetId, selectedThreadId])])
+  const claudeUsed = claudeLimit?.primary?.usedPercent
+  const claudeReached = claudeLimit?.rateLimitReachedType || claudeLimit?.spendControlReached === true
+  const claudeQuota = claudeReached ? '已达额度上限'
+    : claudeUsed != null ? `上报剩余 ${Math.round(remainingQuotaPercent(claudeUsed))}%` : null
 
   const chatKey = JSON.stringify([activeId, fingerprint, selectedTargetId, selectedAgent, selectedProjectId, selectedThreadId])
   const [quote, setQuote] = useState<{ key: string; text: string } | null>(null)
@@ -69,9 +77,8 @@ export function ChatPage() {
   const items = view?.items ?? NO_ITEMS
   const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
-  // 手机屏幕小，推理和命令过程不展示，只保留对话、改动等结果。
   const shownItems = useMemo(
-    () => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'reasoning' && item.kind !== 'command'),
+    () => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'reasoning'),
     [items, view?.error, running],
   )
   // index 记的是块里第一条在 shownItems 中的位置，用来判断是不是打开后新到的。
@@ -89,8 +96,10 @@ export function ChatPage() {
   const project = projects.find((item) => item.id === selectedProjectId)
   // 冷启动恢复会话时列表可能还没加载，先用首条用户消息顶上，避免标题只剩项目名。
   const firstUser = items.find((item) => item.kind === 'user')
-  const threadTitle = threads.find((item) => item.id === selectedThreadId && item.agent === selectedAgent)?.title
+  const thread = threads.find((item) => item.id === selectedThreadId && item.agent === selectedAgent)
+  const threadTitle = thread?.title
     || (firstUser?.kind === 'user' ? firstUser.text.replace(/\s+/g, ' ').trim().slice(0, 60) : '')
+  const statusLabel = selectedThreadId ? sessionStatusLabels[sessionStatus(view, thread?.activity)] : null
   const cwd = currentCwd({ projects, selectedProjectId })
   const imageUnavailable = selectedAgent === 'pi'
     ? '当前 Agent 暂不支持图片'
@@ -136,16 +145,23 @@ export function ChatPage() {
     node.scrollTop = node.scrollHeight
   }
 
+  async function resend(text: string, attachments: UserInput[]) {
+    const sent = await send(text, attachments, false, 'queue', { keepDraft: true })
+    if (sent) jumpToLatest()
+    return sent
+  }
+
   return (
     <>
       <Header
         title={threadTitle || project?.name || '对话'}
-        subtitle={[project?.name, agentLabel(selectedAgent), running ? '运行中' : view?.status === 'error' ? '失败' : null].filter(Boolean).join(' · ')}
+        subtitle={[statusLabel, project?.name, agentLabel(selectedAgent)].filter(Boolean).join(' · ')}
         onBack={goBack}
         right={
           <>
-            {selectedAgent === 'codex' && <RateLimitBadge targetId={selectedTargetId} onToggle={() => setShowRate(true)} hideWhenEmpty />}
-            {selectedAgent === 'claude' && <Button variant="ghost" className="px-2 text-xs" onClick={() => setShowRate(true)}>用量</Button>}
+            {selectedAgent === 'codex' && <RateLimitBadge targetId={selectedTargetId} onToggle={() => setShowRate(true)} />}
+            {selectedAgent === 'claude' && <Button variant="ghost" className="px-2 text-xs" onClick={() => setShowRate(true)}>{claudeQuota ?? '额度'}</Button>}
+            {project && <NewSessionButton project={project} iconOnly className="qn-header-icon" />}
             <Button variant="ghost" className="qn-header-icon" onClick={() => setSwitching(true)} aria-label="切换会话">
               <PanelLeft size={20} strokeWidth={1.75} aria-hidden />
             </Button>
@@ -177,19 +193,22 @@ export function ChatPage() {
           )}
           {items.length === 0 && approvals.length === 0 && <Empty>发送消息开始对话。</Empty>}
           <div className="space-y-4">
-            <FileActionsContext.Provider value={fileActions}>
-              {blocks.map(({ block, index }) => (
-                <div key={block.kind === 'item' ? block.item.id : block.id}
-                  className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
-                  {block.kind === 'item'
-                    ? <MessageItem item={block.item} onQuote={(text) => setQuote({ key: chatKey, text })} agentName={agentLabel(selectedAgent)} />
-                    : <ToolGroup items={block.items} onQuote={(text) => setQuote({ key: chatKey, text })} />}
-                </div>
-              ))}
-            </FileActionsContext.Provider>
+            <SubagentRpcContext.Provider key={chatKey} value={session?.rpc ?? null}>
+              <FileActionsContext.Provider value={fileActions}>
+                {blocks.map(({ block, index }) => (
+                  <div key={block.kind === 'item' ? block.item.id : block.id}
+                    className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
+                    {block.kind === 'item'
+                      ? <MessageItem item={block.item} onQuote={(text) => setQuote({ key: chatKey, text })} agentName={agentLabel(selectedAgent)}
+                        onResend={selectedThreadId ? resend : undefined} />
+                      : <ToolGroup items={block.items} onQuote={(text) => setQuote({ key: chatKey, text })} />}
+                  </div>
+                ))}
+              </FileActionsContext.Provider>
+            </SubagentRpcContext.Provider>
             {/* 失败原因贴在最后一轮之后，和出错的位置对应；运行中且还没有回复时给出等待提示。 */}
             {running && shownItems.at(-1)?.kind === 'user' && (
-              <div className="qn-thinking" role="status"><LoaderCircle size={14} className="qn-spin" aria-hidden />{agentLabel(selectedAgent)} 正在处理…</div>
+              <div className="qn-thinking" role="status"><LoadingIcon />{agentLabel(selectedAgent)} 正在处理…</div>
             )}
             {!running && view?.error && <TurnErrorCard message={view.error} />}
             {approvals.length > 0 && (
@@ -214,13 +233,14 @@ export function ChatPage() {
           {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
         </div>
       )}
+      <QueuedMessages />
       <Composer
         key={chatKey}
         draftKey={chatKey}
         text={draftText}
         onChangeText={setDraftText}
-        onSend={async (text, images, delegate) => {
-          const sent = await send(text, images, delegate)
+        onSend={async (text, images, mode) => {
+          const sent = await send(text, images, false, mode)
           if (sent) jumpToLatest()
           return sent
         }}
@@ -237,28 +257,26 @@ export function ChatPage() {
         onConfirmQuote={(text, comment) => { addAnnotation(text, comment); setQuote(null) }}
         onCancelQuote={() => setQuote(null)}
         placeholder={agentPlaceholder(selectedAgent)}
-        canRequestSubagents={supportsSubagentRequests(selectedAgent)}
+        canSteer={selectedAgent === 'codex'}
         toolbar={
           <>
-            <AgentTag agent={selectedAgent} />
             {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">工具直接执行</span>}
             {selectedTargetId && <ModelPicker targetId={selectedTargetId} agent={selectedAgent} />}
+            <ContextUsage tokenUsage={view?.tokenUsage} />
           </>
         }
       />
       {switching && <SessionSwitcher onClose={() => setSwitching(false)} />}
       {showRate && (
-        <Dialog title={selectedAgent === 'claude' ? 'Claude 用量' : '额度详情'} onClose={() => setShowRate(false)}>
+        <Dialog title={`${agentLabel(selectedAgent)} 额度`} onClose={() => setShowRate(false)}>
           {selectedAgent === 'claude' ? (
             <div className="space-y-2 text-sm">
-              <p>{claudeLimit?.rateLimitReachedType ? '已达限额' : claudeLimit?.primary?.usedPercent != null
-                ? `最近上报利用率 ${Math.round(claudeLimit.primary.usedPercent)}%`
-                : '暂无限额事件'}</p>
+              <p>{claudeQuota ?? '暂无限额事件'}</p>
               {claudeLimit?.primary?.resetsAt != null && <p>{formatReset(claudeLimit.primary.resetsAt, Date.now())}</p>}
               {claudeCost != null && <p>本设备已收到的会话费用估算 {new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(claudeCost)}</p>}
               <p className="text-xs text-qn-muted">Claude 只在接近或触发限额时上报。</p>
             </div>
-          ) : <RateLimitDetails targetId={selectedTargetId} onClose={() => setShowRate(false)} />}
+          ) : <RateLimitDetails targetId={selectedTargetId} />}
         </Dialog>
       )}
     </>

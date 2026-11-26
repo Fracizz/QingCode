@@ -6,6 +6,7 @@ import {
   archiveThread,
   CodexRpc,
   emptyState,
+  failActiveThreads,
   interruptTurn,
   listModels,
   listThreads,
@@ -18,6 +19,7 @@ import {
   resumeThread,
   sendInput,
   startThread,
+  steerTurn,
   supportsSubagentRequests,
   type AccountSummary,
   type ConversationState,
@@ -25,6 +27,7 @@ import {
   type RequestId,
   type ServerNotification,
   type ServerRequest,
+  type TurnOverrides,
   type UserInput,
 } from '@qn/codex-client'
 import { create } from 'zustand'
@@ -207,7 +210,27 @@ export type ViewerState = {
 }
 
 export type DiffRequest = { path: string; diff?: string | null }
+export type SendMode = 'queue' | 'steer' | 'immediate'
+
+type QueuedSend = {
+  id: string
+  text: string
+  imageCount: number
+  input: UserInput[]
+  overrides: TurnOverrides
+  sending?: boolean
+  error?: string
+}
+
+type SendAddress = { desktopId: string; targetId: string; agent: AgentKind; threadId: string }
+
 type DiscoveredThread = ThreadSummary & { targetId: string; projectId: string }
+
+type WorkspaceProject = {
+  project: Project
+  projects: Project[]
+  threads: ThreadSummary[]
+}
 
 type AppState = {
   page: Page
@@ -216,6 +239,7 @@ type AppState = {
   connections: Connection[]
   activeId: string | null
   connectionStatus: Record<string, ConnectionStatus>
+  connectionLatencyMs: Record<string, number | null>
   needsRepair: Record<string, RepairReason>
   form: FormState | null
   credential: CredentialPrompt | null
@@ -239,6 +263,7 @@ type AppState = {
   /** 单个 Agent 打开或列会话失败的提示，不影响其他 Agent。 */
   agentErrors: Partial<Record<AgentKind, string>>
   selectedThreadId: string | null
+  openingThread: SendAddress | null
   /** 当前对话（或待建会话）所属 Agent。 */
   selectedAgent: AgentKind
   sessions: Record<string, AgentSession>
@@ -252,6 +277,7 @@ type AppState = {
   draftText: string
   approvalSubmitting: Record<string, boolean>
   sending: boolean
+  queuedSends: Record<string, QueuedSend[]>
   error: string | null
   notice: string | null
 
@@ -279,7 +305,8 @@ type AppState = {
   connect: (id: string, credentials: Credentials) => Promise<void>
   disconnectTarget: (id: string) => Promise<void>
   selectTarget: (id: string) => Promise<void>
-  selectProject: (id: string) => Promise<void>
+  selectProject: (id: string, workspace?: WorkspaceProject) => Promise<void>
+  cancelPendingNavigation: () => void
   openDirectory: () => Promise<void>
   browseDirectory: (path: string) => Promise<void>
   closeDirectory: () => void
@@ -289,11 +316,13 @@ type AppState = {
   /** skipFailed：后台刷新（如 turn 完成后）不重试已确认打不开的 Agent，避免反复拉起。 */
   refreshThreads: (options?: { skipFailed?: boolean }) => Promise<void>
   discoverWorkspaceSessions: (projects: readonly Project[]) => Promise<DiscoveredThread[]>
-  newThread: (agent?: AgentKind) => Promise<void>
-  openThread: (id: string, agent?: AgentKind) => Promise<void>
+  newThread: (agent?: AgentKind, workspace?: WorkspaceProject) => Promise<boolean>
+  openThread: (id: string, agent?: AgentKind, workspace?: WorkspaceProject) => Promise<boolean>
   archiveConversation: (targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>) => Promise<void>
   setDraftText: (text: string) => void
-  send: (text: string, attachments?: UserInput[], delegate?: boolean) => Promise<boolean>
+  send: (text: string, attachments?: UserInput[], delegate?: boolean, mode?: SendMode, options?: { keepDraft?: boolean }) => Promise<boolean>
+  removeQueuedSend: (id: string) => void
+  retryQueuedSend: () => Promise<void>
   interrupt: () => Promise<void>
   respondApproval: (requestId: RequestId, decision: MobileApprovalDecision) => Promise<boolean>
   loadModels: (targetId: string, agent: AgentKind, force?: boolean) => Promise<void>
@@ -344,6 +373,21 @@ function draftEndpoint(draft: FormState['draft']): { host: string; port: number 
 const activeConnection = (state: AppState): Connection | null =>
   state.connections.find((item) => item.id === state.activeId) ?? null
 
+const sendKey = ({ desktopId, targetId, agent, threadId }: SendAddress): string =>
+  JSON.stringify([desktopId, targetId, agent, threadId])
+
+function selectedSendAddress(state: AppState): SendAddress | null {
+  const { activeId, selectedTargetId, selectedAgent, selectedThreadId } = state
+  return activeId && selectedTargetId && selectedThreadId
+    ? { desktopId: activeId, targetId: selectedTargetId, agent: selectedAgent, threadId: selectedThreadId }
+    : null
+}
+
+export function selectedQueuedSends(state: AppState): QueuedSend[] | undefined {
+  const address = selectedSendAddress(state)
+  return address ? state.queuedSends[sendKey(address)] : undefined
+}
+
 /** 当前项目目录：相对路径解析、新建会话、git.diff 的 cwd 都以它为准。 */
 export const currentCwd = (state: Pick<AppState, 'projects' | 'selectedProjectId'>): string =>
   state.projects.find((item) => item.id === state.selectedProjectId)?.path ?? ''
@@ -390,6 +434,11 @@ const rateRefresh = new Map<string, Promise<void>>()
 export const useApp = create<AppState>((set, get) => {
   let desktopEpoch = 0
   let navigationEpoch = 0
+  const beginNavigation = (openingThread: SendAddress | null = null): number => {
+    const navigation = ++navigationEpoch
+    if (get().openingThread !== openingThread) set({ openingThread })
+    return navigation
+  }
   let drafts: Record<string, ChatDraft> = {}
   let savedChats: Record<string, SavedChat> = {}
   let pendingRestore: SavedChat | null = null
@@ -400,7 +449,10 @@ export const useApp = create<AppState>((set, get) => {
   const completedTurns = new WeakMap<MobileCodexTransport, Set<string>>()
   const approvalFlights = new WeakMap<MobileCodexTransport, Map<RequestId, string>>()
   const archiveFlights = new Set<string>()
+  const connectionProbes = new Map<Connection, Promise<void>>()
   const storageWrites = new Map<string, Promise<void>>()
+  const submitting = new Set<string>()
+  const replacing = new Set<string>()
 
   const queueStorageWrite = (key: string, write: () => Promise<void>): Promise<void> => {
     const previous = storageWrites.get(key) ?? Promise.resolve()
@@ -465,6 +517,22 @@ export const useApp = create<AppState>((set, get) => {
   const isArchived = (desktopId: string, targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>): boolean =>
     get().archivedThreads[archivedThreadKey(desktopId, targetId, thread)] === true
 
+  const workspaceSelection = (desktopId: string, { project, projects, threads }: WorkspaceProject) => ({
+    selectedTargetId: project.targetId,
+    selectedProjectId: project.id,
+    projects,
+    projectsLoading: false,
+    threads: threads.filter((thread) => !isArchived(desktopId, project.targetId, thread)),
+    threadsLoading: false,
+    threadsError: null,
+    agentErrors: {},
+  })
+
+  const recordProjectVisit = async (conn: Connection, { id, targetId, name, path }: Project): Promise<void> => {
+    // 最近访问时间写入失败时，仍然可以打开会话。
+    await getGateway().rpc(conn, 'projects.save', { id, targetId, name, path }).catch(() => undefined)
+  }
+
   const forgetArchivedChat = (desktopId: string, targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>): void => {
     const matches = (chat: SavedChat | null | undefined) =>
       chat?.targetId === targetId && chat.agent === thread.agent && chat.threadId === thread.id
@@ -474,7 +542,7 @@ export const useApp = create<AppState>((set, get) => {
       if (current.selectedTargetId === targetId) {
         const threads = current.threads.filter((item) => item.agent !== thread.agent || item.id !== thread.id)
         if (current.page === 'chat' && current.selectedAgent === thread.agent && current.selectedThreadId === thread.id) {
-          navigationEpoch += 1
+          beginNavigation()
           viewerToken += 1
           set({ page: 'threads', selectedThreadId: null, viewer: null, threads })
           showDraft()
@@ -494,6 +562,7 @@ export const useApp = create<AppState>((set, get) => {
     if (get().archivedThreads[key]) return
     const archivedThreads: AppState['archivedThreads'] = { ...get().archivedThreads, [key]: true }
     set({ archivedThreads })
+    updateQueue(sendKey({ desktopId, targetId, agent: thread.agent, threadId: thread.id }), () => [])
     persistArchives()
     forgetArchivedChat(desktopId, targetId, thread)
   }
@@ -535,6 +604,7 @@ export const useApp = create<AppState>((set, get) => {
     saveRecord(STORAGE_DESKTOP_MODEL_PREFS, desktopModelPrefs)
     saveRecord(STORAGE_DRAFTS, drafts)
     clearArchivedThreads(id)
+    discardDesktopQueue(id)
   }
 
   const markRepair = (id: string, reason: RepairReason, message: string): void => {
@@ -543,10 +613,14 @@ export const useApp = create<AppState>((set, get) => {
       return {
         needsRepair: { ...state.needsRepair, [id]: reason },
         connectionStatus: { ...state.connectionStatus, [id]: reason === 'fingerprint' ? 'mismatch' : 'offline' },
+        connectionLatencyMs: { ...state.connectionLatencyMs, [id]: null },
         ...(active ? { eventsConnected: false, eventsError: message } : {}),
       }
     })
-    if (get().activeId === id) controller?.stop()
+    if (get().activeId === id) {
+      pauseQueues([id], '电脑需要重新配对，队列已暂停')
+      controller?.stop()
+    }
   }
 
   const markRepairError = (conn: Connection, epoch: number, err: unknown): void => {
@@ -620,6 +694,138 @@ export const useApp = create<AppState>((set, get) => {
     })
   }
 
+  function updateQueue(key: string, update: (list: QueuedSend[]) => QueuedSend[]): void {
+    set((state) => {
+      const current = state.queuedSends[key] ?? []
+      const next = update(current)
+      if (next === current || (!next.length && !current.length)) return state
+      const queuedSends = { ...state.queuedSends }
+      if (next.length) queuedSends[key] = next
+      else delete queuedSends[key]
+      return { queuedSends }
+    })
+  }
+
+  function pauseQueue(key: string, message: string): void {
+    updateQueue(key, (list) => {
+      const index = list.findIndex((item) => !item.sending)
+      const item = list[index]
+      return item && !item.error ? list.map((value, at) => at === index ? { ...value, error: message } : value) : list
+    })
+  }
+
+  function pauseQueues(scope: string[], message: string, resetFlights = false): void {
+    const prefix = `${JSON.stringify(scope).slice(0, -1)},`
+    for (const key of Object.keys(get().queuedSends)) {
+      if (!key.startsWith(prefix)) continue
+      if (resetFlights) updateQueue(key, (list) => list.map((item) => item.sending ? { ...item, sending: false } : item))
+      pauseQueue(key, message)
+    }
+  }
+
+  function discardDesktopQueue(desktopId: string): void {
+    const prefix = `[${JSON.stringify(desktopId)},`
+    for (const key of Object.keys(get().queuedSends)) {
+      if (key.startsWith(prefix)) updateQueue(key, () => [])
+    }
+  }
+
+  function queueLimited(address: SendAddress): boolean {
+    const state = get()
+    const snapshot = address.agent === 'codex' ? state.rateLimits[address.targetId]?.snapshot
+      : address.agent === 'claude' ? state.claudeRateLimits[address.targetId] : null
+    return !!(snapshot?.rateLimitReachedType || snapshot?.spendControlReached)
+  }
+
+  async function resumeCodexConversation(session: AgentSession, threadId: string): Promise<void> {
+    const { thread } = await resumeThread(session.rpc, threadId)
+    session.resumedCodexThreads.add(threadId)
+    patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }), session)
+  }
+
+  async function startMessageTurn(session: AgentSession, address: SendAddress, input: UserInput[], overrides: TurnOverrides): Promise<void> {
+    const { threadId } = address
+    const { turn } = await sendInput(session.rpc, threadId, input, overrides)
+    const current = get().sessions[session.key]
+    if (current?.transport !== session.transport || completedTurns.get(session.transport)?.has(turn.id)) return
+    // 极短的一轮可能先完成，轮次响应也可能已是终态。
+    if (turn.status === 'inProgress' && current.state.threads[threadId]?.activeTurnId === turn.id) return
+    const synthetic = {
+      method: turn.status === 'inProgress' ? 'turn/started' : 'turn/completed',
+      params: { threadId, turn },
+    } as ServerNotification
+    patchSession(session.key, (value) => ({ ...value, state: applyNotification(value.state, synthetic) }), session)
+    if (turn.status === 'failed' || turn.status === 'interrupted') pauseQueue(sendKey(address), '上一轮未完成，队列已暂停')
+  }
+
+  async function flushQueue(address: SendAddress, retry = false): Promise<void> {
+    const { desktopId, targetId, agent, threadId } = address
+    const state = get()
+    const key = sendKey(address)
+    const next = state.queuedSends[key]?.[0]
+    const session = state.sessions[sessionKey(targetId, agent)]
+    const view = session?.state.threads[threadId]
+    if (state.activeId !== desktopId || !next || next.sending || submitting.has(key) || isArchived(desktopId, targetId, { agent, id: threadId })) return
+    if (!session?.opened || !state.eventsConnected || reconnectTask || !view) return
+    if (queueLimited(address)) {
+      pauseQueue(key, '当前额度已用完，队列已暂停')
+      return
+    }
+    if (view.status === 'running') {
+      if (retry) updateQueue(key, (list) => list.map((item) => item.id === next.id ? { ...item, error: undefined } : item))
+      return
+    }
+    if (!retry && (view.status !== 'idle' || next.error)) return
+
+    const epoch = desktopEpoch
+    submitting.add(key)
+    updateQueue(key, (list) => list.map((item) => item.id === next.id ? { ...item, sending: true, error: undefined } : item))
+    try {
+      if (agent === 'codex' && !session.resumedCodexThreads.has(threadId)) {
+        await resumeCodexConversation(session, threadId)
+        if (epoch !== desktopEpoch) return
+        if (!get().eventsConnected || !get().sessions[session.key]?.opened) throw new Error('连接中断，队列已暂停')
+        const status = get().sessions[session.key]?.state.threads[threadId]?.status
+        if (status === 'running') {
+          updateQueue(key, (list) => list.map((item) => item.id === next.id ? { ...item, sending: false } : item))
+          return
+        }
+        if (status !== 'idle' && !retry) throw new Error('上一轮未完成，队列已暂停')
+      }
+      await startMessageTurn(session, address, next.input, next.overrides)
+      if (epoch === desktopEpoch) updateQueue(key, (list) => list.filter((item) => item.id !== next.id))
+    } catch (err) {
+      if (epoch === desktopEpoch) {
+        updateQueue(key, (list) => list.map((item) => item.id === next.id
+          ? { ...item, sending: false, error: friendlyError(err, '排队消息未发送') }
+          : item))
+      }
+    } finally {
+      if (epoch === desktopEpoch) submitting.delete(key)
+    }
+    // 快速完成可能已在 RPC 返回前收到结束事件，锁解除后再检查一次。
+    if (epoch === desktopEpoch && !get().queuedSends[key]?.[0]?.error) void flushQueue(address)
+  }
+
+  async function interruptAndWait(session: AgentSession, threadId: string, turnId: string): Promise<void> {
+    let unsubscribe = () => {}
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const finished = new Promise<boolean>((resolve) => {
+      unsubscribe = session.rpc.onNotification((note) => {
+        if (note.method !== 'turn/completed' || note.params?.threadId !== threadId || note.params.turn?.id !== turnId) return
+        resolve(note.params.turn.status === 'interrupted' || note.params.turn.status === 'completed')
+      })
+      timer = setTimeout(() => resolve(false), 30_000)
+    })
+    try {
+      await interruptTurn(session.rpc, threadId, turnId)
+      if (!(await finished)) throw new Error('未确认当前一轮已停止，请检查会话后重试')
+    } finally {
+      clearTimeout(timer)
+      unsubscribe()
+    }
+  }
+
   const patchRate = (targetId: string, changes: Partial<RateLimitEntry>): void => {
     set((state) => ({
       rateLimits: {
@@ -635,6 +841,8 @@ export const useApp = create<AppState>((set, get) => {
   }
 
   const resetSessions = (): void => {
+    const activeId = get().activeId
+    if (activeId) pauseQueues([activeId], '电脑连接已切换，队列已暂停', true)
     for (const session of Object.values(get().sessions)) {
       session.rpc.dispose()
       session.transport.dispose()
@@ -643,6 +851,8 @@ export const useApp = create<AppState>((set, get) => {
     rateRefresh.clear()
     claudeCostPerTurn.clear()
     reconnectTask = null
+    submitting.clear()
+    replacing.clear()
   }
 
   const serverReq = async <T>(targetId: string, method: string, params: unknown): Promise<T> => {
@@ -667,6 +877,11 @@ export const useApp = create<AppState>((set, get) => {
         updatedAt: Date.now(),
         error: null,
       })
+      const activeId = get().activeId
+      const snapshot = get().rateLimits[targetId]?.snapshot
+      if (activeId && (snapshot?.rateLimitReachedType || snapshot?.spendControlReached)) {
+        pauseQueues([activeId, targetId, 'codex'], '当前额度已用完，队列已暂停')
+      }
     } else if (record.method === 'turn/completed') {
       void get().refreshRateLimits(targetId)
     }
@@ -738,7 +953,8 @@ export const useApp = create<AppState>((set, get) => {
         }
       }
       if (method === 'turn/completed') {
-        const turnId = isRecord(params?.turn) ? params.turn.id : params?.turnId
+        const turn = isRecord(params?.turn) ? params.turn : null
+        const turnId = turn?.id ?? params?.turnId
         if (typeof turnId === 'string') {
           const turns = completedTurns.get(transport) ?? new Set<string>()
           turns.add(turnId)
@@ -748,6 +964,15 @@ export const useApp = create<AppState>((set, get) => {
           }
           completedTurns.set(transport, turns)
         }
+        if (typeof params?.threadId === 'string') {
+          const address = { desktopId: conn.id, targetId, agent, threadId: params.threadId }
+          if (turn?.status === 'completed') void flushQueue(address)
+          else if (turn?.status !== 'interrupted' || !replacing.has(sendKey(address))) {
+            pauseQueue(sendKey(address), '上一轮未完成，队列已暂停')
+          }
+        }
+      } else if (method === 'error' && typeof params?.threadId === 'string' && params.willRetry !== true) {
+        pauseQueue(sendKey({ desktopId: conn.id, targetId, agent, threadId: params.threadId }), '上一轮未完成，队列已暂停')
       }
       if (visibleResolution) {
         set((state) => {
@@ -759,6 +984,7 @@ export const useApp = create<AppState>((set, get) => {
       if (agent === 'claude' && method === 'account/rateLimits/updated') {
         const snapshot = applyRateLimitsUpdate(get().claudeRateLimits[targetId] ?? null, notification)
         if (snapshot) set((state) => ({ claudeRateLimits: { ...state.claudeRateLimits, [targetId]: snapshot } }))
+        if (snapshot?.rateLimitReachedType) pauseQueues([conn.id, targetId, agent], '当前额度已用完，队列已暂停')
       } else if (agent === 'claude' && method === 'thread/tokenUsage/updated') {
         const threadId = params?.threadId
         const turnId = params?.turnId
@@ -890,6 +1116,7 @@ export const useApp = create<AppState>((set, get) => {
     connections: [],
     activeId: null,
     connectionStatus: {},
+    connectionLatencyMs: {},
     needsRepair: {},
     form: null,
     credential: null,
@@ -911,6 +1138,7 @@ export const useApp = create<AppState>((set, get) => {
     threadsError: null,
     agentErrors: {},
     selectedThreadId: null,
+    openingThread: null,
     selectedAgent: DEFAULT_AGENT,
     sessions: {},
     models: {},
@@ -923,6 +1151,7 @@ export const useApp = create<AppState>((set, get) => {
     draftText: '',
     approvalSubmitting: {},
     sending: false,
+    queuedSends: {},
     error: null,
     notice: null,
 
@@ -955,7 +1184,11 @@ export const useApp = create<AppState>((set, get) => {
           const conn = activeConnection(get())
           if (conn && pendingRestore) void restoreSavedChat(conn)
         },
-        onClose: (error) => set({ eventsConnected: false, eventsError: error }),
+        onClose: (error) => {
+          set({ eventsConnected: false, eventsError: error })
+          const activeId = get().activeId
+          if (activeId) pauseQueues([activeId], '连接中断，队列已暂停')
+        },
         onRepair: (reason, message) => {
           const id = get().activeId
           if (id) markRepair(id, reason, message)
@@ -1004,34 +1237,39 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     refreshStatuses: async () => {
-      const connections = get().connections
-      if (connections.length === 0) return
-      set({
-        connectionStatus: Object.fromEntries(
-          connections.map((item) => [item.id, 'checking' as ConnectionStatus]),
-        ),
-      })
-      await Promise.all(
-        connections.map(async (item) => {
+      await Promise.all(get().connections.map((item) => {
+        const existing = connectionProbes.get(item)
+        if (existing) return existing
+        const task = (async () => {
+          if (!get().needsRepair[item.id]) {
+            set((state) => ({ connectionStatus: { ...state.connectionStatus, [item.id]: 'checking' } }))
+          }
           let status: ConnectionStatus = 'offline'
+          let latencyMs: number | null = null
           try {
+            const started = performance.now()
             const probe = await getGateway().probe(item.host, item.port)
             status = normalizeFingerprint(probe.fingerprint) === item.fp ? 'online' : 'mismatch'
+            if (status === 'online') latencyMs = Math.ceil(performance.now() - started)
           } catch {
             status = 'offline'
           }
-          const current = get().connections.find((conn) => conn.id === item.id)
-          if (!current || current.host !== item.host || current.port !== item.port || current.fp !== item.fp) return
+          if (!get().connections.includes(item)) return
           if (status === 'mismatch') markRepair(item.id, 'fingerprint', FINGERPRINT_MISMATCH_HINT)
           else if (!get().needsRepair[item.id]) {
-            set((state) => ({ connectionStatus: { ...state.connectionStatus, [item.id]: status } }))
+            set((state) => ({
+              connectionStatus: { ...state.connectionStatus, [item.id]: status },
+              connectionLatencyMs: { ...state.connectionLatencyMs, [item.id]: latencyMs },
+            }))
           }
-        }),
-      )
+        })().finally(() => connectionProbes.delete(item))
+        connectionProbes.set(item, task)
+        return task
+      }))
     },
 
     openAddForm: () => {
-      navigationEpoch += 1
+      beginNavigation()
       pendingRestore = null
       set({
         page: 'form',
@@ -1045,7 +1283,7 @@ export const useApp = create<AppState>((set, get) => {
     openEditForm: (id) => {
       const conn = get().connections.find((item) => item.id === id)
       if (!conn) return
-      navigationEpoch += 1
+      beginNavigation()
       pendingRestore = null
       const page = get().page
       const returnPage = page === 'form' ? 'connections' : page
@@ -1065,7 +1303,7 @@ export const useApp = create<AppState>((set, get) => {
     beginRepair: (id) => {
       const conn = get().connections.find((item) => item.id === id)
       if (!conn) return
-      navigationEpoch += 1
+      beginNavigation()
       pendingRestore = null
       const page = get().page
       set({
@@ -1215,8 +1453,12 @@ export const useApp = create<AppState>((set, get) => {
           delete savedChats[conn.id]
           saveRecord(STORAGE_SAVED_CHATS, savedChats)
           clearArchivedThreads(conn.id)
+          discardDesktopQueue(conn.id)
         }
-        set({ connections, needsRepair, form: null, page: 'connections' })
+        set((state) => ({
+          connections, needsRepair, form: null, page: 'connections',
+          connectionLatencyMs: { ...state.connectionLatencyMs, [conn.id]: null },
+        }))
         void get().refreshStatuses()
         await get().activate(conn.id)
       } catch (err) {
@@ -1247,11 +1489,15 @@ export const useApp = create<AppState>((set, get) => {
         set({ form: { ...form, error: friendlyError(err, '保存修改失败') } })
         return
       }
-      set({ connections, form: null, page: form.returnPage })
       const changedEndpoint = updated.host !== previous.host || updated.port !== previous.port
+      set((state) => ({
+        connections, form: null, page: form.returnPage,
+        ...(changedEndpoint ? { connectionLatencyMs: { ...state.connectionLatencyMs, [updated.id]: null } } : {}),
+      }))
       if (get().activeId === previous.id && changedEndpoint) {
         set({ eventsConnected: false, eventsError: null, targets: [], error: null })
         controller?.stop()
+        pauseQueues([previous.id], '电脑连接已切换，队列已暂停')
         controller?.start(true)
         await get().loadTargets()
       }
@@ -1270,7 +1516,7 @@ export const useApp = create<AppState>((set, get) => {
       if (wasActive) {
         controller?.stop()
         desktopEpoch += 1
-        navigationEpoch += 1
+        beginNavigation()
         pendingRestore = null
         restoreTask = null
         resetSessions()
@@ -1303,7 +1549,13 @@ export const useApp = create<AppState>((set, get) => {
       removeSavedDesktopState(id)
       const needsRepair = { ...get().needsRepair }
       delete needsRepair[id]
-      set({ connections, activeId, needsRepair, page: wasActive ? 'connections' : get().page })
+      set((state) => {
+        const connectionStatus = { ...state.connectionStatus }
+        const connectionLatencyMs = { ...state.connectionLatencyMs }
+        delete connectionStatus[id]
+        delete connectionLatencyMs[id]
+        return { connections, activeId, needsRepair, connectionStatus, connectionLatencyMs, page: wasActive ? 'connections' : state.page }
+      })
       await persist(connections, activeId)
       void get().refreshStatuses()
     },
@@ -1317,7 +1569,7 @@ export const useApp = create<AppState>((set, get) => {
       }
       controller?.stop()
       desktopEpoch += 1
-      navigationEpoch += 1
+      beginNavigation()
       refreshToken += 1
       viewerToken += 1
       resetSessions()
@@ -1365,7 +1617,7 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     deactivate: () => {
-      navigationEpoch += 1
+      beginNavigation()
       pendingRestore = null
       set({ page: 'connections' })
     },
@@ -1464,6 +1716,7 @@ export const useApp = create<AppState>((set, get) => {
         await getGateway().rpc(conn, 'target.disconnect', { id })
         if (epoch !== desktopEpoch) return
         set((state) => ({ targetStates: applyTargetState(state.targetStates, { id, state: 'idle' }) }))
+        pauseQueues([conn.id, id], '目标连接中断，队列已暂停')
       } catch (err) {
         if (epoch !== desktopEpoch) return
         markRepairError(conn, epoch, err)
@@ -1474,10 +1727,9 @@ export const useApp = create<AppState>((set, get) => {
     selectTarget: async (id) => {
       const conn = activeConnection(get())
       if (!conn) return
-      navigationEpoch += 1
+      const navigation = beginNavigation()
       pendingRestore = null
       const epoch = desktopEpoch
-      const navigation = navigationEpoch
       const isCurrent = () => epoch === desktopEpoch && navigation === navigationEpoch && get().selectedTargetId === id
       set({
         selectedTargetId: id,
@@ -1504,37 +1756,33 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    selectProject: async (id) => {
+    selectProject: async (id, workspace) => {
       const conn = activeConnection(get())
-      const project = get().projects.find((item) => item.id === id)
+      const project = workspace?.project ?? get().projects.find((item) => item.id === id)
       if (!conn || !project) return
-      navigationEpoch += 1
+      beginNavigation()
       pendingRestore = null
-      const epoch = desktopEpoch
-      const navigation = navigationEpoch
-      // 打开项目时刷新 lastOpenedAt（与电脑端一致）。
-      try {
-        await getGateway().rpc(conn, 'projects.save', {
-          id: project.id,
-          targetId: project.targetId,
-          name: project.name,
-          path: project.path,
-        })
-      } catch {
-        // 刷新失败不阻断打开会话。
-      }
-      if (epoch !== desktopEpoch || navigation !== navigationEpoch) return
+      const changedTarget = get().selectedTargetId !== project.targetId
       set({
         selectedProjectId: id,
         selectedThreadId: null,
         threads: [],
         threadsError: null,
         agentErrors: {},
+        ...(workspace ? workspaceSelection(conn.id, workspace) : {}),
+        threadsLoading: true,
         page: 'threads',
+        error: null,
       })
       showDraft()
       saveActiveChat()
-      await get().refreshThreads()
+      if (changedTarget) void get().loadAgentSettings()
+      await Promise.all([get().refreshThreads(), recordProjectVisit(conn, project)])
+    },
+
+    cancelPendingNavigation: () => {
+      beginNavigation()
+      pendingRestore = null
     },
 
     openDirectory: async () => {
@@ -1797,7 +2045,7 @@ export const useApp = create<AppState>((set, get) => {
       if (token !== refreshToken || get().selectedTargetId !== targetId || get().selectedProjectId !== selectedProjectId) return
       const agentErrors: Partial<Record<AgentKind, string>> = {}
       for (const agent of skipped) {
-        const previous = previousErrors[agent]
+        const previous = previousErrors[agent] ?? get().sessions[sessionKey(targetId, agent)]?.openError
         if (previous) agentErrors[agent] = previous
       }
       for (const result of results) if (result.error) agentErrors[result.agent] = result.error
@@ -1846,24 +2094,33 @@ export const useApp = create<AppState>((set, get) => {
       return discovery.flatMap((item) => item.status === 'fulfilled' ? item.value : [])
     },
 
-    newThread: async (agent) => {
-      const targetId = get().selectedTargetId
-      if (!targetId) return
-      const navigation = ++navigationEpoch
-      const cwd = currentCwd(get())
-      const picked = agent ?? defaultAgentFor(get(), targetId)
+    newThread: async (agent, workspace) => {
+      const source = get()
+      const conn = activeConnection(source)
+      const targetId = workspace?.project.targetId ?? source.selectedTargetId
+      if (!conn || !targetId) return false
+      const epoch = desktopEpoch
+      const navigation = beginNavigation()
+      pendingRestore = null
+      const isCurrent = () => epoch === desktopEpoch && navigation === navigationEpoch && get().page === source.page
+      const cwd = workspace?.project.path ?? currentCwd(source)
+      const picked = agent ?? defaultAgentFor(source, targetId)
+      set({ error: null })
       if (!targetAgents(get(), targetId).includes(picked)) {
         set({ error: `${agentLabel(picked)} 已在电脑设置中关闭` })
-        return
+        return false
       }
       const session = await withSession(targetId, picked, navigation)
-      if (!session || navigation !== navigationEpoch) return
+      if (!session || !isCurrent()) return false
       try {
         const result = await startThread(session.rpc, cwd ? { cwd } : {})
-        if (navigation !== navigationEpoch) return
+        if (!isCurrent()) return false
         if (picked === 'codex') session.resumedCodexThreads.add(result.thread.id)
         patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
+        const movedProject = workspace &&
+          (source.selectedTargetId !== targetId || source.selectedProjectId !== workspace.project.id)
         set({
+          ...(movedProject ? workspaceSelection(conn.id, workspace) : {}),
           selectedThreadId: result.thread.id,
           selectedAgent: picked,
           page: 'chat',
@@ -1872,41 +2129,78 @@ export const useApp = create<AppState>((set, get) => {
         showDraft()
         saveActiveChat()
         void get().refreshThreads({ skipFailed: true })
+        if (workspace) void recordProjectVisit(conn, workspace.project)
+        return true
       } catch (err) {
-        if (navigation === navigationEpoch) set({ error: friendlyError(err, '新建会话失败') })
+        if (isCurrent()) set({ error: friendlyError(err, '新建会话失败') })
+        return false
       }
     },
 
-    openThread: async (id, agent) => {
-      const { activeId, selectedTargetId: targetId } = get()
-      if (!activeId || !targetId) return
-      const navigation = ++navigationEpoch
-      const picked = agent ?? get().threads.find((item) => item.id === id)?.agent ?? DEFAULT_AGENT
-      const archived = () => isArchived(activeId, targetId, { id, agent: picked })
-      if (archived()) return
-      const session = await withSession(targetId, picked, navigation)
-      if (!session || navigation !== navigationEpoch || archived()) return
+    openThread: async (id, agent, workspace) => {
+      const source = get()
+      const conn = activeConnection(source)
+      const targetId = workspace?.project.targetId ?? source.selectedTargetId
+      if (!conn || !targetId) return false
+      const picked = agent ?? source.threads.find((item) => item.id === id)?.agent ?? DEFAULT_AGENT
+      const archived = () => isArchived(conn.id, targetId, { id, agent: picked })
+      if (archived()) return false
+      const openingThread = { desktopId: conn.id, targetId, agent: picked, threadId: id }
+      const navigation = beginNavigation(openingThread)
+      if (workspace) pendingRestore = null
+      const isCurrent = () => navigation === navigationEpoch && get().page === source.page
+      set({ error: null })
       try {
+        // 工作台历史可能来自已断开的目标，先恢复目标链路再读取会话。
+        try {
+          await getGateway().rpc(conn, 'server.req', { targetId, method: 'ping' })
+        } catch (err) {
+          if (!isCurrent()) return false
+          if (errorCode(err) !== 'not_connected') throw err
+          patchSession(sessionKey(targetId, picked), (session) => ({ ...session, opened: false }))
+          await connectSavedTarget(conn, targetId)
+        }
+        if (!isCurrent() || archived()) return false
+        const session = await withSession(targetId, picked, navigation)
+        if (!session || !isCurrent() || archived()) return false
         let result: { thread: Parameters<typeof loadThread>[1] }
         let resumed = true
         try {
           result = await resumeThread(session.rpc, id)
         } catch (err) {
+          if (!isCurrent() || archived()) return false
           if (picked !== 'codex') throw err
           resumed = false
           result = await readThread(session.rpc, id)
         }
-        if (navigation !== navigationEpoch || archived()) return
+        if (!isCurrent() || archived()) return false
         if (picked === 'codex') {
           if (resumed) session.resumedCodexThreads.add(id)
           else session.resumedCodexThreads.delete(id)
         }
         patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
-        set({ selectedThreadId: id, selectedAgent: picked, page: 'chat', error: null })
+        // 切换项目前保留当前页面和内容，避免历史读取期间渲染中间页面。
+        const movedProject = workspace &&
+          (source.selectedTargetId !== targetId || source.selectedProjectId !== workspace.project.id)
+        set({
+          ...(movedProject ? workspaceSelection(conn.id, workspace) : {}),
+          selectedThreadId: id,
+          selectedAgent: picked,
+          page: 'chat',
+          error: null,
+        })
         showDraft()
         saveActiveChat()
+        if (movedProject) void recordProjectVisit(conn, workspace.project)
+        return true
       } catch (err) {
-        if (navigation === navigationEpoch) set({ error: friendlyError(err, '打开会话失败') })
+        if (isCurrent()) {
+          markRepairError(conn, desktopEpoch, err)
+          set({ error: hostKeyMessage(err, '打开会话失败') })
+        }
+        return false
+      } finally {
+        if (get().openingThread === openingThread) set({ openingThread: null })
       }
     },
 
@@ -1949,22 +2243,30 @@ export const useApp = create<AppState>((set, get) => {
       if (key) saveDraft(key, { text, annotations: get().annotations })
     },
 
-    send: async (text, attachments = [], delegate = false) => {
+    send: async (text, attachments = [], delegate = false, mode = 'queue', { keepDraft = false } = {}) => {
       const initial = get()
       const conn = activeConnection(initial)
-      const { annotations, selectedTargetId: targetId, selectedAgent: agent } = initial
+      const { selectedTargetId: targetId, selectedAgent: agent } = initial
+      const annotations = keepDraft ? [] : initial.annotations
       const finalText = formatQuotedMessage(annotations, text)
-      if ((!finalText.trim() && !attachments.length) || initial.sending) return false
+      if (!finalText.trim() && !attachments.length) return false
       const key = currentDraftKey(initial)
       if (!targetId || !key || !conn) {
         set({ error: '请先选择目标' })
         return false
       }
+      if (mode === 'steer' && agent !== 'codex') {
+        set({ error: '当前 Agent 不支持引导' })
+        return false
+      }
       const draft = { text, annotations }
-      saveDraft(key, draft)
       const epoch = desktopEpoch
       const navigation = navigationEpoch
       const sessionId = sessionKey(targetId, agent)
+      let address = selectedSendAddress(initial)
+      if (keepDraft && !address) return false
+      let queueKey = address ? sendKey(address) : null
+      const view = address ? initial.sessions[sessionId]?.state.threads[address.threadId] : undefined
       const models = initial.models[sessionId]?.models ?? []
       const prefs = initial.modelPrefs[sessionId] ?? EMPTY_PREFS
       const hasImage = attachments.some((item) => item.type === 'image' || item.type === 'localImage')
@@ -1982,16 +2284,44 @@ export const useApp = create<AppState>((set, get) => {
         msg: { id: Number.MAX_SAFE_INTEGER, method: 'turn/start',
           params: { threadId: initial.selectedThreadId ?? 'x'.repeat(256), input, ...overrides } },
       } }
-      if (new TextEncoder().encode(JSON.stringify(wire)).length > 1_048_576) {
+      const steerWire = view?.activeTurnId && mode === 'steer'
+        ? { ...wire, params: { targetId, agent, msg: { id: Number.MAX_SAFE_INTEGER, method: 'turn/steer',
+          params: { threadId: initial.selectedThreadId, expectedTurnId: view.activeTurnId, input } } } }
+        : null
+      const encoder = new TextEncoder()
+      if ([wire, steerWire].some((request) => request && encoder.encode(JSON.stringify(request)).length > 1_048_576)) {
         set({ error: '消息和附件合计超过 1 MiB，请移除部分内容后再发送' })
         return false
       }
-      const view = initial.selectedThreadId && initial.sessions[sessionId]?.state.threads[initial.selectedThreadId]
-      if (view && view.status === 'running') {
-        set({ error: '会话正在运行，请等当前回复完成或先中断' })
-        return false
+
+      const clearSentDraft = (sentDraftKey: string) => {
+        if (keepDraft) return
+        const current = drafts[sentDraftKey]
+        if (current?.text === draft.text && current.annotations === draft.annotations) {
+          saveDraft(sentDraftKey, { text: '', annotations: [] })
+        }
       }
+      const enqueue = (chat: SendAddress, sentDraftKey: string) => {
+        const chatKey = sendKey(chat)
+        const imageCount = attachments.filter((attachment) => attachment.type === 'image').length
+        const item = { id: makeId(), text: finalText.trim(), imageCount, input, overrides }
+        updateQueue(chatKey, (list) => [...list, item])
+        if (!get().eventsConnected) pauseQueue(chatKey, '连接中断，队列已暂停')
+        clearSentDraft(sentDraftKey)
+        void flushQueue(chat)
+        return true
+      }
+      if (mode === 'queue' && address && queueKey && (
+        view?.status === 'running' || initial.queuedSends[queueKey]?.length || submitting.has(queueKey)
+      )) {
+        if (!keepDraft) saveDraft(key, draft)
+        set({ error: null })
+        return enqueue(address, key)
+      }
+      if (initial.sending || (queueKey && submitting.has(queueKey))) return false
+      if (!keepDraft) saveDraft(key, draft)
       set({ sending: true, error: null })
+      if (queueKey) submitting.add(queueKey)
       try {
         const session = await withSession(targetId, agent, navigation)
         if (!session || epoch !== desktopEpoch || navigation !== navigationEpoch) return false
@@ -2003,6 +2333,9 @@ export const useApp = create<AppState>((set, get) => {
           if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
           patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, created.thread) }), session)
           threadId = created.thread.id
+          address = { desktopId: conn.id, targetId, agent, threadId }
+          queueKey = sendKey(address)
+          submitting.add(queueKey)
           if (agent === 'codex') session.resumedCodexThreads.add(threadId)
           set({ selectedThreadId: threadId })
           sentDraftKey = draftKey(conn.id, targetId, initial.selectedProjectId, agent, threadId, conn.fp)
@@ -2011,41 +2344,92 @@ export const useApp = create<AppState>((set, get) => {
           saveActiveChat()
           void get().refreshThreads({ skipFailed: true })
         } else if (agent === 'codex' && !session.resumedCodexThreads.has(threadId)) {
-          const { thread } = await resumeThread(session.rpc, threadId)
+          await resumeCodexConversation(session, threadId)
           if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
-          session.resumedCodexThreads.add(threadId)
-          patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }), session)
-          if (get().sessions[session.key]?.state.threads[threadId]?.status === 'running') {
-            throw new Error('会话正在运行，请等当前回复完成或先中断')
+        }
+        if (!address || !queueKey) return false
+        const current = get().sessions[session.key]?.state.threads[threadId]
+        if (current?.status === 'running') {
+          if (mode === 'queue') return enqueue(address, sentDraftKey)
+          const turnId = current.activeTurnId
+          if (!turnId) throw new Error('暂未收到当前轮次，请稍后重试')
+          if (mode === 'steer') {
+            await steerTurn(session.rpc, threadId, turnId, input)
+            if (epoch === desktopEpoch) clearSentDraft(sentDraftKey)
+            return true
           }
+          replacing.add(queueKey)
+          await interruptAndWait(session, threadId, turnId)
+          if (epoch !== desktopEpoch) return false
+          if (navigation !== navigationEpoch) throw new Error('会话已切换，请重新打开后发送')
+          if (get().sessions[session.key]?.state.threads[threadId]?.status === 'running') {
+            throw new Error('会话已开始另一轮，请检查后再发送')
+          }
+          replacing.delete(queueKey)
         }
-        const started = await sendInput(session.rpc, threadId, input, overrides)
+        await startMessageTurn(session, address, input, overrides)
         if (epoch !== desktopEpoch) return true
-        // 极短的一轮可能先发 completed，不能用较晚的响应把它恢复成运行中。
-        const synthetic = {
-          method: 'turn/started',
-          params: { threadId, turnId: started.turn.id, turn: started.turn },
-        } as unknown as ServerNotification
-        patchSession(session.key, (value) => ({
-          ...value,
-          state: completedTurns.get(session.transport)?.has(started.turn.id)
-            || value.state.threads[threadId]?.activeTurnId === started.turn.id
-            ? value.state
-            : applyNotification(value.state, synthetic),
-        }), session)
-        const current = drafts[sentDraftKey]
-        if (current?.text === draft.text && current.annotations === draft.annotations) {
-          saveDraft(sentDraftKey, { text: '', annotations: [] })
-        }
+        clearSentDraft(sentDraftKey)
         return true
       } catch (err) {
         if (epoch === desktopEpoch && navigation === navigationEpoch) {
           set({ error: friendlyError(err, '未确认消息已发送，草稿已保留') })
         }
+        if (epoch === desktopEpoch && queueKey && (mode === 'immediate' || mode === 'queue')) {
+          pauseQueue(queueKey, '上一条消息未确认发送，队列已暂停')
+        }
         return false
       } finally {
-        if (epoch === desktopEpoch) set({ sending: false })
+        if (epoch === desktopEpoch) {
+          if (queueKey) {
+            submitting.delete(queueKey)
+            replacing.delete(queueKey)
+          }
+          set({ sending: false })
+          if (address) void flushQueue(address)
+        }
       }
+    },
+
+    removeQueuedSend: (id) => {
+      const address = selectedSendAddress(get())
+      if (!address) return
+      const key = sendKey(address)
+      updateQueue(key, (list) => {
+        const first = list[0]
+        const remaining = list.filter((item) => item.id !== id || item.sending)
+        if (first?.id === id && first.error && remaining[0] && !first.sending) {
+          remaining[0] = { ...remaining[0], error: remaining[0].error ?? '队列已暂停' }
+        }
+        return remaining
+      })
+    },
+
+    retryQueuedSend: async () => {
+      const address = selectedSendAddress(get())
+      if (!address) return
+      const key = sendKey(address)
+      const first = get().queuedSends[key]?.[0]
+      if (!first?.error || submitting.has(key) || !get().eventsConnected) return
+      const epoch = desktopEpoch
+      const navigation = navigationEpoch
+      submitting.add(key)
+      try {
+        const session = await withSession(address.targetId, address.agent, navigation)
+        if (!session) return
+        const { thread } = address.agent === 'codex'
+          ? await resumeThread(session.rpc, address.threadId)
+          : await readThread(session.rpc, address.threadId)
+        if (epoch !== desktopEpoch || navigation !== navigationEpoch || first.id !== get().queuedSends[key]?.[0]?.id) return
+        if (address.agent === 'codex') session.resumedCodexThreads.add(address.threadId)
+        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }), session)
+      } catch (err) {
+        if (epoch === desktopEpoch && navigation === navigationEpoch) set({ error: friendlyError(err, '无法恢复队列') })
+        return
+      } finally {
+        if (epoch === desktopEpoch) submitting.delete(key)
+      }
+      await flushQueue(address, true)
     },
 
     interrupt: async () => {
@@ -2347,6 +2731,8 @@ export const useApp = create<AppState>((set, get) => {
           const id = typeof record?.id === 'string' ? record.id : ''
           if (!id) return
           if (record?.state !== 'ready') {
+            const desktopId = get().activeId
+            if (desktopId) pauseQueues([desktopId, id], '目标连接中断，队列已暂停')
             // 链路断过之后 agent 进程可能已经换了，下次操作必须重新 codex.open。
             for (const session of Object.values(get().sessions)) {
               if (session.targetId === id && session.opened) {
@@ -2384,12 +2770,17 @@ export const useApp = create<AppState>((set, get) => {
           const targetId = typeof payload?.targetId === 'string' ? payload.targetId : ''
           if (payload?.name === 'codex.exited' && targetId) {
             const agent = exitedAgent(payload)
+            const desktopId = get().activeId
+            if (desktopId) {
+              pauseQueues(agent ? [desktopId, targetId, agent] : [desktopId, targetId], 'Agent 已退出，队列已暂停')
+            }
             for (const session of Object.values(get().sessions)) {
               if (session.targetId !== targetId || (agent !== null && session.agent !== agent)) continue
               session.resumedCodexThreads.clear()
               clearPendingApprovals(session)
               patchSession(session.key, (value) => ({
                 ...value,
+                state: failActiveThreads(value.state, `${agentLabel(value.agent)} 进程已退出`),
                 opened: false,
                 openError: `${agentLabel(value.agent)} 进程已退出，下次操作将重新启动`,
               }))
@@ -2432,24 +2823,24 @@ export const useApp = create<AppState>((set, get) => {
         return true
       }
       if (page === 'chat') {
-        navigationEpoch += 1
+        beginNavigation()
         set({ page: 'threads', selectedThreadId: null })
         showDraft()
         saveActiveChat()
         return true
       }
       if (page === 'threads') {
-        navigationEpoch += 1
+        beginNavigation()
         set({ page: 'projects', selectedProjectId: null, selectedThreadId: null })
         return true
       }
       if (page === 'projects') {
-        navigationEpoch += 1
+        beginNavigation()
         set({ page: 'workspace', selectedTargetId: null, directory: null })
         return true
       }
       if (page === 'targets') {
-        navigationEpoch += 1
+        beginNavigation()
         set({ page: 'workspace' })
         return true
       }

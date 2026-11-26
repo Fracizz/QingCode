@@ -26,9 +26,15 @@
   white-space: nowrap;
 }
 
-.qn-terminal-tools .qn-button[aria-pressed="true"] {
-  background: #183e37;
-  color: var(--color-qn-accent);
+.qn-terminal-keys .qn-button {
+  min-width: 44px;
+  min-height: 44px;
+  box-shadow: inset 0 1px rgb(255 255 255 / 8%), inset 0 -2px rgb(0 0 0 / 35%);
+}
+
+.qn-terminal-keys .qn-button:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: inset 0 1px rgb(255 255 255 / 8%);
 }
 
 .qn-terminal-surface {
@@ -40,17 +46,16 @@
   background: #161816;
 }
 
-.qn-terminal-host,
-.qn-terminal-readable {
+.qn-terminal-host {
   position: absolute;
   inset: 0;
   padding: 6px;
 }
 
 .qn-terminal-readable {
-  z-index: 1;
   margin: 0;
   overflow: auto;
+  padding: 8px;
   background: #161816;
   color: var(--color-qn-text);
   font: 13px/1.5 ui-monospace, Consolas, monospace;

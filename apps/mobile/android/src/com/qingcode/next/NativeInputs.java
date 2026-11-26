@@ -4,6 +4,7 @@ import android.content.ClipData;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -21,6 +22,7 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashSet;
@@ -29,6 +31,9 @@ import java.util.Set;
 
 final class NativeInputs {
   private static final int MAX_BITMAP_EDGE = 1600;
+  private static final int MAX_BITMAP_PIXELS = 120_000_000;
+  private static final int[] JPEG_EDGES = { MAX_BITMAP_EDGE, 1080, 720, 480 };
+  private static final int[] JPEG_QUALITIES = { 82, 64, 48 };
   private final ContentResolver resolver;
   private final ActivityRequests requests;
 
@@ -108,20 +113,15 @@ final class NativeInputs {
 
   private Photo readPhoto(Uri uri, int limit) throws IOException {
     if (limit <= 0) return null;
-    BitmapFactory.Options bounds = new BitmapFactory.Options();
-    bounds.inJustDecodeBounds = true;
-    try (InputStream input = resolver.openInputStream(uri)) {
-      if (input == null) return null;
-      BitmapFactory.decodeStream(input, null, bounds);
-    }
-    if (bounds.outWidth < 1 || bounds.outHeight < 1 || (long) bounds.outWidth * bounds.outHeight > 120_000_000) {
-      return null;
-    }
     byte[] original = readAtMost(uri, limit);
     String mime = original == null ? null : NativeFileRules.imageMime(original);
-    if (mime != null) return new Photo(original, mime, false);
+    if (mime != null) {
+      // 已经读入的截图可直接校验尺寸，无需再向相册提供方请求一遍。
+      BitmapFactory.Options bounds = readBounds(uri, original);
+      return validDimensions(bounds.outWidth, bounds.outHeight) ? new Photo(original, mime, false) : null;
+    }
 
-    Bitmap source = decodeSmall(uri, bounds);
+    Bitmap source = decodeSmall(uri, original);
     if (source == null) return null;
     try {
       return compressedPhoto(source, limit);
@@ -131,56 +131,92 @@ final class NativeInputs {
   }
 
   private byte[] readAtMost(Uri uri, int limit) throws IOException {
-    try (InputStream input = resolver.openInputStream(uri)) {
-      if (input == null) return null;
-      ByteArrayOutputStream data = new ByteArrayOutputStream();
-      byte[] buffer = new byte[8192];
-      int read;
-      while ((read = input.read(buffer)) != -1) {
-        if (read > limit - data.size()) return null;
-        data.write(buffer, 0, read);
+    try (AssetFileDescriptor asset = resolver.openAssetFileDescriptor(uri, "r")) {
+      if (asset == null) return null;
+      long length = asset.getLength();
+      if (length > limit) return null;
+      ByteArrayOutputStream data = new ByteArrayOutputStream(length > 0 ? (int) length : 8192);
+      try (InputStream input = asset.createInputStream()) {
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = input.read(buffer, 0, Math.min(buffer.length, limit - data.size() + 1))) != -1) {
+          if (read > limit - data.size()) return null;
+          data.write(buffer, 0, read);
+        }
       }
       return data.toByteArray();
     }
   }
 
-  private Bitmap decodeSmall(Uri uri, BitmapFactory.Options bounds) throws IOException {
+  private BitmapFactory.Options readBounds(Uri uri, byte[] original) throws IOException {
+    BitmapFactory.Options bounds = new BitmapFactory.Options();
+    bounds.inJustDecodeBounds = true;
+    if (original != null) {
+      BitmapFactory.decodeByteArray(original, 0, original.length, bounds);
+    } else {
+      try (InputStream input = resolver.openInputStream(uri)) {
+        if (input != null) BitmapFactory.decodeStream(input, null, bounds);
+      }
+    }
+    return bounds;
+  }
+
+  private static boolean validDimensions(int width, int height) {
+    return width > 0 && height > 0 && (long) width * height <= MAX_BITMAP_PIXELS;
+  }
+
+  private Bitmap decodeSmall(Uri uri, byte[] original) throws IOException {
     if (Build.VERSION.SDK_INT >= 28) {
-      return ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri), (decoder, info, src) -> {
+      ImageDecoder.Source image = original == null ? ImageDecoder.createSource(resolver, uri)
+        : ImageDecoder.createSource(ByteBuffer.wrap(original));
+      return ImageDecoder.decodeBitmap(image, (decoder, info, src) -> {
         int width = info.getSize().getWidth();
         int height = info.getSize().getHeight();
+        if (!validDimensions(width, height)) throw new IllegalArgumentException("图片尺寸不受支持");
         double ratio = Math.min(1.0, (double) MAX_BITMAP_EDGE / Math.max(width, height));
         decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
         decoder.setTargetSize(Math.max(1, (int) (width * ratio)), Math.max(1, (int) (height * ratio)));
       });
     }
+    BitmapFactory.Options bounds = readBounds(uri, original);
+    if (!validDimensions(bounds.outWidth, bounds.outHeight)) return null;
     BitmapFactory.Options options = new BitmapFactory.Options();
     options.inSampleSize = 1;
     while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > MAX_BITMAP_EDGE) options.inSampleSize *= 2;
+    if (original != null) return BitmapFactory.decodeByteArray(original, 0, original.length, options);
     try (InputStream input = resolver.openInputStream(uri)) {
       return input == null ? null : BitmapFactory.decodeStream(input, null, options);
     }
   }
 
   private static Photo compressedPhoto(Bitmap source, int limit) {
-    for (int edge : new int[] { MAX_BITMAP_EDGE, 1080, 720, 480 }) {
-      double ratio = Math.min(1.0, (double) edge / Math.max(source.getWidth(), source.getHeight()));
-      int width = Math.max(1, (int) (source.getWidth() * ratio));
-      int height = Math.max(1, (int) (source.getHeight() * ratio));
-      Bitmap output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+    int sourceWidth = source.getWidth();
+    int sourceHeight = source.getHeight();
+    int longest = Math.max(sourceWidth, sourceHeight);
+    int previousEdge = 0;
+    ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+    for (int maxEdge : JPEG_EDGES) {
+      int edge = Math.min(longest, maxEdge);
+      if (edge == previousEdge) continue;
+      previousEdge = edge;
+      int width = Math.max(1, sourceWidth * edge / longest);
+      int height = Math.max(1, sourceHeight * edge / longest);
+      Bitmap output = source;
       try {
-        Canvas canvas = new Canvas(output);
-        canvas.drawColor(Color.WHITE);
-        canvas.drawBitmap(source, null, new Rect(0, 0, width, height), new Paint(Paint.FILTER_BITMAP_FLAG));
-        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
-        for (int quality : new int[] { 82, 64, 48 }) {
+        if (edge < longest || source.hasAlpha()) {
+          output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+          Canvas canvas = new Canvas(output);
+          canvas.drawColor(Color.WHITE);
+          canvas.drawBitmap(source, null, new Rect(0, 0, width, height), new Paint(Paint.FILTER_BITMAP_FLAG));
+        }
+        for (int quality : JPEG_QUALITIES) {
           encoded.reset();
           if (output.compress(Bitmap.CompressFormat.JPEG, quality, encoded) && encoded.size() <= limit) {
             return new Photo(encoded.toByteArray(), "image/jpeg", true);
           }
         }
       } finally {
-        output.recycle();
+        if (output != source) output.recycle();
       }
     }
     return null;

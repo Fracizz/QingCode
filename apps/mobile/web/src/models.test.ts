@@ -18,6 +18,7 @@ const RAW = {
       id: 'm1',
       model: 'gpt-big',
       displayName: 'Big',
+      description: 'For complex tasks',
       isDefault: true,
       supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }],
       defaultReasoningEffort: 'low',
@@ -54,6 +55,14 @@ describe('model/list 归一化与选择', () => {
     expect(triggerLabel(resolveSelection(models, EMPTY_PREFS))).toBe('Big · 低')
     expect(effortLabel('xhigh')).toBe('超高')
     expect(effortLabel('weird')).toBe('Weird')
+  })
+
+  it('按名称、标识和描述搜索模型，保留当前的隐藏模型规则', () => {
+    expect(visibleModels(models, null, '  BiG  ').map((item) => item.model)).toEqual(['gpt-big'])
+    expect(visibleModels(models, null, 'gpt-small').map((item) => item.model)).toEqual(['gpt-small'])
+    expect(visibleModels(models, null, 'complex').map((item) => item.model)).toEqual(['gpt-big'])
+    expect(visibleModels(models, null, 'hidden')).toEqual([])
+    expect(visibleModels(models, 'gpt-hidden', 'hidden').map((item) => item.model)).toEqual(['gpt-hidden'])
   })
 
   it('换模型时清掉新模型不支持的强度', () => {

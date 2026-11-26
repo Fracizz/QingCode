@@ -1,5 +1,6 @@
 /** getSessionMessages / listSessions 的历史 → v2 Thread/turns/items（纯函数）。 */
 import { emptyMapState, mapSdkMessage } from './items'
+import type { ThreadStatus } from '../../../../vendor/codex-protocol/ts/v2/ThreadStatus'
 import {
   asRecord,
   buildThread,
@@ -42,12 +43,12 @@ export function sessionInfoToMeta(info: unknown, fallbackCwd: string): SessionMe
   }
 }
 
-export function threadListResponse(sessions: SessionMeta[], limit?: number): Json {
+export function threadListResponse(sessions: SessionMeta[], limit?: number, statusFor?: (id: string) => ThreadStatus): Json {
   const data = sessions
     .filter((meta) => meta.id.length > 0)
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
     .slice(0, limit)
-    .map((meta) => buildThread(meta))
+    .map((meta) => statusFor ? { ...buildThread(meta), status: statusFor(meta.id) } : buildThread(meta))
   return { data, nextCursor: null, backwardsCursor: null }
 }
 

@@ -110,7 +110,9 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
   })
 
   it('thread/start → turn/start → 事件 → turn/completed，且广播带 seq', async () => {
-    const { host, sent, broadcasts, rpc } = harness()
+    const { host, sent, broadcasts, rpc } = harness([
+      { meta: { id: 'fake-session', cwd: '/work' }, sessionFile: '/tmp/fake-session.jsonl' },
+    ])
     await host.open({})
     host.handleClientMessage(1, { id: 1, method: 'thread/start', params: { cwd: '/work' } })
     await flush()
@@ -127,6 +129,13 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
     await flush()
     expect(broadcasts.some((entry) => entry.msg.method === 'turn/started')).toBe(true)
     expect(host.activeTurns).toBe(1)
+    host.handleClientMessage(2, { id: 10, method: 'thread/list', params: { cwd: '/work' } })
+    host.handleClientMessage(2, { id: 11, method: 'thread/read', params: { threadId } })
+    await flush()
+    expect(responseFor(sent, 10)?.result).toMatchObject({ data: [{ id: threadId, status: { type: 'active', activeFlags: [] } }] })
+    expect(responseFor(sent, 11)?.result).toMatchObject({
+      thread: { status: { type: 'active', activeFlags: [] }, turns: [{ status: 'inProgress' }] },
+    })
 
     rpc().emit({ type: 'message_start', message: { role: 'assistant', content: [] } })
     rpc().emit({

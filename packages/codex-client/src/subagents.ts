@@ -24,6 +24,8 @@ export type SubagentItemView = {
   title: string
   status: string
   detail: string
+  result?: string
+  agents?: { threadId: string; label: string; status: string; result: string }[]
 }
 
 const toolLabels: Readonly<Record<string, string>> = {
@@ -70,36 +72,46 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
+function string(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
 export function describeSubagentItem(
   item: Record<string, unknown>,
   id: string,
 ): SubagentItemView | undefined {
   if (item.type === 'collabAgentToolCall') {
-    const agents = record(item.agentsStates)
-    const states = Object.entries(agents).map(([agentId, value]) => {
-      const state = record(value)
-      return [agentId, label(agentStatuses, state.status), state.message]
-        .filter((part) => typeof part === 'string' && part)
-        .join(' · ')
-    })
-    const detail = [item.prompt, ...states].filter((part) => typeof part === 'string' && part).join('\n')
+    const states = record(item.agentsStates)
+    const receivers = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds.map(string).filter(Boolean) : []
+    const agents = [...new Set([...receivers, ...Object.keys(states)])]
+      .filter((threadId) => threadId && threadId !== item.senderThreadId)
+      .map((threadId) => {
+        const state = record(Object.hasOwn(states, threadId) ? states[threadId] : undefined)
+        return { threadId, label: '', status: label(agentStatuses, state.status), result: string(state.message) }
+      })
     return {
       kind: 'subagent', id, title: label(toolLabels, item.tool) || '子代理协作',
-      status: label(callStatuses, item.status), detail,
+      status: label(callStatuses, item.status), detail: string(item.prompt),
+      ...(agents.length ? { agents } : {}),
     }
   }
   if (item.type === 'subAgentActivity') {
+    const threadId = string(item.agentThreadId)
+    const path = string(item.agentPath)
+    const status = label(activityStatuses, item.kind)
     return {
-      kind: 'subagent', id, title: '子代理',
-      status: label(activityStatuses, item.kind),
-      detail: typeof item.agentPath === 'string' ? item.agentPath : '',
+      kind: 'subagent', id, title: '子代理', status, detail: threadId ? '' : path,
+      ...(threadId ? { agents: [{ threadId, label: path, status, result: '' }] } : {}),
     }
   }
   if (item.type === 'dynamicToolCall' && item.namespace === 'claude' && (item.tool === 'Agent' || item.tool === 'Task')) {
     const args = record(item.arguments)
-    const detail = [args.subagent_type, args.description]
-      .filter((part) => typeof part === 'string' && part)
-      .join(' · ')
-    return { kind: 'subagent', id, title: '委派给子代理', status: label(callStatuses, item.status), detail }
+    const description = [string(args.subagent_type), string(args.description)].filter(Boolean).join(' · ')
+    const detail = [description, string(args.prompt)].filter(Boolean).join('\n\n')
+    const result = Array.isArray(item.contentItems) ? item.contentItems.map((part: unknown) => {
+      const block = record(part)
+      return block.type === 'text' || block.type === 'inputText' ? string(block.text) : ''
+    }).filter(Boolean).join('\n\n') : ''
+    return { kind: 'subagent', id, title: '委派给子代理', status: label(callStatuses, item.status), detail, ...(result ? { result } : {}) }
   }
 }

@@ -1,3 +1,4 @@
+import { threadActivityFromStatus, type ThreadActivity } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { DEFAULT_AGENT } from './agents'
 
@@ -8,6 +9,7 @@ export type ThreadSummary = {
   cwd: string
   updatedAt: number
   agent: AgentKind
+  activity?: ThreadActivity
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -33,6 +35,7 @@ export function toThreadSummaries(
     const id = text(entry.id)
     if (!id) continue
     const preview = text(entry.preview)
+    const activity = threadActivityFromStatus(entry.status)
     summaries.push({
       id,
       title: text(entry.name) || preview.split('\n')[0]?.trim() || '未命名会话',
@@ -40,6 +43,7 @@ export function toThreadSummaries(
       cwd: text(entry.cwd),
       updatedAt: toTimestamp(entry.updatedAt ?? entry.recencyAt ?? entry.createdAt),
       agent,
+      ...(activity ? { activity } : {}),
     })
   }
   return summaries.sort((a, b) => b.updatedAt - a.updatedAt)

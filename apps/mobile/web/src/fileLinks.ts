@@ -22,6 +22,8 @@ const UNC = /^[\\/]{2}/
 /** file:///C:/a 或 /C:/a 这类"带斜杠的盘符"路径。 */
 const WINISH_ROOT = /^\/[A-Za-z]:[\\/]/
 const OTHER_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/
+const SANDBOX_SCHEME = /^sandbox:/i
+const SANDBOX_FILES = '/mnt/data/'
 const FILE_EXT = /\.[A-Za-z][A-Za-z0-9_+~-]{0,15}$/
 const SPECIAL_PREFIX = /^(?:\.{1,2}|~)[\\/]/
 const HOME_PREFIX = /^~[\\/]/
@@ -204,6 +206,7 @@ export function parseFileHref(href: string, cwd: string): FileLocation | null {
   if (!raw) return null
 
   let candidate: string
+  const sandbox = SANDBOX_SCHEME.test(raw)
   if (/^file:/i.test(raw)) {
     let url: URL
     try {
@@ -217,7 +220,8 @@ export function parseFileHref(href: string, cwd: string): FileLocation | null {
     }
     candidate = `${pathname}${url.hash}`
   } else {
-    if (!DRIVE.test(raw) && OTHER_SCHEME.test(raw) && !isFileWithLineSuffix(raw)) return null
+    if (sandbox) raw = raw.replace(SANDBOX_SCHEME, '')
+    else if (!DRIVE.test(raw) && OTHER_SCHEME.test(raw) && !isFileWithLineSuffix(raw)) return null
     // 纯锚点（#section）是页内跳转，不是文件。
     if (raw.startsWith('#')) return null
     const query = raw.indexOf('?')
@@ -227,6 +231,11 @@ export function parseFileHref(href: string, cwd: string): FileLocation | null {
   const location = splitLocation(candidate)
   let path = decode(location.path).trim()
   if (!path) return null
+  if (sandbox) {
+    if (!path.startsWith(SANDBOX_FILES) || /[\\\0]/.test(path)) return null
+    const resolved = normalizePath(path, 'posix')
+    return resolved.startsWith(SANDBOX_FILES) ? { ...location, path: resolved } : null
+  }
   if (WINISH_ROOT.test(path)) path = path.slice(1)
 
   let resolved: string
@@ -253,9 +262,10 @@ export function resolvePath(path: string, cwd: string): string {
   return joinPath(cwd, value)
 }
 
-/** react-markdown 默认会清掉 file: 与盘符链接；放行它们，其余仍走默认的安全检查。 */
+/** 保留可以交给应用内文件查看器处理的路径。 */
 export function allowLocalUrl(value: string, safe: string): string {
   if (safe) return safe
+  if (SANDBOX_SCHEME.test(value)) return parseFileHref(value, '') ? value : ''
   if (/^file:/i.test(value) || DRIVE.test(value) || isFileWithLineSuffix(value)) return value
   return ''
 }

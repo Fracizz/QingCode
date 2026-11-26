@@ -5,12 +5,57 @@ import { createGateway, setGateway } from './client'
 import { buildConnectionInfo } from './link'
 import { MOCK_FP, type MockNativePort } from './mock'
 import { draftKey, parseConnections, serializeConnections } from './state'
-import { useApp } from './store'
+import { selectedQueuedSends, useApp } from './store'
 import { EventStreamController } from './transport'
+import type { ProbeResult, Project } from './types'
+import { openWorkspaceThread, showWorkspaceProject, useWorkspace } from './workspace'
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 describe('模拟网关全链路', () => {
+  it('合并同一电脑的并发探测，并清除失效的延迟', async () => {
+    const gateway = createGateway()
+    setGateway(gateway)
+    const conn = {
+      id: 'latency-test', name: '电脑', host: '192.168.1.2', port: 38500,
+      fp: MOCK_FP, token: 'mock-token', desktopName: '电脑', createdAt: 0,
+    }
+    const state = useApp.getState
+    const before = state()
+    useApp.setState({ connections: [conn], connectionStatus: {}, connectionLatencyMs: {}, needsRepair: {} })
+    let release!: (value: ProbeResult) => void
+    const pending = new Promise<ProbeResult>((resolve) => { release = resolve })
+    const probe = vi.spyOn(gateway, 'probe').mockReturnValueOnce(pending)
+    let now = 100
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
+    try {
+      const first = state().refreshStatuses()
+      const second = state().refreshStatuses()
+      expect(probe).toHaveBeenCalledTimes(1)
+      expect(state().connectionStatus[conn.id]).toBe('checking')
+      now = 146.5
+      release({ fingerprint: MOCK_FP, name: '电脑', version: '1' })
+      await Promise.all([first, second])
+      expect(state().connectionStatus[conn.id]).toBe('online')
+      expect(state().connectionLatencyMs[conn.id]).toBe(47)
+
+      probe.mockRejectedValueOnce(new Error('离线'))
+      await state().refreshStatuses()
+      expect(state().connectionStatus[conn.id]).toBe('offline')
+      expect(state().connectionLatencyMs[conn.id]).toBeNull()
+
+      probe.mockResolvedValueOnce({ fingerprint: 'ef'.repeat(32), name: '电脑', version: '1' })
+      await state().refreshStatuses()
+      expect(state().connectionStatus[conn.id]).toBe('mismatch')
+      expect(state().connectionLatencyMs[conn.id]).toBeNull()
+    } finally {
+      clock.mockRestore()
+      probe.mockRestore()
+      const { connections, connectionStatus, connectionLatencyMs, needsRepair } = before
+      useApp.setState({ connections, connectionStatus, connectionLatencyMs, needsRepair })
+    }
+  })
+
   it('从剪贴板导入到流式回复都能走通', async () => {
     const gateway = createGateway()
     const writeStorage = gateway.storageSet.bind(gateway)
@@ -158,8 +203,18 @@ describe('模拟网关全链路', () => {
     historyRpc.mockRestore()
     state().goBack()
 
-    await state().newThread()
+    const project = state().projects.find((item) => item.id === 'p-local')!
+    state().goBack()
+    state().goBack()
+    expect(state().page).toBe('workspace')
+    expect(state().selectedTargetId).toBeNull()
+    const pages = new Set<string>()
+    const observeNewSession = useApp.subscribe((next) => pages.add(next.page))
+    await expect(state().newThread('codex', { project, projects: [project], threads: [] })).resolves.toBe(true)
+    observeNewSession()
+    expect([...pages]).toEqual(['workspace', 'chat'])
     expect(state().page).toBe('chat')
+    expect(state().selectedProjectId).toBe(project.id)
     expect(state().selectedAgent).toBe('codex')
     expect(state().selectedThreadId).toBeTruthy()
 
@@ -385,6 +440,274 @@ describe('模拟网关全链路', () => {
       session.transport.dispose()
     }
   }, 15_000)
+
+  it('连续打开会话时采用最后一次选择，取消后忽略迟到的历史', async () => {
+    const gateway = createGateway()
+    setGateway(gateway)
+    const state = useApp.getState
+    const conn = {
+      id: 'switch-desktop', name: '电脑', host: '192.168.1.2', port: 38500,
+      fp: MOCK_FP, token: 'mock-token', desktopName: '电脑', createdAt: Date.now(),
+    }
+    useApp.setState({ connections: [...state().connections, conn] })
+    await state().activate(conn.id)
+    const controller = new EventStreamController(gateway, () => conn, {
+      onEvent: (event) => state().handleGatewayEvent(event),
+      onOpen: () => useApp.setState({ eventsConnected: true }),
+      onClose: () => useApp.setState({ eventsConnected: false }),
+    })
+    controller.start()
+    let releaseResume: (() => void) | undefined
+    const releaseHistory = () => {
+      releaseResume?.()
+      releaseResume = undefined
+    }
+    try {
+      await vi.waitFor(() => expect(state().eventsConnected).toBe(true))
+      await state().selectTarget('local')
+      await state().selectProject('p-local')
+      const rpc = gateway.rpc.bind(gateway)
+      const disconnected = vi.spyOn(gateway, 'rpc').mockImplementation(async (...args) => {
+        const [, method, params] = args
+        if (method === 'server.req' && (params as { method?: string }).method === 'ping') {
+          throw Object.assign(new Error('目标未连接'), { code: 'not_connected' })
+        }
+        return rpc(...args)
+      })
+      try {
+        await expect(state().openThread('c-demo', 'claude')).resolves.toBe(true)
+        expect(disconnected.mock.calls.map(([, method]) => method)).toContain('target.connect')
+        expect(state()).toMatchObject({ selectedThreadId: 'c-demo', openingThread: null, error: null })
+      } finally {
+        disconnected.mockRestore()
+      }
+      const delayed = vi.spyOn(gateway, 'rpc').mockImplementation(async (...args) => {
+        const [, method, params] = args
+        const request = params as { msg?: { method: string; params?: { threadId?: string } } }
+        if (method === 'codex.send' && request.msg?.method === 'thread/resume' && request.msg.params?.threadId === 't-demo') {
+          await new Promise<void>((resolve) => { releaseResume = resolve })
+        }
+        return rpc(...args)
+      })
+      const first = state().openThread('t-demo', 'codex')
+      await vi.waitFor(() => expect(releaseResume).toBeTypeOf('function'))
+      expect(state().openingThread).toMatchObject({ threadId: 't-demo', agent: 'codex' })
+
+      const latest = state().openThread('c-demo', 'claude')
+      expect(state().openingThread).toMatchObject({ threadId: 'c-demo', agent: 'claude' })
+      await expect(latest).resolves.toBe(true)
+      releaseHistory()
+      await expect(first).resolves.toBe(false)
+      expect(state()).toMatchObject({ selectedThreadId: 'c-demo', openingThread: null, error: null })
+
+      const dismissed = state().openThread('t-demo', 'codex')
+      await vi.waitFor(() => expect(releaseResume).toBeTypeOf('function'))
+      state().cancelPendingNavigation()
+      expect(state().openingThread).toBeNull()
+      releaseHistory()
+      await expect(dismissed).resolves.toBe(false)
+      expect(state()).toMatchObject({ selectedThreadId: 'c-demo', openingThread: null, error: null })
+      delayed.mockRestore()
+    } finally {
+      releaseHistory()
+      controller.stop()
+      for (const session of Object.values(state().sessions)) {
+        session.rpc.dispose()
+        session.transport.dispose()
+      }
+    }
+  })
+
+  it('运行中可排队、引导或立即发送，停止后可手动继续队列', async () => {
+    const gateway = createGateway()
+    setGateway(gateway)
+    const state = useApp.getState
+    const conn = {
+      id: 'queue-desktop', name: '电脑', host: '192.168.1.2', port: 38500,
+      fp: MOCK_FP, token: 'mock-token', desktopName: '电脑', createdAt: Date.now(),
+    }
+    useApp.setState({ connections: [...state().connections, conn] })
+    await state().activate(conn.id)
+    const controller = new EventStreamController(gateway, () => conn, {
+      onEvent: (event) => state().handleGatewayEvent(event),
+      onOpen: () => useApp.setState({ eventsConnected: true }),
+      onClose: () => useApp.setState({ eventsConnected: false }),
+    })
+    controller.start()
+    try {
+      await vi.waitFor(() => expect(state().eventsConnected).toBe(true))
+      await state().selectTarget('local')
+      await state().selectProject('p-local')
+      await state().openThread('t-demo', 'codex')
+
+      const view = () => state().sessions['codex:local']?.state.threads['t-demo']
+      const texts = () => view()?.items.flatMap((item) => item.kind === 'user' ? [item.text] : [])
+      const queue = () => selectedQueuedSends(state()) ?? []
+      const rpc = vi.spyOn(gateway, 'rpc')
+      const turnMethods = () => rpc.mock.calls.flatMap(([, method, params]) => {
+        const msg = (params as { msg?: { method?: string } } | undefined)?.msg
+        return method === 'codex.send' && msg?.method?.startsWith('turn/') ? [msg.method] : []
+      })
+
+      await expect(state().send('第一条')).resolves.toBe(true)
+      const firstTurn = view()?.activeTurnId
+      expect(firstTurn).toBeTruthy()
+      expect(state().sending).toBe(false)
+      state().setDraftText('排队一')
+      const png = 'data:image/png;base64,AA=='
+      await expect(state().send(state().draftText, [{ type: 'image', url: png }])).resolves.toBe(true)
+      expect(state().draftText).toBe('')
+      await expect(state().send('移除这条')).resolves.toBe(true)
+      await expect(state().send('排队二')).resolves.toBe(true)
+      expect(queue().map((message) => message.text)).toEqual(['排队一', '移除这条', '排队二'])
+      state().removeQueuedSend(queue()[1]!.id)
+      expect(turnMethods()).toEqual(['turn/start'])
+
+      await expect(state().send('补充方向', [], false, 'steer')).resolves.toBe(true)
+      expect(rpc).toHaveBeenCalledWith(conn, 'codex.send', expect.objectContaining({
+        agent: 'codex', msg: expect.objectContaining({ method: 'turn/steer', params: expect.objectContaining({
+          threadId: 't-demo', expectedTurnId: firstTurn,
+        }) }),
+      }))
+      expect(view()?.activeTurnId).toBe(firstTurn)
+      expect(texts()).toContain('补充方向')
+
+      await vi.waitFor(() => expect(view()?.items).toContainEqual(expect.objectContaining({ text: '排队一', images: [png] })))
+      expect(queue().map((message) => message.text)).toEqual(['排队二'])
+      await expect(state().send('立即跟进', [], false, 'immediate')).resolves.toBe(true)
+      expect(texts()).toContain('立即跟进')
+      expect(queue()[0]?.error).toBeUndefined()
+      expect(turnMethods()).toEqual(['turn/start', 'turn/steer', 'turn/start', 'turn/interrupt', 'turn/start'])
+
+      await state().interrupt()
+      expect(view()?.status).toBe('error')
+      expect(queue()[0]).toMatchObject({ text: '排队二', error: '上一轮未完成，队列已暂停' })
+      expect(texts()).not.toContain('排队二')
+      await state().retryQueuedSend()
+      await vi.waitFor(() => expect(view()?.status).toBe('idle'))
+      expect(texts()).toEqual(['你好', '第一条', '补充方向', '排队一', '立即跟进', '排队二'])
+      expect(queue()).toEqual([])
+
+      state().setDraftText('独立草稿')
+      state().addAnnotation('草稿引用')
+      await expect(state().send('编辑后的消息', [{ type: 'image', url: png }], false, 'queue', { keepDraft: true })).resolves.toBe(true)
+      expect(view()?.activity).toBe('running')
+      await vi.waitFor(() => expect(view()?.activity).toBe('completed'))
+      expect(view()?.items).toContainEqual(expect.objectContaining({ text: '编辑后的消息', images: [png] }))
+      expect(state().draftText).toBe('独立草稿')
+      expect(state().annotations).toContainEqual(expect.objectContaining({ quote: '草稿引用' }))
+      state().removeAnnotation(state().annotations[0]!.id)
+
+      await expect(state().send('模拟队列失败前的一轮')).resolves.toBe(true)
+      await expect(state().send('保留失败的排队消息')).resolves.toBe(true)
+      rpc.mockRestore()
+      const actualRpc = gateway.rpc.bind(gateway)
+      const rejectQueued = vi.spyOn(gateway, 'rpc').mockImplementation((connection, method, params, agent, timeout) => {
+        const msg = (params as { msg?: { method?: string; params?: { input?: { text?: string }[] } } } | undefined)?.msg
+        if (method === 'codex.send' && msg?.method === 'turn/start' && msg.params?.input?.[0]?.text === '保留失败的排队消息') {
+          return Promise.reject(new Error('模拟排队网络失败'))
+        }
+        return actualRpc(connection, method, params, agent, timeout)
+      })
+      await vi.waitFor(() => expect(queue()[0]).toMatchObject({ text: '保留失败的排队消息', error: '模拟排队网络失败' }))
+      expect(texts()).not.toContain('保留失败的排队消息')
+      expect(state().sending).toBe(false)
+      rejectQueued.mockRestore()
+      state().removeQueuedSend(queue()[0]!.id)
+
+      await state().openThread('c-demo', 'claude')
+      const unsupportedRpc = vi.spyOn(gateway, 'rpc')
+      await expect(state().send('不支持引导', [], false, 'steer')).resolves.toBe(false)
+      expect(state().error).toBe('当前 Agent 不支持引导')
+      expect(unsupportedRpc.mock.calls).not.toContainEqual([
+        conn, 'codex.send', expect.objectContaining({ msg: expect.objectContaining({ method: 'turn/steer' }) }),
+      ])
+      unsupportedRpc.mockRestore()
+    } finally {
+      controller.stop()
+      await state().removeConnection(conn.id)
+    }
+  }, 10_000)
+
+  it('从工作台直接打开项目或会话，切换标签后丢弃迟到的跳转', async () => {
+    const gateway = createGateway()
+    setGateway(gateway)
+    const state = useApp.getState
+    const conn = {
+      id: 'workspace-navigation', name: '电脑', host: '192.168.1.2', port: 38500,
+      fp: MOCK_FP, token: 'mock-token', desktopName: '电脑', createdAt: Date.now(),
+    }
+    useApp.setState({ connections: [...state().connections, conn] })
+    await state().activate(conn.id)
+    const controller = new EventStreamController(gateway, () => conn, {
+      onEvent: state().handleGatewayEvent,
+      onOpen: () => useApp.setState({ eventsConnected: true }),
+      onClose: () => useApp.setState({ eventsConnected: false }),
+    })
+    const pages: string[] = []
+    const unsubscribe = useApp.subscribe((next, previous) => {
+      if (next.page !== previous.page) pages.push(next.page)
+    })
+    controller.start()
+    try {
+      await vi.waitFor(() => expect(state().eventsConnected).toBe(true))
+      const projects = await gateway.rpc<Project[]>(conn, 'projects.list')
+      const project = projects.find((item) => item.id === 'p-local')!
+      const threads = await state().discoverWorkspaceSessions(projects)
+      const thread = threads.find((item) => item.id === 't-demo')!
+      useWorkspace.setState({ tab: 'sessions', threads: { [conn.id]: threads } })
+
+      const openingProject = showWorkspaceProject(project)
+      expect(pages).toEqual(['threads'])
+      expect(state()).toMatchObject({ selectedTargetId: project.targetId, selectedProjectId: project.id })
+      expect(state().threads).toContainEqual(thread)
+      await openingProject
+      state().goBack()
+      state().goBack()
+      pages.length = 0
+
+      let releaseResume!: () => void
+      const resumeGate = new Promise<void>((resolve) => { releaseResume = resolve })
+      const sendRpc = gateway.rpc.bind(gateway)
+      const rpc = vi.spyOn(gateway, 'rpc').mockImplementation(async (connection, method, params, agent, timeout) => {
+        if (method === 'codex.send' && (params as { msg?: { method?: string } })?.msg?.method === 'thread/resume') {
+          await resumeGate
+        }
+        return sendRpc(connection, method, params, agent, timeout)
+      })
+      try {
+        const openingThread = openWorkspaceThread(thread, project)
+        await vi.waitFor(() => expect(rpc).toHaveBeenCalledWith(conn, 'codex.send', expect.objectContaining({
+          msg: expect.objectContaining({ method: 'thread/resume' }),
+        })))
+        expect(pages).toEqual([])
+        expect(state().selectedTargetId).toBeNull()
+
+        useWorkspace.getState().setTab('projects')
+        useWorkspace.getState().setTab('sessions')
+        releaseResume()
+        await openingThread
+        expect(pages).toEqual([])
+      } finally {
+        releaseResume()
+        rpc.mockRestore()
+      }
+
+      await openWorkspaceThread(thread, project)
+      expect(pages).toEqual(['chat'])
+      expect(state()).toMatchObject({
+        selectedTargetId: thread.targetId, selectedProjectId: thread.projectId, selectedThreadId: thread.id,
+      })
+      expect(state().sessions['codex:local']?.state.threads[thread.id]?.items.length).toBeGreaterThan(0)
+      expect(state().goBack()).toBe(true)
+      expect(state().page).toBe('threads')
+    } finally {
+      unsubscribe()
+      controller.stop()
+      useWorkspace.setState({ threads: {} })
+      await state().removeConnection(conn.id)
+    }
+  })
 
   it('冷启动从加密存储恢复电脑的当前会话及对应草稿', async () => {
     const gateway = createGateway()

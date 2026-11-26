@@ -70,6 +70,7 @@ const MOCK_PROJECTS: Project[] = [
 
 type Stream = { id: string; heartbeat: ReturnType<typeof setInterval> | null }
 type MockTerminal = { project: Project; info: TermInfo; chunks: TermOutputChunk[]; attached: boolean }
+type MockTurn = { id: string; status: 'inProgress' | 'completed' | 'interrupted'; items: JsonRecord[] }
 
 /** 本机启用 Codex / Claude / pi（pi 模拟未安装），93 上关闭 Claude。 */
 export const MOCK_AGENT_SETTINGS = {
@@ -249,6 +250,7 @@ export class MockNativePort implements NativePort {
   private readonly memory = new Map<string, string>()
   private readonly projects: Project[] = [...MOCK_PROJECTS]
   private readonly terminals = new Map<string, MockTerminal>()
+  private readonly turns = new Map<string, MockTurn[]>()
   private readonly threads = new Map<AgentKind, JsonRecord[]>([
     [
       'codex',
@@ -526,6 +528,10 @@ export class MockNativePort implements NativePort {
     const nowSec = Math.floor(Date.now() / SECOND)
     const recv = (payload: unknown) => this.recv(targetId, agent, payload)
     const archiveKey = (id: unknown) => `mock.archive:${JSON.stringify([targetId, id])}`
+    const key = JSON.stringify([targetId, agent, threadId])
+    const turns = this.turns.get(key) ?? []
+    const last = turns.at(-1)
+    const active = last?.status === 'inProgress' ? last : null
 
     switch (msg.method) {
       case 'thread/list': {
@@ -578,7 +584,7 @@ export class MockNativePort implements NativePort {
               name: '',
               preview: '',
               updatedAt: nowSec,
-              status: { type: 'idle' },
+              status: { type: active ? 'active' : 'idle' },
               turns: [
                 {
                   id: `turn-history-${threadId}`,
@@ -592,21 +598,44 @@ export class MockNativePort implements NativePort {
                     },
                   ],
                 },
+                ...turns,
               ],
             },
           },
         })
         return
       case 'turn/start':
+        if (active) {
+          recv({ id, error: { code: -32602, message: '已有一轮正在运行，请等待完成' } })
+          return
+        }
         this.lastTurnParams = { agent, ...inner }
-        this.simulateTurn(targetId, agent, threadId, id, inner)
+        this.turns.set(key, turns)
+        this.simulateTurn(targetId, agent, threadId, id, inner, turns)
         return
+      case 'turn/steer': {
+        if (agent !== 'codex') {
+          recv({ id, error: { code: -32601, message: '当前 Agent 不支持引导' } })
+          return
+        }
+        if (!active || active.id !== inner.expectedTurnId) {
+          recv({ id, error: { code: -32602, message: '当前轮次已变化，请重新发送' } })
+          return
+        }
+        const item = { type: 'userMessage', id: `steer-${++this.counter}`, content: Array.isArray(inner.input) ? inner.input : [] }
+        active.items.push(item)
+        recv({ id, result: { turnId: active.id } })
+        recv({ method: 'item/completed', params: { threadId, turnId: active.id, item } })
+        return
+      }
       case 'turn/interrupt':
+        if (!active || active.id !== inner.turnId) {
+          recv({ id, error: { code: -32602, message: '当前轮次已变化' } })
+          return
+        }
+        active.status = 'interrupted'
         recv({ id, result: {} })
-        recv({
-          method: 'turn/completed',
-          params: { threadId, turn: { id: 'turn-mock', status: 'interrupted' } },
-        })
+        recv({ method: 'turn/completed', params: { threadId, turn: active } })
         return
       case 'model/list':
         if (agent === 'pi') {
@@ -653,7 +682,7 @@ export class MockNativePort implements NativePort {
     return list
   }
 
-  private simulateTurn(targetId: string, agent: AgentKind, threadId: string, id: unknown, params: JsonRecord): void {
+  private simulateTurn(targetId: string, agent: AgentKind, threadId: string, id: unknown, params: JsonRecord, turns: MockTurn[]): void {
     const turnId = `turn-${++this.counter}`
     const itemId = `item-${this.counter}`
     const changeId = `change-${this.counter}`
@@ -672,63 +701,38 @@ export class MockNativePort implements NativePort {
       changes: [{ path: 'apps/mobile/web/src/store.ts', kind: { type: 'update' }, diff: mockDiff('apps/mobile/web/src/store.ts') }],
     }
     const recv = (payload: unknown) => this.recv(targetId, agent, payload)
+    const user = { type: 'userMessage', id: `u-${turnId}`, content: input }
+    const reply = { type: 'agentMessage', id: itemId, text: '', status: 'inProgress' }
+    const turn: MockTurn = { id: turnId, status: 'inProgress', items: [user] }
+    turns.push(turn)
 
     recv({ id, result: { turn: { id: turnId, status: 'inProgress', items: [] } } })
-    recv({
-      method: 'turn/started',
-      params: {
-        threadId,
-        turnId,
-        turn: {
-          id: turnId,
-          status: 'inProgress',
-          items: [{ type: 'userMessage', id: `u-${turnId}`, content: [{ type: 'text', text: userText }] }],
-        },
-      },
-    })
+    recv({ method: 'turn/started', params: { threadId, turnId, turn } })
+    turn.items.push(change, reply)
     recv({ method: 'item/completed', params: { threadId, turnId, itemId: changeId, item: change } })
-    recv({
-      method: 'item/started',
-      params: {
-        threadId,
-        turnId,
-        itemId,
-        item: { type: 'agentMessage', id: itemId, text: '', status: 'inProgress' },
-      },
-    })
+    recv({ method: 'item/started', params: { threadId, turnId, itemId, item: reply } })
     let delay = 60
     for (const chunk of chunks) {
-      setTimeout(() => recv({ method: 'item/agentMessage/delta', params: { threadId, itemId, delta: chunk } }), delay)
+      setTimeout(() => {
+        if (turn.status !== 'inProgress') return
+        reply.text += chunk
+        recv({ method: 'item/agentMessage/delta', params: { threadId, itemId, delta: chunk } })
+      }, delay)
       delay += 35
     }
     setTimeout(() => {
-      recv({
-        method: 'item/completed',
-        params: {
-          threadId,
-          itemId,
-          item: { type: 'agentMessage', id: itemId, text: answer, status: 'completed' },
-        },
-      })
-      recv({
-        method: 'turn/completed',
-        params: {
-          threadId,
-          turn: {
-            id: turnId,
-            status: 'completed',
-            items: [
-              { type: 'userMessage', id: `u-${turnId}`, content: [{ type: 'text', text: userText }] },
-              change,
-              { type: 'agentMessage', id: itemId, text: answer, status: 'completed' },
-            ],
-          },
-        },
-      })
+      if (turn.status !== 'inProgress') return
+      reply.status = 'completed'
+      turn.status = 'completed'
+      recv({ method: 'item/completed', params: { threadId, itemId, item: reply } })
+      recv({ method: 'turn/completed', params: { threadId, turn } })
       recv({
         method: 'thread/tokenUsage/updated',
         params: {
-          threadId, turnId, tokenUsage: { total: { totalTokens: 128 }, ...(agent === 'claude' ? { estimatedCostUsd: 0.012 } : {}) },
+          threadId, turnId, tokenUsage: {
+            total: { totalTokens: 128 },
+            ...(agent === 'claude' ? { estimatedCostUsd: 0.012 } : { last: { totalTokens: 128 }, modelContextWindow: 1024 }),
+          },
         },
       })
       if (agent === 'codex') {

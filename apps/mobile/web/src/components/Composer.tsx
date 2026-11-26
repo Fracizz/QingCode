@@ -1,18 +1,20 @@
-import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, LoaderCircle, Square, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, Square, X } from 'lucide-react'
 import type { UserInput } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
 import { attachmentBytes, IMAGE_BYTES, insertFileMention, isDraftImage, MAX_IMAGES, mentionAt, type DraftImage } from '../composerLogic'
 import { suggestFiles, type ProjectFile } from '../projectApi'
 import { friendlyError, type Annotation } from '../state'
+import type { SendMode } from '../store'
 import type { Project } from '../types'
-import { Button, Note } from './ui'
+import { ImageThumbnail } from './ImageThumbnail'
+import { Button, Dialog, LoadingIcon, Note } from './ui'
 
 export type ComposerProps = {
   draftKey: string
   text: string
   onChangeText: (text: string) => void
-  onSend: (text: string, attachments: UserInput[], delegate: boolean) => Promise<boolean>
+  onSend: (text: string, attachments: UserInput[], mode: SendMode) => Promise<boolean>
   onInterrupt: () => void
   running: boolean
   sending: boolean
@@ -27,7 +29,7 @@ export type ComposerProps = {
   onCancelQuote: () => void
   placeholder?: string
   toolbar?: ReactNode
-  canRequestSubagents?: boolean
+  canSteer: boolean
 }
 
 // 相册选择保留在当前应用进程中，避免将大段图片数据写进加密草稿。
@@ -43,7 +45,7 @@ function rememberImages(key: string, images: DraftImage[]) {
 export function Composer({
   draftKey, text, onChangeText, onSend, onInterrupt, running, sending, disabled, imageUnavailable,
   project, annotations, onUpdateAnnotation, onRemoveAnnotation, quoteDraft, onConfirmQuote,
-  onCancelQuote, placeholder = '和 Codex 一起工作', toolbar, canRequestSubagents,
+  onCancelQuote, placeholder = '和 Codex 一起工作', toolbar, canSteer,
 }: ComposerProps) {
   const [comment, setComment] = useState('')
   const [showAnnotations, setShowAnnotations] = useState(false)
@@ -53,7 +55,6 @@ export function Composer({
   const [caret, setCaret] = useState<number | null>(null)
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [fileStatus, setFileStatus] = useState('')
-  const [delegate, setDelegate] = useState(false)
   const textarea = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
   const mounted = useRef(true)
@@ -69,7 +70,7 @@ export function Composer({
     const input = textarea.current
     if (!input) return
     input.style.height = 'auto'
-    input.style.height = `${Math.min(input.scrollHeight + 2, 126)}px`
+    input.style.height = `${Math.min(input.scrollHeight, 126)}px`
   }, [text])
   useEffect(() => {
     if (!project || query === undefined) return
@@ -118,17 +119,14 @@ export function Composer({
     }
   }
 
-  const canSend = (!running && !disabled && !sending && !picking &&
+  const canSend = (!disabled && !sending && !picking &&
     (!imageUnavailable || images.length === 0) && Boolean(text.trim() || images.length || annotations.length))
 
-  async function submit() {
+  async function submit(mode: SendMode = 'queue') {
     if (!canSend || composing.current) return
     setCaret(null)
     const attachments: UserInput[] = images.map((image) => ({ type: 'image', url: image.dataUrl }))
-    if (await onSend(text, attachments, Boolean(canRequestSubagents && delegate))) {
-      updateImages([])
-      if (mounted.current) setDelegate(false)
-    }
+    if (await onSend(text, attachments, mode)) updateImages([])
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -154,20 +152,6 @@ export function Composer({
     requestAnimationFrame(() => {
       textarea.current?.focus()
       textarea.current?.setSelectionRange(next.caret, next.caret)
-    })
-  }
-
-  function beginMention() {
-    const input = textarea.current
-    if (!input) return
-    const prefix = text.slice(0, input.selectionStart)
-    const marker = prefix && !/\s$/.test(prefix) ? ' @' : '@'
-    const nextCaret = prefix.length + marker.length
-    onChangeText(prefix + marker + text.slice(input.selectionEnd))
-    requestAnimationFrame(() => {
-      input.focus()
-      input.setSelectionRange(nextCaret, nextCaret)
-      setCaret(nextCaret)
     })
   }
 
@@ -230,17 +214,17 @@ export function Composer({
         <ul className="mb-2 flex flex-wrap gap-2" aria-label="图片附件">
           {images.map((image, index) => (
             <li className="flex items-center gap-1 rounded-xl border border-qn-border px-1" key={`${image.name}:${index}`}>
-              <img className="h-9 w-9 rounded object-cover" src={image.dataUrl} alt={image.name} />
+              <ImageThumbnail src={image.dataUrl} alt={image.name} className="h-11 w-11 rounded-lg object-cover" />
               <Button variant="ghost" className="p-0!" disabled={sending || picking} onClick={() => updateImages(images.filter((_, at) => at !== index))} aria-label={`移除 ${image.name}`}><X size={15} /></Button>
             </li>
           ))}
         </ul>
       )}
       {images.length > 0 && imageUnavailable && <div className="mb-2 text-xs text-qn-warn">{imageUnavailable}</div>}
-      <div className="rounded-xl border border-qn-border bg-qn-card focus-within:border-qn-accent">
+      <div className="qn-composer">
         <textarea
           ref={textarea}
-          className="qn-textarea block min-h-11 resize-none rounded-none border-0 bg-transparent px-3 py-2.5 text-base"
+          className="qn-textarea"
           rows={1}
           value={text}
           disabled={disabled}
@@ -253,36 +237,66 @@ export function Composer({
           onCompositionStart={() => { composing.current = true }}
           onCompositionEnd={() => { composing.current = false }}
         />
-        {/* 一行放下：左侧工具可横向滚动，发送键固定在右侧，不会被模型名等挤到下一行。 */}
-        <div className="flex min-w-0 items-center gap-1 px-1 pb-1">
+        <div className="qn-composer-toolbar">
           <div className="qn-composer-tools">
             <Button variant="ghost" className="qn-icon-button" aria-label="添加图片" title={imageUnavailable}
               onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
               <ImagePlus size={19} strokeWidth={1.75} aria-hidden />
             </Button>
-            {project && <Button variant="ghost" className="qn-icon-button" aria-label="引用项目文件" onClick={beginMention} disabled={disabled}>@</Button>}
             {toolbar}
-            {canRequestSubagents && (
-              <button type="button" className={`qn-chip ${delegate ? 'qn-chip-active' : ''}`}
-                aria-label="本条消息请求子代理" aria-pressed={delegate}
-                title="随本条消息请求子代理协作，由当前智能体决定如何委派"
-                disabled={disabled || sending || running} onClick={() => setDelegate(!delegate)}>
-                子代理
-              </button>
-            )}
             {picking && <span className="shrink-0 text-xs text-qn-muted" role="status">选图中…</span>}
           </div>
-          {running ? (
-            <Button variant="danger" className="qn-send-button" aria-label="中断" onClick={onInterrupt}>
-              <Square size={13} fill="currentColor" aria-hidden />
+          <div className="qn-composer-actions">
+            {running && (
+              <Button variant="danger" className="qn-stop-button" aria-label="停止运行" disabled={sending} onClick={onInterrupt}>
+                <Square size={12} fill="currentColor" aria-hidden />
+              </Button>
+            )}
+            <Button variant="primary" className={`qn-send-button${running ? ' qn-queue-button' : ''}`}
+              aria-label={sending ? '发送中' : running ? '排队' : '发送'} disabled={!canSend} onClick={() => void submit()}>
+              {sending ? <LoadingIcon size={18} /> : <ArrowUp size={19} strokeWidth={2.25} aria-hidden />}
+              {running && <span>排队</span>}
             </Button>
-          ) : (
-            <Button variant="primary" className="qn-send-button" aria-label={sending ? '发送中' : '发送'} disabled={!canSend} onClick={() => void submit()}>
-              {sending ? <LoaderCircle size={18} className="qn-spin" aria-hidden /> : <ArrowUp size={19} strokeWidth={2.25} aria-hidden />}
-            </Button>
-          )}
+            {running && <SendOptions canSteer={canSteer} disabled={!canSend} onSelect={(mode) => void submit(mode)} />}
+          </div>
         </div>
       </div>
     </div>
+  )
+}
+
+function SendOptions({ canSteer, disabled, onSelect }: {
+  canSteer: boolean
+  disabled: boolean
+  onSelect: (mode: SendMode) => void
+}) {
+  const [open, setOpen] = useState(false)
+
+  function select(mode: SendMode) {
+    setOpen(false)
+    onSelect(mode)
+  }
+
+  return (
+    <>
+      <Button variant="ghost" className="qn-icon-button" aria-label="发送方式" aria-haspopup="dialog" disabled={disabled} onClick={() => setOpen(true)}>
+        <ChevronDown size={17} aria-hidden />
+      </Button>
+      {open && (
+        <Dialog title="发送方式" onClose={() => setOpen(false)}>
+          <div className="grid gap-2">
+            <Button className="justify-between!" onClick={() => select('queue')}>
+              <span>排队</span><span className="text-xs text-qn-muted">本轮结束后发送</span>
+            </Button>
+            <Button className="justify-between!" disabled={!canSteer} onClick={() => select('steer')}>
+              <span>引导</span><span className="text-xs text-qn-muted">{canSteer ? '补充到当前一轮' : '当前 Agent 暂不可用'}</span>
+            </Button>
+            <Button className="justify-between!" onClick={() => select('immediate')}>
+              <span>立即发送</span><span className="text-xs text-qn-muted">停止本轮后发送</span>
+            </Button>
+          </div>
+        </Dialog>
+      )}
+    </>
   )
 }

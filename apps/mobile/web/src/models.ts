@@ -69,9 +69,14 @@ export function toModelOptions(raw: unknown): ModelOption[] {
   return options
 }
 
-/** 手机屏幕小，不做搜索：只列非隐藏模型；当前选中的隐藏模型仍保留以免"消失"。 */
-export function visibleModels(models: readonly ModelOption[], selected?: string | null): ModelOption[] {
-  return models.filter((model) => !model.hidden || model.model === selected)
+/** 当前选中的隐藏模型仍可见，避免选择结果从模型列表消失。 */
+export function visibleModels(models: readonly ModelOption[], selected?: string | null, query = ''): ModelOption[] {
+  const visible = models.filter((model) => !model.hidden || model.model === selected)
+  const term = query.trim().toLowerCase()
+  if (!term) return visible
+  return visible.filter((model) =>
+    [model.displayName, model.model, model.description].some((value) => value.toLowerCase().includes(term)),
+  )
 }
 
 const EFFORT_LABELS: Record<string, string> = {

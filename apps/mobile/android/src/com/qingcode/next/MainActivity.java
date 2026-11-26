@@ -138,12 +138,13 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
   }
 
   @Override public void send(String json) {
+    // 大图片的回调字符串在桥接线程准备，主线程只负责派发。
+    String script = "(function(){try{return typeof window.__qnNativeCallback==='function'"
+      + " ? (window.__qnNativeCallback(" + Json.quote(json) + "), true) : false}"
+      + "catch(e){return false}})()";
     runOnUiThread(new Runnable() {
       @Override public void run() {
         if (destroyed || webView == null) return;
-        String script = "(function(){try{return typeof window.__qnNativeCallback==='function'"
-          + " ? (window.__qnNativeCallback(" + Json.quote(json) + "), true) : false}"
-          + "catch(e){return false}})()";
         try {
           webView.evaluateJavascript(script, null);
         } catch (RuntimeException ignored) {

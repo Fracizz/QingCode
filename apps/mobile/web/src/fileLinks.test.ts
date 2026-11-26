@@ -67,6 +67,17 @@ describe('行号后缀与链接', () => {
     expect(allowLocalUrl('javascript:foo.md:42', '')).toBe('')
     expect(allowLocalUrl('javascript:alert(1)', '')).toBe('')
   })
+
+  it('将 Codex 的 sandbox 附件链接交给只读文件查看器', () => {
+    const href = 'sandbox:/mnt/data/qingcode-android-icon-preview.png'
+    expect(allowLocalUrl(href, '')).toBe(href)
+    expect(parseFileHref(href, '/home/code/QingCode')).toEqual({ path: '/mnt/data/qingcode-android-icon-preview.png' })
+    expect(parseFileHref('sandbox:/mnt/data/%E5%AF%B9%E6%AF%94%20%E5%9B%BE.png', 'C:\\work')).toEqual({ path: '/mnt/data/对比 图.png' })
+    for (const invalid of ['sandbox://example.com/mnt/data/a.png', 'sandbox:/tmp/a.png', 'sandbox:/mnt/data/%2e%2e/a.png', 'sandbox:/mnt/data/a%5c..%5c..%5cb.png']) {
+      expect(allowLocalUrl(invalid, '')).toBe('')
+      expect(parseFileHref(invalid, '/repo')).toBeNull()
+    }
+  })
 })
 
 describe('文本中的路径识别', () => {

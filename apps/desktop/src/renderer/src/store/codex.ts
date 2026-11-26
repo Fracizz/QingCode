@@ -12,6 +12,7 @@ import {
   dropOptimisticUsers,
   forkThread,
   emptyState,
+  failActiveThreads,
   interruptTurn,
   listThreads,
   loadThread,
@@ -69,9 +70,11 @@ import {
   type AccessMode,
 } from '../features/access/accessModel'
 import { configuredAgentOpen } from '../features/access/openConfig'
+import { threadKey } from '../lib/threads'
 import { useAgentPrefs } from './agentPrefs'
 import { overridesFor } from './models'
 import { useTargets } from './targets'
+import { useThreadPrefs } from './threadPrefs'
 
 type TargetSession = {
   key: string
@@ -270,6 +273,11 @@ export const useCodex = create<CodexState>((set, get) => {
       }))
       if (notification.method === 'turn/completed' && notification.params?.threadId && notification.params.turn) {
         const chat = { targetId, agent, threadId: notification.params.threadId }
+        const state = get()
+        if (!(state.currentTargetId === targetId && state.currentAgent === agent && state.currentThreadId === chat.threadId)
+          && !(state.sideTargetId === targetId && state.sideAgent === agent && state.sideThreadId === chat.threadId)) {
+          useThreadPrefs.getState().setUnread(targetId, threadKey(agent, chat.threadId), true)
+        }
         if (notification.params.turn.status === 'completed') void flushPending(chat)
         else if (!replacing.has(pendingSendKey(chat))) pausePending(chat, '上一轮未完成，队列已暂停', true)
       }
@@ -685,6 +693,7 @@ export const useCodex = create<CodexState>((set, get) => {
           if (!session?.opened) return
           patchSession(key, (value) => ({
             ...value,
+            state: failActiveThreads(value.state, `${agentLabel(value.agent)} 进程已退出`),
             opened: false,
             openError: `${agentLabel(value.agent)} 进程已退出，下次操作将重新启动`,
           }))
@@ -864,6 +873,7 @@ export const useCodex = create<CodexState>((set, get) => {
           return { ...value, threadsAwaitingResume, state: loadThread(value.state, result.thread) }
         })
         set({ currentThreadId: threadId, currentAgent: picked, error: null })
+        useThreadPrefs.getState().setUnread(targetId, threadKey(picked, threadId), false)
         const chat = { targetId, agent: picked, threadId }
         if (writerConflict) {
           const message = '会话被另一个 Codex 进程占用，当前可查看历史。释放会话后可再次发送'

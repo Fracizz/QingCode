@@ -36,6 +36,7 @@ import { SendQueue } from './SendQueue'
 import { MainHeader } from './shell/MainHeader'
 import { WelcomePane } from './shell/WelcomePane'
 import { SideChat } from './SideChat'
+import { SubagentRpcContext } from './SubagentDetails'
 import { TurnErrorNote } from './TurnErrorNote'
 import { EmptyState, ErrorNote } from './ui'
 
@@ -372,20 +373,22 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
               </div>
             ) : (
               <div className="space-y-4 pt-4">
-                {flow.map((entry) =>
-                  entry.kind === 'tools' ? (
-                    <ToolGroup key={entry.key} items={entry.items} />
-                  ) : entry.kind === 'work' ? (
-                    <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries} onFork={canFork ? forkFromMessage : undefined} />
-                  ) : (
-                    <MessageItem
-                      key={`${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`}
-                      item={entry.item}
-                      onFork={canFork ? forkFromMessage : undefined}
-                      onEdit={(text, input) => sendAndFollow(text, { input })}
-                    />
-                  ),
-                )}
+                <SubagentRpcContext.Provider key={chatKey ?? undefined} value={session?.rpc ?? null}>
+                  {flow.map((entry) =>
+                    entry.kind === 'tools' ? (
+                      <ToolGroup key={entry.key} items={entry.items} />
+                    ) : entry.kind === 'work' ? (
+                      <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries} onFork={canFork ? forkFromMessage : undefined} />
+                    ) : (
+                      <MessageItem
+                        key={`${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`}
+                        item={entry.item}
+                        onFork={canFork ? forkFromMessage : undefined}
+                        onEdit={(text, input) => sendAndFollow(text, { input })}
+                      />
+                    ),
+                  )}
+                </SubagentRpcContext.Provider>
                 {showReplyPending && <ReplyPending />}
                 {approvals.map((approval) => (
                   <ApprovalCard

@@ -1,7 +1,7 @@
 import { Children, isValidElement, memo, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, GitFork, ImageIcon, Lightbulb, ListChecks, Pencil, Terminal, Wand2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Terminal, Wand2 } from 'lucide-react'
 import type { ItemView, UserInput } from '@qn/codex-client'
 import { basename, editUserText, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
@@ -16,6 +16,7 @@ import { FeedbackRow } from './FeedbackRow'
 import { LoadingIcon } from './LoadingIcon'
 import { MessageActions } from './MessageActions'
 import { MessageImage } from './MessageImage'
+import { SubagentDetails } from './SubagentDetails'
 import { Badge, IconButton } from './ui'
 
 function plainText(children: ReactNode): string {
@@ -272,11 +273,7 @@ export const MessageItem = memo(function MessageItem({
     case 'fileChange':
       return <FileChangeItem item={item} />
     case 'subagent':
-      return (
-        <ToolRow icon={<GitFork size={14} />} summary={[item.title, item.status].filter(Boolean).join(' · ')}>
-          {item.detail && <div className="whitespace-pre-wrap break-words text-[13px] text-qn-muted">{item.detail}</div>}
-        </ToolRow>
-      )
+      return <SubagentDetails item={item} renderItem={(child) => <MessageItem key={child.id} item={child} />} />
     case 'other':
       return (
         <ToolRow icon={<FileText size={14} />} summary={item.type}>

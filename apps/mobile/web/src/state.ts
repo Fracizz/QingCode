@@ -1,5 +1,5 @@
 // 手机端状态纯逻辑：未知 JSON 的归一化、事件折叠、注释拼接。无 DOM / 网络依赖。
-import { approvalResponse, type ApprovalDecision, type ApprovalView, type UserInput } from '@qn/codex-client'
+import { approvalResponse, threadActivityFromStatus, type ApprovalDecision, type ApprovalView, type ThreadActivity, type UserInput } from '@qn/codex-client'
 import { isValidHost, normalizeFingerprint, parsePort } from './link'
 import type { AgentKind, Connection, Project, SshAuth, Target, TargetState, TargetStateEvent } from './types'
 
@@ -23,7 +23,7 @@ export type ThreadSummary = {
   preview: string
   cwd: string
   updatedAt: number
-  activity?: 'pending' | 'running'
+  activity?: ThreadActivity
   /** 会话所属 Agent；打开会话时必须用它对应的会话通道。 */
   agent: AgentKind
 }
@@ -322,12 +322,7 @@ export function toThreadSummaries(value: unknown, agent: AgentKind = 'codex'): T
     const id = text(entry.id)
     if (!id) continue
     const preview = cleanThreadText(text(entry.preview))
-    const status = isRecord(entry.status) ? entry.status : null
-    const activity = status?.type === 'active'
-      ? Array.isArray(status.activeFlags) && status.activeFlags.some((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput')
-        ? 'pending'
-        : 'running'
-      : undefined
+    const activity = threadActivityFromStatus(entry.status)
     summaries.push({
       id,
       title: cleanThreadText(text(entry.name)) || preview.split('\n')[0]?.trim() || '未命名会话',

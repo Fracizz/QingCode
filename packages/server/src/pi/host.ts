@@ -205,7 +205,10 @@ export class PiHost extends JsonRpcAgentHost {
       this.metas.set(meta.id, meta)
     }
     return {
-      data: [...metas.values()].slice(0, limit).map((meta) => piThread(meta)),
+      data: [...metas.values()].slice(0, limit).map((meta) => {
+        const thread = piThread(meta)
+        return this.sessions.get(meta.id)?.turnId ? { ...thread, status: { type: 'active', activeFlags: [] } } : thread
+      }),
       nextCursor: null,
       backwardsCursor: null,
     }
@@ -250,7 +253,12 @@ export class PiHost extends JsonRpcAgentHost {
     }
     const history = messagesToThread(meta, messagesValue)
     this.touch(session)
-    return { thread: history.thread }
+    const turnId = session.turnId
+    return { thread: turnId ? {
+      ...history.thread,
+      status: { type: 'active', activeFlags: [] },
+      turns: [...history.turns, buildTurn(turnId, [], 'inProgress')],
+    } : history.thread }
   }
 
   private async turnStart(params: Json): Promise<Json> {

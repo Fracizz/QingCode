@@ -1,3 +1,4 @@
+import { isThreadOutcome, sessionStatus } from '@qn/codex-client'
 import { create } from 'zustand'
 import { archivedThreadKey, sessionKey } from './agents'
 import { getGateway } from './client'
@@ -6,6 +7,14 @@ import { useApp } from './store'
 import type { Project, Target } from './types'
 
 export type WorkspaceTab = 'sessions' | 'projects' | 'connections'
+type WorkspaceTabTap = { tab: WorkspaceTab; at: number }
+
+export function isWorkspaceTabDoubleTap(previous: WorkspaceTabTap | null, current: WorkspaceTabTap): boolean {
+  if (!previous || previous.tab !== current.tab) return false
+  const elapsed = current.at - previous.at
+  return elapsed >= 0 && elapsed <= 350
+}
+
 export type WorkspaceThread = ThreadSummary & {
   targetId: string
   projectId: string
@@ -92,7 +101,7 @@ function mergeThreads(
   for (const item of next) {
     const key = workspaceThreadKey(item)
     const old = merged.get(key)
-    merged.set(key, { ...old, ...item, updatedAt: Math.max(old?.updatedAt ?? 0, item.updatedAt) })
+    merged.set(key, { ...old, ...item, activity: item.activity, updatedAt: Math.max(old?.updatedAt ?? 0, item.updatedAt) })
   }
   return visibleWorkspaceThreads([...merged.values()], desktopId, archived)
     .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_SESSIONS)
@@ -113,7 +122,12 @@ function persistThreads() {
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
   tab: 'sessions',
-  setTab: (tab) => set({ tab }),
+  setTab: (tab) => {
+    if (get().tab === tab) return
+    const app = useApp.getState()
+    if (app.page === 'workspace') app.cancelPendingNavigation()
+    set({ tab })
+  },
   threads: {},
   projects: {},
   loadProjects: async (desktopId) => {
@@ -212,10 +226,11 @@ export function startWorkspaceObserver(): () => void {
       const current = now.sessions[key]?.state.threads[cached.id]
       const previous = before.activeId === desktopId ? before.sessions[key]?.state.threads[cached.id] : undefined
       const currentChat = visibleChat(now, cached)
+      const activity = current?.activity
       if (currentChat && cached.unread) {
         snapshots.push({ ...cached, unread: false })
-      } else if (!currentChat && previous?.status === 'running' && current && current.status !== 'running') {
-        snapshots.push({ ...cached, activity: undefined, unread: true, updatedAt: Date.now() })
+      } else if (!currentChat && previous?.activity !== activity && isThreadOutcome(activity)) {
+        snapshots.push({ ...cached, activity, unread: true, updatedAt: Date.now() })
       }
     }
 
@@ -233,36 +248,31 @@ export function startWorkspaceObserver(): () => void {
   }
 }
 
-export async function showWorkspaceProject(targetId: string, projectId: string, keepPage = false): Promise<boolean> {
-  const starting = useApp.getState()
-  if (!starting.activeId) return false
-  if (starting.selectedTargetId !== targetId || !starting.projects.some((item) => item.id === projectId)) {
-    await starting.selectTarget(targetId)
+export function workspaceProject(project: Project, desktopId: string) {
+  const cached = useWorkspace.getState()
+  const byId = new Map<string, Project>()
+  for (const item of [...useApp.getState().projects, ...(cached.projects[desktopId]?.items ?? [])]) {
+    if (item.targetId === project.targetId) byId.set(item.id, item)
   }
-  const current = useApp.getState()
-  if (current.activeId !== starting.activeId || current.selectedTargetId !== targetId
-    || !current.projects.some((item) => item.id === projectId && item.targetId === targetId)) return false
-  if (current.selectedProjectId !== projectId) await current.selectProject(projectId)
-  else if (!keepPage) useApp.setState({ page: 'threads' })
-  const result = useApp.getState()
-  return result.activeId === starting.activeId && result.selectedTargetId === targetId && result.selectedProjectId === projectId
+  byId.set(project.id, project)
+  const threads = (cached.threads[desktopId] ?? [])
+    .filter((thread) => thread.targetId === project.targetId && thread.projectId === project.id)
+  return { project, projects: [...byId.values()], threads }
 }
 
-export async function openWorkspaceThread(thread: WorkspaceThread): Promise<void> {
-  if (await showWorkspaceProject(thread.targetId, thread.projectId, true)) {
-    await useApp.getState().openThread(thread.id, thread.agent)
-  }
+export async function showWorkspaceProject(project: Project): Promise<void> {
+  const app = useApp.getState()
+  if (app.activeId) await app.selectProject(project.id, workspaceProject(project, app.activeId))
 }
 
-export function recentThreadStatus(thread: WorkspaceThread, view?: {
-  status: string
-  pendingApprovals: readonly unknown[]
-}): 'pending' | 'running' | 'unread' | null {
-  if (view?.pendingApprovals.length) return 'pending'
-  if (view?.status === 'running') return 'running'
-  if (!view && thread.activity) return thread.activity
-  if (thread.unread) return 'unread'
-  return null
+export async function openWorkspaceThread(thread: WorkspaceThread, project: Project): Promise<boolean> {
+  const app = useApp.getState()
+  if (!app.activeId) return false
+  return app.openThread(thread.id, thread.agent, workspaceProject(project, app.activeId))
+}
+
+export function recentThreadStatus(thread: WorkspaceThread, view?: Parameters<typeof sessionStatus>[0]) {
+  return sessionStatus(view, thread.activity, thread.unread)
 }
 
 /**

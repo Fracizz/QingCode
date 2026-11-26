@@ -15,12 +15,14 @@ import type {
   UserInput,
 } from './codex-types'
 import { describeSubagentItem, type SubagentItemView } from './subagents'
+import { isActiveThread, isThreadOutcome, threadActivityFromStatus, type ThreadActivity, type ThreadOutcome } from './threadStatus'
 
 export type ConversationState = { threads: Record<string, ThreadView> }
 
 export type ThreadView = {
   id: string
   status: 'idle' | 'running' | 'error'
+  activity?: ThreadActivity
   activeTurnId: string | null
   items: ItemView[]
   pendingApprovals: ApprovalView[]
@@ -141,6 +143,18 @@ export function emptyState(): ConversationState {
   return { threads: {} }
 }
 
+export function failActiveThreads(state: ConversationState, error: string): ConversationState {
+  const active = Object.values(state.threads).filter((thread) => thread.status === 'running' || thread.pendingApprovals.length > 0)
+  if (!active.length) return state
+  const threads = { ...state.threads }
+  for (const thread of active) {
+    threads[thread.id] = {
+      ...finalizeItems(thread), status: 'error', activity: 'failed', activeTurnId: null, pendingApprovals: [], error,
+    }
+  }
+  return { threads }
+}
+
 /** 把即将发送的 UserInput[] 转成一条本地占位气泡。 */
 export function userItemFromInput(id: string, input: UserInput[]): Extract<ItemView, { kind: 'user' }> {
   const texts: string[] = []
@@ -248,19 +262,25 @@ function clearError(thread: ThreadView): ThreadView {
   return next
 }
 
-function statusFromValue(value: unknown): ThreadStatus {
-  const type = asRecord(value)?.type ?? value
-  if (type === 'active') return 'running'
-  if (type === 'systemError') return 'error'
+function statusFromActivity(activity: ThreadActivity = 'idle'): ThreadStatus {
+  if (isActiveThread(activity)) return 'running'
+  if (activity === 'failed') return 'error'
   return 'idle'
 }
 
-function withStatus(s: ConversationState, id: string, status: ThreadStatus): ConversationState {
+function withStatus(s: ConversationState, id: string, value: unknown): ConversationState {
+  const activity = threadActivityFromStatus(value)
+  if (!activity) return s
+  const status = statusFromActivity(activity)
   return withThread(s, id, (thread) => {
+    // Agent 的 idle 通知只表示已停止执行，不能覆盖最后一轮的结果。
+    if (activity === 'idle' && isThreadOutcome(thread.activity)) return thread
     const next: ThreadView = {
       ...thread,
       status,
-      activeTurnId: status === 'idle' ? null : thread.activeTurnId,
+      activity,
+      activeTurnId: status === 'running' ? thread.activeTurnId : null,
+      pendingApprovals: status === 'running' ? thread.pendingApprovals : [],
     }
     if (status !== 'error') delete next.error
     return next
@@ -355,7 +375,10 @@ function withItem(
       status: markRunning ? 'running' : thread.status,
       activeTurnId: turnId || thread.activeTurnId,
     }
-    if (markRunning) delete next.error
+    if (markRunning) {
+      if (next.activity !== 'pending' && next.activity !== 'input') next.activity = 'running'
+      delete next.error
+    }
     const owner = turnId || thread.activeTurnId
     if (owner) next = upsertTurnMeta(next, owner, { itemIds: [itemId] })
     return next
@@ -698,7 +721,8 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   if (!id) return s
 
   const previous = ownThread(s, id)
-  let status = statusFromValue(raw.status)
+  const reportedActivity = threadActivityFromStatus(raw.status)
+  let status = statusFromActivity(reportedActivity)
   let activeTurnId: string | null = status === 'idle' ? null : previous?.activeTurnId ?? null
   let items: ItemView[] = []
   // 沿用实时记下的计时：历史里的时间戳可能缺失或只有秒级。
@@ -706,9 +730,11 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
 
   // 只看最后一轮：历史里早先失败、之后又成功的轮次不该让整个会话显示为失败。
   let lastTurnError: string | undefined
+  let lastTurnOutcome: ThreadOutcome | undefined
   for (const turnValue of arrayOf(raw.turns)) {
     const turn = asRecord(turnValue)
-    lastTurnError = scalarText(turn?.status) === 'failed' ? errorText(turn?.error) ?? 'Turn failed' : undefined
+    lastTurnOutcome = isThreadOutcome(turn?.status) ? turn.status : undefined
+    lastTurnError = lastTurnOutcome === 'failed' ? errorText(turn?.error) ?? 'Turn failed' : undefined
     const turnStreaming = scalarText(turn?.status) === 'inProgress'
     if (turnStreaming) {
       status = 'running'
@@ -737,6 +763,11 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   }
   if (previous?.tokenUsage !== undefined) next.tokenUsage = previous.tokenUsage
   if (turns) next.turns = turns
+  if (status === 'running') {
+    next.activity = reportedActivity === 'pending' || reportedActivity === 'input' ? reportedActivity : 'running'
+  } else {
+    next.activity = reportedActivity === 'failed' ? 'failed' : lastTurnOutcome ?? reportedActivity ?? 'idle'
+  }
   if (status === 'idle' && lastTurnError) {
     next.status = 'error'
     next.error = lastTurnError
@@ -755,11 +786,13 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
       const thread = asRecord(params.thread)
       const id = idValue(thread?.id)
       if (!id) return s
-      const status = statusFromValue(thread?.status)
+      const activity = threadActivityFromStatus(thread?.status)
+      const status = statusFromActivity(activity)
       return withThread(s, id, (current) => {
         let next: ThreadView = {
           ...current,
           status,
+          activity,
           activeTurnId: status === 'idle' ? null : current.activeTurnId,
         }
         if (status !== 'error') next = clearError(next)
@@ -772,7 +805,7 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
     case 'thread/status/changed': {
       const id = threadIdFrom(params)
       if (!id) return s
-      return withStatus(s, id, statusFromValue(params.status))
+      return withStatus(s, id, params.status)
     }
     case 'turn/started': {
       const id = threadIdFrom(params)
@@ -782,6 +815,7 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         let next: ThreadView = {
           ...clearError(current),
           status: 'running',
+          activity: current.activity === 'pending' || current.activity === 'input' ? current.activity : 'running',
           activeTurnId: turnId || current.activeTurnId,
         }
         next = mergeTurnItems(next, params.turn, true, 'started')
@@ -807,7 +841,9 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         next = {
           ...next,
           status: failed ? 'error' : 'idle',
+          activity: isThreadOutcome(turnStatus) ? turnStatus : 'completed',
           activeTurnId: null,
+          pendingApprovals: [],
         }
         if (message) next.error = message
         else delete next.error
@@ -961,8 +997,10 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
       return withThread(s, id, (thread) => ({
         ...thread,
         status: willRetry ? 'running' : 'error',
+        activity: willRetry ? 'running' : 'failed',
         error: message,
         activeTurnId: willRetry ? idValue(params.turnId) || thread.activeTurnId : null,
+        pendingApprovals: willRetry ? thread.pendingApprovals : [],
       }))
     }
     default:
@@ -1060,6 +1098,7 @@ export function applyServerRequest(s: ConversationState, r: ServerRequest): Conv
     const next: ThreadView = {
       ...clearError(thread),
       status: 'running',
+      activity: thread.activity === 'pending' || thread.activity === 'input' ? thread.activity : 'running',
       activeTurnId: turnIdFrom(params) || thread.activeTurnId,
       pendingApprovals,
     }
@@ -1073,7 +1112,8 @@ export function resolveServerRequest(s: ConversationState, requestId: RequestId)
   for (const [id, thread] of Object.entries(s.threads)) {
     const pendingApprovals = thread.pendingApprovals.filter((approval) => approval.requestId !== requestId)
     if (pendingApprovals.length !== thread.pendingApprovals.length) {
-      threads[id] = { ...thread, pendingApprovals }
+      const activity = pendingApprovals.length === 0 && thread.activity === 'pending' ? 'running' : thread.activity
+      threads[id] = { ...thread, activity, pendingApprovals }
       changed = true
     }
   }

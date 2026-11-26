@@ -12,6 +12,7 @@ import { Composer } from './Composer'
 import { MessageItem, ReplyPending } from './MessageItem'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
+import { SubagentRpcContext } from './SubagentDetails'
 import { TurnErrorNote } from './TurnErrorNote'
 import { Badge, EmptyState, ErrorNote, IconButton } from './ui'
 
@@ -94,16 +95,18 @@ export function SideChat() {
           <EmptyState>临时会话已就绪，输入框里已填入引用文字。</EmptyState>
         )}
         <div className="space-y-3">
-          {items.map((item) => (
-            <MessageItem
-              key={`${sideThreadId}:${item.id}`}
-              item={item}
-              onEdit={sideThreadId ? (text, input) => {
-                pinned.current = true
-                return send(text, { targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId, input })
-              } : undefined}
-            />
-          ))}
+          <SubagentRpcContext.Provider key={chatKey ?? undefined} value={session?.rpc ?? null}>
+            {items.map((item) => (
+              <MessageItem
+                key={`${sideThreadId}:${item.id}`}
+                item={item}
+                onEdit={sideThreadId ? (text, input) => {
+                  pinned.current = true
+                  return send(text, { targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId, input })
+                } : undefined}
+              />
+            ))}
+          </SubagentRpcContext.Provider>
           {showReplyPending && <ReplyPending />}
           {approvals.map((approval) => (
             <ApprovalCard

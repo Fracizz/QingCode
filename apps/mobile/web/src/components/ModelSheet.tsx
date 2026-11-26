@@ -4,11 +4,12 @@ import { sessionKey } from '../agents'
 import { EMPTY_PREFS, effortLabel, pickModel, resolveSelection, triggerLabel, visibleModels } from '../models'
 import { useApp } from '../store'
 import type { AgentKind } from '../types'
-import { Button, Dialog } from './ui'
+import { Button, Dialog, Loading, LoadingIcon, Note } from './ui'
+import { WorkspaceSearch } from './WorkspaceHome'
 
 /**
  * 输入框上方的"模型 · 推理强度"入口 + 底部弹层（参考桌面 ModelPicker）。
- * 数据来自当前会话 Agent 的 model/list，列表为空时整块不显示；快速档只对 Codex 显示。
+ * 数据来自当前会话 Agent 的 model/list，快速档只对 Codex 显示。
  */
 export function ModelPicker({ targetId, agent }: { targetId: string; agent: AgentKind }) {
   const key = sessionKey(targetId, agent)
@@ -18,6 +19,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
   const load = useApp((s) => s.loadModels)
   const setPrefs = useApp((s) => s.setModelPrefs)
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
 
   useEffect(() => {
     if (opened) void load(targetId, agent)
@@ -25,21 +27,33 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
 
   const models = list?.models ?? []
   const selection = useMemo(() => resolveSelection(models, prefs), [models, prefs])
-  const options = useMemo(() => visibleModels(models, selection.model?.model), [models, selection.model?.model])
+  const options = useMemo(() => visibleModels(models, selection.model?.model, query), [models, selection.model?.model, query])
 
-  if (!opened || models.length === 0) return null
+  if (!opened || (!open && models.length === 0 && !list?.loading && !list?.error)) return null
   const showFast = agent === 'codex' && selection.fastTier !== null
+  const close = () => {
+    setOpen(false)
+    setQuery('')
+  }
 
   return (
-    <>
+    <div className="qn-composer-model">
       <button type="button" className="qn-chip" onClick={() => setOpen(true)} aria-label="选择模型与推理强度">
+        {list?.loading && models.length === 0 && <LoadingIcon size={13} />}
         {selection.fast && <Zap size={13} className="shrink-0 text-qn-warn" aria-hidden />}
         <span className="truncate">{triggerLabel(selection) || '模型'}</span>
         <ChevronDown size={14} className="shrink-0" aria-hidden />
       </button>
       {open && (
-        <Dialog title="模型与推理强度" onClose={() => setOpen(false)}>
-          {list?.error && <p className="mb-2 text-xs text-qn-danger">{list.error}</p>}
+        <Dialog title="模型与推理强度" onClose={close}>
+          {list?.error && <Note tone="error" message={list.error} actionLabel="重试" onAction={() => void load(targetId, agent, true)} />}
+          {(models.length > 1 || query !== '') && (
+            <div className="mb-2"><WorkspaceSearch label="搜索模型" query={query} onChange={setQuery} /></div>
+          )}
+          {list?.loading && models.length === 0 && <Loading text="正在加载模型…" />}
+          {!list?.loading && !list?.error && options.length === 0 && (
+            <p className="py-3 text-center text-sm text-qn-muted">{query.trim() ? '没有匹配的模型' : '暂无可选模型'}</p>
+          )}
           <div className="mb-3 space-y-2" role="listbox" aria-label="模型">
             {options.map((model) => {
               const selected = model.model === selection.model?.model
@@ -107,12 +121,12 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                 跟随 Agent 默认
               </Button>
             )}
-            <Button variant="primary" className="flex-1" onClick={() => setOpen(false)}>
+            <Button variant="primary" className="flex-1" onClick={close}>
               完成
             </Button>
           </div>
         </Dialog>
       )}
-    </>
+    </div>
   )
 }

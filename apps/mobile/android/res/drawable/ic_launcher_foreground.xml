@@ -1,16 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标前景层：取 branding/icon.svg 的尖括号 + 青色光标条，按 0.175 缩放；
-     平移量 = 54 - 256×0.175，再加母版里整体下移的 6px，保证与桌面图标同一视觉重心 -->
+<!-- 主体占启动器 72dp 可见区域的约六成，按尖括号和光标条的整体外框居中。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <group
-        android:scaleX="0.175"
-        android:scaleY="0.175"
-        android:translateX="9.2"
-        android:translateY="10.25">
+        android:scaleX="0.135"
+        android:scaleY="0.135"
+        android:translateX="19.44"
+        android:translateY="20.18">
         <path
             android:fillColor="#FF4ECDB5"
             android:pathData="M108,344h296a12,12 0,0 1,12 12v40a12,12 0,0 1,-12 12h-296a12,12 0,0 1,-12 -12v-40a12,12 0,0 1,12 -12z" />

@@ -31,6 +31,15 @@ describe('会话列表归一化', () => {
     expect(toThreadSummaries(undefined)).toEqual([])
   })
 
+  it('保留尚未打开的会话在列表中报告的状态', () => {
+    const threads = toThreadSummaries([
+      { id: 'approval', status: { type: 'active', activeFlags: ['waitingOnApproval'] } },
+      { id: 'input', status: { type: 'active', activeFlags: ['waitingOnUserInput'] } },
+      { id: 'failed', status: { type: 'systemError' } },
+    ])
+    expect(threads.map((thread) => thread.activity)).toEqual(['pending', 'input', 'failed'])
+  })
+
   it('给会话标上 agent 并合并两个来源', () => {
     const codex = toThreadSummaries({ data: [{ id: 'c1', updatedAt: 1_700_000_000 }] })
     const claude = toThreadSummaries({ data: [{ id: 'l1', updatedAt: 1_700_000_100 }] }, 'claude')

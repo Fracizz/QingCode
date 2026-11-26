@@ -4,6 +4,7 @@ import {
   listModels,
   listSkills,
   listThreads,
+  readSubagentThread,
   readThread,
   resumeThread,
   sendText,
@@ -81,6 +82,26 @@ describe('codex api', () => {
       { cwd: ['/repo', '/other'], sortKey: 'updated_at', limit: 2 },
       { cwd: ['/repo', '/other'], sortKey: 'updated_at', limit: 1, cursor: 'p2' },
     ])
+  })
+
+  it('用只读请求加载指定子代理的对话记录', async () => {
+    const calls: Call[] = []
+    const rpc = {
+      request: async (method: string, params: unknown) => {
+        calls.push({ method, params })
+        return {
+          thread: {
+            id: 'child', agentNickname: 'Review', status: { type: 'idle' },
+            turns: [{ id: 'review', status: 'completed', items: [{ type: 'agentMessage', id: 'reply', text: '检查通过' }] }],
+          },
+        }
+      },
+    } as unknown as CodexRpcLike
+    await expect(readSubagentThread(rpc, 'child')).resolves.toMatchObject({
+      name: 'Review', view: { items: [{ kind: 'agent', text: '检查通过' }] },
+    })
+    expect(calls).toEqual([{ method: 'thread/read', params: { threadId: 'child', includeTurns: true } }])
+    await expect(readSubagentThread(rpc, 'another')).rejects.toThrow('会话与请求不一致')
   })
 
   it('listModels 按游标翻页拼接', async () => {

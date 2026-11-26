@@ -1,3 +1,4 @@
+import { sessionStatus } from '@qn/codex-client'
 import { Check, FileText, FolderGit2, MessageSquareText, MoreHorizontal, RotateCw, SquarePen, Terminal } from 'lucide-react'
 import { useFiles } from '../../features/files'
 import { TERMINAL_SHORTCUT, useTerminalDock } from '../../features/terminal/dockState'
@@ -9,6 +10,7 @@ import { useUi } from '../../store/ui'
 import { AgentIcon } from '../AgentIcon'
 import { Menu, MenuContent, MenuGroup, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '../primitives'
 import { IconButton } from '../ui'
+import { SessionStatusBadge } from './SessionStatusBadge'
 import { DOCK_TOOLS } from './WorkspaceDock'
 
 const CHAT_WIDTH_OPTIONS = [
@@ -25,9 +27,9 @@ export function MainHeader() {
   const threads = useCodex((s) => s.threads)
   const startDraft = useCodex((s) => s.startDraft)
   const refreshThreads = useCodex((s) => s.refreshThreads)
-  const running = useCodex((s) => {
-    if (!s.currentTargetId || !s.currentThreadId) return false
-    return s.sessions[sessionKey(s.currentTargetId, s.currentAgent)]?.state.threads[s.currentThreadId]?.status === 'running'
+  const view = useCodex((s) => {
+    if (!s.currentTargetId || !s.currentThreadId) return undefined
+    return s.sessions[sessionKey(s.currentTargetId, s.currentAgent)]?.state.threads[s.currentThreadId]
   })
 
   const dockTool = useDock((s) => s.tool)
@@ -37,9 +39,8 @@ export function MainHeader() {
   const chatWidth = useUi((s) => s.chatWidth)
   const setChatWidth = useUi((s) => s.setChatWidth)
   const project = projects.find((item) => item.id === projectId)
-  const title = threadId
-    ? (threads.find((item) => item.id === threadId && item.agent === agent)?.title ?? '新会话')
-    : '新会话'
+  const thread = threads.find((item) => item.id === threadId && item.agent === agent)
+  const title = thread?.title ?? '新会话'
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 px-4 text-[14px]">
@@ -50,11 +51,7 @@ export function MainHeader() {
           <FolderGit2 size={13} /> {project.name}
         </span>
       )}
-      {running && (
-        <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-qn-brand/10 px-2 py-0.5 text-[12px] text-qn-brand">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-qn-brand" /> 运行中
-        </span>
-      )}
+      {threadId && <span role="status"><SessionStatusBadge status={sessionStatus(view, thread?.activity)} /></span>}
       <div className="flex-1" />
       {threadId && <AgentIcon agent={agent} size={13} label />}
       {fileTabs > 0 && (

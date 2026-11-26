@@ -1,4 +1,4 @@
-import { FileText, Folder, Terminal } from 'lucide-react'
+import { Ellipsis, FileText, Folder, Terminal } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { callDevice } from '../client'
 import { getWindowNativePort, NativeRequestError } from '../native'
@@ -12,17 +12,34 @@ import { Button, Dialog, Note } from './ui'
 const CHUNK_BYTES = 256 * 1024
 const TerminalPanel = lazy(async () => ({ default: (await import('./TerminalPanel')).TerminalPanel }))
 
-export function ProjectTools({ project }: { project: Project }) {
-  const [tool, setTool] = useState<'files' | 'terminal' | null>(null)
+export function ProjectTools({ project, compact = false }: { project: Project; compact?: boolean }) {
+  const [tool, setTool] = useState<'files' | 'terminal' | 'menu' | null>(null)
   const desktopId = useApp((s) => s.activeId)
   return (
     <>
-      <Button variant="ghost" className="px-2" onClick={() => setTool('files')} aria-label={`浏览 ${project.name} 的文件`} title="浏览文件">
-        <Folder size={19} strokeWidth={1.75} aria-hidden />
+      {!compact && (
+        <Button variant="ghost" className="px-2" onClick={() => setTool('files')} aria-label={`浏览 ${project.name} 的文件`} title="浏览文件">
+          <Folder size={19} strokeWidth={1.75} aria-hidden />
+        </Button>
+      )}
+      <Button variant="ghost" className={compact ? 'qn-header-icon' : 'px-2'} onClick={() => setTool('menu')}
+        aria-label={`${project.name} 的项目工具`} aria-haspopup="dialog" title="项目工具">
+        <Ellipsis size={19} strokeWidth={1.75} aria-hidden />
       </Button>
-      <Button variant="ghost" className="px-2" onClick={() => setTool('terminal')} aria-label={`打开 ${project.name} 的终端`} title="终端">
-        <Terminal size={19} strokeWidth={1.75} aria-hidden />
-      </Button>
+      {tool === 'menu' && (
+        <Dialog title={project.name} onClose={() => setTool(null)}>
+          <div className="qn-project-tools-menu">
+            {compact && (
+              <Button variant="ghost" onClick={() => setTool('files')}>
+                <Folder size={19} strokeWidth={1.75} aria-hidden /> 浏览项目文件
+              </Button>
+            )}
+            <Button variant="ghost" onClick={() => setTool('terminal')}>
+              <Terminal size={19} strokeWidth={1.75} aria-hidden /> 打开项目终端
+            </Button>
+          </div>
+        </Dialog>
+      )}
       {tool === 'files' && <ProjectFileBrowser key={`${desktopId}:${project.id}`} desktopId={desktopId} project={project} onClose={() => setTool(null)} />}
       {tool === 'terminal' && (
         <Dialog title={`终端 · ${project.name}`} placement="full" onClose={() => setTool(null)}>

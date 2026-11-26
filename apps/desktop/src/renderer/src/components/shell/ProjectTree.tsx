@@ -53,8 +53,8 @@ export function ProjectTree({ targetId }: { targetId: string }) {
 
   const newDraftIn = (project: Project) => {
     // 先切到该项目再进入草稿态：会话在发第一条消息时才创建，不留空会话。
-    if (project.id !== selectedId) void select(project).then(() => useCodex.getState().startDraft())
-    else useCodex.getState().startDraft()
+    if (project.id !== selectedId) void select(project)
+    useCodex.getState().startDraft()
     setCollapsed(false)
   }
 
@@ -328,8 +328,7 @@ function ThreadList({ now }: { now: number }) {
             thread={thread}
             now={now}
             current={thread.id === currentThreadId && thread.agent === currentAgent}
-            running={view?.status === 'running'}
-            waiting={(view?.pendingApprovals.length ?? 0) > 0}
+            view={view}
           />
         )
       })}

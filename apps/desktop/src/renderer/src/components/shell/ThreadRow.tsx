@@ -1,3 +1,4 @@
+import { isActiveThread, sessionStatus, sessionStatusLabels, type ThreadView } from '@qn/codex-client'
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentProps } from 'react'
 import { ContextMenu } from 'radix-ui'
 import {
@@ -22,7 +23,8 @@ import { useThreadPrefs } from '../../store/threadPrefs'
 import { AgentIcon } from '../AgentIcon'
 import { LoadingIcon } from '../LoadingIcon'
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, floatSurface, menuItemClass, MenuItemContent } from '../primitives'
-import { Badge, IconButton, Modal } from '../ui'
+import { IconButton, Modal } from '../ui'
+import { SessionStatusBadge } from './SessionStatusBadge'
 
 function ShortcutItem({ hint, ...props }: ComponentProps<typeof ContextMenuItem>) {
   // 菜单打开时按快捷字母直接触发，见 onMenuKeyDown。
@@ -45,14 +47,12 @@ export function ThreadRow({
   thread,
   now,
   current,
-  running,
-  waiting,
+  view,
 }: {
   thread: ThreadSummary
   now: number
   current: boolean
-  running: boolean
-  waiting: boolean
+  view?: ThreadView
 }) {
   const targetId = useCodex((s) => s.currentTargetId)
   const openThread = useCodex((s) => s.openThread)
@@ -70,6 +70,8 @@ export function ThreadRow({
 
   const pinned = prefs?.pinned[key] !== undefined
   const unread = prefs?.unread[key] === true && !current
+  const status = sessionStatus(view, thread.activity, unread)
+  const running = isActiveThread(status)
   // Claude 侧没有会话管理 RPC：重命名/归档退化为本机记录，分支与永久删除不可用。
   const native = thread.agent === 'codex'
 
@@ -89,7 +91,6 @@ export function ThreadRow({
   if (!targetId) return null
 
   const open = (): void => {
-    setUnread(targetId, key, false)
     void openThread(thread.id, thread.agent)
   }
 
@@ -169,15 +170,14 @@ export function ThreadRow({
               }
             }}
           >
-            {/* 左侧槽位：运行中显示转圈，否则显示未读圆点；当前会话只靠背景高亮，不再画竖杠。 */}
-            {running && !waiting ? (
+            {status === 'running' ? (
               <LoadingIcon
                 size={13}
                 strokeWidth={2.5}
                 className="absolute left-[14px] top-1/2 -mt-[6.5px] text-qn-brand [animation-duration:2s]"
                 role="img"
                 aria-hidden={false}
-                aria-label="运行中"
+                aria-label={sessionStatusLabels.running}
               />
             ) : unread && (
               <span className="absolute left-[18px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-qn-brand" aria-label="未读" />
@@ -185,9 +185,8 @@ export function ThreadRow({
             {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
             {thread.agent !== DEFAULT_AGENT && <AgentIcon agent={thread.agent} size={12} />}
             <span className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold text-qn-text')}>{thread.title}</span>
-            {waiting ? (
-              <Badge tone="warn">待审批</Badge>
-            ) : (
+            <SessionStatusBadge status={status} />
+            {status !== 'pending' && status !== 'input' && (
               <>
                 <span className="shrink-0 text-[12px] text-qn-dim group-hover:hidden">
                   {formatRelative(thread.updatedAt, now)}

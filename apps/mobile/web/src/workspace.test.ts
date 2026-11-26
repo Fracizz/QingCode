@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { archivedThreadKey } from './agents'
 import type { Project, Target } from './types'
-import { closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, recentThreadStatus, registerBackHandler, threadPreviewLine, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
+import { closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, recentThreadStatus, registerBackHandler, threadPreviewLine, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
 
 const laptop: Project = { id: 'laptop', targetId: 'local', name: 'sandbox', path: 'C:\\sandbox', lastOpenedAt: 1 }
 const remote: Project = { id: 'remote', targetId: 'ssh', name: 'sandbox', path: '/srv/sandbox', lastOpenedAt: 0 }
@@ -22,6 +22,14 @@ const thread = (project: Project, patch: Partial<WorkspaceThread> = {}): Workspa
 })
 
 describe('移动工作台', () => {
+  it.each(['sessions', 'projects', 'connections'] as const)('只识别连续双击同一标签 %s', (tab) => {
+    expect(isWorkspaceTabDoubleTap(null, { tab, at: 100 })).toBe(false)
+    expect(isWorkspaceTabDoubleTap({ tab, at: 100 }, { tab, at: 400 })).toBe(true)
+    expect(isWorkspaceTabDoubleTap({ tab, at: 100 }, { tab, at: 500 })).toBe(false)
+    const other = tab === 'sessions' ? 'projects' : 'sessions'
+    expect(isWorkspaceTabDoubleTap({ tab: other, at: 100 }, { tab, at: 200 })).toBe(false)
+  })
+
   it('按项目名、主机、来源和路径搜索', () => {
     const projects = [laptop, remote]
     expect(filterProjects(projects, targets, ' ci.TEST ')).toEqual([remote])

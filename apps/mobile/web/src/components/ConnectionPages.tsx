@@ -130,6 +130,7 @@ function MobileSettings({ onClose }: { onClose: () => void }) {
 export function ConnectionsPage() {
   const connections = useApp((s) => s.connections)
   const statuses = useApp((s) => s.connectionStatus)
+  const latencies = useApp((s) => s.connectionLatencyMs)
   const activeId = useApp((s) => s.activeId)
   const page = useApp((s) => s.page)
   const booting = useApp((s) => s.booting)
@@ -151,6 +152,10 @@ export function ConnectionsPage() {
   const [menu, setMenu] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const [settings, setSettings] = useState(false)
+  useEffect(() => {
+    if (!booting && connections.length) void refreshStatuses()
+  }, [booting, connections, refreshStatuses])
+
   const selected = connections.find((item) => item.id === menu)
   const addFromClipboard = () => {
     openAddForm()
@@ -168,7 +173,7 @@ export function ConnectionsPage() {
 
   return (
     <>
-      <main className="qn-body qn-scroll qn-workspace qn-rise">
+      <main className="qn-body qn-scroll qn-workspace qn-rise" aria-label="连接">
         <header className="qn-workspace-title" data-connected={eventsConnected}>
           <div className="qn-workspace-context">
             <span className="text-[13px]">{mock ? '浏览器预览' : connections.length ? `已配对 ${connections.length} 台电脑` : 'QingCode Next'}</span>
@@ -183,7 +188,6 @@ export function ConnectionsPage() {
               </Button>
             </div>
           </div>
-          <h1>连接</h1>
         </header>
         {error && <Note message={error} tone="error" onClose={clearError} />}
         {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
@@ -206,6 +210,7 @@ export function ConnectionsPage() {
                 const repair = needsRepair[conn.id]
                 const status = current && eventsConnected ? 'online' : statuses[conn.id] ?? 'unknown'
                 const tone = repair ? 'danger' : statusTone(status)
+                const latency = !repair && status === 'online' ? latencies[conn.id] : null
                 return (
                   <div key={conn.id} className="qn-row qn-list-row">
                     <button type="button" className="qn-row-trigger" onClick={() => openComputer(conn.id)}>
@@ -214,7 +219,10 @@ export function ConnectionsPage() {
                         <span className="qn-list-primary">{conn.name}</span>
                         <span className="qn-subtitle block">{current ? '当前电脑 · ' : ''}{formatAddress(conn.host, conn.port)}</span>
                       </span>
-                      <Badge tone={tone}>{repair ? '重新配对' : stateText[status]}</Badge>
+                      <span className="flex shrink-0 flex-col items-end gap-1">
+                        <Badge tone={tone}>{repair ? '重新配对' : stateText[status]}</Badge>
+                        {latency != null && <span className="text-[11px] text-qn-muted tabular-nums" title="手机到电脑的 HTTPS 探测耗时">{latency} ms</span>}
+                      </span>
                     </button>
                     <Button variant="ghost" className="qn-list-action" onClick={() => setMenu(conn.id)} aria-label={`${conn.name} 的连接操作`}>
                       <WorkspaceIcon name="more" />

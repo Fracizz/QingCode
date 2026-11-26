@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react'
-import { basename, imageDataUrl } from '../fileLinks'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { basename, imageDataUrl, isImagePath } from '../fileLinks'
 import { useApp } from '../store'
 import { diffRows, formatBytes, numberLines, viewKind, type DiffRow } from '../viewer'
 import { Badge, Button, Header, Loading, Note } from './ui'
@@ -10,6 +10,16 @@ const DIFF_CLASS: Record<DiffRow['kind'], string> = {
   hunk: 'qn-diff-hunk',
   meta: 'qn-diff-meta',
   context: '',
+}
+
+function FileImage({ src, title }: { src: string; title: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return <Note message="无法显示这张图片，文件内容可能不完整" tone="warn" />
+  return (
+    <div className="flex justify-center rounded-lg border border-qn-border bg-black/30 p-2">
+      <img src={src} alt={title} decoding="async" onError={() => setFailed(true)} className="max-h-[70dvh] max-w-full object-contain" />
+    </div>
+  )
 }
 
 function TextView({ content, line }: { content: string; line: number | null }) {
@@ -65,9 +75,11 @@ export function FileViewer() {
   const file = viewer.file
   const kind = file ? viewKind(file) : null
   const title = basename(viewer.path) || viewer.path
+  const imageRequested = viewer.mode === 'file' && isImagePath(viewer.path)
 
   return (
-    <div className="qn-viewer" role="dialog" aria-modal="true" aria-label={`查看 ${title}`}>
+    <div className="qn-viewer" data-image={imageRequested || undefined}
+      role="dialog" aria-modal="true" aria-label={`查看 ${title}`}>
       <Header
         title={viewer.mode === 'diff' ? `差异 · ${title}` : title}
         subtitle={viewer.path}
@@ -90,7 +102,7 @@ export function FileViewer() {
             }
           />
         )}
-        {viewer.loading && <Loading text={viewer.mode === 'diff' ? '正在读取差异…' : '正在读取文件…'} />}
+        {viewer.loading && <Loading text={viewer.mode === 'diff' ? '正在读取差异…' : imageRequested ? '正在读取图片…' : '正在读取文件…'} />}
 
         {viewer.mode === 'diff' && viewer.diff !== null && (
           <>
@@ -118,11 +130,7 @@ export function FileViewer() {
               {viewer.line && <span>· 第 {viewer.line} 行</span>}
               {file.truncated && <Badge tone="warn">已截断</Badge>}
             </div>
-            {kind === 'image' && (
-              <div className="flex justify-center rounded-lg border border-qn-border bg-black/30 p-2">
-                <img src={imageDataUrl(file.content, file.path)} alt={title} className="max-h-[70vh] max-w-full object-contain" />
-              </div>
-            )}
+            {kind === 'image' && <FileImage key={file.path} src={imageDataUrl(file.content, file.path)} title={title} />}
             {kind === 'binary' && (
               <Note message="这是二进制文件，无法以文本显示。" />
             )}

@@ -167,7 +167,8 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
   })
 
   it('open / thread / turn / delta / approval / completed / interrupt / attach', async () => {
-    const h = harness()
+    const sessionInfos = [{ sessionId: 'old-1', summary: '历史会话', cwd: '/work', lastModified: 1_700_000_000_000 }]
+    const h = harness({ listSessions: async () => sessionInfos })
     const opened = await h.bridge.open({})
     expect(opened.initialize).toEqual({ userAgent: 'claude-bridge/2.1.331' })
     expect(opened.lastSeq).toBe(0)
@@ -187,6 +188,7 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
     const startedThread = await response(h, 'r-start')
     const threadId = ((startedThread.result as Json).thread as Json).id as string
     expect(threadId).toBeTypeOf('string')
+    sessionInfos.push({ sessionId: threadId, summary: '新会话', cwd: '/work', lastModified: Date.now() })
 
     request(h, 'r-turn', 'turn/start', {
       threadId,
@@ -263,6 +265,17 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
     await until(() => h.recv.some((e) => e.msg.method === 'item/commandExecution/requestApproval'))
     const approval = h.recv.find((e) => e.msg.method === 'item/commandExecution/requestApproval')?.msg as Json
     expect(approval.params).toMatchObject({ command: 'echo qn-ok', threadId })
+    request(h, 'list-active', 'thread/list', { cwd: '/work' })
+    expect((await response(h, 'list-active')).result).toMatchObject({
+      data: [{ id: threadId, status: { type: 'active', activeFlags: ['waitingOnApproval'] } }, { id: 'old-1' }],
+    })
+    request(h, 'read-active', 'thread/read', { threadId })
+    const activeResult = (await response(h, 'read-active')).result
+    expect(activeResult).toMatchObject({
+      thread: { status: { type: 'active', activeFlags: ['waitingOnApproval'] } },
+    })
+    const activeThread = (activeResult as { thread: { turns: Json[] } }).thread
+    expect(activeThread.turns.at(-1)).toMatchObject({ id: turn.id, status: 'inProgress' })
     const approvalId = approval.id as string
     h.bridge.handleClientMessage(1, { id: approvalId, result: { decision: 'acceptForSession' } })
     await until(() => permission !== null)

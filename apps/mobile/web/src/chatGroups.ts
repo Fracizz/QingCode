@@ -1,7 +1,7 @@
 import type { ItemView } from '@qn/codex-client'
 
-/** 工具步骤：命令、文件改动、子代理和其它非对话条目。 */
-export type ToolItem = Exclude<ItemView, { kind: 'user' | 'agent' | 'reasoning' }>
+/** 子代理单独显示，便于从消息流直接查看。 */
+export type ToolItem = Exclude<ItemView, { kind: 'user' | 'agent' | 'reasoning' | 'subagent' }>
 
 export type ChatBlock =
   | { kind: 'item'; item: ItemView }
@@ -10,7 +10,7 @@ export type ChatBlock =
 export type ToolStatus = 'running' | 'failed' | 'done'
 
 const isTool = (item: ItemView): item is ToolItem =>
-  item.kind !== 'user' && item.kind !== 'agent' && item.kind !== 'reasoning'
+  item.kind === 'command' || item.kind === 'fileChange' || item.kind === 'other'
 
 export function toolStatus(item: ToolItem): ToolStatus {
   const status = 'status' in item && typeof item.status === 'string' ? item.status : ''

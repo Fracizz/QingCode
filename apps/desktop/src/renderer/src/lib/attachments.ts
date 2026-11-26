@@ -180,42 +180,5 @@ export function filterSlashItems(items: SlashItem[], query: string): SlashItem[]
     .map((entry) => entry.item)
 }
 
-// ---------- 用户消息展示 ----------
-
-const ATTACHMENT_NOTE = '附件文件（请按需读取）：'
-const SKILL_PREFIX = /^\/([\w.:-]+)(?:\s+|$)/
-
-/**
- * Claude 桥接把附件写成文本尾部的说明、把技能写成 `/name` 前缀（SDK 历史里存的就是这段文字）。
- * 展示时拆回附件列表与技能名，正文只保留用户真正输入的部分。
- */
-export function splitUserText(text: string): { text: string; files: string[]; skills: string[] } {
-  let body = text
-  const files: string[] = []
-  const index = body.lastIndexOf(ATTACHMENT_NOTE)
-  if (index >= 0) {
-    const lines = body.slice(index + ATTACHMENT_NOTE.length).split('\n').filter((line) => line.trim())
-    const parsed = lines.map((line) => /^- [^:]*: (.+)$/.exec(line.trim())?.[1])
-    if (parsed.length > 0 && parsed.every(Boolean)) {
-      files.push(...(parsed as string[]))
-      body = body.slice(0, index).replace(/\s+$/, '')
-    }
-  }
-  // Claude 桥把多个技能写成 "/a /b 正文"，逐个拆出来展示成标签。
-  const skills: string[] = []
-  for (;;) {
-    const match = SKILL_PREFIX.exec(body)
-    if (!match) break
-    skills.push(match[1]!)
-    body = body.slice(match[0].length)
-  }
-  return { text: body, files, skills }
-}
-
-export function editUserText(original: string, text: string): string {
-  const parsed = splitUserText(original)
-  const body = [...parsed.skills.map((skill) => `/${skill}`), text].filter(Boolean).join(' ')
-  if (!parsed.files.length) return body
-  return `${body}\n\n${original.slice(original.lastIndexOf(ATTACHMENT_NOTE))}`.trim()
-}
+export { editUserText, splitUserText } from '@qn/codex-client'
 

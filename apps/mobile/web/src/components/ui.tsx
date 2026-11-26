@@ -1,4 +1,4 @@
-import { ChevronLeft, X } from 'lucide-react'
+import { ChevronLeft, LoaderCircle, X, type LucideProps } from 'lucide-react'
 import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode, type TouchEvent } from 'react'
 import { agentLabel } from '../agents'
 import type { AgentKind } from '../types'
@@ -58,14 +58,16 @@ export function Header({
   subtitle,
   onBack,
   right,
+  className,
 }: {
   title: string
-  subtitle?: string
+  subtitle?: ReactNode
   onBack?: () => void
   right?: ReactNode
+  className?: string
 }) {
   return (
-    <header className="qn-header">
+    <header className={className ? `qn-header ${className}` : 'qn-header'}>
       {onBack && (
         <Button variant="ghost" className="qn-header-icon" onClick={onBack} aria-label="返回">
           <ChevronLeft size={22} strokeWidth={1.9} />
@@ -211,8 +213,16 @@ export function Dialog({
   )
 }
 
+export function LoadingIcon({ className = '', ...props }: LucideProps) {
+  return <LoaderCircle size={14} strokeWidth={2.5} aria-hidden="true" className={`qn-spin shrink-0 ${className}`} {...props} />
+}
+
 export function Loading({ text = '正在加载…' }: { text?: string }) {
-  return <div className="py-6 text-center text-sm text-qn-muted">{text}</div>
+  return (
+    <div className="flex items-center justify-center gap-2 py-6 text-center text-sm text-qn-muted" role="status">
+      <LoadingIcon size={16} />{text}
+    </div>
+  )
 }
 
 /** 会话所属 Agent 的小标签；用中性文字而非厂商 Logo（docs/agent-adapters.md §5）。 */

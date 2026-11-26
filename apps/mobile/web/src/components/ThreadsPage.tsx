@@ -1,64 +1,12 @@
-import { ChevronRight, Plus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { agentLabel, threadKey } from '../agents'
-import { defaultAgentFor, targetAgents, unavailableAgents, useApp } from '../store'
-import type { AgentKind } from '../types'
-import { Button, Dialog, Empty, Header, Loading, Note } from './ui'
+import { targetAgents, useApp } from '../store'
+import { Button, Empty, Header, Loading, Note } from './ui'
 import { RateLimitBadge } from './RateLimitView'
 import { ProjectTools } from './ProjectTools'
+import { NewSessionButton } from './NewSessionButton'
 import { WorkspaceIcon, WorkspaceSearch, WorkspaceThreadRow } from './WorkspaceHome'
 import { groupWorkspaceThreads } from '../workspace'
-
-/** 新建会话时选 Agent：只列电脑设置里启用的；打开失败的置灰并给出原因，但仍可点（会重试打开）。 */
-function AgentPickerDialog({
-  agents,
-  preferred,
-  unavailable,
-  reasons,
-  onPick,
-  onClose,
-}: {
-  agents: AgentKind[]
-  preferred: AgentKind
-  unavailable: Set<AgentKind>
-  reasons: Partial<Record<AgentKind, string>>
-  onPick: (agent: AgentKind) => void
-  onClose: () => void
-}) {
-  return (
-    <Dialog title="新建会话" onClose={onClose}>
-      <div className="space-y-2">
-        {agents.map((agent) => {
-          const disabled = unavailable.has(agent)
-          return (
-            <button
-              key={agent}
-              type="button"
-              className={`qn-row rounded-xl border px-3 py-2 ${disabled ? 'opacity-60' : ''} ${
-                agent === preferred ? 'border-qn-accent bg-qn-accent/10' : 'border-qn-border'
-              }`}
-              onClick={() => onPick(agent)}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-2 text-sm font-medium">
-                  {agentLabel(agent)}
-                  {agent === preferred && <span className="text-[11px] text-qn-muted">默认</span>}
-                </span>
-                {disabled && reasons[agent] && (
-                  <span className="block text-[11px] leading-4 text-qn-danger">{reasons[agent]}</span>
-                )}
-                {agent === 'pi' && !disabled && (
-                  <span className="block text-[11px] leading-4 text-qn-muted">pi 不经审批直接执行工具</span>
-                )}
-              </span>
-              <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />
-            </button>
-          )
-        })}
-      </div>
-    </Dialog>
-  )
-}
 
 export function ThreadsPage() {
   const projects = useApp((s) => s.projects)
@@ -69,22 +17,19 @@ export function ThreadsPage() {
   const threadsError = useApp((s) => s.threadsError)
   const agentErrors = useApp((s) => s.agentErrors)
   const agentSettings = useApp((s) => s.agentSettings)
-  const sessions = useApp((s) => s.sessions)
   const error = useApp((s) => s.error)
   const notice = useApp((s) => s.notice)
   const clearError = useApp((s) => s.clearError)
   const clearNotice = useApp((s) => s.clearNotice)
   const goBack = useApp((s) => s.goBack)
   const refreshThreads = useApp((s) => s.refreshThreads)
-  const newThread = useApp((s) => s.newThread)
   const openThread = useApp((s) => s.openThread)
-  const [picking, setPicking] = useState(false)
   const [query, setQuery] = useState('')
-  // 从对话页返回时列表可能还是空的且尚未开始刷新；先拉一次，拿到结果前不显示「还没有会话」。
+  // 从对话页返回时用最近会话占位，避免等待完整列表期间显示空状态。
   const [settled, setSettled] = useState(threads.length > 0)
   const sawLoading = useRef(false)
   useEffect(() => {
-    if (threads.length === 0 && !loading) void refreshThreads()
+    if (!loading) void refreshThreads({ skipFailed: threads.length > 0 })
     // 只在进入页面时补拉一次
   }, [])
   useEffect(() => {
@@ -94,27 +39,24 @@ export function ThreadsPage() {
 
   const project = projects.find((item) => item.id === selectedProjectId)
   const agents = targetAgents({ agentSettings }, selectedTargetId)
-  const unavailable = selectedTargetId ? unavailableAgents({ sessions }, selectedTargetId, agents) : new Set<AgentKind>()
-  const preferred = selectedTargetId ? defaultAgentFor({ agentSettings, sessions }, selectedTargetId) : agents[0]
-  const multiAgent = agents.length > 1
   const shown = project ? groupWorkspaceThreads(threads.map((thread) => ({ ...thread, targetId: project.targetId, projectId: project.id })), [project], query)[0]?.threads ?? [] : []
-
-  const startNew = () => {
-    if (multiAgent) setPicking(true)
-    else void newThread(agents[0])
-  }
 
   return (
     <>
       <Header
-        title="会话"
-        subtitle={project?.name ?? ''}
+        className="qn-threads-header"
+        title={project?.name || '会话'}
+        subtitle={project && (
+          <span className="qn-threads-header-meta">
+            <span>会话</span>
+            <RateLimitBadge targetId={selectedTargetId} hideWhenEmpty />
+          </span>
+        )}
         onBack={goBack}
         right={
           <>
-            <RateLimitBadge targetId={selectedTargetId} hideWhenEmpty />
-            {project && <ProjectTools project={project} />}
-            <Button variant="ghost" onClick={() => void refreshThreads()} disabled={loading} aria-label="刷新会话">
+            {project && <ProjectTools project={project} compact />}
+            <Button variant="ghost" className="qn-header-icon" onClick={() => void refreshThreads()} disabled={loading} aria-label="刷新会话">
               <WorkspaceIcon name="refresh" />
             </Button>
           </>
@@ -152,24 +94,9 @@ export function ThreadsPage() {
           </div>
         )}
       </div>
-      <div className="qn-footer flex gap-2">
-        <Button className="flex-1" variant="primary" onClick={startNew}>
-          <Plus size={17} aria-hidden />新建会话
-        </Button>
-      </div>
-      {picking && preferred && (
-        <AgentPickerDialog
-          agents={agents}
-          preferred={preferred}
-          unavailable={unavailable}
-          reasons={agentErrors}
-          onPick={(agent) => {
-            setPicking(false)
-            void newThread(agent)
-          }}
-          onClose={() => setPicking(false)}
-        />
-      )}
+      {project && <div className="qn-footer flex gap-2">
+        <NewSessionButton project={project} className="flex-1" primary />
+      </div>}
     </>
   )
 }

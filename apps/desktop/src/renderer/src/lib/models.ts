@@ -200,20 +200,4 @@ export function parsePrefs(raw: string | null | undefined): Record<string, Model
   }
 }
 
-export type ContextUsage = { percent: number; used: number; window: number }
-
-/** thread/tokenUsage/updated 的 tokenUsage → 上下文窗口占用；缺窗口大小时无法计算，返回 null。 */
-export function contextUsage(tokenUsage: unknown): ContextUsage | null {
-  if (!isRecord(tokenUsage)) return null
-  const window = tokenUsage.modelContextWindow
-  const last = tokenUsage.last
-  if (typeof window !== 'number' || window <= 0 || !isRecord(last)) return null
-  const used = typeof last.totalTokens === 'number' ? last.totalTokens : 0
-  return { used, window, percent: Math.min(100, Math.max(0, Math.round((used / window) * 100))) }
-}
-
-export function formatTokens(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
-  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1).replace(/\.0$/, '')}K`
-  return String(value)
-}
+export { contextUsage, formatTokens, type ContextUsage } from '@qn/codex-client'
