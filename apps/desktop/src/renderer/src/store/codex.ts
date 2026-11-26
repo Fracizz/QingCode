@@ -277,12 +277,14 @@ export const useCodex = create<CodexState>((set, get) => {
       if (notification.method === 'turn/completed' && notification.params?.threadId && notification.params.turn) {
         const chat = { targetId, agent, threadId: notification.params.threadId }
         const state = get()
-        if (!(state.currentTargetId === targetId && state.currentAgent === agent && state.currentThreadId === chat.threadId)
-          && !(state.sideTargetId === targetId && state.sideAgent === agent && state.sideThreadId === chat.threadId)) {
-          useThreadPrefs.getState().setUnread(targetId, threadKey(agent, chat.threadId), true)
+        if (state.sessions[key]?.state.threads[chat.threadId]?.status !== 'running') {
+          if (!(state.currentTargetId === targetId && state.currentAgent === agent && state.currentThreadId === chat.threadId)
+            && !(state.sideTargetId === targetId && state.sideAgent === agent && state.sideThreadId === chat.threadId)) {
+            useThreadPrefs.getState().setUnread(targetId, threadKey(agent, chat.threadId), true)
+          }
+          if (notification.params.turn.status === 'completed') void flushPending(chat)
+          else if (!replacing.has(pendingSendKey(chat))) pausePending(chat, '上一轮未完成，队列已暂停', true)
         }
-        if (notification.params.turn.status === 'completed') void flushPending(chat)
-        else if (!replacing.has(pendingSendKey(chat))) pausePending(chat, '上一轮未完成，队列已暂停', true)
       }
       const method = (notification as { method?: unknown }).method
       if (

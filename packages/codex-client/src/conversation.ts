@@ -366,16 +366,18 @@ function withItem(
   const turnId = turnIdFrom(params)
 
   return withThread(s, threadId, (thread) => {
+    const otherTurn = thread.status === 'running' && thread.activeTurnId && turnId && thread.activeTurnId !== turnId
+    const isRunning = markRunning && !otherTurn
     // 新条目出现说明之前的文本/推理已经输出完：有的 Agent 不会为每条消息发 item/completed，
     // 不收尾的话上一条消息的流式光标会一直挂着。
-    const base = thread.items.some((item) => item.id === itemId) ? thread : finalizeItems(thread)
+    const base = otherTurn || thread.items.some((item) => item.id === itemId) ? thread : finalizeItems(thread)
     let next: ThreadView = {
       ...thread,
       items: replaceItem(base.items, itemId, () => create(itemId), update),
-      status: markRunning ? 'running' : thread.status,
-      activeTurnId: turnId || thread.activeTurnId,
+      status: isRunning ? 'running' : thread.status,
+      activeTurnId: !otherTurn && (isRunning || thread.status === 'running') && turnId ? turnId : thread.activeTurnId,
     }
-    if (markRunning) {
+    if (isRunning) {
       if (next.activity !== 'pending' && next.activity !== 'input') next.activity = 'running'
       delete next.error
     }
@@ -854,6 +856,8 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         let next = mergeTurnItems(current, params.turn, false, 'completed')
         const completedId = idValue(turn?.id) || idValue(params.turnId) || current.activeTurnId || ''
         if (completedId && !turn) next = upsertTurnMeta(next, completedId, { phase: 'completed' })
+        // 旧轮次的中断结果可能迟到，此时只合并历史，保留当前轮的运行状态和审批。
+        if (current.status === 'running' && current.activeTurnId && completedId !== current.activeTurnId) return next
         next = finalizeItems(next)
         next = {
           ...next,
@@ -1009,16 +1013,20 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
     case 'error': {
       const id = threadIdFrom(params)
       if (!id) return s
+      const turnId = turnIdFrom(params)
       const message = errorText(params.error) ?? 'Codex error'
       const willRetry = params.willRetry === true
-      return withThread(s, id, (thread) => ({
-        ...thread,
-        status: willRetry ? 'running' : 'error',
-        activity: willRetry ? 'running' : 'failed',
-        error: message,
-        activeTurnId: willRetry ? idValue(params.turnId) || thread.activeTurnId : null,
-        pendingApprovals: willRetry ? thread.pendingApprovals : [],
-      }))
+      return withThread(s, id, (thread) => {
+        if (thread.status === 'running' && thread.activeTurnId && turnId && turnId !== thread.activeTurnId) return thread
+        return {
+          ...thread,
+          status: willRetry ? 'running' : 'error',
+          activity: willRetry ? 'running' : 'failed',
+          error: message,
+          activeTurnId: willRetry ? turnId || thread.activeTurnId : null,
+          pendingApprovals: willRetry ? thread.pendingApprovals : [],
+        }
+      })
     }
     default:
       return s

@@ -1074,14 +1074,15 @@ export const useApp = create<AppState>((set, get) => {
           }
           completedTurns.set(transport, turns)
         }
-        if (typeof params?.threadId === 'string') {
+        if (typeof params?.threadId === 'string' && get().sessions[key]?.state.threads[params.threadId]?.status !== 'running') {
           const address = { desktopId: conn.id, targetId, agent, threadId: params.threadId }
           if (turn?.status === 'completed') void flushQueue(address)
           else if (turn?.status !== 'interrupted' || !replacing.has(sendKey(address))) {
             pauseQueue(sendKey(address), '上一轮未完成，队列已暂停')
           }
         }
-      } else if (method === 'error' && typeof params?.threadId === 'string' && params.willRetry !== true) {
+      } else if (method === 'error' && typeof params?.threadId === 'string' && params.willRetry !== true
+        && get().sessions[key]?.state.threads[params.threadId]?.status !== 'running') {
         pauseQueue(sendKey({ desktopId: conn.id, targetId, agent, threadId: params.threadId }), '上一轮未完成，队列已暂停')
       }
       if (visibleResolution) {
