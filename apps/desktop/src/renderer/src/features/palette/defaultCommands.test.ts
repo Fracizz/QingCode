@@ -10,9 +10,9 @@ describe('defaultCommands', () => {
   it('停靠栏工具命令调用 toggleDockTool 并带快捷键', () => {
     const toggleDockTool = vi.fn()
     const commands = defaultCommands({ toggleDockTool })
-    expect(commands.map((c) => c.shortcut)).toEqual(['Ctrl+Shift+E', 'Ctrl+Shift+F', 'Ctrl+Shift+G'])
+    expect(commands.map((c) => c.shortcut)).toEqual(['Ctrl+Shift+E', 'Ctrl+Shift+F', 'Ctrl+Shift+G', 'Ctrl+Shift+R'])
     for (const command of commands) void command.run()
-    expect(toggleDockTool.mock.calls.map((call) => call[0])).toEqual(['explorer', 'search', 'git'])
+    expect(toggleDockTool.mock.calls.map((call) => call[0])).toEqual(['explorer', 'search', 'git', 'run'])
   })
 
   it('设置命令：总入口 + 每个分区', () => {
@@ -59,6 +59,6 @@ describe('defaultCommands', () => {
       reloadWindow: noop,
     })
     expect(new Set(commands.map((c) => c.id)).size).toBe(commands.length)
-    expect(commands.length).toBe(15)
+    expect(commands.length).toBe(16)
   })
 })
