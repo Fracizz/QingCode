@@ -1,5 +1,5 @@
 import { ChevronLeft, X } from 'lucide-react'
-import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode, type TouchEvent } from 'react'
 import { agentLabel } from '../agents'
 import type { AgentKind } from '../types'
 import { registerBackHandler } from '../workspace'
@@ -166,13 +166,39 @@ export function Dialog({
     }
   }, [])
 
+  // 底部弹层：内容滚到顶时向下拖动跟手，超过 80px 松手关闭，否则回弹。
+  const drag = useRef<{ y: number; dy: number } | null>(null)
+  const swipe = {
+    onTouchStart: (event: TouchEvent<HTMLDivElement>) => {
+      drag.current = event.currentTarget.scrollTop <= 0 ? { y: event.touches[0]!.clientY, dy: 0 } : null
+    },
+    onTouchMove: (event: TouchEvent<HTMLDivElement>) => {
+      if (!drag.current) return
+      drag.current.dy = Math.max(0, event.touches[0]!.clientY - drag.current.y)
+      event.currentTarget.style.transition = 'none'
+      event.currentTarget.style.transform = `translateY(${drag.current.dy}px)`
+    },
+    onTouchEnd: (event: TouchEvent<HTMLDivElement>) => {
+      const dy = drag.current?.dy ?? 0
+      drag.current = null
+      const panel = event.currentTarget
+      panel.style.transition = 'transform var(--qn-motion-medium) var(--qn-ease-emphasized)'
+      if (dy > 80) {
+        panel.style.transform = 'translateY(100%)'
+        window.setTimeout(() => close.current(), 180)
+      } else {
+        panel.style.transform = ''
+      }
+    },
+  }
+
   return (
     <dialog ref={ref} className="qn-dialog" data-placement={placement} aria-label={title}
       onCancel={(event) => { event.preventDefault(); onClose() }}
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}>
-      <div className="qn-dialog-panel">
+      <div className="qn-dialog-panel" {...(placement === 'bottom' ? swipe : {})}>
         <div className="mb-3 flex items-center gap-2">
           <h2 className="qn-title flex-1">{title}</h2>
           <Button autoFocus variant="ghost" className="qn-header-icon" onClick={onClose} aria-label="关闭">
