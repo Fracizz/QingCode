@@ -3,11 +3,13 @@
  * 审批、中断、空闲关闭与错误恢复。只发 v2 JSON-RPC，与客户端的渲染链路完全复用。
  */
 import { randomUUID } from 'node:crypto'
-import type { Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { Options, PermissionMode, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { classifyJsonRpc, type JsonRpcId } from '@qn/protocol'
 import {
   AgentHostError,
+  agentConfigEnv,
   JsonRpcAgentHost,
+  parseAgentConfigDir,
   type AgentHost,
   type AgentHostHub,
   type AgentOpenOptions,
@@ -52,6 +54,7 @@ export interface QueryLike extends AsyncIterable<unknown> {
   // 以下为流式输入模式下的控制接口；测试替身可以不实现。
   supportedModels?(): Promise<unknown[]>
   setModel?(model?: string): Promise<void>
+  setPermissionMode?(mode: PermissionMode): Promise<void>
   applyFlagSettings?(settings: Record<string, unknown>): Promise<void>
 }
 
@@ -73,11 +76,14 @@ interface BridgeSession {
   query: QueryLike | null
   input: AsyncQueue<SDKUserMessage> | null
   turnId: string | null
+  preparingTurn: boolean
   state: MapState
   queryCreated: boolean
   idleTimer: ReturnType<typeof setTimeout> | null
   /** 当前 query 已生效的模型/推理强度；null 表示沿用 Claude 自身配置。 */
   settings: ClaudeSettings
+  permissionMode: PermissionMode
+  allowsBypass: boolean
 }
 
 interface PendingApproval {
@@ -153,6 +159,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private initializeResult: Json = {}
   private claude: ClaudeExecutable | null = null
   private deps: ClaudeDeps | null = null
+  private configDir: string | undefined
   private readonly sessions = new Map<string, BridgeSession>()
   private readonly metas = new Map<string, SessionMeta>()
   private readonly approvals = new Map<JsonRpcId, PendingApproval>()
@@ -177,6 +184,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     initialize: unknown
     agentVersion?: string
   }> {
+    this.configDir = parseAgentConfigDir(options.claudeConfigDir, 'CLAUDE_CONFIG_DIR')
     if (this.opened) return { initialize: this.initializeResult, agentVersion: this.claude?.version }
     const explicit =
       typeof options.claudePath === 'string' && options.claudePath.trim()
@@ -215,14 +223,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     this.modelListRequest = null
     for (const session of this.sessions.values()) {
       if (session.idleTimer) clearTimeout(session.idleTimer)
-      try {
-        session.query?.close()
-      } catch {
-        // 查询可能已结束。
-      }
-      session.input?.close()
-      session.query = null
-      session.input = null
+      closeQuery(session)
     }
     for (const pending of this.approvals.values()) {
       pending.resolve({ behavior: 'deny', message: 'server 正在退出' })
@@ -297,9 +298,10 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       case 'turn/start': {
         const threadId = scalarText(params.threadId)
         if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
+        const permissionMode = parsePermissionMode(params.claudePermissionMode)
         const content = await resolveTurnInput(params.input)
         const session = await this.sessionFor(threadId, deps, typeof params.cwd === 'string' ? params.cwd : undefined)
-        return this.startTurn(session, content, parseOverrides(params, session.settings))
+        return this.startTurn(session, content, parseOverrides(params, session.settings), permissionMode)
       }
       case 'skills/list': {
         const requested = Array.isArray(params.cwds)
@@ -393,44 +395,70 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     }
   }
 
-  private async startTurn(session: BridgeSession, content: TurnContent, next: ClaudeSettings): Promise<Json> {
+  private async setPermissionMode(session: BridgeSession, mode: PermissionMode): Promise<void> {
+    const query = session.query
+    if (!query || mode === session.permissionMode) return
+    if (mode === 'bypassPermissions' && !session.allowsBypass) {
+      // SDK 要求启动时显式允许 bypass，保留默认启动行为并按用户选择恢复历史会话。
+      if (session.meta.ephemeral) throw new BridgeRpcError(-32602, '临时会话启动后无法启用跳过审批')
+      closeQuery(session)
+      return
+    }
+    if (!query.setPermissionMode) throw new BridgeRpcError(-32603, 'Claude SDK 不支持在线切换权限模式')
+    await query.setPermissionMode(mode)
+    session.permissionMode = mode
+  }
+
+  private async startTurn(
+    session: BridgeSession,
+    content: TurnContent,
+    next: ClaudeSettings,
+    permissionMode: PermissionMode,
+  ): Promise<Json> {
+    if (session.preparingTurn) throw new BridgeRpcError(-32602, '正在准备一轮对话，请稍后重试')
     if (session.turnId) {
       // v2 规定追加输入到进行中的 turn 时忽略覆盖项，输入直接推入同一 query 的队列。
       this.pushInput(session, content.blocks)
       return { turn: buildTurn(session.turnId, [], 'inProgress') }
     }
     const turnId = randomUUID()
-    session.turnId = turnId
-    session.state = emptyMapState()
     const userItem = userMessageContentItem(`${turnId}-user`, content.echo)
-    session.state.items[scalarText(userItem.id)] = userItem
-    session.state.order.push(scalarText(userItem.id))
     const turn = buildTurn(turnId, [userItem], 'inProgress')
     if (!this.claude) throw new AgentHostError('agent_unavailable', 'claude 尚未就绪')
+    session.preparingTurn = true
+    let started = false
     try {
-      const existing = session.query !== null && session.input !== null
-      if (existing) {
+      await this.setPermissionMode(session, permissionMode)
+      if (session.query && session.input) {
         if (await this.applySettings(session, next)) session.settings = next
-      } else {
-        this.ensureQuery(session, next)
       }
+      session.turnId = turnId
+      session.state = emptyMapState()
+      session.state.items[scalarText(userItem.id)] = userItem
+      session.state.order.push(scalarText(userItem.id))
+      this.ensureQuery(session, next, permissionMode)
       // 通知里带上本轮真正生效的配置；客户端会忽略 v2 形状之外的字段。
       this.notify({
         method: 'turn/started',
         params: { threadId: session.meta.id, turn, ...threadModelConfig(session.settings) },
       })
+      started = true
       this.pushInput(session, content.blocks)
     } catch (err) {
-      // 已经广播了 turn/started，失败也必须补 turn/completed，否则界面会一直显示运行中。
       session.turnId = null
-      this.notify({
-        method: 'turn/completed',
-        params: {
-          threadId: session.meta.id,
-          turn: buildTurn(turnId, [userItem], 'failed', describe(err)),
-        },
-      })
+      // 没有发出开始通知时，完成通知会影响其他并行轮次的计数。
+      if (started) {
+        this.notify({
+          method: 'turn/completed',
+          params: {
+            threadId: session.meta.id,
+            turn: buildTurn(turnId, [userItem], 'failed', describe(err)),
+          },
+        })
+      }
       throw err
+    } finally {
+      session.preparingTurn = false
     }
     this.touch(session)
     return { turn }
@@ -448,7 +476,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     session.input.push(message)
   }
 
-  private ensureQuery(session: BridgeSession, settings: ClaudeSettings = NO_OVERRIDES): void {
+  private ensureQuery(session: BridgeSession, settings: ClaudeSettings, permissionMode: PermissionMode): void {
     if (session.query && session.input) return
     const deps = this.requireDeps()
     const input = new AsyncQueue<SDKUserMessage>()
@@ -456,7 +484,8 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       ...queryOverrides(settings),
       cwd: session.meta.cwd,
       includePartialMessages: true,
-      permissionMode: 'default',
+      permissionMode,
+      ...(permissionMode === 'bypassPermissions' ? { allowDangerouslySkipPermissions: true } : {}),
       persistSession: !session.meta.ephemeral,
       canUseTool: (toolName, toolInput, extra) =>
         this.onCanUseTool(session, toolName, toolInput, {
@@ -466,7 +495,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
           decisionReason: extra.decisionReason,
         }),
       pathToClaudeCodeExecutable: this.claude?.path ?? '',
-      env: envStrings(),
+      env: agentConfigEnv(envStrings(), 'CLAUDE_CONFIG_DIR', this.configDir),
       stderr: (data: string) => this.hub.log(`claude stderr: ${redact(data)}`),
       // 首次用 sessionId 固定 UUID；空闲关闭后用 resume 重新拉起，保留会话历史。
       ...(session.queryCreated
@@ -478,23 +507,31 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     session.input = input
     session.queryCreated = true
     session.settings = { ...settings }
+    session.permissionMode = permissionMode
+    session.allowsBypass = permissionMode === 'bypassPermissions'
     this.cacheModels(query)
     void this.consume(session, query)
   }
 
   private async consume(session: BridgeSession, query: QueryLike): Promise<void> {
     try {
-      for await (const message of query) this.onSdkMessage(session, message)
+      for await (const message of query) {
+        if (session.query !== query) break
+        this.onSdkMessage(session, message)
+      }
     } catch (err) {
-      this.hub.log(`claude query 异常: ${redact(describe(err))}`)
-      this.finishTurn(session, 'failed', describe(err))
+      if (session.query === query) {
+        this.hub.log(`claude query 异常: ${redact(describe(err))}`)
+        this.finishTurn(session, 'failed', describe(err))
+      }
     } finally {
       if (session.query === query) {
+        session.input?.close()
         session.query = null
         session.input = null
+        // CLI 提前退出且没有 result 消息时兜底结束 turn，避免 activeTurns 永远不归零。
+        if (session.turnId) this.finishTurn(session, 'failed', 'claude 进程提前结束')
       }
-      // CLI 提前退出且没有 result 消息时兜底结束 turn，避免 activeTurns 永远不归零。
-      if (session.turnId) this.finishTurn(session, 'failed', 'claude 进程提前结束')
     }
   }
 
@@ -608,6 +645,8 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         const meta = sessionInfoToMeta(info, fallback)
         if (meta.id) this.metas.set(meta.id, meta)
       }
+      const concurrent = this.sessions.get(threadId)
+      if (concurrent) return concurrent
     }
     const meta: SessionMeta = this.metas.get(threadId) ?? {
       id: threadId,
@@ -625,15 +664,8 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     if (session.idleTimer) clearTimeout(session.idleTimer)
     session.idleTimer = setTimeout(() => {
       session.idleTimer = null
-      if (session.turnId) return
-      try {
-        session.query?.close()
-      } catch {
-        // 查询可能已结束。
-      }
-      session.input?.close()
-      session.query = null
-      session.input = null
+      if (session.turnId || session.preparingTurn) return
+      closeQuery(session)
     }, this.idleTimeoutMs)
     session.idleTimer.unref?.()
   }
@@ -664,11 +696,32 @@ function makeSession(
     query: null,
     input: null,
     turnId: null,
+    preparingTurn: false,
     state: emptyMapState(),
     queryCreated,
     idleTimer: null,
     settings: { ...settings },
+    permissionMode: 'default',
+    allowsBypass: false,
   }
+}
+
+function closeQuery(session: BridgeSession): void {
+  const query = session.query
+  session.query = null
+  session.input?.close()
+  session.input = null
+  try {
+    query?.close()
+  } catch {
+    // 查询可能已结束。
+  }
+}
+
+function parsePermissionMode(value: unknown): PermissionMode {
+  if (value === undefined || value === 'default') return 'default'
+  if (value === 'acceptEdits' || value === 'plan' || value === 'bypassPermissions') return value
+  throw new BridgeRpcError(-32602, '不支持的 Claude 访问模式')
 }
 
 function threadStartResult(meta: SessionMeta, settings: ClaudeSettings, thread: Json): Json {

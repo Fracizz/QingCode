@@ -17,6 +17,7 @@ import {
   type ProbeResult,
 } from './logic'
 import { PYTHON_BRIDGE_SOURCE, PYTHON_PROBE_SOURCE } from './pythonBridge'
+import { resolveWindowsPty } from './windows'
 
 const PROBE_TIMEOUT_MS = 5_000
 const READY_TIMEOUT_MS = 5_000
@@ -329,13 +330,13 @@ function wireScript(child: ChildProcess): Promise<PtyProcess> {
   })
 }
 
-/** 默认解析器：POSIX 探测 python3 → script；Windows 未接入 ConPTY 时一律 pty_unavailable。 */
+/** POSIX 探测 python3 → script；Windows 按需加载本机 Electron 的预编译模块。 */
 export function createDefaultResolver(
   probe: () => Promise<Capabilities> = cachedCapabilities,
 ): PtyBackendResolver {
   return async (preference: TermBackendPreference) => {
     if (process.platform === 'win32') {
-      throw termError('pty_unavailable', 'Windows 本机终端需要 ConPTY 后端，当前版本尚未提供')
+      return resolveWindowsPty(preference)
     }
     const choice = chooseBackend(await probe(), preference)
     if (!choice.ok) throw termError('pty_unavailable', choice.message)

@@ -105,6 +105,10 @@ export type FsSearchResultEvt = {
 /** evt `fs.changed`：仅推送给登记了监听的客户端，200ms 去抖合并 */
 export type FsChangedEvt = { paths: string[] }
 
+export type ProjectFileEntry = { path: string; name: string; kind: 'dir' | 'file'; size: number; mtimeMs: number }
+export type ProjectFileList = { entries: ProjectFileEntry[]; truncated: boolean }
+export type ProjectFileChunk = { content: string; length: number; size: number; version: string }
+
 export type GitFileStatus = {
   /** 相对仓库根，`/` 分隔 */
   path: string
@@ -150,6 +154,9 @@ export interface WorkspaceMethods {
   'fs.delete': { params: { path: string; recursive?: boolean }; result: Record<string, never> }
   'fs.search': { params: FsSearchParams; result: { searchId: string } }
   'fs.searchCancel': { params: { searchId: string }; result: Record<string, never> }
+  'fs.project.list': { params: { root: string; path?: string; hidden?: boolean }; result: ProjectFileList }
+  'fs.project.search': { params: { root: string; path?: string; query: string; hidden?: boolean; limit?: number }; result: ProjectFileList }
+  'fs.project.read': { params: { root: string; path: string; offset?: number; length?: number; version?: string }; result: ProjectFileChunk }
   /** 全量替换本连接的监听集合；空数组即取消全部 */
   'fs.watch': { params: { paths: string[] }; result: Record<string, never> }
 

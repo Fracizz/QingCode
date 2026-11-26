@@ -120,7 +120,7 @@ function requestJson(
   })
 }
 
-function openEventStream(token: string): EventStreamHandles {
+function openEventStream(token: string, accept = (event: GatewayEvent) => event.name === 'target.state'): EventStreamHandles {
   let resolveReady: () => void = () => undefined
   let rejectReady: (err: Error) => void = () => undefined
   let resolveEvent: (event: GatewayEvent) => void = () => undefined
@@ -170,7 +170,7 @@ function openEventStream(token: string): EventStreamHandles {
         if (parsed?.name === 'ping' && !readySettled) {
           readySettled = true
           resolveReady()
-        } else if (parsed?.name === 'target.state' && !eventSettled) {
+        } else if (parsed && accept(parsed) && !eventSettled) {
           eventSettled = true
           resolveEvent(parsed)
         }
@@ -207,8 +207,12 @@ beforeAll(async () => {
   deviceStore = new DeviceStore(deviceFilePath(directory), () => now)
   router = new BackendRouter()
   router.register('targets.list', () => [LOCAL_TARGET])
+  router.register('projects.list', ({ targetId }) => targetId === 'local'
+    ? [{ id: 'test-project', targetId, path: '/project', name: '测试项目', lastOpenedAt: 0 }]
+    : [])
   router.register('server.req', (params) => {
     lastServerReq = params
+    if (params.method === 'term.open') return params.params
     return { method: params.method }
   })
   router.register('codex.send', (params) => {
@@ -315,20 +319,26 @@ describe('手机网关纯逻辑', () => {
     expect(({} as Record<string, unknown>).codex).toBeUndefined()
   })
 
-  it('codex.open 按设置补可执行文件路径，忽略手机传入的路径', () => {
+  it('codex.open 以电脑设置指定可执行文件和配置目录', () => {
     expect(injectAgentPath({ targetId: 'local', method: 'codex.open', params: { agent: 'codex' } }, APP_SETTINGS))
-      .toEqual({ targetId: 'local', method: 'codex.open', params: { agent: 'codex', codexPath: 'C:\\tools\\codex.exe' } })
+      .toEqual({ targetId: 'local', method: 'codex.open', params: {
+        agent: 'codex', codexPath: 'C:\\tools\\codex.exe', codexHome: 'C:\\Users\\me\\.codex',
+      } })
     expect(injectAgentPath({ targetId: 'local', method: 'codex.open', params: { agent: 'claude' } }, APP_SETTINGS))
       .toEqual({
         targetId: 'local',
         method: 'codex.open',
-        params: { agent: 'claude', claudePath: 'C:\\Users\\me\\.local\\bin\\claude.exe' },
+        params: { agent: 'claude', claudePath: 'C:\\Users\\me\\.local\\bin\\claude.exe', claudeConfigDir: 'D:\\claude-cfg' },
       })
     // 缺省 agent 视为 codex；手机自带的路径被丢弃并以设置为准。
     expect(injectAgentPath(
-      { targetId: 'local', method: 'codex.open', params: { codexPath: '/tmp/evil', claudePath: '/tmp/x' } },
+      { targetId: 'local', method: 'codex.open', params: {
+        codexPath: '/tmp/evil', claudePath: '/tmp/x', codexHome: '/tmp/arbitrary', claudeConfigDir: '/tmp/other',
+      } },
       APP_SETTINGS,
-    )).toEqual({ targetId: 'local', method: 'codex.open', params: { codexPath: 'C:\\tools\\codex.exe' } })
+    )).toEqual({ targetId: 'local', method: 'codex.open', params: {
+      codexPath: 'C:\\tools\\codex.exe', codexHome: 'C:\\Users\\me\\.codex',
+    } })
     // 设置里路径为空或没有该目标：不补路径，由 server 自动解析；手机路径同样丢弃。
     expect(injectAgentPath(
       { targetId: 'local', method: 'codex.open', params: { agent: 'pi', piPath: '/tmp/pi' } },
@@ -361,6 +371,14 @@ describe('手机网关纯逻辑', () => {
       },
     })
     expect(mobileEventFromRouter('secret.internal', {})).toBeNull()
+  })
+
+  it('拦截桌面终端事件并保留其他服务端事件', () => {
+    for (const name of ['term.data', 'term.exit', 'term.resized', 'term.error']) {
+      expect(mobileEventFromRouter('server.evt', { targetId: 'local', name, payload: {} })).toBeNull()
+    }
+    const payload = { targetId: 'local', name: 'fs.changed', payload: { path: '/project/file' } }
+    expect(mobileEventFromRouter('server.evt', payload)).toEqual({ name: 'server.evt', payload })
   })
 })
 
@@ -447,6 +465,18 @@ describe('手机网关 HTTPS 集成', () => {
     expect(agentRpc.status).toBe(200)
     expect(lastCodexSend).toMatchObject({ targetId: 'local', agent: 'claude' })
 
+    const turn = await requestJson('/rpc', 'POST', {
+      method: 'codex.send',
+      params: { targetId: 'local', msg: { id: 'c1', method: 'turn/start', params: {
+        threadId: 'thread', input: [], claudePermissionMode: 'bypassPermissions',
+        qingcodeAccessOverride: true, approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' },
+      } } },
+    }, token)
+    expect(turn.status).toBe(200)
+    expect(lastCodexSend).toEqual({ targetId: 'local', msg: {
+      id: 'c1', method: 'turn/start', params: { threadId: 'thread', input: [] },
+    } })
+
     const agents = await requestJson('/rpc', 'POST', { method: 'mobile.agents', params: {} }, token)
     expect(agents.status).toBe(200)
     expect(agents.json()).toEqual(mobileAgentsFromSettings(APP_SETTINGS))
@@ -457,7 +487,9 @@ describe('手机网关 HTTPS 集成', () => {
       'POST',
       {
         method: 'server.req',
-        params: { targetId: 'local', method: 'codex.open', params: { agent: 'claude', claudePath: '/tmp/evil' } },
+        params: { targetId: 'local', method: 'codex.open', params: {
+          agent: 'claude', claudePath: '/tmp/evil', claudeConfigDir: '/tmp/arbitrary',
+        } },
       },
       token
     )
@@ -465,7 +497,7 @@ describe('手机网关 HTTPS 集成', () => {
     expect(lastServerReq).toEqual({
       targetId: 'local',
       method: 'codex.open',
-      params: { agent: 'claude', claudePath: 'C:\\Users\\me\\.local\\bin\\claude.exe' },
+      params: { agent: 'claude', claudePath: 'C:\\Users\\me\\.local\\bin\\claude.exe', claudeConfigDir: 'D:\\claude-cfg' },
     })
 
     const fileRead = await requestJson(
@@ -493,6 +525,7 @@ describe('手机网关 HTTPS 集成', () => {
 
     const stream = openEventStream(token)
     await stream.ready
+    router.emit('server.evt', { targetId: 'local', name: 'term.data', payload: { termId: 't1', seq: 1, data: 'dGVzdA==' } })
     router.emit('target.state', { id: 'local', state: 'ready' })
     expect(await stream.event).toEqual({
       name: 'target.state',
@@ -511,5 +544,34 @@ describe('手机网关 HTTPS 集成', () => {
     gateway?.disconnectDevice(deviceId)
     const revoked = await requestJson('/rpc', 'POST', { method: 'targets.list', params: {} }, token)
     expect(revoked.status).toBe(401)
+  }, 20_000)
+
+  it('手机只收到自己接回的终端事件，其他设备不能接回同一终端', async () => {
+    const owner = await deviceStore.add({ name: '本人手机', ip: '127.0.0.1', now })
+    const watcher = await deviceStore.add({ name: '另一台手机', ip: '127.0.0.1', now })
+    const project = { projectId: 'test-project', targetId: 'local' }
+    const call = (method: string, params: unknown, token: string) => requestJson('/rpc', 'POST', { method, params }, token)
+    expect((await call('mobile.term.open', project, owner.token)).status).toBe(403)
+    gateway?.setTerminalEnabled(true)
+    const interested = (event: GatewayEvent) => event.name === 'mobile.terminal' || event.name === 'target.state'
+    const first = openEventStream(owner.token, interested)
+    const second = openEventStream(watcher.token, interested)
+    try {
+      await Promise.all([first.ready, second.ready])
+      const opened = await call('mobile.term.open', project, owner.token)
+      expect(opened.status).toBe(200)
+      const { termId } = opened.json() as { termId: string }
+      expect((await call('mobile.term.attach', { ...project, termId }, watcher.token)).status).toBe(403)
+      expect((await call('mobile.term.attach', { ...project, termId }, owner.token)).status).toBe(200)
+      const data = { targetId: 'local', name: 'term.data', payload: { termId, seq: 1, data: 'YQ==' } }
+      router.emit('server.evt', data)
+      router.emit('target.state', { id: 'local', state: 'ready' })
+      expect(await first.event).toEqual({ name: 'mobile.terminal', payload: { ...data, projectId: project.projectId } })
+      expect((await second.event).name).toBe('target.state')
+    } finally {
+      first.close()
+      second.close()
+      gateway?.setTerminalEnabled(false)
+    }
   }, 20_000)
 })

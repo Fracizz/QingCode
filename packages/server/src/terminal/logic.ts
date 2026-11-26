@@ -187,8 +187,11 @@ export function parseSnapshotParams(p: Record<string, unknown>): {
   }
 }
 
-/** 默认 shell：$SHELL（须为绝对路径），否则 /bin/sh。 */
-export function defaultShell(env: NodeJS.ProcessEnv): string {
+export function defaultShell(env: NodeJS.ProcessEnv, platform = process.platform): string {
+  if (platform === 'win32') {
+    const command = env.ComSpec ?? env.COMSPEC
+    return command && path.win32.isAbsolute(command) && !hasNul(command) ? command : 'cmd.exe'
+  }
   const shell = env.SHELL
   return typeof shell === 'string' && shell.startsWith('/') && !hasNul(shell) ? shell : '/bin/sh'
 }

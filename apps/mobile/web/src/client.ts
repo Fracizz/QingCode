@@ -73,6 +73,10 @@ function connectionParams(conn: Connection): JsonRecord {
 export class GatewayClient implements Gateway {
   constructor(private readonly native: NativeCaller) {}
 
+  device<T>(method: string, params?: unknown, timeoutMs?: number): Promise<T> {
+    return this.native.call<T>(method, params, timeoutMs)
+  }
+
   probe(host: string, port: number): Promise<ProbeResult> {
     return this.native.call<ProbeResult>('probe', { host, port })
   }
@@ -148,6 +152,14 @@ export function createGateway(): Gateway {
 export function getGateway(): Gateway {
   if (!singleton) singleton = createGateway()
   return singleton
+}
+
+export function callDevice<T>(method: string, params?: unknown, timeoutMs?: number): Promise<T> {
+  const gateway = getGateway()
+  if (!(gateway instanceof GatewayClient)) {
+    return Promise.reject(new NativeRequestError('此功能需要 Android 应用', 'native_unavailable'))
+  }
+  return gateway.device<T>(method, params, timeoutMs)
 }
 
 /** 仅供单测注入假网关。 */

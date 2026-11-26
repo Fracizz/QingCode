@@ -1,7 +1,7 @@
 import { Children, isValidElement, memo, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, LoaderCircle, Pencil, Terminal, Wand2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, GitFork, ImageIcon, Lightbulb, ListChecks, LoaderCircle, Pencil, Terminal, Wand2 } from 'lucide-react'
 import type { ItemView, UserInput } from '@qn/codex-client'
 import { basename, editUserText, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
@@ -263,6 +263,12 @@ export const MessageItem = memo(function MessageItem({
       return <CommandItem item={item} />
     case 'fileChange':
       return <FileChangeItem item={item} />
+    case 'subagent':
+      return (
+        <ToolRow icon={<GitFork size={14} />} summary={[item.title, item.status].filter(Boolean).join(' · ')}>
+          {item.detail && <div className="whitespace-pre-wrap break-words text-[13px] text-qn-muted">{item.detail}</div>}
+        </ToolRow>
+      )
     case 'other':
       return (
         <ToolRow icon={<FileText size={14} />} summary={item.type}>

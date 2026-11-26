@@ -269,6 +269,13 @@ describe('assistant / user 完整消息 → v2 item', () => {
     expect(mcp.tool).toBe('lookup')
   })
 
+  it.each(['Agent', 'Task'])('标记 Claude 的 %s 子代理委派', (name) => {
+    const options = { description: '检查文档', subagent_type: 'general-purpose' }
+    expect(toolUseItem('i1', name, options, '/work')).toMatchObject({
+      type: 'dynamicToolCall', namespace: 'claude', tool: name, arguments: options, status: 'inProgress',
+    })
+  })
+
   it('历史回放才生成 userMessage，实时流忽略普通用户文本', () => {
     const user = {
       type: 'user',

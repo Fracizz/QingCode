@@ -22,7 +22,7 @@ export function formatMiB(bytes: number): string {
 export type ScreenResult<T> = { accepted: T[]; rejected: { name: string; reason: string }[] }
 
 /**
- * 粘贴/选择的文件进入附件前先筛一遍图片：类型、大小、张数、当前模型是否支持图片。
+ * 附件入口先筛一遍图片：类型、大小、张数、当前模型是否支持图片。
  * 非图片文件原样放行（由附件流程按文件处理）。被拒的逐个给出原因，调用方负责提示，不静默丢弃。
  */
 export function screenFiles<T extends FileLike>(
@@ -82,7 +82,7 @@ export function imageDataUrlProblem(url: string): string | null {
 }
 
 /**
- * 发送前对整组图片再校验一次（拖入走的是聊天区自己的附件流程，没经过 screenFiles）。
+ * 发送前再校验一次，因为添加图片后仍可能切换模型。
  * 返回阻止发送的原因；模型不支持图片时同样阻止，让用户自己移除，而不是悄悄丢掉。
  */
 export function imageSendBlock(dataUrls: string[], imagesAllowed: boolean, unsupportedReason?: string): string | null {

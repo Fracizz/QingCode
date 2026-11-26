@@ -1,4 +1,5 @@
 // 手机端状态纯逻辑：未知 JSON 的归一化、事件折叠、注释拼接。无 DOM / 网络依赖。
+import { approvalResponse, type ApprovalDecision, type ApprovalView, type UserInput } from '@qn/codex-client'
 import { isValidHost, normalizeFingerprint, parsePort } from './link'
 import type { AgentKind, Connection, Project, SshAuth, Target, TargetState, TargetStateEvent } from './types'
 
@@ -22,11 +23,109 @@ export type ThreadSummary = {
   preview: string
   cwd: string
   updatedAt: number
+  activity?: 'pending' | 'running'
   /** 会话所属 Agent；打开会话时必须用它对应的会话通道。 */
   agent: AgentKind
 }
 
 export type Annotation = { id: string; quote: string; comment: string }
+export type ChatDraft = { text: string; annotations: Annotation[] }
+export type SavedChat = { targetId: string; projectId: string; agent: AgentKind; threadId: string }
+export type RepairReason = 'fingerprint' | 'unauthorized'
+export type MobileApprovalDecision = ApprovalDecision | 'cancel'
+
+export function draftKey(
+  desktopId: string, targetId: string, projectId: string | null, agent: AgentKind, threadId: string | null,
+  fingerprint: string | null = null,
+): string {
+  return JSON.stringify([desktopId, targetId, projectId, agent, threadId, fingerprint])
+}
+
+export function parseStoredRecord(raw: string | null): JsonRecord {
+  try {
+    const value: unknown = raw === null ? null : JSON.parse(raw)
+    return isRecord(value) ? value : {}
+  } catch {
+    return {}
+  }
+}
+
+export function parseDrafts(raw: string | null): Record<string, ChatDraft> {
+  const drafts: Record<string, ChatDraft> = Object.create(null)
+  for (const [key, value] of Object.entries(parseStoredRecord(raw))) {
+    if (!isRecord(value) || typeof value.text !== 'string' || !Array.isArray(value.annotations)) continue
+    const annotations = value.annotations.filter((item): item is Annotation => isRecord(item)
+      && typeof item.id === 'string' && typeof item.quote === 'string' && typeof item.comment === 'string')
+    drafts[key] = { text: value.text, annotations }
+  }
+  return drafts
+}
+
+export function parseSavedChats(raw: string | null): Record<string, SavedChat> {
+  const chats: Record<string, SavedChat> = Object.create(null)
+  for (const [key, entry] of Object.entries(parseStoredRecord(raw))) {
+    if (!isRecord(entry)) continue
+    const { targetId, projectId, threadId, agent } = entry
+    if (typeof targetId !== 'string' || !targetId || typeof projectId !== 'string' || !projectId
+      || typeof threadId !== 'string' || !threadId || (agent !== 'codex' && agent !== 'claude' && agent !== 'pi')) continue
+    chats[key] = { targetId, projectId, threadId, agent }
+  }
+  return chats
+}
+
+export function connectionRepairReason(err: unknown): RepairReason | null {
+  const code = errorCode(err)
+  const message = friendlyError(err, '')
+  if (code === 'fingerprint' || /地址指向了另一台电脑|证书指纹不匹配/.test(message)) return 'fingerprint'
+  if (code === 'unauthorized' || /设备未配对|令牌已失效|设备已被撤销/.test(message)) return 'unauthorized'
+  return null
+}
+
+export function availableApprovalDecisions(approval: ApprovalView, agent: AgentKind): MobileApprovalDecision[] {
+  if (agent === 'pi') return []
+  const raw = isRecord(approval.raw) ? approval.raw : null
+  const params = isRecord(raw?.params) ? raw.params : null
+  const supplied = params?.availableDecisions
+  const withSession: MobileApprovalDecision[] = ['accept', 'acceptForSession', 'decline']
+  let decisions: MobileApprovalDecision[]
+  switch (approval.method) {
+    case 'item/commandExecution/requestApproval':
+    case 'item/fileChange/requestApproval':
+    case 'execCommandApproval':
+    case 'applyPatchApproval':
+      decisions = [...withSession, 'cancel']
+      break
+    case 'item/permissions/requestApproval':
+      decisions = withSession
+      break
+    default:
+      return []
+  }
+  const available = Array.isArray(supplied) ? decisions.filter((item) => supplied.includes(item)) : decisions
+  return available.some((item) => item === 'decline' || item === 'cancel') ? available : []
+}
+
+export function mobileApprovalReply(approval: ApprovalView, decision: MobileApprovalDecision): unknown {
+  if (decision !== 'cancel') return approvalResponse(approval, decision)
+  const legacy = approval.method === 'execCommandApproval' || approval.method === 'applyPatchApproval'
+  return { decision: legacy ? 'abort' : 'cancel' }
+}
+
+export function buildMobileTurnInput(agent: AgentKind, text: string, attachments: readonly UserInput[]): UserInput[] {
+  const extras: UserInput[] = []
+  const fileLines: string[] = []
+  for (const item of attachments) {
+    if (agent === 'codex' && item.type === 'mention' && !/^[a-z][a-z0-9+.-]*:\/\//i.test(item.path)) {
+      fileLines.push(`- ${item.name || item.path}: ${item.path}`)
+    } else {
+      extras.push(item)
+    }
+  }
+  const body = fileLines.length
+    ? [text, ['附件文件（请按需读取）：', ...fileLines].join('\n')].filter(Boolean).join('\n\n')
+    : text
+  return body ? [{ type: 'text', text: body, text_elements: [] }, ...extras] : extras
+}
 
 export function toTimestamp(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0
@@ -201,6 +300,12 @@ export function toThreadSummaries(value: unknown, agent: AgentKind = 'codex'): T
     const id = text(entry.id)
     if (!id) continue
     const preview = text(entry.preview)
+    const status = isRecord(entry.status) ? entry.status : null
+    const activity = status?.type === 'active'
+      ? Array.isArray(status.activeFlags) && status.activeFlags.some((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput')
+        ? 'pending'
+        : 'running'
+      : undefined
     summaries.push({
       id,
       title: text(entry.name) || preview.split('\n')[0]?.trim() || '未命名会话',
@@ -208,6 +313,7 @@ export function toThreadSummaries(value: unknown, agent: AgentKind = 'codex'): T
       cwd: text(entry.cwd),
       updatedAt: toTimestamp(entry.updatedAt ?? entry.recencyAt ?? entry.createdAt),
       agent,
+      ...(activity ? { activity } : {}),
     })
   }
   return summaries.sort((a, b) => b.updatedAt - a.updatedAt)

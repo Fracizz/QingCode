@@ -346,10 +346,16 @@ describe('server 端到端（daemon + connect --stdio + codex 中继）', () => 
     bridge.close()
   }, 60_000)
 
-  it('ensure --replace 在版本不同且无进行中 turn 时重启 daemon', async () => {
+  const hasPythonPty = process.platform !== 'win32' &&
+    spawnSync('python3', ['-I', '-c', 'import pty, termios'], { timeout: 5000 }).status === 0
+  it.each([
+    { terminal: false, label: '空闲时重启' },
+    { terminal: true, label: '保留活跃终端，关闭终端后重启' },
+  ].filter(({ terminal }) => !terminal || hasPythonPty))('ensure --replace 版本不同时 $label', async ({ terminal }) => {
     const oldRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'qn-server-replace-'))
     const oldBundle = path.join(oldRoot, 'qn-server-old.cjs')
     const replaceState = path.join(oldRoot, 'state')
+    let replacePid = 0
     try {
       // 用插件把 package.json 内联版本换成旧版，模拟已部署的旧 daemon。
       const oldVersion: Plugin = {
@@ -383,7 +389,33 @@ describe('server 端到端（daemon + connect --stdio + codex 中继）', () => 
       )
       expect(old.status).toBe(0)
       const oldInfo = JSON.parse(old.stdout.trim()) as { version: string; pid: number; token: string }
+      replacePid = oldInfo.pid
       expect(oldInfo.version).toBe('0.0.0')
+
+      if (terminal) {
+        const bridge = new Bridge(oldBundle, replaceState)
+        try {
+          expect((await bridge.hello(oldInfo.token)).t).toBe('welcome')
+          const opened = await bridge.req('term.open', { cwd: oldRoot, shell: '/bin/sh', backend: 'python' })
+          const termId = opened.termId
+          await expect(bridge.req('server.shutdown', { whenIdle: true })).rejects.toThrow('有进行中的对话或终端')
+          const deferred = spawnSync(
+            process.execPath,
+            [bundle, 'ensure', '--state-dir', replaceState, '--replace'],
+            { encoding: 'utf8', timeout: 30_000, windowsHide: true },
+          )
+          expect(deferred.status).toBe(0)
+          expect(JSON.parse(deferred.stdout)).toMatchObject({
+            started: false,
+            version: oldInfo.version,
+            pid: oldInfo.pid,
+          })
+          expect(await bridge.req('term.attach', { termId, sinceSeq: 0 })).toMatchObject({ alive: true })
+          await bridge.req('term.close', { termId })
+        } finally {
+          bridge.close()
+        }
+      }
 
       const replaced = spawnSync(
         process.execPath,
@@ -397,6 +429,7 @@ describe('server 端到端（daemon + connect --stdio + codex 中继）', () => 
         token: string
         started: boolean
       }
+      replacePid = info.pid
       expect(info.started).toBe(true)
       expect(info.version).toBe(VERSION)
       expect(info.pid).not.toBe(oldInfo.pid)
@@ -408,6 +441,7 @@ describe('server 端到端（daemon + connect --stdio + codex 中继）', () => 
       bridge.close()
       await until(() => !alive(info.pid), 5_000)
     } finally {
+      if (replacePid && alive(replacePid)) process.kill(replacePid)
       fs.rmSync(oldRoot, { recursive: true, force: true })
     }
   }, 90_000)

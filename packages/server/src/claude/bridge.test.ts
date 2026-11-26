@@ -2,8 +2,9 @@
  * bridge 层端到端：注入假的 query 工厂，跑 open → thread/start → turn/start → delta
  * → approval → turn/completed → interrupt，同时验证 seq/回放与 agent host 的中继规则。
  */
-import type { Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { Options, PermissionMode, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ServerMessage } from '@qn/protocol'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { AgentHostError, type AgentHostHub } from '../codexHost'
 import { AsyncQueue, ClaudeBridge, type ClaudeDeps, type QueryLike } from './bridge'
@@ -11,6 +12,7 @@ import type { Json } from './v2'
 
 class FakeQuery implements QueryLike {
   readonly messages = new AsyncQueue<unknown>()
+  readonly permissionChanges: PermissionMode[] = []
   interrupted = 0
   closed = false
   constructor(
@@ -28,6 +30,10 @@ class FakeQuery implements QueryLike {
 
   async interrupt(): Promise<void> {
     this.interrupted += 1
+  }
+
+  async setPermissionMode(mode: PermissionMode): Promise<void> {
+    this.permissionChanges.push(mode)
   }
 
   close(): void {
@@ -351,6 +357,88 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
     })
     expect(content[1]?.type).toBe('text')
     expect(content[1]?.text).toBe('/review 看这张图\n\n附件文件（请按需读取）：\n- a.txt: /w/a.txt')
+  })
+
+  it('按轮应用用户选的权限，并使普通轮次恢复默认权限', async () => {
+    const h = harness()
+    await h.bridge.open()
+    request(h, 'start', 'thread/start', { cwd: '/work' })
+    const threadId = (((await response(h, 'start')).result as Json).thread as Json).id as string
+    const input = [{ type: 'text', text: '检查文件' }]
+    const send = async (id: string, mode?: string) => {
+      request(h, id, 'turn/start', { threadId, input, claudePermissionMode: mode })
+      expect(await response(h, id)).toHaveProperty('result.turn.status', 'inProgress')
+    }
+    const complete = async () => {
+      h.queries.at(-1)?.emit({ type: 'result', subtype: 'success', is_error: false, usage: {} })
+      await until(() => h.bridge.activeTurns === 0)
+    }
+
+    try {
+      await send('plan', 'plan')
+      expect(h.queries[0]?.options).toMatchObject({ permissionMode: 'plan' })
+      expect(h.queries[0]?.options?.allowDangerouslySkipPermissions).toBeUndefined()
+      await complete()
+
+      await send('edit', 'acceptEdits')
+      expect(h.queries).toHaveLength(1)
+      expect(h.queries[0]?.permissionChanges).toEqual(['acceptEdits'])
+      await complete()
+
+      await send('bypass', 'bypassPermissions')
+      expect(h.queries[0]?.closed).toBe(true)
+      expect(h.queries[1]?.options).toMatchObject({
+        resume: threadId,
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+      })
+      await complete()
+
+      await send('default')
+      expect(h.queries).toHaveLength(2)
+      expect(h.queries[1]?.permissionChanges).toEqual(['default'])
+      await complete()
+
+      request(h, 'unknown', 'turn/start', { threadId, input, claudePermissionMode: 'unsupported' })
+      expect((await response(h, 'unknown')).error).toMatchObject({ code: -32602 })
+      expect(h.bridge.activeTurns).toBe(0)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('配置目录的改变只应用到后来启动的 query', async () => {
+    const h = harness()
+    const original = path.resolve('claude-original')
+    const changed = path.resolve('claude-changed')
+    const openThread = async (id: string) => {
+      request(h, id, 'thread/start', { cwd: '/work' })
+      return (((await response(h, id)).result as Json).thread as Json).id as string
+    }
+    const send = async (id: string, threadId: string) => {
+      request(h, id, 'turn/start', { threadId, input: [{ type: 'text', text: '你好' }] })
+      expect(await response(h, id)).toHaveProperty('result.turn.status', 'inProgress')
+    }
+
+    try {
+      await h.bridge.open({ claudeConfigDir: original })
+      const first = await openThread('first')
+      await send('first-turn', first)
+      expect(h.queries[0]?.options?.env?.CLAUDE_CONFIG_DIR).toBe(original)
+
+      await expect(h.bridge.open({ claudeConfigDir: 'relative' })).rejects.toMatchObject({ code: 'params' })
+      await h.bridge.open({ claudeConfigDir: changed })
+      expect(h.queries[0]?.closed).toBe(false)
+      expect(h.queries[0]?.options?.env?.CLAUDE_CONFIG_DIR).toBe(original)
+      await send('second-turn', await openThread('second'))
+      expect(h.queries[1]?.options?.env?.CLAUDE_CONFIG_DIR).toBe(changed)
+
+      await h.bridge.open()
+      await send('third-turn', await openThread('third'))
+      expect(h.queries[2]?.options?.env?.CLAUDE_CONFIG_DIR).toBe(process.env.CLAUDE_CONFIG_DIR)
+    } finally {
+      h.bridge.shutdown()
+    }
   })
 
   it('turn/start 没有文本/图片/附件，或图片类型不支持时返回 -32602', async () => {

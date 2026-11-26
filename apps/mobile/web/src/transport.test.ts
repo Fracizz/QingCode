@@ -109,6 +109,22 @@ describe('MobileCodexTransport', () => {
     expect(seen).toHaveLength(1)
     expect(seen[0]).toMatchObject({ id: 'c9', error: { code: -32000, message: '网关拒绝' } })
   })
+
+  it('重复回放只投递一次，旧序号未决审批仍可补收，daemon 换代可从零开始', () => {
+    const transport = new MobileCodexTransport('local', async () => null)
+    const received = vi.fn()
+    transport.onMessage(received)
+    const recv = (seq: number) => transport.handleRecv({ targetId: 'local', seq, msg: { id: seq } })
+    recv(4)
+    recv(4)
+    recv(2)
+    expect(received.mock.calls.map((call) => call[1])).toEqual([4, 2])
+    expect(transport.getLastSeq()).toBe(4)
+    transport.resetSequence()
+    recv(2)
+    expect(received).toHaveBeenCalledTimes(3)
+    expect(transport.getLastSeq()).toBe(2)
+  })
 })
 
 type StreamCb = (msg: { stream: string; event: GatewayEvent } | { stream: string; closed: true; error: string | null }) => void
@@ -194,5 +210,22 @@ describe('EventStreamController', () => {
     await flush()
     expect(handlers.onClose).toHaveBeenCalledWith('电脑离线')
     expect(scheduled).toHaveLength(1)
+  })
+
+  it('恢复前台可立即检查流，收到设备撤销就停止重试', async () => {
+    const { gateway, emit } = fakeStreamGateway()
+    const schedule = vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>)
+    const handlers = { onEvent: vi.fn(), onOpen: vi.fn(), onClose: vi.fn(), onRepair: vi.fn() }
+    const controller = new EventStreamController(gateway, () => CONN, handlers, schedule, vi.fn())
+    controller.start()
+    await flush()
+    controller.wake(true)
+    await flush()
+    expect(gateway.openEvents).toHaveBeenCalledTimes(2)
+    emit({ stream: 's1', event: { name: 'unauthorized' } })
+    expect(handlers.onRepair).toHaveBeenCalledExactlyOnceWith('unauthorized', '设备已被撤销，请重新配对')
+    controller.wake(true)
+    expect(gateway.openEvents).toHaveBeenCalledTimes(2)
+    expect(schedule).not.toHaveBeenCalled()
   })
 })

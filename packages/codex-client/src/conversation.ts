@@ -14,6 +14,7 @@ import type {
   Thread,
   UserInput,
 } from './codex-types'
+import { describeSubagentItem, type SubagentItemView } from './subagents'
 
 export type ConversationState = { threads: Record<string, ThreadView> }
 
@@ -56,6 +57,7 @@ export type ItemView =
   | { kind: 'reasoning'; id: string; summary: string; streaming: boolean }
   | { kind: 'command'; id: string; command: string; cwd?: string; output: string; exitCode?: number | null; status: string }
   | { kind: 'fileChange'; id: string; changes: { path: string; kind: string; diff?: string }[]; status: string }
+  | SubagentItemView
   | { kind: 'other'; id: string; type: string; summary: string }
 
 export type ApprovalView = {
@@ -484,6 +486,8 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
     case 'fileChange':
       return { kind: 'fileChange', id, changes: fileChanges(item.changes), status }
     default: {
+      const subagent = describeSubagentItem(item, id)
+      if (subagent) return subagent
       const summary =
         scalarText(item.text) ||
         scalarText(item.review) ||

@@ -1,6 +1,7 @@
 import type { WorkspaceHandlers } from '../registry'
 import { fsCreateFile, fsDelete, fsMkdir, fsRead, fsRename, fsStat, fsWrite } from './ops'
 import { fsSearch, fsSearchCancel } from './search'
+import { listProjectFiles, readProjectFile, searchProjectFiles } from './projectFiles'
 import { fsWatch } from './watch'
 
 export const fsHandlers: WorkspaceHandlers = {
@@ -13,5 +14,8 @@ export const fsHandlers: WorkspaceHandlers = {
   'fs.delete': fsDelete,
   'fs.search': fsSearch,
   'fs.searchCancel': fsSearchCancel,
+  'fs.project.list': listProjectFiles,
+  'fs.project.search': searchProjectFiles,
+  'fs.project.read': readProjectFile,
   'fs.watch': fsWatch,
 }

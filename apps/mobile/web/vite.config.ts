@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
@@ -5,6 +6,15 @@ import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 
 const webRoot = dirname(fileURLToPath(import.meta.url))
+const desktopRequire = createRequire(resolve(webRoot, '../../desktop/package.json'))
+
+// 终端和桌面共用现有 xterm 依赖；pnpm 隔离安装时从桌面包解析。
+const terminalAliases = ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-search', '@xterm/addon-unicode11']
+  .map((name) => {
+    const manifest = desktopRequire.resolve(`${name}/package.json`)
+    const { module, main } = desktopRequire(manifest) as { module?: string; main: string }
+    return { find: new RegExp(`^${name}$`), replacement: resolve(dirname(manifest), module ?? main) }
+  })
 
 // T12 用 shouldInterceptRequest 直接喂本地资源，响应里没有 CORS 头；去掉 crossorigin 避免真机上被 CORS 拦下。
 const stripCrossOrigin = (): Plugin => ({
@@ -23,6 +33,12 @@ export default defineConfig({
   // APK 里页面从 assets/web/index.html 加载，资源必须走相对路径。
   base: './',
   plugins: [react(), tailwindcss(), stripCrossOrigin()],
+  resolve: {
+    alias: [
+      { find: '@xterm/xterm/css/xterm.css', replacement: desktopRequire.resolve('@xterm/xterm/css/xterm.css') },
+      ...terminalAliases,
+    ],
+  },
   build: {
     outDir: resolve(webRoot, '../android/assets/web'),
     emptyOutDir: true,

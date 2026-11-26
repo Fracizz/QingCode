@@ -1,6 +1,6 @@
 # Java 纯逻辑小测
 
-`PureLogicTest.java` 只依赖 JDK，验证 `Json.quote/stringify` 与 `Fingerprints.normalize/toHex/sha256Hex`。在仓库根目录运行：
+`PureLogicTest.java` 只依赖 JDK，覆盖 JSON、证书指纹、配对链接、文件名、分块限制、图片签名及在线更新 URL 校验。在仓库根目录运行：
 
 ```powershell
 $jdk = 'D:\code\.qn-toolchain\jdk'
@@ -8,8 +8,10 @@ New-Item -ItemType Directory -Force -Path apps/mobile/android/build/test-classes
 & "$jdk\bin\javac.exe" --release 17 -encoding UTF-8 -d apps/mobile/android/build/test-classes `
   apps/mobile/android/src/com/qingcode/next/Json.java `
   apps/mobile/android/src/com/qingcode/next/Fingerprints.java `
+  apps/mobile/android/src/com/qingcode/next/BridgeException.java `
+  apps/mobile/android/src/com/qingcode/next/NativeFileRules.java `
   apps/mobile/android/tests/PureLogicTest.java
 & "$jdk\bin\java.exe" -cp apps/mobile/android/build/test-classes com.qingcode.next.PureLogicTest
 ```
 
-输出 `pure logic tests passed` 即通过。网络、TLS、Keystore、WebView 等真机相关逻辑由总管安排真机验收。
+输出 `pure logic tests passed` 即通过。真机应覆盖扫码应用可用与不可用、冷启动深链、多图选择及取消、完整下载及取消、中文键盘及旋转，以及 APK 签名不符和系统安装确认。

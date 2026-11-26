@@ -1,9 +1,11 @@
 import type { ItemView } from '@qn/codex-client'
-import { createContext, useContext, useMemo, type ReactNode } from 'react'
+import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { allowLocalUrl, parseFileHref, resolvePath, segmentPaths, type FileLocation } from '../fileLinks'
-import { Badge, Button } from './ui'
+import { callDevice } from '../client'
+import { getWindowNativePort } from '../native'
+import { Badge, Button, Dialog } from './ui'
 
 /** 消息里的路径按会话 cwd 解析，点击后在只读查看页打开；没有提供时路径只是普通文本。 */
 export type FileActions = {
@@ -128,17 +130,38 @@ function DiffBlock({ text }: { text: string }) {
   )
 }
 
-function QuoteButton({ text, onQuote }: { text: string; onQuote: (text: string) => void }) {
+function MessageActions({ text, onQuote, getPlainText }: {
+  text: string; onQuote: (text: string) => void; getPlainText?: () => string
+}) {
+  const [open, setOpen] = useState(false)
+  const [status, setStatus] = useState('')
   if (!text.trim()) return null
+
+  async function copy(value: string) {
+    try {
+      if (getWindowNativePort()) await callDevice('clipboard.write', { text: value })
+      else await navigator.clipboard.writeText(value)
+      setOpen(false)
+      setStatus('已复制')
+    } catch {
+      setStatus('复制失败，可长按选中文字后复制')
+    }
+  }
+
   return (
-    <div className="mt-1 flex justify-end">
-      <Button
-        variant="ghost"
-        className="px-3 py-1 text-[11px]"
-        onClick={() => onQuote(text.slice(0, 4000))}
-      >
-        ❝ 引用
-      </Button>
+    <div className="mt-1 flex items-center justify-end gap-1">
+      {status && <span className="text-xs text-qn-muted" role="status">{status}</span>}
+      <Button variant="ghost" className="p-0! text-qn-muted" aria-label="消息操作" onClick={() => { setStatus(''); setOpen(true) }}>⋯</Button>
+      {open && (
+        <Dialog title="消息操作" onClose={() => setOpen(false)}>
+          <div className="grid gap-1">
+            <Button variant="ghost" onClick={() => { onQuote(text.slice(0, 4000)); setOpen(false) }}>引用到对话</Button>
+            <Button variant="ghost" onClick={() => void copy(text)}>{getPlainText ? '复制 Markdown' : '复制文本'}</Button>
+            {getPlainText && <Button variant="ghost" onClick={() => void copy(getPlainText())}>复制纯文本</Button>}
+            {status && <p className="text-xs text-qn-warn" role="alert">{status}</p>}
+          </div>
+        </Dialog>
+      )}
     </div>
   )
 }
@@ -171,7 +194,7 @@ function CommandItem({
           </pre>
         </details>
       )}
-      <QuoteButton text={item.command || item.output} onQuote={onQuote} />
+      <MessageActions text={item.command || item.output} onQuote={onQuote} />
     </div>
   )
 }
@@ -224,7 +247,7 @@ function FileChangeItem({
           {typeof change.diff === 'string' && change.diff !== '' && <DiffBlock text={change.diff} />}
         </div>
       ))}
-      <QuoteButton text={item.changes.map((change) => change.path).join('\n')} onQuote={onQuote} />
+      <MessageActions text={item.changes.map((change) => change.path).join('\n')} onQuote={onQuote} />
     </div>
   )
 }
@@ -238,6 +261,7 @@ export function MessageItem({
   onQuote: (text: string) => void
   agentName?: string
 }) {
+  const markdownRef = useRef<HTMLDivElement>(null)
   switch (item.kind) {
     case 'user':
       return (
@@ -245,22 +269,27 @@ export function MessageItem({
           <div className="max-w-[88%] rounded-xl border border-qn-accent/40 bg-qn-accent/10 px-3 py-2">
             <div className="mb-1 text-right text-[11px] text-qn-muted">你</div>
             <div className="whitespace-pre-wrap break-words text-sm">{item.text}</div>
-            <QuoteButton text={item.text} onQuote={onQuote} />
+            {item.images && item.images.length > 0 && <div className="mt-1 flex flex-wrap gap-2">
+              {item.images.map((url, index) => /^data:image\/(?:jpeg|png|gif|webp);base64,/i.test(url)
+                ? <img key={index} src={url} className="max-h-36 max-w-full rounded-lg object-contain" alt={`附件图片 ${index + 1}`} loading="lazy" />
+                : <Badge key={index}>图片 {index + 1}</Badge>)}
+            </div>}
+            <MessageActions text={item.text} onQuote={onQuote} />
           </div>
         </div>
       )
     case 'agent':
       return (
-        <div className="rounded-xl border border-qn-border bg-qn-card px-3 py-2">
+        <div className="px-1 py-2">
           <div className="mb-1 flex items-center gap-2 text-[11px] text-qn-muted">
             <span>◆ {agentName ?? 'Agent'}</span>
             {item.streaming && <Badge tone="accent">生成中</Badge>}
           </div>
-          <div className="qn-markdown break-words text-sm">
+          <div ref={markdownRef} className="qn-markdown break-words text-sm">
             <Markdown text={item.text} streaming={item.streaming === true} />
             {item.streaming && <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse bg-qn-accent align-middle" />}
           </div>
-          <QuoteButton text={item.text} onQuote={onQuote} />
+          <MessageActions text={item.text} onQuote={onQuote} getPlainText={() => markdownRef.current?.innerText ?? item.text} />
         </div>
       )
     case 'reasoning':
@@ -273,19 +302,29 @@ export function MessageItem({
           <div className="mt-2 whitespace-pre-wrap break-words leading-5 text-qn-text/90">
             {item.summary || '（暂无摘要）'}
           </div>
-          <QuoteButton text={item.summary} onQuote={onQuote} />
+          <MessageActions text={item.summary} onQuote={onQuote} />
         </details>
       )
     case 'command':
       return <CommandItem item={item} onQuote={onQuote} />
     case 'fileChange':
       return <FileChangeItem item={item} onQuote={onQuote} />
+    case 'subagent':
+      return (
+        <div className="rounded-xl border border-qn-border bg-black/10 px-3 py-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span>{item.title}</span>
+            {item.status && <Badge>{item.status}</Badge>}
+          </div>
+          {item.detail && <div className="mt-1 whitespace-pre-wrap break-words text-qn-muted">{item.detail}</div>}
+        </div>
+      )
     case 'other':
       return (
         <div className="rounded-xl border border-qn-border bg-black/10 px-3 py-2 text-xs">
           <div className="mb-1 text-[11px] text-qn-muted">{item.type}</div>
           <div className="whitespace-pre-wrap break-words">{item.summary}</div>
-          <QuoteButton text={item.summary} onQuote={onQuote} />
+          <MessageActions text={item.summary} onQuote={onQuote} />
         </div>
       )
   }

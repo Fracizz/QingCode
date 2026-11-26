@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import path from 'node:path'
-import { IpcClient } from './client'
+import { IpcClient, IpcRequestError } from './client'
 import {
   ensureRunDir,
   readDaemonJson,
@@ -47,21 +47,12 @@ export async function ensure(options: EnsureOptions = {}): Promise<EnsureResult>
   let probe = await probeDaemon(paths)
   if (probe) {
     if (options.replace && probe.serverVersion !== VERSION) {
-      const status = (await probe.client.request('codex.status', undefined, PROBE_TIMEOUT_MS).catch(() => null)) as {
-        activeTurns?: unknown
-      } | null
-      const activeTurns = typeof status?.activeTurns === 'number' ? status.activeTurns : 0
-      if (activeTurns === 0) {
-        await probe.client.request('server.shutdown', undefined, PROBE_TIMEOUT_MS).catch(() => null)
-        probe.client.close()
-        probe = null
-        await waitForExit(paths)
-        // Windows 命名管道实例释放会略晚于进程退出。
-        await sleep(RETRY_INTERVAL_MS)
-      } else {
-        // 有进行中的 turn 时不打断旧 daemon，避免丢会话。
-        return finish(probe, paths, false)
-      }
+      if (!(await requestIdleShutdown(probe.client))) return finish(probe, paths, false)
+      probe.client.close()
+      probe = await waitForExit(paths)
+      if (probe) return finish(probe, paths, false)
+      // Windows 命名管道实例释放会略晚于进程退出。
+      await sleep(RETRY_INTERVAL_MS)
     } else {
       return finish(probe, paths, false)
     }
@@ -115,14 +106,37 @@ async function probeDaemon(paths: ServerPaths): Promise<Probe | null> {
   }
 }
 
-async function waitForExit(paths: ServerPaths): Promise<void> {
+async function requestIdleShutdown(client: IpcClient): Promise<boolean> {
+  try {
+    const status = await client.request('codex.status', undefined, PROBE_TIMEOUT_MS) as {
+      activeTurns?: unknown
+    } | null
+    if (status?.activeTurns !== 0) return false
+    // 有些旧版支持终端，但还不会按 whenIdle 拒绝替换请求。
+    const terminalState = await client.request('term.list', undefined, PROBE_TIMEOUT_MS).catch((err: unknown) => {
+      if (err instanceof IpcRequestError && err.code === 'method') return { terminals: [] }
+      throw err
+    }) as { terminals?: Array<{ alive?: unknown }> } | null
+    if (!Array.isArray(terminalState?.terminals) || terminalState.terminals.some((term) => term.alive !== false)) {
+      return false
+    }
+    await client.request('server.shutdown', { whenIdle: true }, PROBE_TIMEOUT_MS)
+    return true
+  } catch {
+    // 无法确认旧进程已接受关闭时，先维持现有连接。
+    return false
+  }
+}
+
+async function waitForExit(paths: ServerPaths): Promise<Probe | null> {
   const deadline = Date.now() + EXIT_WAIT_MS
   while (Date.now() < deadline) {
     const probe = await probeDaemon(paths)
-    if (!probe) return
+    if (!probe) return null
     probe.client.close()
     await sleep(RETRY_INTERVAL_MS)
   }
+  return probeDaemon(paths)
 }
 
 function spawnDaemon(paths: ServerPaths, options: EnsureOptions): void {

@@ -3,7 +3,8 @@
 范围：
 - 新增 `apps/desktop/src/renderer/src/features/composer/**`（含测试）；`apps/desktop/src/renderer/src/components/Composer.tsx` 可改（接入点）；`apps/desktop/src/renderer/src/store/codex.ts` 只改发送消息时组装 `turn/start` 输入的那一处（先重新读取）。
 - server：`packages/server/src/claude/**`、`packages/server/src/pi/**` 中把 v2 `UserInput` 的图片项映射到各自 Agent 原生输入的部分（含测试）。
-- 不改 protocol、backend、手机端、其他渲染文件。
+- `apps/desktop/src/renderer/src/components/ChatPanel.tsx` 仅用于让拖入、粘贴和选择附件走相同的图片校验入口。
+- 不改 protocol、backend、手机端及其余渲染文件。
 
 依据：`docs/agent-adapters.md`（合规：Agent 原生支持什么才发什么，不伪造能力）；Codex v2 输入类型见 `vendor/codex-protocol/ts/v2/UserInput.ts`（`text`/`image`/`localImage`/`mention` 等，以实际文件为准）；Claude SDK `SDKUserMessage` 的 content blocks（`packages/server/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`，图片为 base64 image block）；pi RPC `prompt` 的 `images` 字段（`C:\Users\Administrator\AppData\Roaming\npm\node_modules\@earendil-works\pi-coding-agent\docs\rpc.md`）。文件搜索用已有的 `fs.search`（`apps/desktop/src/renderer/src/features/workspace/serverCall.ts`，参考 `features/explorer` 中 QuickOpen 的用法）。
 

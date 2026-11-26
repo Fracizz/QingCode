@@ -1,0 +1,66 @@
+.qn-terminal-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.qn-terminal-panel > * {
+  flex-shrink: 0;
+}
+
+.qn-terminal-tools {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.qn-terminal-tools .qn-button {
+  flex: 0 0 auto;
+  padding-inline: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.qn-terminal-tools .qn-button[aria-pressed="true"] {
+  background: #183e37;
+  color: var(--color-qn-accent);
+}
+
+.qn-terminal-surface {
+  position: relative;
+  flex: 1 0 140px;
+  overflow: hidden;
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius);
+  background: #161816;
+}
+
+.qn-terminal-host,
+.qn-terminal-readable {
+  position: absolute;
+  inset: 0;
+  padding: 6px;
+}
+
+.qn-terminal-readable {
+  z-index: 1;
+  margin: 0;
+  overflow: auto;
+  background: #161816;
+  color: var(--color-qn-text);
+  font: 13px/1.5 ui-monospace, Consolas, monospace;
+  user-select: text;
+}
+
+.qn-terminal-host .xterm {
+  height: 100%;
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .qn-terminal-surface { flex-basis: 105px; }
+}

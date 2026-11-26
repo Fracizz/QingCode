@@ -1,5 +1,6 @@
-import { Check, FileText, FolderGit2, MessageSquareText, MoreHorizontal, RotateCw, SquarePen } from 'lucide-react'
+import { Check, FileText, FolderGit2, MessageSquareText, MoreHorizontal, RotateCw, SquarePen, Terminal } from 'lucide-react'
 import { useFiles } from '../../features/files'
+import { TERMINAL_SHORTCUT, useTerminalDock } from '../../features/terminal/dockState'
 import { useDock } from '../../store/dock'
 import { sessionKey } from '../../lib/agents'
 import { useCodex } from '../../store/codex'
@@ -30,6 +31,7 @@ export function MainHeader() {
   })
 
   const dockTool = useDock((s) => s.tool)
+  const terminalOpen = useTerminalDock((s) => s.open)
   const filesOpen = useFiles((s) => s.open)
   const fileTabs = useFiles((s) => s.tabs.length)
   const chatWidth = useUi((s) => s.chatWidth)
@@ -74,6 +76,14 @@ export function MainHeader() {
           {tool.icon}
         </IconButton>
       ))}
+      <IconButton
+        label={`终端（${TERMINAL_SHORTCUT}）`}
+        aria-expanded={terminalOpen}
+        className={terminalOpen ? 'bg-qn-active text-qn-text' : undefined}
+        onClick={useTerminalDock.getState().toggle}
+      >
+        <Terminal size={15} />
+      </IconButton>
       <Menu>
         <MenuTrigger asChild>
           <IconButton label="会话操作">

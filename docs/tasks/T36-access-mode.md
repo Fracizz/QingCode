@@ -6,7 +6,8 @@
 - 渲染：新增 `apps/desktop/src/renderer/src/features/access/**`（含测试）；`components/Composer.tsx`（接入点，先重新读取：T35 刚改过）；`store/codex.ts` 中 `openParams` 与组装 `turn/start` 的位置（先重新读取）。
 - server：`packages/server/src/codexHost.ts`、`packages/server/src/claude/**`、`packages/server/src/pi/**`（只在需要标注能力时）（含测试）。
 - protocol：`packages/protocol/src/messages.ts` 中 `codex.open` 的 params 只追加字段。
-- 不改 backend（`server.req` 原样透传）、手机端、网关、`packages/server/src/terminal/**`（T29 进行中）、`daemon.ts`（T29 进行中；如确需改，只做最小改动并在报告说明）。
+- `apps/desktop/src/backend/mobile/gateway.ts`、`gateway.test.ts` 仅用于沿用电脑端配置目录并过滤手机请求中的配置目录与本任务新增的权限字段。
+- 其他 backend（`server.req` 原样透传）、手机端与 `packages/server/src/terminal/**` 不在本卡范围。仅在 `daemon.ts` 的 `codex.open` 中透传配置目录。
 
 依据：**`docs/agent-adapters.md` §6 审批与权限**（核心：默认用 Agent 自身默认；提升到 `acceptEdits`/`bypassPermissions`/Codex `danger-full-access` 必须用户在会话内显式选择，且在输入框区域常驻标识；不得伪造 Agent 不支持的模式，R7/R8）。Codex v2 类型见 `vendor/codex-protocol/ts/v2/`（`TurnStartParams`、`SandboxPolicy`、`AskForApproval` 等，以实际文件为准）；Claude SDK 见 `packages/server/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`（`Options.permissionMode`、`Query.setPermissionMode()`、`PermissionMode`）。设置模型见 `apps/desktop/src/renderer/src/features/settings/settingsModel.ts`（`agentPrefs` 的 `configDir`）。
 

@@ -168,7 +168,9 @@ export function toolUseItem(
     return fileChangeItem(id, fileChangesFromTool(name, input))
   }
   if (name.startsWith('mcp__')) return mcpToolCallItem(id, name, input)
-  return dynamicToolCallItem(id, name, input)
+  const item = dynamicToolCallItem(id, name, input)
+  if (name === 'Agent' || name === 'Task') item.namespace = 'claude'
+  return item
 }
 
 function blockKey(messageId: string | null, index: number): string {

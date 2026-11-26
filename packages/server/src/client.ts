@@ -14,6 +14,12 @@ interface Waiter {
   timer: ReturnType<typeof setTimeout>
 }
 
+export class IpcRequestError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message)
+  }
+}
+
 /** ensure 用的一次性 IPC 客户端：hello/welcome + 顺序 req/res。 */
 export class IpcClient {
   private readonly conn: FramedConnection
@@ -114,8 +120,10 @@ export class IpcClient {
         waiter.resolve(raw.result ?? null)
         return
       }
-      const detail = isRecord(raw.error) && typeof raw.error.message === 'string' ? raw.error.message : '请求失败'
-      waiter.reject(new Error(detail))
+      const error = isRecord(raw.error) ? raw.error : {}
+      const code = typeof error.code === 'string' ? error.code : 'internal'
+      const detail = typeof error.message === 'string' ? error.message : '请求失败'
+      waiter.reject(new IpcRequestError(code, detail))
     }
   }
 

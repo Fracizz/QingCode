@@ -188,6 +188,12 @@ export function splitLocation(input: string): FileLocation {
   return result
 }
 
+function isFileWithLineSuffix(value: string): boolean {
+  const suffix = COLON_SUFFIX.exec(value.split('#', 1)[0] ?? '')
+  const path = suffix?.input.slice(0, suffix.index) ?? ''
+  return FILE_EXT.test(path) && !path.includes(':')
+}
+
 /**
  * 把 Markdown / 文本里的 href 解析为本地文件位置；其他协议返回 null。
  * 相对路径按 cwd 解析（cwd 为空时无法解析）；~/ 原样保留（手机不知道目标机 home）。
@@ -211,7 +217,7 @@ export function parseFileHref(href: string, cwd: string): FileLocation | null {
     }
     candidate = `${pathname}${url.hash}`
   } else {
-    if (!DRIVE.test(raw) && OTHER_SCHEME.test(raw)) return null
+    if (!DRIVE.test(raw) && OTHER_SCHEME.test(raw) && !isFileWithLineSuffix(raw)) return null
     // 纯锚点（#section）是页内跳转，不是文件。
     if (raw.startsWith('#')) return null
     const query = raw.indexOf('?')
@@ -250,7 +256,7 @@ export function resolvePath(path: string, cwd: string): string {
 /** react-markdown 默认会清掉 file: 与盘符链接；放行它们，其余仍走默认的安全检查。 */
 export function allowLocalUrl(value: string, safe: string): string {
   if (safe) return safe
-  if (/^file:/i.test(value) || DRIVE.test(value)) return value
+  if (/^file:/i.test(value) || DRIVE.test(value) || isFileWithLineSuffix(value)) return value
   return ''
 }
 

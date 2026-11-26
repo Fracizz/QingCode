@@ -31,6 +31,14 @@ describe('defaultCommands', () => {
     expect(openSettings).toHaveBeenNthCalledWith(2, 'about')
   })
 
+  it('终端命令切换底部面板', () => {
+    const toggleTerminal = vi.fn()
+    const [command] = defaultCommands({ toggleTerminal, terminalShortcut: 'Ctrl+`' })
+    expect(command).toMatchObject({ id: 'view.terminal.toggle', shortcut: 'Ctrl+`' })
+    void command?.run()
+    expect(toggleTerminal).toHaveBeenCalledOnce()
+  })
+
   it('when 条件透传', () => {
     let ready = false
     const [quick] = defaultCommands({ quickOpen: () => {}, canQuickOpen: () => ready })

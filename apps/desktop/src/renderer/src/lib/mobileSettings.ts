@@ -4,6 +4,7 @@ import type { MobileSettings, MobileSettingsInput } from '../../../shared/backen
 
 export type SettingsDraft = {
   enabled: boolean
+  terminalEnabled: boolean
   port: string
   password: string
   publicAddresses: string[]
@@ -137,6 +138,7 @@ export function buildAddressOptions(
 export function draftFromSettings(settings: MobileSettings): SettingsDraft {
   return {
     enabled: settings.enabled,
+    terminalEnabled: settings.terminalEnabled === true,
     port: String(settings.port),
     password: '',
     publicAddresses: [...settings.publicAddresses],
@@ -164,6 +166,7 @@ export function buildSettingsPatch(
 
   const patch: MobileSettingsInput = {}
   if (draft.enabled !== settings.enabled) patch.enabled = draft.enabled
+  if (draft.terminalEnabled !== (settings.terminalEnabled === true)) patch.terminalEnabled = draft.terminalEnabled
   if (port !== settings.port) patch.port = port
   if (draft.password) patch.password = draft.password
   if (

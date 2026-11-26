@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import type { ApprovalView } from '@qn/codex-client'
 import {
   applyTargetState,
+  availableApprovalDecisions,
+  buildMobileTurnInput,
+  connectionRepairReason,
+  draftKey,
   errorCode,
   formatQuotedMessage,
   formatTime,
@@ -9,9 +14,12 @@ import {
   hostKeyMessage,
   isHostKeyError,
   joinPath,
+  mobileApprovalReply,
   parentPath,
   parseConnections,
+  parseDrafts,
   parseProjects,
+  parseSavedChats,
   parseTargets,
   projectsForTarget,
   quoteText,
@@ -139,5 +147,52 @@ describe('注释拼接（§12）', () => {
         '  请修复  ',
       ),
     ).toBe('> x\n请看这里\n\n> y\n\n请修复')
+  })
+})
+
+describe('会话恢复、草稿和审批', () => {
+  it('会话键包含电脑、目标、项目、Agent、会话，恢复时过滤非法记录', () => {
+    const key = draftKey('一号电脑', 'local', 'project', 'codex', 'thread')
+    expect(draftKey('二号电脑', 'local', 'project', 'codex', 'thread')).not.toBe(key)
+    const annotation = { id: '1', quote: '原文', comment: '评论' }
+    expect(parseDrafts(JSON.stringify({
+      [key]: { text: '草稿', annotations: [annotation, { id: 'bad' }] },
+      wrong: { text: 1, annotations: [] },
+    }))).toEqual({ [key]: { text: '草稿', annotations: [annotation] } })
+    const chat = { targetId: 'local', projectId: 'project', threadId: 'thread', agent: 'claude' }
+    expect(parseSavedChats(JSON.stringify({ ok: chat, bad: { ...chat, agent: 'wrong' } }))).toEqual({ ok: chat })
+  })
+
+  it('只有电脑授权或证书错误需要重新配对', () => {
+    expect(connectionRepairReason({ code: 'unauthorized' })).toBe('unauthorized')
+    expect(connectionRepairReason('设备已被撤销')).toBe('unauthorized')
+    expect(connectionRepairReason({ code: 'fingerprint' })).toBe('fingerprint')
+    expect(connectionRepairReason({ code: 'hostKey', message: '请在电脑上确认主机指纹' })).toBeNull()
+  })
+
+  it('审批保留原生支持的决策，未知请求没有可伪造的许可信号', () => {
+    const request: ApprovalView = {
+      requestId: 1, threadId: 't', title: '审批', detail: '', kind: 'command',
+      method: 'item/commandExecution/requestApproval',
+      raw: { params: { availableDecisions: ['accept', 'decline', 'cancel'] } },
+    }
+    expect(availableApprovalDecisions(request, 'codex')).toEqual(['accept', 'decline', 'cancel'])
+    expect(availableApprovalDecisions({ ...request, method: 'item/tool/requestUserInput' }, 'codex')).toEqual([])
+    expect(availableApprovalDecisions(request, 'pi')).toEqual([])
+    const legacy = { ...request, method: 'applyPatchApproval', raw: {} }
+    expect(availableApprovalDecisions(legacy, 'codex')).toEqual(['accept', 'acceptForSession', 'decline', 'cancel'])
+    expect(mobileApprovalReply(legacy, 'cancel')).toEqual({ decision: 'abort' })
+    expect(availableApprovalDecisions({ ...request, raw: { params: { availableDecisions: ['accept'] } } }, 'codex')).toEqual([])
+  })
+
+  it('Codex 的工作区文件引用附到正文，图片与资源引用仍是原生输入', () => {
+    const file = { type: 'mention', name: 'main.ts', path: '/repo/main.ts' } as const
+    const resource = { type: 'mention', name: 'plugin', path: 'plugin://demo' } as const
+    const image = { type: 'image', url: 'data:image/png;base64,AA==' } as const
+    expect(buildMobileTurnInput('codex', '你好', [file, resource, image])).toEqual([
+      { type: 'text', text: '你好\n\n附件文件（请按需读取）：\n- main.ts: /repo/main.ts', text_elements: [] },
+      resource, image,
+    ])
+    expect(buildMobileTurnInput('claude', '', [file])).toEqual([file])
   })
 })

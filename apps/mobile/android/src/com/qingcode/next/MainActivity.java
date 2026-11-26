@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -11,7 +12,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.Window;
+import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.window.OnBackInvokedDispatcher;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -26,8 +29,11 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class MainActivity extends Activity implements NativeBridge.Callback {
   private static final String ORIGIN = "https://appassets.androidplatform.net";
@@ -35,20 +41,26 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
   private static final String ASSET_PREFIX = ORIGIN + "/assets/web/";
   private static final String ASSET_ROOT = "web/";
   private static final String START_URL = ASSET_PREFIX + "index.html";
+  private static final int BACKGROUND = 0xFF181918;
+  private static final String CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
+    + "connect-src 'none'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 
   private WebView webView;
   private NativeBridge bridge;
   private volatile boolean destroyed;
+  private boolean resumed;
+  private boolean backPending;
+  private final AtomicReference<String> pendingPairing = new AtomicReference<>();
 
   @Override protected void onCreate(Bundle saved) {
     super.onCreate(saved);
     configureWindow();
 
     FrameLayout root = new FrameLayout(this);
-    root.setBackgroundColor(0xFF0B1020);
-    root.setFitsSystemWindows(false);
+    root.setBackgroundColor(BACKGROUND);
+    configureInsets(root);
     webView = new WebView(this);
-    webView.setBackgroundColor(0xFF0B1020);
+    webView.setBackgroundColor(BACKGROUND);
     webView.setFitsSystemWindows(false);
     root.addView(webView, new FrameLayout.LayoutParams(
       FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
@@ -57,17 +69,60 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
     webView.addJavascriptInterface(bridge, "QnNative");
     setContentView(root);
     root.requestApplyInsets();
+    capturePairingIntent(getIntent());
+    if (Build.VERSION.SDK_INT >= 33) {
+      getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::onBackPressed);
+    }
     webView.loadUrl(START_URL);
   }
 
   @Override protected void onResume() {
     super.onResume();
-    if (webView != null) webView.onResume();
+    resumed = true;
+    if (webView != null) {
+      webView.onResume();
+      webView.evaluateJavascript("if (typeof window.__qnResume === 'function') window.__qnResume()", null);
+    }
   }
 
   @Override protected void onPause() {
+    resumed = false;
     if (webView != null) webView.onPause();
     super.onPause();
+  }
+
+  @Override protected void onNewIntent(Intent intent) {
+    super.onNewIntent(intent);
+    if (!capturePairingIntent(intent) || webView == null) return;
+    String link = pendingPairing.get();
+    if (link == null) return;
+    webView.evaluateJavascript("typeof window.__qnPairLink === 'function' && window.__qnPairLink("
+      + Json.quote(link) + ") === true", value -> {
+        if ("true".equals(value)) pendingPairing.compareAndSet(link, null);
+      });
+  }
+
+  @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    super.onActivityResult(requestCode, resultCode, data);
+    if (bridge != null) bridge.onActivityResult(requestCode, resultCode, data);
+  }
+
+  private boolean capturePairingIntent(Intent intent) {
+    if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return false;
+    String link = NativeFileRules.pairingLink(intent.getDataString());
+    if (link == null) return false;
+    pendingPairing.set(link);
+    // 创建 Activity 时去掉链接中的配对密码，避免系统重建时重复导入。
+    setIntent(new Intent(this, MainActivity.class).setAction(Intent.ACTION_MAIN));
+    return true;
+  }
+
+  @Override public String takePairingLink() {
+    return pendingPairing.getAndSet(null);
+  }
+
+  @Override public boolean canShowSystemUi() {
+    return resumed && !isFinishing() && webView != null && isInternalAssetUrl(webView.getUrl());
   }
 
   @Override protected void onDestroy() {
@@ -103,11 +158,16 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
       finish();
       return;
     }
+    if (backPending) return;
+    backPending = true;
     final AtomicBoolean settled = new AtomicBoolean(false);
     final Handler handler = new Handler(Looper.getMainLooper());
     final Runnable fallback = new Runnable() {
       @Override public void run() {
-        if (settled.compareAndSet(false, true)) finish();
+        if (settled.compareAndSet(false, true)) {
+          backPending = false;
+          finish();
+        }
       }
     };
     handler.postDelayed(fallback, 1000);
@@ -119,6 +179,7 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
           @Override public void onReceiveValue(String value) {
             if (settled.compareAndSet(false, true)) {
               handler.removeCallbacks(fallback);
+              backPending = false;
               if (!"true".equals(value)) finish();
             }
           }
@@ -126,6 +187,7 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
     } catch (RuntimeException ignored) {
       if (settled.compareAndSet(false, true)) {
         handler.removeCallbacks(fallback);
+        backPending = false;
         finish();
       }
     }
@@ -136,23 +198,34 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
     window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
     window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
     window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
-    window.setStatusBarColor(Color.TRANSPARENT);
-    window.setNavigationBarColor(Color.TRANSPARENT);
-    if (Build.VERSION.SDK_INT >= 28) {
-      WindowManager.LayoutParams attributes = window.getAttributes();
-      attributes.layoutInDisplayCutoutMode =
-        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-      window.setAttributes(attributes);
-      window.setNavigationBarDividerColor(Color.TRANSPARENT);
-    }
+    window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     if (Build.VERSION.SDK_INT >= 30) {
       window.setDecorFitsSystemWindows(false);
+      window.setStatusBarColor(Color.TRANSPARENT);
+      window.setNavigationBarColor(Color.TRANSPARENT);
+      window.setNavigationBarDividerColor(Color.TRANSPARENT);
+      window.setNavigationBarContrastEnforced(false);
+      WindowManager.LayoutParams attributes = window.getAttributes();
+      attributes.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+      window.setAttributes(attributes);
+    } else {
+      window.setStatusBarColor(BACKGROUND);
+      window.setNavigationBarColor(BACKGROUND);
     }
     // 深色页面需要浅色系统栏图标，这里不设置任何 LIGHT_* 标志。
     View decor = window.getDecorView();
-    decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-      | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-      | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+    decor.setSystemUiVisibility(0);
+  }
+
+  private void configureInsets(View root) {
+    if (Build.VERSION.SDK_INT < 30) return;
+    root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+      // 键盘、刘海和系统栏由原生层合并，WebView 只计算实际可用大小。
+      Insets safe = windowInsets.getInsets(WindowInsets.Type.systemBars()
+        | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+      view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+      return WindowInsets.CONSUMED;
+    });
   }
 
   private void configureWebView(WebView view) {
@@ -183,6 +256,7 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
       }
 
       @Override public boolean shouldOverrideUrlLoading(WebView current, WebResourceRequest request) {
+        if (!request.isForMainFrame()) return true;
         return overrideUrl(request.getUrl().toString());
       }
 
@@ -238,8 +312,10 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
     try {
       InputStream stream = getAssets().open(assetPath);
       String encoding = isTextMime(mime) ? "UTF-8" : null;
-      return new WebResourceResponse(mime, encoding, 200, "OK",
-        Collections.singletonMap("Cache-Control", "no-cache"), stream);
+      Map<String, String> headers = new HashMap<>();
+      headers.put("Cache-Control", "no-cache");
+      if ("text/html".equals(mime)) headers.put("Content-Security-Policy", CSP);
+      return new WebResourceResponse(mime, encoding, 200, "OK", headers, stream);
     } catch (IOException ignored) {
       return denied();
     }

@@ -27,6 +27,8 @@ export type DefaultCommandDeps<S extends string = string> = {
   canInterrupt?: () => boolean
   /** 切换侧栏 */
   toggleSidebar?: () => void
+  toggleTerminal?: () => void
+  terminalShortcut?: string
   /** 添加项目（打开目录选择器） */
   addProject?: () => void
   /** 添加远程连接 */
@@ -82,6 +84,16 @@ export function defaultCommands<S extends string = string>(deps: DefaultCommandD
       keywords: ['sidebar'],
       shortcut: 'Ctrl+B',
       run: deps.toggleSidebar,
+    },
+  )
+  push(
+    deps.toggleTerminal && {
+      id: 'view.terminal.toggle',
+      title: '切换终端面板',
+      category: '视图',
+      keywords: ['terminal', 'shell', 'console'],
+      ...(deps.terminalShortcut ? { shortcut: deps.terminalShortcut } : {}),
+      run: deps.toggleTerminal,
     },
   )
   push(

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { Copy, Eye, EyeOff, Plus, RotateCw, ShieldCheck, Smartphone, Trash2, Wifi, X } from 'lucide-react'
+import { Copy, Eye, EyeOff, Plus, QrCode, RotateCw, ShieldCheck, Smartphone, Trash2, Wifi, X } from 'lucide-react'
+import { call } from '../lib/backend'
 import {
   buildAddressOptions,
   buildSettingsPatch,
@@ -67,10 +68,14 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
   const [formError, setFormError] = useState<string | null>(null)
   const [confirmRegen, setConfirmRegen] = useState(false)
   const [tab, setTab] = useState('settings')
+  const [pairQr, setPairQr] = useState<{ address: string; rows: string[] } | null>(null)
+  const [loadingQr, setLoadingQr] = useState(false)
 
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => setPairQr(null), [settings?.fingerprint])
 
   // 手动复制的明文含配对密码，关闭面板后不再留在内存里。
   useEffect(() => () => useMobile.getState().clearManualCopy(), [])
@@ -99,6 +104,20 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
 
   const patch = (part: Partial<SettingsDraft>) => setDraft((value) => (value ? { ...value, ...part } : value))
 
+  async function showQr() {
+    if (loadingQr || !address) return
+    setLoadingQr(true)
+    setFormError(null)
+    try {
+      const result = await call('mobile.pairQr', { address })
+      setPairQr({ address, rows: result.rows })
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : '二维码生成失败')
+    } finally {
+      setLoadingQr(false)
+    }
+  }
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!draft || !settings) return
@@ -108,6 +127,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
       return
     }
     setFormError(null)
+    setPairQr(null)
     const next = await save(result.patch)
     if (next) {
       setDraft(draftFromSettings(next))
@@ -197,6 +217,9 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
             <Checkbox checked={draft?.enabled ?? false} onChange={(value) => patch({ enabled: value })}>
               启用手机连接（关闭后手机无法连接这台电脑）
             </Checkbox>
+            <Checkbox checked={draft?.terminalEnabled ?? false} onChange={(value) => patch({ terminalEnabled: value })}>
+              允许本人已配对的手机在项目中打开终端
+            </Checkbox>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-[10rem_1fr]">
               <Field label="监听端口" hint="端口修改后，可在手机端编辑已保存的连接。" error={portError}>
                 <input
@@ -238,7 +261,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
                   value={address}
                   disabled={options.length === 0}
                   placeholder="（暂无可用的连接地址）"
-                  onValueChange={setSelectedAddress}
+                  onValueChange={(value) => { setSelectedAddress(value); setPairQr(null) }}
                   groups={[
                     { label: '局域网地址', options: lanOptions.map((option) => ({ value: option.value, label: option.value })) },
                     { label: '对外地址', options: publicOptions.map((option) => ({ value: option.value, label: option.value })) },
@@ -252,12 +275,25 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
                 >
                   <Copy size={14} /> 复制连接信息
                 </button>
+                <IconButton label="显示配对二维码" disabled={!address || !settings?.hasPassword || dirty || busy !== null || loadingQr}
+                  onClick={() => { if (pairQr) setPairQr(null); else void showQr() }}>
+                  <QrCode size={16} />
+                </IconButton>
               </div>
               <p className="text-[12px] text-qn-muted">
                 {dirty || !settings?.hasPassword
                   ? '请先保存配对设置，再复制连接信息。'
                   : '在手机版选择「从剪贴板导入」。信息含配对密码，请只发给自己。'}
               </p>
+              {pairQr?.address === address && !dirty && (
+                <div className="space-y-2">
+                  <svg role="img" aria-label="手机配对二维码" viewBox={`-4 -4 ${pairQr.rows.length + 8} ${pairQr.rows.length + 8}`}
+                    className="h-52 w-52 bg-white" shapeRendering="crispEdges">
+                    <path fill="#000" d={pairQr.rows.map((row, y) => Array.from(row, (module, x) => module === '1' ? `M${x} ${y}h1v1h-1z` : '').join('')).join('')} />
+                  </svg>
+                  <p className="text-[12px] text-qn-muted">二维码含配对密码，请用自己的手机扫描。</p>
+                </div>
+              )}
               {manualCopy && (
                 <div className="space-y-1.5">
                   <textarea

@@ -4,7 +4,9 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.os.Build;
+import android.os.PersistableBundle;
 import android.webkit.JavascriptInterface;
 
 import org.json.JSONException;
@@ -16,6 +18,7 @@ import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.security.GeneralSecurityException;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -34,6 +37,8 @@ import javax.net.ssl.HttpsURLConnection;
 public final class NativeBridge {
   public interface Callback {
     void send(String json);
+    String takePairingLink();
+    boolean canShowSystemUi();
   }
 
   private static final ThreadFactory THREAD_FACTORY = new ThreadFactory() {
@@ -51,6 +56,10 @@ public final class NativeBridge {
   private final Activity activity;
   private final Context appContext;
   private final Callback callback;
+  private final ActivityRequests activityRequests;
+  private final NativeInputs inputs;
+  private final ProjectDownloads downloads;
+  private final AppUpdates updates;
   private final SecureStorage storage;
   private final String storageError;
   private final ExecutorService executor;
@@ -75,6 +84,10 @@ public final class NativeBridge {
     this.activity = activity;
     this.appContext = activity.getApplicationContext();
     this.callback = callback;
+    this.activityRequests = new ActivityRequests(activity, callback::canShowSystemUi);
+    this.inputs = new NativeInputs(appContext, activityRequests);
+    this.downloads = new ProjectDownloads(appContext, activityRequests);
+    this.updates = new AppUpdates(activity, activityRequests);
     SecureStorage created = null;
     String error = null;
     try {
@@ -91,6 +104,7 @@ public final class NativeBridge {
         try {
           long now = System.currentTimeMillis();
           for (EventStream stream : streams.values()) stream.checkIdle(now);
+          updates.releaseExpired();
         } catch (RuntimeException ignored) {
           // 单个流异常不能让定时看门狗退出。
         }
@@ -146,19 +160,40 @@ public final class NativeBridge {
 
   void close() {
     if (!closed.compareAndSet(false, true)) return;
+    activityRequests.close();
+    downloads.close();
+    updates.close();
     for (EventStream stream : streams.values()) stream.stop(null, false);
     streams.clear();
     executor.shutdownNow();
     watchdog.shutdownNow();
   }
 
+  void onActivityResult(int requestCode, int resultCode, Intent data) {
+    activityRequests.receive(requestCode, resultCode, data);
+  }
+
   private Object dispatch(String method, JSONObject params) throws Exception {
     if ("probe".equals(method)) return PinnedHttps.probe(PinnedHttps.url(params, "/probe"));
     if ("pair".equals(method)) return pair(params);
+    if ("pair.scan".equals(method)) return inputs.scanPairingLink();
+    if ("pair.pending".equals(method)) {
+      String link = callback.takePairingLink();
+      return link == null ? JSONObject.NULL : link;
+    }
     if ("rpc".equals(method)) return rpc(params);
     if ("events.open".equals(method)) return openEvents(params);
     if ("events.close".equals(method)) return closeEvents(params);
     if ("clipboard.read".equals(method)) return readClipboard();
+    if ("clipboard.write".equals(method)) return writeClipboard(params);
+    if ("images.pick".equals(method)) return inputs.pickImages(params);
+    if ("download.begin".equals(method)) return downloads.begin(params);
+    if ("download.append".equals(method)) return downloads.append(params);
+    if ("download.finish".equals(method)) return downloads.finish(params);
+    if ("download.cancel".equals(method)) return downloads.cancel(params);
+    if ("updates.status".equals(method)) return updates.status();
+    if ("updates.check".equals(method)) return updates.check(params);
+    if ("updates.install".equals(method)) return updates.install(params);
     if ("storage.get".equals(method)) return storageGet(params);
     if ("storage.set".equals(method)) return storageSet(params);
     throw new BridgeException("unsupported", "不支持的原生方法");
@@ -236,24 +271,43 @@ public final class NativeBridge {
   }
 
   private String readClipboard() throws BridgeException {
-    final AtomicReference<String> value = new AtomicReference<>("");
+    return clipboardOnUi(() -> {
+      ClipboardManager clipboard = (ClipboardManager) appContext.getSystemService(Context.CLIPBOARD_SERVICE);
+      if (clipboard == null || !clipboard.hasPrimaryClip()) return "";
+      ClipData clip = clipboard.getPrimaryClip();
+      if (clip == null || clip.getItemCount() == 0) return "";
+      CharSequence sequence = clip.getItemAt(0).getText();
+      return sequence == null ? "" : sequence.toString();
+    });
+  }
+
+  private JSONObject writeClipboard(JSONObject params) throws Exception {
+    Object raw = params.opt("text");
+    if (!(raw instanceof String) || ((String) raw).length() > 256 * 1024) {
+      throw new BridgeException("bad_request", "剪贴板文本过长或格式不正确");
+    }
+    return clipboardOnUi(() -> {
+      ClipboardManager clipboard = (ClipboardManager) appContext.getSystemService(Context.CLIPBOARD_SERVICE);
+      if (clipboard == null) throw new BridgeException("clipboard", "系统剪贴板不可用");
+      ClipData clip = ClipData.newPlainText("QingCode Next", (String) raw);
+      PersistableBundle extras = new PersistableBundle();
+      extras.putBoolean("android.content.extra.IS_SENSITIVE", true);
+      clip.getDescription().setExtras(extras);
+      clipboard.setPrimaryClip(clip);
+      return new JSONObject().put("ok", true);
+    });
+  }
+
+  private <T> T clipboardOnUi(Callable<T> operation) throws BridgeException {
+    final AtomicReference<T> value = new AtomicReference<>();
     final AtomicReference<Exception> failure = new AtomicReference<>();
     final CountDownLatch latch = new CountDownLatch(1);
     try {
       activity.runOnUiThread(new Runnable() {
         @Override public void run() {
           try {
-            ClipboardManager clipboard = (ClipboardManager) appContext
-              .getSystemService(Context.CLIPBOARD_SERVICE);
-            String text = "";
-            if (clipboard != null && clipboard.hasPrimaryClip()) {
-              ClipData clip = clipboard.getPrimaryClip();
-              if (clip != null && clip.getItemCount() > 0) {
-                CharSequence sequence = clip.getItemAt(0).getText();
-                if (sequence != null) text = sequence.toString();
-              }
-            }
-            value.set(text);
+            if (!callback.canShowSystemUi()) throw new BridgeException("clipboard", "请在应用前台使用剪贴板");
+            value.set(operation.call());
           } catch (Exception error) {
             failure.set(error);
           } finally {
@@ -262,18 +316,18 @@ public final class NativeBridge {
         }
       });
     } catch (RuntimeException error) {
-      throw new BridgeException("clipboard", "应用已关闭，无法读取剪贴板");
+      throw new BridgeException("clipboard", "应用已关闭，无法访问剪贴板");
     }
     try {
       if (!latch.await(3, TimeUnit.SECONDS)) {
-        throw new BridgeException("clipboard", "读取剪贴板超时");
+        throw new BridgeException("clipboard", "访问剪贴板超时");
       }
     } catch (InterruptedException error) {
       Thread.currentThread().interrupt();
-      throw new BridgeException("clipboard", "读取剪贴板被中断");
+      throw new BridgeException("clipboard", "访问剪贴板被中断");
     }
     if (failure.get() != null) {
-      throw new BridgeException("clipboard", "无法读取剪贴板，请在前台重试");
+      throw new BridgeException("clipboard", "无法访问剪贴板，请在前台重试");
     }
     return value.get();
   }

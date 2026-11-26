@@ -1,21 +1,22 @@
-import type { ApprovalDecision, ItemView, RequestId } from '@qn/codex-client'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { formatReset, supportsSubagentRequests, type ItemView } from '@qn/codex-client'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
+import { nearBottom } from '../composerLogic'
+import { EMPTY_PREFS, resolveSelection } from '../models'
 import { currentCwd, useApp } from '../store'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
 import { FileActionsContext, MessageItem, type FileActions } from './MessageItem'
 import { ModelPicker } from './ModelSheet'
 import { RateLimitBadge, RateLimitDetails } from './RateLimitView'
-import { AgentTag, Badge, Empty, Header, Note } from './ui'
+import { SessionSwitcher } from './SessionSwitcher'
+import { AgentTag, Badge, Button, Dialog, Empty, Header, Note } from './ui'
 
-function stateBadge(status: string | undefined) {
-  if (status === 'running') return <Badge tone="accent">运行中</Badge>
-  if (status === 'error') return <Badge tone="danger">失败</Badge>
-  return <Badge tone="ok">就绪</Badge>
-}
+const NO_ITEMS: ItemView[] = []
 
 export function ChatPage() {
+  const activeId = useApp((s) => s.activeId)
+  const fingerprint = useApp((s) => s.connections.find((connection) => connection.id === s.activeId)?.fp)
   const projects = useApp((s) => s.projects)
   const selectedProjectId = useApp((s) => s.selectedProjectId)
   const selectedTargetId = useApp((s) => s.selectedTargetId)
@@ -23,145 +24,211 @@ export function ChatPage() {
   const selectedAgent = useApp((s) => s.selectedAgent)
   const openFile = useApp((s) => s.openFile)
   const openDiff = useApp((s) => s.openDiff)
-  const sessions = useApp((s) => s.sessions)
+  const key = selectedTargetId ? sessionKey(selectedTargetId, selectedAgent) : ''
+  const session = useApp((s) => s.sessions[key])
+  const models = useApp((s) => s.models[key]?.models)
+  const modelPrefs = useApp((s) => s.modelPrefs[key] ?? EMPTY_PREFS)
   const threads = useApp((s) => s.threads)
   const sending = useApp((s) => s.sending)
   const error = useApp((s) => s.error)
   const notice = useApp((s) => s.notice)
   const annotations = useApp((s) => s.annotations)
+  const draftText = useApp((s) => s.draftText)
+  const setDraftText = useApp((s) => s.setDraftText)
+  const eventsConnected = useApp((s) => s.eventsConnected)
+  const needsRepair = useApp((s) => (activeId ? s.needsRepair[activeId] : undefined))
+  const beginRepair = useApp((s) => s.beginRepair)
   const goBack = useApp((s) => s.goBack)
   const send = useApp((s) => s.send)
   const interrupt = useApp((s) => s.interrupt)
   const respondApproval = useApp((s) => s.respondApproval)
+  const approvalSubmitting = useApp((s) => s.approvalSubmitting)
   const addAnnotation = useApp((s) => s.addAnnotation)
   const updateAnnotation = useApp((s) => s.updateAnnotation)
   const removeAnnotation = useApp((s) => s.removeAnnotation)
   const ensureOpen = useApp((s) => s.ensureOpen)
-  const refreshThreads = useApp((s) => s.refreshThreads)
   const clearError = useApp((s) => s.clearError)
   const clearNotice = useApp((s) => s.clearNotice)
+  const claudeLimit = useApp((s) => selectedTargetId ? s.claudeRateLimits[selectedTargetId] : undefined)
+  const claudeCost = useApp((s) => s.claudeCosts[JSON.stringify([selectedTargetId, selectedThreadId])])
 
-  const [quoteDraft, setQuoteDraft] = useState<string | null>(null)
+  const chatKey = JSON.stringify([activeId, fingerprint, selectedTargetId, selectedAgent, selectedProjectId, selectedThreadId])
+  const [quote, setQuote] = useState<{ key: string; text: string } | null>(null)
   const [showRate, setShowRate] = useState(false)
+  const [switching, setSwitching] = useState(false)
+  const [atBottom, setAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const approvalsRef = useRef<HTMLDivElement>(null)
+  const following = useRef(true)
+  const previousChat = useRef(chatKey)
 
-  const session = selectedTargetId ? sessions[sessionKey(selectedTargetId, selectedAgent)] : undefined
   const view = selectedThreadId ? session?.state.threads[selectedThreadId] : undefined
-  const items: ItemView[] = view?.items ?? []
-  const approvals = view
-    ? view.pendingApprovals
-    : Object.values(session?.state.threads ?? {}).flatMap((thread) => thread.pendingApprovals)
+  const items = view?.items ?? NO_ITEMS
+  const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
   const project = projects.find((item) => item.id === selectedProjectId)
   const threadTitle = threads.find((item) => item.id === selectedThreadId && item.agent === selectedAgent)?.title
   const cwd = currentCwd({ projects, selectedProjectId })
-  const fileActions = useMemo<FileActions>(
-    () => ({
-      cwd,
-      openFile: (location) => void openFile(location),
-      openDiff: (path, diff) => void openDiff({ path, diff: diff ?? null }),
-    }),
-    [cwd, openFile, openDiff],
-  )
+  const imageUnavailable = selectedAgent === 'pi'
+    ? '当前 Agent 暂不支持图片'
+    : resolveSelection(models ?? [], modelPrefs).model?.imageInput === false ? '当前模型不支持图片' : undefined
+  const fileActions = useMemo<FileActions>(() => ({
+    cwd,
+    openFile: (location) => void openFile(location),
+    openDiff: (path, diff) => void openDiff({ path, diff: diff ?? null }),
+  }), [cwd, openFile, openDiff])
 
-  const last = items[items.length - 1]
-  const signature = `${items.length}:${approvals.length}:${
-    last?.kind === 'agent'
-      ? last.text.length
-      : last?.kind === 'command'
-        ? last.output.length
-        : last?.kind === 'reasoning'
-          ? last.summary.length
-          : last?.kind === 'fileChange'
-            ? last.changes.reduce((total, change) => total + (change.diff?.length ?? 0), 0)
-            : last?.kind === 'other'
-              ? last.summary.length
-              : 0
-  }`
-
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (previousChat.current !== chatKey) {
+      previousChat.current = chatKey
+      following.current = true
+      setAtBottom(true)
+    }
     const node = scrollRef.current
-    if (node) node.scrollTop = node.scrollHeight
-  }, [signature])
+    if (node && following.current) node.scrollTop = node.scrollHeight
+  }, [chatKey, items, approvals.length])
+
+  useLayoutEffect(() => {
+    const node = scrollRef.current
+    if (!node) return
+    const observer = new ResizeObserver(() => {
+      if (following.current) node.scrollTop = node.scrollHeight
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
+
+  function updateScroll() {
+    const node = scrollRef.current
+    if (!node) return
+    following.current = nearBottom(node)
+    setAtBottom(following.current)
+  }
+
+  function jumpToLatest() {
+    const node = scrollRef.current
+    if (!node) return
+    following.current = true
+    setAtBottom(true)
+    node.scrollTop = node.scrollHeight
+  }
 
   return (
     <>
       <Header
         title={threadTitle || project?.name || '对话'}
-        subtitle={project?.path}
+        subtitle={[project?.name, agentLabel(selectedAgent), running ? '运行中' : view?.status === 'error' ? '失败' : null].filter(Boolean).join(' · ')}
         onBack={goBack}
         right={
           <>
-            {selectedAgent === 'codex' && (
-              <RateLimitBadge targetId={selectedTargetId} onToggle={() => setShowRate((value) => !value)} />
-            )}
-            {stateBadge(view?.status)}
+            {selectedAgent === 'codex' && <RateLimitBadge targetId={selectedTargetId} onToggle={() => setShowRate(true)} hideWhenEmpty />}
+            {selectedAgent === 'claude' && <Button variant="ghost" className="px-2 text-xs" onClick={() => setShowRate(true)}>用量</Button>}
+            <Button variant="ghost" className="px-2" onClick={() => setSwitching(true)} aria-label="切换会话">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M10 5v14M6.5 9h1M6.5 12h1" /></svg>
+            </Button>
           </>
         }
       />
-      <div ref={scrollRef} className="qn-body qn-scroll">
-        {error && <Note message={error} tone="error" onClose={clearError} />}
-        {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
-        {showRate && <RateLimitDetails targetId={selectedTargetId} onClose={() => setShowRate(false)} />}
-        {session?.openError && (
+      {!eventsConnected && (
+        <div className="border-b border-qn-border bg-qn-panel px-3 pt-2">
           <Note
-            message={session.openError}
-            tone="error"
-            actionLabel="重试"
-            onAction={() => {
-              if (selectedTargetId) void ensureOpen(selectedTargetId, selectedAgent).then(() => void refreshThreads())
-            }}
+            tone="warn"
+            message={needsRepair ? '电脑连接需要重新配对' : '与电脑的连接中断，正在尝试恢复…'}
+            actionLabel={needsRepair ? '重新配对' : undefined}
+            onAction={needsRepair && activeId ? () => beginRepair(activeId) : undefined}
           />
-        )}
-        {view?.error && <Note message={`Turn 失败：${view.error}`} tone="error" />}
-        {items.length === 0 && approvals.length === 0 && (
-          <Empty>
-            {selectedThreadId
-              ? '会话暂无消息，发送一条开始对话。'
-              : '输入消息即可创建新会话；长按/点击消息下方的「引用」可加入注释。'}
-          </Empty>
-        )}
-        <div className="space-y-3">
-          <FileActionsContext.Provider value={fileActions}>
-            {items.map((item) => (
-              <MessageItem key={item.id} item={item} onQuote={setQuoteDraft} agentName={agentLabel(selectedAgent)} />
-            ))}
-          </FileActionsContext.Provider>
-          {approvals.map((approval) => (
-            <ApprovalCard
-              key={String(approval.requestId)}
-              approval={approval}
-              onDecide={(decision: ApprovalDecision) => respondApproval(approval.requestId as RequestId, decision)}
-            />
-          ))}
         </div>
+      )}
+      {approvals.length > 0 && (
+        <button className="qn-row border-b border-qn-border bg-qn-panel px-3 text-sm" type="button"
+          onClick={() => approvalsRef.current?.scrollIntoView({ block: 'nearest' })}>
+          <Badge tone="warn">{approvals.length} 项待审批</Badge>
+          <span className="min-w-0 flex-1 truncate text-qn-muted">{approvals[0]?.title}</span><span aria-hidden>↓</span>
+        </button>
+      )}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div ref={scrollRef} className="qn-body qn-scroll" onScroll={updateScroll}>
+          {session?.openError && (
+            <Note message={session.openError} tone="error" actionLabel="重试"
+              onAction={() => { if (selectedTargetId) void ensureOpen(selectedTargetId, selectedAgent) }} />
+          )}
+          {view?.error && <Note message={view.error} tone="error" />}
+          {items.length === 0 && approvals.length === 0 && <Empty>发送消息开始对话。</Empty>}
+          <div className="space-y-4">
+            <FileActionsContext.Provider value={fileActions}>
+              {items.map((item) => (
+                <MessageItem key={item.id} item={item} onQuote={(text) => setQuote({ key: chatKey, text })} agentName={agentLabel(selectedAgent)} />
+              ))}
+            </FileActionsContext.Provider>
+            {approvals.length > 0 && (
+              <div ref={approvalsRef} className="space-y-3">
+                {approvals.map((approval) => (
+                  <ApprovalCard key={String(approval.requestId)} approval={approval}
+                    agent={selectedAgent} submitting={Boolean(approvalSubmitting[String(approval.requestId)])}
+                    offline={!eventsConnected}
+                    onDecide={(decision) => void respondApproval(approval.requestId, decision)} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        {!atBottom && (
+          <Button className="absolute right-3 bottom-3 bg-qn-panel shadow-lg" onClick={jumpToLatest}>回到最新 <span aria-hidden>↓</span></Button>
+        )}
       </div>
+      {(error || notice) && (
+        <div className="bg-qn-panel px-3 pt-1">
+          {error && <Note message={error} tone="error" onClose={clearError} />}
+          {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
+        </div>
+      )}
       <Composer
-        onSend={(text) => void send(text)}
+        key={chatKey}
+        draftKey={chatKey}
+        text={draftText}
+        onChangeText={setDraftText}
+        onSend={async (text, images, delegate) => {
+          const sent = await send(text, images, delegate)
+          if (sent) jumpToLatest()
+          return sent
+        }}
         onInterrupt={() => void interrupt()}
         running={running}
         sending={sending}
         disabled={!selectedTargetId}
-        error={error}
-        onClearError={clearError}
+        imageUnavailable={imageUnavailable}
+        project={project}
         annotations={annotations}
         onUpdateAnnotation={updateAnnotation}
         onRemoveAnnotation={removeAnnotation}
-        quoteDraft={quoteDraft}
-        onConfirmQuote={(quote, comment) => {
-          addAnnotation(quote, comment)
-          setQuoteDraft(null)
-        }}
-        onCancelQuote={() => setQuoteDraft(null)}
+        quoteDraft={quote?.key === chatKey ? quote.text : null}
+        onConfirmQuote={(text, comment) => { addAnnotation(text, comment); setQuote(null) }}
+        onCancelQuote={() => setQuote(null)}
         placeholder={agentPlaceholder(selectedAgent)}
+        canRequestSubagents={supportsSubagentRequests(selectedAgent)}
         toolbar={
           <>
             <AgentTag agent={selectedAgent} />
-            {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">pi 不经审批直接执行工具</span>}
+            {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">工具直接执行</span>}
             {selectedTargetId && <ModelPicker targetId={selectedTargetId} agent={selectedAgent} />}
           </>
         }
       />
+      {switching && <SessionSwitcher onClose={() => setSwitching(false)} />}
+      {showRate && (
+        <Dialog title={selectedAgent === 'claude' ? 'Claude 用量' : '额度详情'} onClose={() => setShowRate(false)}>
+          {selectedAgent === 'claude' ? (
+            <div className="space-y-2 text-sm">
+              <p>{claudeLimit?.rateLimitReachedType ? '已达限额' : claudeLimit?.primary?.usedPercent != null
+                ? `最近上报利用率 ${Math.round(claudeLimit.primary.usedPercent)}%`
+                : '暂无限额事件'}</p>
+              {claudeLimit?.primary?.resetsAt != null && <p>{formatReset(claudeLimit.primary.resetsAt, Date.now())}</p>}
+              {claudeCost != null && <p>本设备已收到的会话费用估算 {new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(claudeCost)}</p>}
+              <p className="text-xs text-qn-muted">Claude 只在接近或触发限额时上报。</p>
+            </div>
+          ) : <RateLimitDetails targetId={selectedTargetId} onClose={() => setShowRate(false)} />}
+        </Dialog>
+      )}
     </>
   )
 }

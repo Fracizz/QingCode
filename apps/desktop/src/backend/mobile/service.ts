@@ -96,6 +96,7 @@ export class MobileService {
       const current = await this.settings.read()
       const next: MobileStoredSettings = {
         enabled: patch.enabled ?? current.enabled,
+        terminalEnabled: patch.terminalEnabled ?? current.terminalEnabled ?? false,
         port: patch.port ?? current.port,
         publicAddresses: patch.publicAddresses ?? current.publicAddresses,
       }
@@ -227,6 +228,7 @@ export class MobileService {
     }
     return {
       enabled: settings.enabled,
+      terminalEnabled: settings.terminalEnabled === true,
       port: settings.port,
       hasPassword,
       publicAddresses: [...settings.publicAddresses],
@@ -248,6 +250,7 @@ export class MobileService {
 
   private async applyNow(): Promise<void> {
     const settings = await this.settings.read()
+    this.gateway.setTerminalEnabled(settings.enabled && settings.terminalEnabled === true)
     const certificate = await this.certificateNow()
     if (!settings.enabled) {
       await this.gateway.stop()

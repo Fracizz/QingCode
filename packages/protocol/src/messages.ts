@@ -57,14 +57,25 @@ export interface ServerMethods extends WorkspaceMethods {
     result: { path: string; entries: FsEntry[] }
   }
   'codex.open': {
-    params: { codexPath?: string; claudePath?: string; piPath?: string; agent?: AgentKind }
+    params: {
+      codexPath?: string
+      claudePath?: string
+      piPath?: string
+      codexHome?: string
+      claudeConfigDir?: string
+      agent?: AgentKind
+    }
     result: {
       initialize: unknown
       lastSeq: number
       codexVersion?: string
       agentVersion?: string
-      /** pi 无审批/额度接口，由前端据此标注与隐藏徽标。 */
-      capabilities?: { approvals: boolean; rateLimits: boolean }
+      capabilities?: {
+        approvals: boolean
+        rateLimits: boolean
+        accessModes?: boolean
+        agentConfigDir?: boolean
+      }
     }
   }
   'codex.attach': {
@@ -75,7 +86,7 @@ export interface ServerMethods extends WorkspaceMethods {
     params: { agent?: AgentKind }
     result: { running: boolean; pid?: number; activeTurns: number }
   }
-  'server.shutdown': { params: void; result: Record<string, never> }
+  'server.shutdown': { params: { whenIdle: true } | void; result: Record<string, never> }
 }
 
 export type ServerMethod = keyof ServerMethods

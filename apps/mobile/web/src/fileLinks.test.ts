@@ -49,6 +49,7 @@ describe('行号后缀与链接', () => {
 
   it('Markdown href → 本地文件；外链与锚点返回 null', () => {
     expect(parseFileHref('src/a.ts:10', '/repo')).toEqual({ path: '/repo/src/a.ts', line: 10 })
+    expect(parseFileHref('README.md:3', '/repo')).toEqual({ path: '/repo/README.md', line: 3 })
     expect(parseFileHref('file:///C:/repo/a.ts#L5', '')).toEqual({ path: 'C:/repo/a.ts', line: 5 })
     expect(parseFileHref('C:\\repo\\a%20b.ts', '')).toEqual({ path: 'C:\\repo\\a b.ts' })
     expect(parseFileHref('https://example.com/a.ts', '/repo')).toBeNull()
@@ -62,6 +63,8 @@ describe('行号后缀与链接', () => {
     expect(allowLocalUrl('https://a', 'https://a')).toBe('https://a')
     expect(allowLocalUrl('file:///a.ts', '')).toBe('file:///a.ts')
     expect(allowLocalUrl('C:\\a.ts', '')).toBe('C:\\a.ts')
+    expect(allowLocalUrl('README.md:3:2', '')).toBe('README.md:3:2')
+    expect(allowLocalUrl('javascript:foo.md:42', '')).toBe('')
     expect(allowLocalUrl('javascript:alert(1)', '')).toBe('')
   })
 })

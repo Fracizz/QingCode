@@ -109,7 +109,7 @@ describe('设置草稿与补丁', () => {
 
   it('只提交改动的字段，密码留空表示不修改', () => {
     const result = buildSettingsPatch(
-      { enabled: false, port: '38501', password: '', publicAddresses: ['frp.example.com:7001'] },
+      { ...draft(), enabled: false, port: '38501' },
       settings(),
     )
     expect(result).toEqual({ ok: true, patch: { enabled: false, port: 38501 } })
@@ -118,8 +118,7 @@ describe('设置草稿与补丁', () => {
   it('新密码与规范化、去重后的地址会提交', () => {
     const result = buildSettingsPatch(
       {
-        enabled: true,
-        port: '38500',
+        ...draft(),
         password: 'abc123',
         publicAddresses: [' 2001:db8::1:7001 ', 'frp.example.com:7001', 'frp.example.com:7001'],
       },
@@ -131,6 +130,13 @@ describe('设置草稿与补丁', () => {
         password: 'abc123',
         publicAddresses: ['[2001:db8::1]:7001', 'frp.example.com:7001'],
       },
+    })
+  })
+
+  it('手机终端开关默认关闭，只有显式修改时才提交', () => {
+    expect(draft().terminalEnabled).toBe(false)
+    expect(buildSettingsPatch({ ...draft(), terminalEnabled: true }, settings())).toEqual({
+      ok: true, patch: { terminalEnabled: true },
     })
   })
 

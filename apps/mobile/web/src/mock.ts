@@ -1,4 +1,5 @@
 // 浏览器开发模式：无 window.QnNative 时用内存假数据把全部页面点通（多 Agent、只读文件/差异；不触网、不打印凭据）。
+import type { TermInfo, TermOutputChunk } from '@qn/protocol'
 import { buildConnectionInfo, normalizeFingerprint } from './link'
 import type { NativeCallbacks, NativePort } from './native'
 import type { AgentKind, GatewayEvent, Project, Target } from './types'
@@ -68,6 +69,7 @@ const MOCK_PROJECTS: Project[] = [
 ]
 
 type Stream = { id: string; heartbeat: ReturnType<typeof setInterval> | null }
+type MockTerminal = { project: Project; info: TermInfo; chunks: TermOutputChunk[]; attached: boolean }
 
 /** 本机启用 Codex / Claude / pi（pi 模拟未安装），93 上关闭 Claude。 */
 export const MOCK_AGENT_SETTINGS = {
@@ -192,10 +194,61 @@ function mockDiff(path: string): string {
   ].join('\n')
 }
 
+const MOCK_PROJECT_PATHS = [
+  'README.md', '.gitignore', 'docs', 'docs/mvp.md',
+  'apps', 'apps/mobile', 'apps/mobile/web', 'apps/mobile/web/src', 'apps/mobile/web/src/store.ts',
+]
+const MOCK_PROJECT_FILE_MTIME = Date.now()
+const mockBase64 = (bytes: Uint8Array) => btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''))
+
+function mockProjectFiles(method: string, params: JsonRecord): JsonRecord {
+  const path = str(params.path)
+  const paths = MOCK_PROJECT_PATHS.filter((entry) =>
+    method === 'mobile.files.read' || params.hidden === true || !entry.startsWith('.'),
+  )
+  const entries = paths.map((entry) => {
+    const directory = MOCK_PROJECT_PATHS.some((candidate) => candidate.startsWith(`${entry}/`))
+    return {
+      path: entry, name: basename(entry), kind: directory ? 'dir' : 'file',
+      mtimeMs: MOCK_PROJECT_FILE_MTIME,
+      size: directory ? 0 : new TextEncoder().encode(mockText(entry)).length,
+    }
+  })
+  const directory = path ? `${path}/` : ''
+  if (method === 'mobile.files.read') {
+    const file = entries.find((entry) => entry.path === path && entry.kind === 'file')
+    if (!file) throw new MockError('not_found', '文件不存在')
+    const data = new TextEncoder().encode(mockText(path))
+    const offset = Number.isSafeInteger(params.offset) ? Math.max(0, Number(params.offset)) : 0
+    const length = Number.isSafeInteger(params.length) ? Math.max(0, Number(params.length)) : 262_144
+    const part = data.slice(offset, offset + Math.min(length, 262_144))
+    const version = `${MOCK_PROJECT_FILE_MTIME}:${data.length}`
+    if (params.version !== undefined && params.version !== version) throw new MockError('conflict', '文件已修改')
+    const content = mockBase64(part)
+    return { content, length: part.length, size: data.length, version }
+  }
+  if (method === 'mobile.files.list') {
+    if (path && !entries.some((entry) => entry.path === path && entry.kind === 'dir')) {
+      throw new MockError('not_found', '目录不存在')
+    }
+    return {
+      entries: entries.filter((entry) => entry.path.startsWith(directory) && !entry.path.slice(directory.length).includes('/')),
+      truncated: false,
+    }
+  }
+  const query = str(params.query).toLocaleLowerCase()
+  const limit = typeof params.limit === 'number' ? Math.max(0, Math.min(params.limit, 200)) : 200
+  const matches = entries.filter((entry) =>
+    entry.path.startsWith(directory) && entry.path.toLocaleLowerCase().includes(query) && entry.kind === 'file',
+  )
+  return { entries: matches.slice(0, limit), truncated: matches.length > limit }
+}
+
 export class MockNativePort implements NativePort {
   private readonly streams = new Map<string, Stream>()
   private readonly memory = new Map<string, string>()
   private readonly projects: Project[] = [...MOCK_PROJECTS]
+  private readonly terminals = new Map<string, MockTerminal>()
   private readonly threads = new Map<AgentKind, JsonRecord[]>([
     [
       'codex',
@@ -300,6 +353,7 @@ export class MockNativePort implements NativePort {
   private handleRpc(request: JsonRecord): unknown {
     const method = str(request.method)
     const params = isRecord(request.params) ? request.params : {}
+    if (method.startsWith('mobile.term.')) return this.mockTerminal(method, params)
     switch (method) {
       case 'targets.list':
         return MOCK_TARGETS
@@ -311,6 +365,13 @@ export class MockNativePort implements NativePort {
         return null
       case 'mobile.agents':
         return MOCK_AGENT_SETTINGS
+      case 'mobile.files.list':
+      case 'mobile.files.search':
+      case 'mobile.files.read': {
+        const project = this.projects.find((item) => item.id === params.projectId && item.targetId === params.targetId)
+        if (!project) throw new MockError('not_found', '项目不存在')
+        return mockProjectFiles(method, params)
+      }
       case 'projects.list': {
         const targetId = str(params.targetId)
         return targetId ? this.projects.filter((p) => p.targetId === targetId) : [...this.projects]
@@ -343,6 +404,68 @@ export class MockNativePort implements NativePort {
     }
   }
 
+  private mockTerminal(method: string, params: JsonRecord): unknown {
+    const project = this.projects.find((item) => item.id === params.projectId && item.targetId === params.targetId)
+    if (!project) throw new MockError('not_found', '项目不存在')
+    if (method === 'mobile.term.list') {
+      return { terminals: [...this.terminals.values()].filter((item) => item.project.id === project.id).map((item) => item.info) }
+    }
+    if (method === 'mobile.term.open') {
+      const termId = `mock-terminal-${++this.counter}`
+      const info: TermInfo = {
+        termId, cwd: project.path, shell: '模拟终端', args: [], pid: null, backend: 'python',
+        supportsResize: true, alive: true, lastSeq: 0, cols: Number(params.cols) || 80,
+        rows: Number(params.rows) || 24, startedAt: Date.now(),
+      }
+      const terminal: MockTerminal = { project, info, attached: false, chunks: [] }
+      this.terminals.set(termId, terminal)
+      this.mockTerminalOutput(terminal, '模拟终端 · 文本仅回显\r\n> ')
+      return { ...info, created: true }
+    }
+    const terminal = this.terminals.get(str(params.termId))
+    if (!terminal || terminal.project.id !== project.id) throw new MockError('term_not_found', '终端不存在')
+    const { info, chunks } = terminal
+    switch (method) {
+      case 'mobile.term.attach': {
+        terminal.attached = true
+        const since = Number(params.sinceSeq) || 0
+        const truncated = since + 1 < (chunks[0]?.seq ?? 0)
+        return { ...info, truncated, mode: truncated ? 'resync' : 'replay', chunks: chunks.filter((chunk) => chunk.seq > since) }
+      }
+      case 'mobile.term.detach':
+        terminal.attached = false
+        return {}
+      case 'mobile.term.resize':
+        info.cols = Number(params.cols) || info.cols
+        info.rows = Number(params.rows) || info.rows
+        return { cols: info.cols, rows: info.rows, applied: true }
+      case 'mobile.term.write': {
+        const bytes = Uint8Array.from(atob(str(params.data)), (byte) => byte.charCodeAt(0))
+        const text = new TextDecoder().decode(bytes).replace(/\x03/g, '^C\r').replace(/\r\n?|\n/g, '\r\n> ')
+        if (text) this.mockTerminalOutput(terminal, text)
+        return { acceptedBytes: bytes.length }
+      }
+      case 'mobile.term.close':
+        this.terminals.delete(info.termId)
+        return {}
+      default:
+        throw new MockError('forbidden', '未知手机终端操作')
+    }
+  }
+
+  private mockTerminalOutput(terminal: MockTerminal, text: string): void {
+    const { project, info, chunks } = terminal
+    const chunk = { seq: ++info.lastSeq, data: mockBase64(new TextEncoder().encode(text)) }
+    chunks.push(chunk)
+    if (chunks.length > 128) chunks.shift()
+    if (terminal.attached) {
+      this.emit({
+        name: 'mobile.terminal',
+        payload: { targetId: project.targetId, projectId: project.id, name: 'term.data', payload: { termId: info.termId, ...chunk } },
+      })
+    }
+  }
+
   private serverReq(params: JsonRecord): unknown {
     const method = str(params.method)
     const inner = isRecord(params.params) ? params.params : {}
@@ -368,7 +491,7 @@ export class MockNativePort implements NativePort {
       case 'codex.attach':
         return { lastSeq: this.seq, truncated: false }
       case 'codex.status':
-        return { running: true, pid: 4242, activeTurns: 0 }
+        return { running: agent !== 'pi', pid: 4242, activeTurns: 0 }
       case 'fs.read':
         return mockRead(str(inner.path), inner)
       case 'git.status':
@@ -581,7 +704,12 @@ export class MockNativePort implements NativePort {
           },
         },
       })
-      recv({ method: 'thread/tokenUsage/updated', params: { threadId, tokenUsage: { total: 128 } } })
+      recv({
+        method: 'thread/tokenUsage/updated',
+        params: {
+          threadId, turnId, tokenUsage: { total: { totalTokens: 128 }, ...(agent === 'claude' ? { estimatedCostUsd: 0.012 } : {}) },
+        },
+      })
       if (agent === 'codex') {
         recv({
           method: 'account/rateLimits/updated',
@@ -591,6 +719,11 @@ export class MockNativePort implements NativePort {
               secondary: { usedPercent: 18, windowDurationMins: 10080, resetsAt: nowSec + 86_400 },
             },
           },
+        })
+      } else if (agent === 'claude') {
+        recv({
+          method: 'account/rateLimits/updated',
+          params: { rateLimits: { primary: { usedPercent: 81, windowDurationMins: 300, resetsAt: nowSec + 2700 } } },
         })
       }
     }, delay + 40)
@@ -604,7 +737,8 @@ export class MockNativePort implements NativePort {
   }
 
   private recv(targetId: string, agent: AgentKind, msg: unknown): void {
-    this.emit({ name: 'codex.recv', payload: { targetId, seq: ++this.seq, msg, agent } })
+    const response = isRecord(msg) && !msg.method && ('result' in msg || 'error' in msg)
+    this.emit({ name: 'codex.recv', payload: { targetId, seq: response ? null : ++this.seq, msg, agent } })
   }
 
   private emit(event: GatewayEvent): void {

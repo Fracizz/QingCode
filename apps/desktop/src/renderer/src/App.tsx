@@ -15,6 +15,8 @@ import { useWorkspaceScope, WorkspaceDock } from './components/shell/WorkspaceDo
 import { QuickOpen } from './features/explorer'
 import { CommandPalette, defaultCommands, registerCommands, storeCommandDeps, toggleCommandPalette } from './features/palette'
 import { closeSettings, openSettings, SettingsDialog, useSettings, useSettingsDialog } from './features/settings'
+import { TerminalDock } from './features/terminal/TerminalDock'
+import { useTerminalDock } from './features/terminal/dockState'
 import { useWorkspaceWatch } from './hooks/useWorkspaceWatch'
 import { useDock } from './store/dock'
 import { useBootSplash } from './hooks/useBootSplash'
@@ -102,6 +104,7 @@ export default function App() {
   // Ctrl+Shift+E/F/G 切换右侧资源管理器 / 搜索 / 源代码管理；Ctrl+Shift+P / F1 命令面板。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof Element && event.target.closest('[data-terminal-input]')) return
       if (event.key === 'F1' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
         event.preventDefault()
         toggleCommandPalette()
@@ -136,8 +139,18 @@ export default function App() {
         useCodex.getState().startDraft()
       }
     }
+    const onTerminalShortcut = (event: KeyboardEvent) => {
+      if (event.code !== 'Backquote' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (!event.repeat) useTerminalDock.getState().toggle()
+    }
+    window.addEventListener('keydown', onTerminalShortcut, true)
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onTerminalShortcut, true)
+      window.removeEventListener('keydown', onKeyDown)
+    }
   }, [])
 
   const requestConnect = (id: string) => {
@@ -235,7 +248,10 @@ export default function App() {
             onForgetSecret={(id) => void forgetSecret(id)}
           />
         )}
-        <ChatPanel onConnect={requestConnect} onAddTarget={openAddTarget} />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <ChatPanel onConnect={requestConnect} onAddTarget={openAddTarget} />
+          <TerminalDock />
+        </div>
         <WorkspaceDock />
       </div>
 

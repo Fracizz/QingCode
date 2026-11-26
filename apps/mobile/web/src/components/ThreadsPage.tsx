@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { agentLabel, threadKey } from '../agents'
-import { formatTime } from '../state'
 import { defaultAgentFor, targetAgents, unavailableAgents, useApp } from '../store'
 import type { AgentKind } from '../types'
-import { AgentTag, Button, Card, Dialog, Empty, Header, Loading, Note } from './ui'
+import { Button, Dialog, Empty, Header, Loading, Note } from './ui'
 import { RateLimitBadge } from './RateLimitView'
+import { ProjectTools } from './ProjectTools'
+import { WorkspaceIcon, WorkspaceSearch, WorkspaceThreadRow } from './WorkspaceHome'
+import { groupWorkspaceThreads } from '../workspace'
 
 /** 新建会话时选 Agent：只列电脑设置里启用的；打开失败的置灰并给出原因，但仍可点（会重试打开）。 */
 function AgentPickerDialog({
@@ -76,12 +78,14 @@ export function ThreadsPage() {
   const newThread = useApp((s) => s.newThread)
   const openThread = useApp((s) => s.openThread)
   const [picking, setPicking] = useState(false)
+  const [query, setQuery] = useState('')
 
   const project = projects.find((item) => item.id === selectedProjectId)
   const agents = targetAgents({ agentSettings }, selectedTargetId)
   const unavailable = selectedTargetId ? unavailableAgents({ sessions }, selectedTargetId, agents) : new Set<AgentKind>()
   const preferred = selectedTargetId ? defaultAgentFor({ agentSettings, sessions }, selectedTargetId) : agents[0]
   const multiAgent = agents.length > 1
+  const shown = project ? groupWorkspaceThreads(threads.map((thread) => ({ ...thread, targetId: project.targetId, projectId: project.id })), [project], query)[0]?.threads ?? [] : []
 
   const startNew = () => {
     if (multiAgent) setPicking(true)
@@ -94,7 +98,15 @@ export function ThreadsPage() {
         title="会话"
         subtitle={project?.name ?? ''}
         onBack={goBack}
-        right={<RateLimitBadge targetId={selectedTargetId} hideWhenEmpty />}
+        right={
+          <>
+            <RateLimitBadge targetId={selectedTargetId} hideWhenEmpty />
+            {project && <ProjectTools project={project} />}
+            <Button variant="ghost" onClick={() => void refreshThreads()} disabled={loading} aria-label="刷新会话">
+              <WorkspaceIcon name="refresh" />
+            </Button>
+          </>
+        }
       />
       <div className="qn-body qn-scroll">
         {error && <Note message={error} tone="error" onClose={clearError} />}
@@ -114,32 +126,21 @@ export function ThreadsPage() {
               />
             ))
         )}
+        {threads.length > 0 && <WorkspaceSearch label="搜索会话" query={query} onChange={setQuery} />}
         {loading && threads.length === 0 && <Loading text="正在读取会话…" />}
-        {!loading && threads.length === 0 && !threadsError && (
-          <Empty>还没有会话。点「新建会话」开始。</Empty>
+        {!loading && shown.length === 0 && !threadsError && (
+          <Empty>{query ? '没有匹配的会话。' : '还没有会话。点「新建会话」开始。'}</Empty>
         )}
-        <div className="space-y-3">
-          {threads.map((thread) => (
-            <Card key={threadKey(thread.agent, thread.id)}>
-              <button type="button" className="qn-row" onClick={() => void openThread(thread.id, thread.agent)}>
-                <span className="min-w-0 flex-1">
-                  <span className="flex min-w-0 items-center gap-2">
-                    {multiAgent && <AgentTag agent={thread.agent} />}
-                    <span className="min-w-0 truncate text-sm font-medium">{thread.title}</span>
-                  </span>
-                  <span className="qn-subtitle block">{thread.preview || '（无预览）'}</span>
-                  <span className="qn-subtitle block">{formatTime(thread.updatedAt)}</span>
-                </span>
-                <span className="text-qn-muted">›</span>
-              </button>
-            </Card>
-          ))}
-        </div>
+        {shown.length > 0 && (
+          <div className="qn-list-group mt-3">
+            {shown.map((thread) => (
+              <WorkspaceThreadRow key={threadKey(thread.agent, thread.id)} thread={thread}
+                onOpen={() => void openThread(thread.id, thread.agent)} />
+            ))}
+          </div>
+        )}
       </div>
       <div className="qn-footer flex gap-2">
-        <Button className="flex-1" onClick={() => void refreshThreads()} disabled={loading}>
-          {loading ? '刷新中…' : '刷新'}
-        </Button>
         <Button className="flex-1" variant="primary" onClick={startNew}>
           ＋ 新建会话
         </Button>

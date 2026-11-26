@@ -6,6 +6,7 @@
 - `packages/server/src/workspace/index.ts` 合并登记一行（先重新读取）。
 - `packages/server/src/daemon.ts`：只做必要的最小改动——空闲退出判定计入活跃终端、`term.data` 只发给订阅了该 termId 的连接、连接关闭时取消订阅（不关终端）。
 - 不改桌面端、手机端、网关（**不得**把 `term.*` 加进手机网关白名单）。
+- 升级收尾：`packages/server/src/ensure.ts`、`client.ts`、`daemon.ts`、`e2e.test.ts` 与 `packages/protocol/src/messages.ts` 的 `server.shutdown` 参数，仅用于替换旧 daemon 时保护活跃终端。有终端时继续使用旧 daemon；终端结束后下一次 `ensure --replace` 可正常升级。
 
 依据：`docs/spikes/terminal.md`（**全文**，尤其 §1 结论、§2 原型、§5 断线接回、§6 协议草案、§6.5 安全、§7 风险）、`docs/mvp.md` §4（帧格式、16 MiB 上限）、`docs/roadmap.md` §7.4。现有 workspace 分发模式参考 `packages/server/src/workspace/fs/search.ts`（`ctx.emit`、`ctx.onClose`）。
 

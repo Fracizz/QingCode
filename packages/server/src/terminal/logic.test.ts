@@ -122,9 +122,16 @@ describe('参数校验', () => {
 
 describe('环境与 shell', () => {
   it('默认 shell 取 $SHELL 绝对路径，否则 /bin/sh', () => {
-    expect(defaultShell({ SHELL: '/bin/zsh' })).toBe('/bin/zsh')
-    expect(defaultShell({ SHELL: 'zsh' })).toBe('/bin/sh')
-    expect(defaultShell({})).toBe('/bin/sh')
+    expect(defaultShell({ SHELL: '/bin/zsh' }, 'linux')).toBe('/bin/zsh')
+    expect(defaultShell({ SHELL: 'zsh' }, 'linux')).toBe('/bin/sh')
+    expect(defaultShell({}, 'linux')).toBe('/bin/sh')
+  })
+
+  it('Windows 默认 shell 取 ComSpec 的绝对路径，否则 cmd.exe', () => {
+    const command = 'C:/Windows/System32/cmd.exe'
+    expect(defaultShell({ ComSpec: command }, 'win32')).toBe(command)
+    expect(defaultShell({ COMSPEC: 'relative/cmd.exe' }, 'win32')).toBe('cmd.exe')
+    expect(defaultShell({ SHELL: '/bin/zsh' }, 'win32')).toBe('cmd.exe')
   })
 
   it('buildEnv 去掉 daemon 自身变量，补 TERM/COLORTERM/COLUMNS/LINES', () => {

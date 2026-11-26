@@ -108,6 +108,16 @@ describe('发送时的乐观用户消息', () => {
     expect(viewItems('t1').map((item) => item.id)).toEqual(['u1'])
   })
 
+  it('请求子代理时只发送一轮，并把委派请求放在这一轮的正文中', async () => {
+    await expect(useCodex.getState().send('核对文档', { delegate: true })).resolves.toBe(true)
+    const turns = callMock.mock.calls
+      .filter(([method, params]) => method === 'codex.send' && params?.msg?.method === 'turn/start')
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.[1].msg.params.input).toEqual([
+      { type: 'text', text: expect.stringMatching(/^核对文档\n\n请.*子代理/), text_elements: [] },
+    ])
+  })
+
   it('发送失败时撤回占位、复位 sending 并返回 false', async () => {
     callMock.mockImplementation(async (method: string, params?: CallParams) => {
       if (method === 'codex.send' && params?.msg?.method === 'turn/start') throw new Error('turn 失败')

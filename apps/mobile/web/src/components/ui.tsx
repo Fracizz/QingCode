@@ -1,6 +1,7 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { agentLabel } from '../agents'
 import type { AgentKind } from '../types'
+import { registerBackHandler } from '../workspace'
 
 type Tone = 'muted' | 'ok' | 'warn' | 'danger' | 'accent'
 
@@ -123,7 +124,7 @@ export function Note({
         </button>
       )}
       {onClose && (
-        <button type="button" className="qn-button qn-button-ghost px-3 py-1 text-xs" onClick={onClose}>
+        <button type="button" className="qn-button qn-button-ghost px-3 py-1 text-xs" aria-label="关闭提示" onClick={onClose}>
           ✕
         </button>
       )}
@@ -143,23 +144,43 @@ export function Dialog({
   title,
   children,
   onClose,
+  placement = 'bottom',
 }: {
   title: string
   children: ReactNode
   onClose: () => void
+  placement?: 'bottom' | 'side' | 'full'
 }) {
+  const ref = useRef<HTMLDialogElement>(null)
+  const close = useRef(onClose)
+  useEffect(() => { close.current = onClose }, [onClose])
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+    node.showModal()
+    const unregister = registerBackHandler(() => close.current())
+    return () => {
+      unregister()
+      node.close()
+    }
+  }, [])
+
   return (
-    <div className="qn-dialog" role="dialog" aria-modal="true" aria-label={title}>
+    <dialog ref={ref} className="qn-dialog" data-placement={placement} aria-label={title}
+      onCancel={(event) => { event.preventDefault(); onClose() }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}>
       <div className="qn-dialog-panel">
         <div className="mb-3 flex items-center gap-2">
-          <span className="qn-title flex-1">{title}</span>
-          <Button variant="ghost" className="px-2" onClick={onClose} aria-label="关闭">
-            ✕
+          <h2 className="qn-title flex-1">{title}</h2>
+          <Button autoFocus variant="ghost" className="px-2" onClick={onClose} aria-label="关闭">
+            ×
           </Button>
         </div>
         {children}
       </div>
-    </div>
+    </dialog>
   )
 }
 

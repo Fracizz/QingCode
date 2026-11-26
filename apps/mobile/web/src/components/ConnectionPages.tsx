@@ -1,43 +1,144 @@
-import { useState } from 'react'
-import { formatAddress, isValidPairingCode, normalizeFingerprint, parseAddress } from '../link'
+import { useEffect, useState } from 'react'
+import { callDevice, getGateway } from '../client'
+import { formatAddress, isValidPairingCode, normalizeFingerprint, parseAddress, parsePairingLink } from '../link'
+import { getWindowNativePort } from '../native'
+import { friendlyError } from '../state'
 import { useApp } from '../store'
 import type { ConnectionStatus } from '../types'
+import { useWorkspace } from '../workspace'
 import { Badge, Button, Card, Dialog, Empty, Field, Header, Loading, Note, StatusDot } from './ui'
+import { WorkspaceIcon } from './WorkspaceHome'
 
-function statusText(status: ConnectionStatus | undefined, connected: boolean): string {
-  if (connected) return '已连接'
-  switch (status) {
-    case 'online':
-      return '在线'
-    case 'offline':
-      return '离线'
-    case 'mismatch':
-      return '证书指纹已变化'
-    case 'checking':
-      return '检测中…'
-    default:
-      return '未检测'
-  }
+const stateText: Record<ConnectionStatus, string> = {
+  online: '在线',
+  offline: '离线',
+  mismatch: '证书已变化',
+  checking: '检测中…',
+  unknown: '待连接',
 }
 
-function statusTone(status: ConnectionStatus | undefined, connected: boolean): 'ok' | 'warn' | 'danger' | 'muted' {
-  if (connected || status === 'online') return 'ok'
+function statusTone(status: ConnectionStatus): 'ok' | 'warn' | 'danger' | 'muted' {
+  if (status === 'online') return 'ok'
   if (status === 'checking') return 'warn'
-  if (status === 'offline') return 'muted'
   if (status === 'mismatch') return 'danger'
   return 'muted'
+}
+
+type UpdateCheck = { available: boolean; versionName: string; versionCode: number; id?: string }
+const UPDATE_URL = 'mobile.updateUrl'
+
+function MobileSettings({ onClose }: { onClose: () => void }) {
+  const [version, setVersion] = useState<string | null>(null)
+  const [online, setOnline] = useState(false)
+  const [url, setUrl] = useState('')
+  const [busy, setBusy] = useState<'check' | 'install' | null>(null)
+  const [candidate, setCandidate] = useState<UpdateCheck | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const native = Boolean(getWindowNativePort())
+
+  useEffect(() => {
+    if (!native) return
+    let cancelled = false
+    void callDevice<{ versionName: string; online: boolean }>('updates.status').then((result) => {
+      if (!cancelled) {
+        setVersion(result.versionName)
+        setOnline(result.online)
+      }
+    }).catch((err: unknown) => {
+      if (!cancelled) setError(friendlyError(err, '无法读取应用版本'))
+    })
+    void getGateway().storageGet(UPDATE_URL).then((value) => {
+      if (!cancelled && value) setUrl(value)
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [native])
+
+  const check = async () => {
+    setNotice(null)
+    setError(null)
+    setCandidate(null)
+    let endpoint: URL
+    try {
+      endpoint = new URL(url.trim())
+      if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.hash) throw new Error()
+    } catch {
+      setError('请输入 HTTPS APK 下载地址。')
+      return
+    }
+    setBusy('check')
+    try {
+      await getGateway().storageSet(UPDATE_URL, endpoint.href)
+      const result = await callDevice<UpdateCheck>('updates.check', { url: endpoint.href }, 300_000)
+      setCandidate(result)
+      if (!result.available) setNotice('当前已是此地址提供的最新版本。')
+    } catch (err) {
+      setError(friendlyError(err, '检查更新失败'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const install = async (id?: string) => {
+    setError(null)
+    setNotice(null)
+    setBusy('install')
+    try {
+      const result = await callDevice<{ started: boolean }>('updates.install', id ? { id } : {}, 300_000)
+      if (result.started) setNotice('在 Android 系统界面中确认安装。')
+    } catch (err) {
+      setError(friendlyError(err, '无法安装所选 APK'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <Dialog title="应用设置" onClose={onClose}>
+      <p className="mb-3 text-sm">QingCode Next{version ? ` · ${version}` : ''}</p>
+      <p className="mb-4 text-xs text-qn-muted">QingCode Next 是第三方客户端，与 OpenAI、Anthropic 无隶属关系。Agent 用量计入你自己的账号。</p>
+      {error && <Note tone="error" message={error} />}
+      {notice && <Note message={notice} />}
+      {online && (
+        <>
+          <Field label="更新地址" hint="填写你信任的 HTTPS APK 下载地址。">
+            <input className="qn-input" type="url" value={url} disabled={busy !== null}
+              onChange={(event) => { setUrl(event.target.value); setCandidate(null) }}
+              autoCapitalize="off" spellCheck={false} placeholder="https://…" />
+          </Field>
+          {candidate?.available && candidate.id ? (
+            <Button className="mb-2 w-full" variant="primary" disabled={busy !== null} onClick={() => void install(candidate.id)}>
+              {busy === 'install' ? '正在检查安装包…' : `安装 ${candidate.versionName}`}
+            </Button>
+          ) : (
+            <Button className="mb-2 w-full" variant="primary" disabled={busy !== null || !url.trim()} onClick={() => void check()}>
+              {busy === 'check' ? '正在下载并验证更新…' : '检查更新'}
+            </Button>
+          )}
+        </>
+      )}
+      {native && (
+        <Button className="w-full" disabled={busy !== null} onClick={() => void install()}>
+          从本地 APK 更新
+        </Button>
+      )}
+    </Dialog>
+  )
 }
 
 export function ConnectionsPage() {
   const connections = useApp((s) => s.connections)
   const statuses = useApp((s) => s.connectionStatus)
   const activeId = useApp((s) => s.activeId)
+  const page = useApp((s) => s.page)
   const booting = useApp((s) => s.booting)
   const mock = useApp((s) => s.mock)
   const eventsConnected = useApp((s) => s.eventsConnected)
   const eventsError = useApp((s) => s.eventsError)
   const error = useApp((s) => s.error)
   const notice = useApp((s) => s.notice)
+  const needsRepair = useApp((s) => s.needsRepair)
+  const beginRepair = useApp((s) => s.beginRepair)
   const activate = useApp((s) => s.activate)
   const openAddForm = useApp((s) => s.openAddForm)
   const openEditForm = useApp((s) => s.openEditForm)
@@ -46,97 +147,108 @@ export function ConnectionsPage() {
   const refreshStatuses = useApp((s) => s.refreshStatuses)
   const clearError = useApp((s) => s.clearError)
   const clearNotice = useApp((s) => s.clearNotice)
+  const [menu, setMenu] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
-
+  const [settings, setSettings] = useState(false)
+  const selected = connections.find((item) => item.id === menu)
   const addFromClipboard = () => {
     openAddForm()
     void pasteFromClipboard()
   }
+  const openComputer = (id: string) => {
+    if (needsRepair[id] || statuses[id] === 'mismatch') {
+      beginRepair(id)
+    } else if (id === activeId && page === 'workspace' && eventsConnected) {
+      useWorkspace.getState().setTab('sessions')
+    } else {
+      void activate(id)
+    }
+  }
 
   return (
     <>
-      <Header
-        title="QingCode Next"
-        subtitle={mock ? '浏览器开发模式（模拟电脑数据）' : '手机连接'}
-        right={
-          <Button variant="ghost" className="px-2" onClick={() => void refreshStatuses()} aria-label="刷新状态">
-            ⟳
-          </Button>
-        }
-      />
-      <div className="qn-body qn-scroll">
+      <main className="qn-body qn-scroll qn-workspace">
+        <header className="qn-workspace-title" data-connected={eventsConnected}>
+          <div className="qn-workspace-context">
+            <span>{mock ? '浏览器预览' : 'QingCode Next'}</span>
+            <div className="flex">
+              {connections.length > 0 && (
+                <Button variant="ghost" className="qn-list-action" onClick={() => void refreshStatuses()} aria-label="刷新连接">
+                  <WorkspaceIcon name="refresh" />
+                </Button>
+              )}
+              <Button variant="ghost" className="qn-list-action" onClick={() => setSettings(true)} aria-label="应用设置">
+                ⚙
+              </Button>
+            </div>
+          </div>
+          <h1>连接</h1>
+        </header>
         {error && <Note message={error} tone="error" onClose={clearError} />}
         {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
-        {eventsError && <Note message={`事件流：${eventsError}`} tone="warn" />}
-        {mock && !notice && (
-          <Note message="浏览器开发模式：未检测到原生桥，页面使用内存假数据；剪贴板里已放好示例连接信息。" />
-        )}
-        {booting ? (
-          <Loading text="正在读取已保存的连接…" />
-        ) : connections.length === 0 ? (
+        {eventsError && activeId && !needsRepair[activeId] && <Note message={eventsError} tone="warn" />}
+        {booting ? <Loading text="正在读取已保存的连接…" /> : connections.length === 0 ? (
           <Empty>
-            还没有连接电脑。
-            <br />
-            在电脑端「手机连接」复制连接信息后粘贴导入。
+            <p>在电脑端「手机连接」复制连接信息。</p>
+            <div className="mt-4 flex flex-col gap-2">
+              <Button variant="primary" onClick={addFromClipboard}>从剪贴板导入</Button>
+              <Button variant="ghost" onClick={openAddForm}>添加连接</Button>
+            </div>
           </Empty>
         ) : (
-          <div className="space-y-3">
-            {connections.map((conn) => {
-              const connected = conn.id === activeId && eventsConnected
-              const status = statuses[conn.id]
-              return (
-                <Card key={conn.id}>
-                  <button type="button" className="qn-row" onClick={() => void activate(conn.id)}>
-                    <StatusDot tone={statusTone(status, connected)} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">{conn.name}</span>
-                      <span className="qn-subtitle qn-mono block">{formatAddress(conn.host, conn.port)}</span>
-                    </span>
-                    <Badge tone={statusTone(status, connected)}>{statusText(status, connected)}</Badge>
-                  </button>
-                  <div className="mt-2 flex gap-2 border-t border-qn-border pt-2">
-                    <Button className="flex-1" variant="primary" onClick={() => void activate(conn.id)}>
-                      进入
-                    </Button>
-                    <Button className="flex-1" onClick={() => openEditForm(conn.id)}>
-                      编辑
-                    </Button>
-                    <Button className="flex-1" variant="danger" onClick={() => setPendingDelete(conn.id)}>
-                      删除
+          <>
+            <div className="qn-list-group">
+              {connections.map((conn) => {
+                const current = conn.id === activeId
+                const repair = needsRepair[conn.id]
+                const status = current && eventsConnected ? 'online' : statuses[conn.id] ?? 'unknown'
+                const tone = repair ? 'danger' : statusTone(status)
+                return (
+                  <div key={conn.id} className="qn-row qn-list-row">
+                    <button type="button" className="qn-row-trigger" onClick={() => openComputer(conn.id)}>
+                      <StatusDot tone={tone} />
+                      <span className="qn-row-copy">
+                        <span className="qn-list-primary">{conn.name}</span>
+                        <span className="qn-subtitle block">{current ? '当前电脑 · ' : ''}{formatAddress(conn.host, conn.port)}</span>
+                      </span>
+                      <Badge tone={tone}>{repair ? '重新配对' : stateText[status]}</Badge>
+                    </button>
+                    <Button variant="ghost" className="qn-list-action" onClick={() => setMenu(conn.id)} aria-label={`${conn.name} 的连接操作`}>
+                      <WorkspaceIcon name="more" />
                     </Button>
                   </div>
-                </Card>
-              )
-            })}
-          </div>
+                )
+              })}
+            </div>
+            <Button variant="primary" className="mt-4 w-full" onClick={addFromClipboard}>从剪贴板导入</Button>
+            <Button variant="ghost" className="mt-2 w-full" onClick={openAddForm}>添加连接</Button>
+          </>
         )}
-      </div>
-      <div className="qn-footer flex gap-2">
-        <Button variant="primary" className="flex-1" onClick={openAddForm}>
-          ＋ 添加连接
-        </Button>
-        <Button className="flex-1" onClick={addFromClipboard}>
-          从剪贴板导入
-        </Button>
-      </div>
+      </main>
+      {settings && <MobileSettings onClose={() => setSettings(false)} />}
+      {selected && (
+        <Dialog title={selected.name} onClose={() => setMenu(null)}>
+          <p className="mb-3 text-xs text-qn-muted">{formatAddress(selected.host, selected.port)}</p>
+          <div className="grid gap-2">
+            {selected.id === activeId && eventsConnected && (
+              <Button onClick={() => { setMenu(null); useApp.setState({ page: 'targets' }) }}>查看目标</Button>
+            )}
+            <Button onClick={() => { setMenu(null); openEditForm(selected.id) }}>编辑连接</Button>
+            <Button onClick={() => { setMenu(null); beginRepair(selected.id) }}>重新配对</Button>
+            <Button variant="danger" onClick={() => { setMenu(null); setPendingDelete(selected.id) }}>删除连接</Button>
+          </div>
+        </Dialog>
+      )}
       {pendingDelete && (
         <Dialog title="删除连接" onClose={() => setPendingDelete(null)}>
-          <p className="mb-4 text-sm text-qn-muted">删除后需要重新粘贴连接信息配对，确定删除吗？</p>
+          <p className="mb-4 text-sm text-qn-muted">删除后需要重新配对才能访问这台电脑。</p>
           <div className="flex gap-2">
-            <Button className="flex-1" onClick={() => setPendingDelete(null)}>
-              取消
-            </Button>
-            <Button
-              className="flex-1"
-              variant="danger"
-              onClick={() => {
-                const id = pendingDelete
-                setPendingDelete(null)
-                void removeConnection(id)
-              }}
-            >
-              删除
-            </Button>
+            <Button className="flex-1" onClick={() => setPendingDelete(null)}>取消</Button>
+            <Button className="flex-1" variant="danger" onClick={() => {
+              const id = pendingDelete
+              setPendingDelete(null)
+              void removeConnection(id)
+            }}>删除</Button>
           </div>
         </Dialog>
       )}
@@ -146,7 +258,6 @@ export function ConnectionsPage() {
 
 export function ConnectionFormPage() {
   const form = useApp((s) => s.form)
-  const mock = useApp((s) => s.mock)
   const closeForm = useApp((s) => s.closeForm)
   const setFormPaste = useApp((s) => s.setFormPaste)
   const parsePaste = useApp((s) => s.parsePaste)
@@ -155,11 +266,15 @@ export function ConnectionFormPage() {
   const testConnection = useApp((s) => s.testConnection)
   const pairAndSave = useApp((s) => s.pairAndSave)
   const saveEdit = useApp((s) => s.saveEdit)
+  const [scanning, setScanning] = useState(false)
+  const [scanError, setScanError] = useState<string | null>(null)
 
   if (!form) return null
   const isEdit = form.mode === 'edit'
+  const isRepair = form.mode === 'repair'
+  const title = isEdit ? '编辑连接' : isRepair ? '重新配对' : '添加连接'
+  const imported = Boolean(normalizeFingerprint(form.draft.fp))
   const codeOk = isValidPairingCode(form.draft.code)
-
   const onHostBlur = () => {
     const parsed = parseAddress(form.draft.host)
     if (parsed && parsed.host !== form.draft.host) {
@@ -168,120 +283,116 @@ export function ConnectionFormPage() {
     }
   }
 
+  const scan = async () => {
+    const requestForm = useApp.getState().form
+    setScanning(true)
+    setScanError(null)
+    try {
+      const link = await callDevice<string | null>('pair.scan', {}, 300_000)
+      if (!link || requestForm !== useApp.getState().form) return
+      if (!parsePairingLink(link)) {
+        setScanError('二维码里没有可用的 QingCode Next 配对链接。')
+        return
+      }
+      setFormPaste(link)
+      parsePaste()
+    } catch (err) {
+      setScanError(friendlyError(err, '扫码不可用，可用系统相机或粘贴连接信息。'))
+    } finally {
+      setScanning(false)
+    }
+  }
+
   return (
     <>
-      <Header
-        title={isEdit ? '编辑连接' : '添加连接'}
-        subtitle={isEdit ? '修改地址无需重新配对' : '导入后可修改，再配对保存'}
-        onBack={form.saving ? undefined : closeForm}
-      />
+      <Header title={title}
+        subtitle={isEdit ? '修改名称或地址' : isRepair ? '请从同一台电脑复制新的连接信息' : '配对到自己的电脑'}
+        onBack={form.saving ? undefined : closeForm} />
       <fieldset className="qn-body qn-scroll min-w-0" disabled={form.saving}>
+        {!isEdit && (
           <Card className="mb-3">
-            <Field
-              label={isEdit ? '粘贴新的连接地址' : '粘贴连接信息'}
-              hint={isEdit ? '粘贴同一台电脑新复制的信息，可更新主机和端口。' : '可粘贴电脑端复制的整段文字。'}
-            >
-              <textarea
-                className="qn-textarea"
-                rows={3}
-                value={form.paste}
-                placeholder="粘贴电脑端复制的连接信息…"
-                onChange={(event) => setFormPaste(event.target.value)}
-              />
-            </Field>
-            <div className="flex gap-2">
-              <Button className="flex-1" onClick={() => void pasteFromClipboard()}>
-                读取剪贴板
+            <p className="mb-3 text-sm">在电脑端「手机连接」复制连接信息，再在这里导入。</p>
+            <Button className="w-full" onClick={() => { setScanError(null); void pasteFromClipboard() }}>
+              从剪贴板导入
+            </Button>
+            {getWindowNativePort() && (
+              <Button className="mt-2 w-full" disabled={scanning} onClick={() => void scan()}>
+                {scanning ? '正在扫码…' : '扫码导入'}
               </Button>
-              <Button className="flex-1" disabled={!form.paste.trim()} onClick={parsePaste}>
-                {isEdit ? '导入地址' : '导入信息'}
-              </Button>
-            </div>
-            {mock && !isEdit && <p className="mt-2 text-[11px] text-qn-muted">模拟密码：mock1234</p>}
+            )}
+            <details className="qn-details mt-1">
+              <summary>手动粘贴</summary>
+              <Field label="连接信息">
+                <textarea className="qn-textarea" rows={3} value={form.paste} placeholder="粘贴电脑端复制的连接信息…"
+                  onChange={(event) => setFormPaste(event.target.value)} />
+              </Field>
+              <Button className="w-full" disabled={!form.paste.trim()} onClick={parsePaste}>导入信息</Button>
+            </details>
+            {scanError && <Note message={scanError} tone="warn" onClose={() => setScanError(null)} />}
           </Card>
-
-        <Card>
-          <Field label="名称">
-            <input
-              className="qn-input"
-              value={form.draft.name}
-              placeholder="例如：家里的电脑"
-              onChange={(event) => updateDraft('name', event.target.value)}
-            />
-          </Field>
-          <Field label="主机" hint="可填 IPv4 / IPv6 / 域名，支持 frp 转发；也可直接粘贴 host:port">
-            <input
-              className="qn-input qn-mono"
-              value={form.draft.host}
-              placeholder="192.168.1.2 或 frp.example.com:7001"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              onChange={(event) => updateDraft('host', event.target.value)}
-              onBlur={onHostBlur}
-            />
-          </Field>
-          <Field label="端口" hint="可以与电脑监听端口不同（TCP 转发场景）">
-            <input
-              className="qn-input qn-mono"
-              inputMode="numeric"
-              value={form.draft.port}
-              onChange={(event) => updateDraft('port', event.target.value)}
-            />
-          </Field>
-          {!isEdit && (
-            <Field label="配对密码" hint="6–20 位、区分大小写；只在配对时使用，不保存到连接里">
-              <input
-                className="qn-input"
-                type="password"
-                value={form.draft.code}
-                placeholder="电脑端设置的配对密码"
-                autoComplete="off"
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                onChange={(event) => updateDraft('code', event.target.value)}
-              />
-            </Field>
-          )}
-          <Field label="证书指纹（只读）" hint="固定指纹；不一致时拒绝连接">
-            <div className="qn-mono break-all rounded-lg border border-qn-border bg-black/20 p-2 text-[11px] leading-5">
-              {normalizeFingerprint(form.draft.fp) ?? '（未解析）'}
-            </div>
-          </Field>
-
-          {form.error && <Note message={form.error} tone="error" />}
-          {form.fpMismatch && <Note message={form.fpMismatch} tone="error" />}
-          {form.probe && (
-            <Note
-              message={`指纹核对通过：${form.probe.name || '电脑'} ${form.probe.version || ''}`.trim()}
-              tone="ok"
-            />
-          )}
-          {!isEdit && form.draft.code && !codeOk && (
-            <Note message="配对密码需为 6–20 位且不含空白字符" tone="warn" />
-          )}
-
-          <div className="mt-2 flex gap-2">
-            <Button className="flex-1" disabled={form.testing} onClick={() => void testConnection()}>
-              {form.testing ? '测试中…' : '测试连接'}
-            </Button>
-            <Button
-              className="flex-1"
-              variant="primary"
-              disabled={form.testing || form.saving || form.fpMismatch !== null}
-              onClick={() => void (isEdit ? saveEdit() : pairAndSave())}
-            >
-              {isEdit ? (form.saving ? '保存中…' : '保存修改') : (form.saving ? '配对中…' : '配对并保存')}
-            </Button>
-          </div>
-        </Card>
-        {isEdit && (
-          <p className="mt-3 text-xs text-qn-muted">
-            修改名称、主机或端口后，仍使用原来的配对。
-          </p>
         )}
+
+        {(imported || isEdit) && (
+          <Card>
+            <Field label="名称">
+              <input className="qn-input" value={form.draft.name} placeholder="例如：工作电脑"
+                onChange={(event) => updateDraft('name', event.target.value)} />
+            </Field>
+            <p className="qn-subtitle qn-mono mb-1">{formatAddress(form.draft.host, Number(form.draft.port))}</p>
+            <details className="qn-details" open={isEdit || undefined}>
+              <summary>地址、端口和证书指纹</summary>
+              <Field label="主机" hint="IPv4、IPv6 或域名，也可输入 host:port">
+                <input className="qn-input qn-mono" value={form.draft.host} placeholder="例如 frp.example.com:7001"
+                  autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                  onChange={(event) => updateDraft('host', event.target.value)} onBlur={onHostBlur} />
+              </Field>
+              <Field label="端口">
+                <input className="qn-input qn-mono" inputMode="numeric" value={form.draft.port}
+                  onChange={(event) => updateDraft('port', event.target.value)} />
+              </Field>
+              <div className="qn-label">证书指纹</div>
+              <div className="qn-mono mb-3 rounded-xl border border-qn-border bg-black/20 p-2 text-xs">
+                {normalizeFingerprint(form.draft.fp) ?? '待导入'}
+              </div>
+            </details>
+            {!isEdit && (
+              <Field label="配对密码" hint="只在配对时使用">
+                <input className="qn-input" type="password" value={form.draft.code} placeholder="电脑端设置的配对密码"
+                  autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                  onChange={(event) => updateDraft('code', event.target.value)} />
+              </Field>
+            )}
+            {isEdit && (
+              <details className="qn-details">
+                <summary>从新连接信息导入地址</summary>
+                <Field label="新连接信息">
+                  <textarea className="qn-textarea" rows={2} value={form.paste}
+                    onChange={(event) => setFormPaste(event.target.value)} />
+                </Field>
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <Button className="flex-1" onClick={() => void pasteFromClipboard()}>从剪贴板导入</Button>
+                  <Button className="flex-1" disabled={!form.paste.trim()} onClick={parsePaste}>导入地址</Button>
+                </div>
+              </details>
+            )}
+            {form.probe && <Note message={`指纹核对通过 · ${form.probe.name || '电脑'}`} tone="ok" />}
+            {!isEdit && form.draft.code && !codeOk && <Note message="配对密码需要 6–20 位且不含空白字符。" tone="warn" />}
+          </Card>
+        )}
+        {form.error && <div className="mt-3"><Note message={form.error} tone="error" /></div>}
+        {form.fpMismatch && <div className="mt-3"><Note message={form.fpMismatch} tone="error" /></div>}
       </fieldset>
+      {(imported || isEdit) && (
+        <div className="qn-footer flex flex-wrap gap-2">
+          <Button className="flex-1" disabled={form.testing || form.saving} onClick={() => void testConnection()}>
+            {form.testing ? '测试中…' : '测试连接'}
+          </Button>
+          <Button className="flex-1" variant="primary" disabled={form.testing || form.saving || Boolean(form.fpMismatch)}
+            onClick={() => void (isEdit ? saveEdit() : pairAndSave())}>
+            {form.saving ? '保存中…' : isEdit ? '保存修改' : '配对并保存'}
+          </Button>
+        </div>
+      )}
     </>
   )
 }

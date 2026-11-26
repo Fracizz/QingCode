@@ -105,6 +105,7 @@ export type Project = {
 
 export type MobileSettings = {
   enabled: boolean
+  terminalEnabled?: boolean
   port: number
   hasPassword: boolean
   publicAddresses: string[]
@@ -116,6 +117,7 @@ export type MobileSettings = {
 export type MobileSettingsView = MobileSettings
 export type MobileSettingsInput = {
   enabled?: boolean
+  terminalEnabled?: boolean
   port?: number
   password?: string
   publicAddresses?: string[]
@@ -230,6 +232,7 @@ export interface BackendMethods {
   'mobile.getSettings': { params: void; result: MobileSettings }
   'mobile.saveSettings': { params: MobileSettingsInput; result: MobileSettings }
   'mobile.connectionInfo': { params: { address: string }; result: MobileConnectionInfo }
+  'mobile.pairQr': { params: { address: string }; result: { rows: string[] } }
   'mobile.devices': { params: void; result: MobileDevice[] }
   'mobile.revokeDevice': { params: { id: string }; result: void }
   'mobile.regenerateCert': { params: void; result: MobileRegenerateResult }

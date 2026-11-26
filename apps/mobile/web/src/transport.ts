@@ -2,7 +2,7 @@
 import type { CodexTransport } from '@qn/codex-client'
 import type { Gateway } from './client'
 import type { NativeStreamClosed, NativeStreamEvent } from './native'
-import { friendlyError } from './state'
+import { connectionRepairReason, friendlyError, type RepairReason } from './state'
 import type { AgentKind, Connection, GatewayEvent } from './types'
 
 type JsonRecord = Record<string, unknown>
@@ -68,6 +68,7 @@ type MessageListener = (msg: unknown, seq: number | null) => void
 
 export class MobileCodexTransport implements CodexTransport {
   private readonly listeners = new Set<MessageListener>()
+  private readonly seen = new Set<number>()
   private lastSeq: number | null = null
   private disposed = false
 
@@ -82,6 +83,11 @@ export class MobileCodexTransport implements CodexTransport {
     void this.sendMessage(msg).catch((err: unknown) => this.handleSendError(msg, err))
   }
 
+  async respond(id: string | number, result: unknown): Promise<void> {
+    if (this.disposed) throw new Error('会话连接已切换')
+    await this.sendMessage({ id, result })
+  }
+
   onMessage(cb: MessageListener): () => void {
     this.listeners.add(cb)
     return () => {
@@ -92,6 +98,12 @@ export class MobileCodexTransport implements CodexTransport {
   handleRecv(payload: unknown): void {
     const recv = filterRecv(payload, this.targetId, this.agent)
     if (!recv) return
+    if (recv.seq !== null) {
+      if (this.seen.has(recv.seq)) return
+      this.seen.add(recv.seq)
+      // 还未决的审批可以从回放游标之前补来，不能简单丢弃比 lastSeq 小的帧。
+      if (this.seen.size > 20_000) this.seen.delete(this.seen.values().next().value!)
+    }
     this.lastSeq = advanceSeq(this.lastSeq, recv.seq)
     this.emit(recv.msg, recv.seq)
   }
@@ -102,6 +114,11 @@ export class MobileCodexTransport implements CodexTransport {
 
   setLastSeq(seq: number | null): void {
     this.lastSeq = advanceSeq(this.lastSeq, seq)
+  }
+
+  resetSequence(): void {
+    this.lastSeq = null
+    this.seen.clear()
   }
 
   dispose(): void {
@@ -143,6 +160,7 @@ export type EventStreamHandlers = {
   onEvent: (event: GatewayEvent) => void
   onOpen: (reconnected: boolean) => void
   onClose: (error: string | null) => void
+  onRepair?: (reason: RepairReason, message: string) => void
 }
 
 type TimerHandle = ReturnType<typeof setTimeout>
@@ -154,7 +172,8 @@ export class EventStreamController {
   private attempts = 0
   private generation = 0
   private stopped = true
-  private intentional = false
+  private lastMessageAt = 0
+  private opening = false
 
   constructor(
     private readonly gateway: EventStreamGateway,
@@ -165,6 +184,7 @@ export class EventStreamController {
   ) {}
 
   start(reconnected = this.attempts > 0): void {
+    this.stop()
     this.stopped = false
     this.generation += 1
     this.clearTimer()
@@ -177,15 +197,25 @@ export class EventStreamController {
     this.clearTimer()
     this.off?.()
     this.off = null
-    this.intentional = true
+    this.opening = false
     const stream = this.stream
     this.stream = null
     if (stream) void this.gateway.closeEvents(stream).catch(() => undefined)
   }
 
+  wake(force = false): void {
+    if (this.stopped || this.opening) return
+    // 网关 20 秒一次心跳，休眠后原有 socket 可能还没报告断开。
+    if (force || !this.stream || Date.now() - this.lastMessageAt > 45_000) {
+      if (this.stream) this.handlers.onClose(null)
+      this.start(true)
+    }
+  }
+
   private async open(generation: number, reconnected: boolean): Promise<void> {
     const conn = this.getConnection()
     if (!conn || this.stopped) return
+    this.opening = true
     try {
       const stream = await this.gateway.openEvents(conn)
       if (this.stopped || generation !== this.generation) {
@@ -193,7 +223,7 @@ export class EventStreamController {
         return
       }
       this.stream = stream
-      this.intentional = false
+      this.lastMessageAt = Date.now()
       this.off?.()
       this.off = this.gateway.onStream((msg) => this.handleStream(stream, msg))
       this.attempts = 0
@@ -201,18 +231,32 @@ export class EventStreamController {
     } catch (err) {
       if (this.stopped || generation !== this.generation) return
       const message = friendlyError(err, '')
+      const reason = connectionRepairReason(err)
+      if (reason && this.handlers.onRepair) {
+        this.stop()
+        this.handlers.onRepair(reason, message)
+        return
+      }
       this.handlers.onClose(message || null)
       this.scheduleRetry()
+    } finally {
+      if (generation === this.generation) this.opening = false
     }
   }
 
   private handleStream(stream: string, msg: NativeStreamEvent | NativeStreamClosed): void {
     if (msg.stream !== stream || this.stream !== stream) return
     if ('event' in msg) {
+      this.lastMessageAt = Date.now()
+      if (msg.event.name === 'unauthorized' && this.handlers.onRepair) {
+        this.stop()
+        this.handlers.onRepair('unauthorized', '设备已被撤销，请重新配对')
+        return
+      }
       this.handlers.onEvent(msg.event)
       return
     }
-    if (this.stopped || this.intentional) return
+    if (this.stopped) return
     this.stream = null
     this.off?.()
     this.off = null

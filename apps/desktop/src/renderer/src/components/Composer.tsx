@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ArrowUp, ChevronDown, CircleAlert, FileText, ImageOff, LoaderCircle, Paperclip, Slash, Square, Wand2, X } from 'lucide-react'
+import { supportsSubagentRequests } from '@qn/codex-client'
+import { ArrowUp, ChevronDown, CircleAlert, FileText, GitFork, ImageOff, LoaderCircle, Paperclip, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
-import { agentPlaceholder } from '../lib/agents'
+import { agentPlaceholder, sessionKey } from '../lib/agents'
 import {
   consumeSlashToken,
   filterSlashItems,
@@ -12,17 +13,18 @@ import {
   type SlashItem,
 } from '../lib/attachments'
 import { useSetting } from '../features/settings/settingsStore'
+import { AccessModePicker } from '../features/access/AccessModePicker'
+import { accessKey, getAccessMode, type AccessAddress } from '../features/access/accessModel'
 import {
   applyMention,
   imageSendBlock,
   mentionToken,
   MentionMenu,
-  screenFiles,
-  useImageSupport,
   useMentionSearch,
+  type ImageSupport,
   type MentionCandidate,
 } from '../features/composer'
-import { useCodex } from '../store/codex'
+import { pendingSendKey, useCodex } from '../store/codex'
 import { cn } from '../lib/cn'
 import type { SendMode } from '../store/codex'
 import { Menu, MenuContent, MenuItem, MenuTrigger, Tip } from './primitives'
@@ -33,6 +35,7 @@ const MAX_HEIGHT_RATIO = 0.4
 
 type AttachmentProps = {
   attachments: Attachment[]
+  imageSupport: ImageSupport
   onAddFiles: (files: File[]) => void
   onRemoveAttachment: (id: string) => void
   /** 还不能发送的原因（如附件上传中）。 */
@@ -74,7 +77,7 @@ export function Composer({
   attach,
   slash,
 }: {
-  onSend: (text: string, mode: SendMode) => void
+  onSend: (text: string, mode: SendMode, delegate: boolean) => void | Promise<boolean>
   onInterrupt: () => void
   running: boolean
   sending: boolean
@@ -108,6 +111,17 @@ export function Composer({
   // `@` 引用相对当前项目根；没有项目上下文时不启用。
   const targetId = useCodex((s) => s.currentTargetId)
   const root = useCodex((s) => s.currentCwd)
+  const threadId = useCodex((s) => s.currentThreadId)
+  const draftRevision = useCodex((s) => s.access.draftRevision)
+  const [delegate, setDelegate] = useState(false)
+  const accessAddress: AccessAddress | null = !compact && targetId ? { targetId, agent, threadId } : null
+  const accessMode = useCodex((s) => accessAddress ? getAccessMode(s.access, accessAddress) : 'default')
+  const setAccessMode = useCodex((s) => s.setAccessMode)
+  const accessSupported = useCodex((s) => Boolean(targetId && s.sessions[sessionKey(targetId, agent)]?.openedConfig?.accessModes))
+  const sendingPending = useCodex((s) => Boolean(targetId && threadId && s.pendingSends[pendingSendKey({ targetId, agent, threadId })]?.[0]?.sending))
+  const canRequestSubagents = !compact && supportsSubagentRequests(agent)
+
+  useEffect(() => setDelegate(false), [targetId, root, agent, threadId, draftRevision])
 
   useLayoutEffect(() => {
     const area = areaRef.current
@@ -136,7 +150,7 @@ export function Composer({
 
   const attachments = attach?.attachments ?? []
   const images = attachments.flatMap((item) => (item.kind === 'image' ? [item.dataUrl] : []))
-  const imageSupport = useImageSupport(targetId, agent, !!attach)
+  const imageSupport = attach?.imageSupport ?? { allowed: true, reason: null }
   const imageBlock = imageSendBlock(images, imageSupport.allowed, imageSupport.reason ?? undefined)
   const hasExtras = attachments.length > 0 || (slash?.skills.length ?? 0) > 0 || annotationCount > 0
   const blocked = attach?.blockedReason ?? imageBlock
@@ -147,7 +161,9 @@ export function Composer({
 
   const submit = (mode: SendMode = 'queue') => {
     if (!canSend) return
-    onSend(value, mode)
+    const selected = canRequestSubagents && delegate
+    const result = onSend(value, mode, selected)
+    if (selected) void result?.then((sent) => { if (sent) setDelegate(false) })
   }
 
   const choose = (item: SlashItem | undefined) => {
@@ -228,28 +244,13 @@ export function Composer({
     }
   }
 
-  /** 粘贴/选择的文件先按图片规则筛一遍；被拒的逐个提示原因，不悄悄丢掉。 */
-  const addFiles = (files: File[]) => {
-    if (!attach) return
-    const { accepted, rejected } = screenFiles(files, {
-      existingImages: images.length,
-      imagesAllowed: imageSupport.allowed,
-      unsupportedReason: imageSupport.reason ?? undefined,
-    })
-    if (rejected.length > 0) {
-      const detail = rejected.map((item) => `${item.name}：${item.reason}`).join('；')
-      useCodex.setState({ notice: `未添加 ${rejected.length} 张图片（${detail}）` })
-    }
-    if (accepted.length > 0) attach.onAddFiles(accepted)
-  }
-
   const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
     if (!attach) return
     const files = [...event.clipboardData.files]
     if (files.length === 0) return
     // 只有文件（截图、资源管理器里复制的文件）时拦下默认粘贴，避免把文件名当文字贴进来。
     if (!event.clipboardData.getData('text/plain')) event.preventDefault()
-    addFiles(files)
+    attach.onAddFiles(files)
   }
 
   const syncCaret = () => setCaret(areaRef.current?.selectionStart ?? 0)
@@ -281,7 +282,7 @@ export function Composer({
         )}
 
         {noApprovals && (
-          <div className="mb-1.5 px-3 text-[12px] text-qn-dim">pi 不经审批直接执行工具</div>
+          <div className="mb-1.5 px-3 text-[12px] text-qn-warn">无审批：工具直接执行</div>
         )}
         {attach && !imageSupport.allowed && (
           <div className="mb-1.5 flex items-center gap-1.5 px-3 text-[12px] text-qn-dim">
@@ -363,12 +364,28 @@ export function Composer({
                   onChange={(event) => {
                     const files = [...(event.target.files ?? [])]
                     event.target.value = ''
-                    if (files.length) addFiles(files)
+                    if (files.length) attach.onAddFiles(files)
                   }}
                 />
               </>
             )}
             {leading}
+            {canRequestSubagents && (
+              <Tip label="随本条消息请求子代理协作，由当前智能体决定如何委派">
+                <button
+                  type="button"
+                  className={cn('inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-xs hover:bg-white/10 disabled:opacity-50',
+                    delegate ? 'bg-qn-accent/10 text-qn-accent' : 'text-qn-muted')}
+                  aria-label="本条消息请求子代理"
+                  aria-pressed={delegate}
+                  disabled={disabled || sending}
+                  onClick={() => setDelegate(!delegate)}
+                >
+                  <GitFork size={14} aria-hidden />
+                  子代理
+                </button>
+              </Tip>
+            )}
             {slash?.skills.map((skill) => (
               <span key={skill.name} className="inline-flex h-7 max-w-[14rem] items-center gap-1 rounded-lg bg-qn-brand/10 pl-2 pr-1 text-[13px] text-qn-brand">
                 <Wand2 size={13} className="shrink-0" />
@@ -389,6 +406,15 @@ export function Composer({
               </span>
             )}
             <div className="flex-1" />
+            {accessAddress && !noApprovals && (accessSupported || accessMode !== 'default') && (
+              <AccessModePicker
+                key={`${accessKey(accessAddress)}:${threadId === null ? draftRevision : ''}`}
+                agent={agent}
+                mode={accessMode}
+                disabled={Boolean(disabled || sending || running || sendingPending || !accessSupported)}
+                onChange={(mode) => setAccessMode(accessAddress, draftRevision, mode)}
+              />
+            )}
             {trailing}
             {running && (
               <IconButton label="停止运行" className="size-7.5" disabled={sending} onClick={onInterrupt}>

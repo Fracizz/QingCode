@@ -17,12 +17,14 @@ import {
   loadThread,
   moveOptimisticUsers,
   readThread,
+  requestSubagents,
   resolveServerRequest,
   resumeThread,
   sendInput,
   setThreadName,
   startThread,
   steerTurn,
+  supportsSubagentRequests,
   userItemFromInput,
   type ApprovalDecision,
   type ConversationState,
@@ -32,6 +34,7 @@ import {
   type UserInput,
   type TurnOverrides,
 } from '@qn/codex-client'
+import type { ServerResult } from '@qn/protocol'
 import type { AgentKind } from '../../../shared/backendApi'
 import { call, on } from '../lib/backend'
 import { attachResult, BackendCodexTransport, maxSeq, openSeq } from '../lib/codexTransport'
@@ -51,6 +54,19 @@ import { quoteBlock } from '../lib/annotations'
 import { agentPrefs } from '../features/settings/settingsModel'
 import { useSettings } from '../features/settings/settingsStore'
 import { adaptTurnInput } from '../features/composer/agentInput'
+import {
+  emptyAccessMemory,
+  getAccessMode,
+  rememberAccessMode,
+  resetDraftAccess,
+  resetTargetAccess,
+  targetAgentKeyPrefix,
+  turnAccessOverride,
+  type AccessAddress,
+  type AccessMemory,
+  type AccessMode,
+} from '../features/access/accessModel'
+import { configuredAgentOpen } from '../features/access/openConfig'
 import { useAgentPrefs } from './agentPrefs'
 import { overridesFor } from './models'
 import { useTargets } from './targets'
@@ -63,6 +79,7 @@ type TargetSession = {
   transport: BackendCodexTransport
   state: ConversationState
   opened: boolean
+  openedConfig: { directory: string | undefined; accessModes: boolean } | null
   opening: boolean
   openError: string | null
   openFailure: unknown
@@ -79,6 +96,7 @@ type SendOptions = {
   /** 完整输入（含图片/附件/技能）；不传则只发 text。 */
   input?: UserInput[]
   mode?: SendMode
+  delegate?: boolean
 }
 
 type ChatAddress = { targetId: string; agent: AgentKind; threadId: string }
@@ -107,6 +125,7 @@ type CodexState = {
   threadsLoading: boolean
   threadsError: string | null
   sending: boolean
+  access: AccessMemory
   pendingSends: Record<string, PendingSend[]>
   error: string | null
   notice: string | null
@@ -127,6 +146,7 @@ type CodexState = {
   startDraft: (agent?: AgentKind) => void
   /** 草稿态下切换下一条消息使用的 Agent；已打开会话时 Agent 跟随会话，不可切换。 */
   setDraftAgent: (agent: AgentKind) => void
+  setAccessMode: (address: AccessAddress, draftRevision: number, mode: AccessMode) => void
   openThread: (threadId: string, agent?: AgentKind) => Promise<void>
   /** 返回是否成功提交；失败时调用方要把输入框内容还回去。 */
   send: (text: string, options?: SendOptions) => Promise<boolean>
@@ -185,14 +205,12 @@ export const useCodex = create<CodexState>((set, get) => {
   const clearAllDrafts = (): void => {
     set((state) => {
       const sessions = { ...state.sessions }
-      let changed = false
       for (const [key, session] of Object.entries(sessions)) {
         const next = clearDraftThread(session.state)
         if (next === session.state) continue
         sessions[key] = { ...session, state: next }
-        changed = true
       }
-      return changed ? { sessions } : state
+      return { sessions, access: resetDraftAccess(state.access) }
     })
   }
 
@@ -206,12 +224,12 @@ export const useCodex = create<CodexState>((set, get) => {
       useAgentPrefs.getState().byTarget[targetId] ?? (useSettings.getState().settings.general.defaultAgent as AgentKind),
     )
 
-  /** 设置里为该目标指定的可执行文件路径（留空 = 由 server 自动解析）。 */
-  const openParams = (targetId: string, agent: AgentKind): Record<string, string> => {
-    const path = agentPrefs(useSettings.getState().settings, targetId, agent).path?.trim()
-    if (!path) return { agent }
-    const key = agent === 'claude' ? 'claudePath' : agent === 'pi' ? 'piPath' : 'codexPath'
-    return { agent, [key]: path }
+  const openParams = (targetId: string, agent: AgentKind) =>
+    configuredAgentOpen(agent, agentPrefs(useSettings.getState().settings, targetId, agent))
+
+  const configDirFor = (targetId: string, agent: AgentKind): string | undefined => {
+    const params = openParams(targetId, agent)
+    return params.codexHome ?? params.claudeConfigDir
   }
 
   const sessionFor = (targetId: string, agent: AgentKind): TargetSession => {
@@ -229,6 +247,7 @@ export const useCodex = create<CodexState>((set, get) => {
       transport,
       state: emptyState(),
       opened: false,
+      openedConfig: null,
       opening: false,
       openError: null,
       openFailure: null,
@@ -268,16 +287,18 @@ export const useCodex = create<CodexState>((set, get) => {
   const ensureOpen = async (targetId: string, agent: AgentKind = DEFAULT_AGENT): Promise<boolean> => {
     const key = sessionKey(targetId, agent)
     const current = get().sessions[key]
-    if (current?.opened) return true
+    const params = openParams(targetId, agent)
+    const directory = params.codexHome ?? params.claudeConfigDir
     const busy = opening.get(key)
-    if (busy) return busy
+    if (busy) return (await busy) && ensureOpen(targetId, agent)
+    if (current?.opened && current.openedConfig?.directory === directory) return true
 
     const session = sessionFor(targetId, agent)
     patchSession(key, (value) => ({ ...value, opening: true, openError: null }))
 
     const task = (async () => {
       try {
-        const open = () => call('server.req', { targetId, method: 'codex.open', params: openParams(targetId, agent) })
+        const open = () => call('server.req', { targetId, method: 'codex.open', params })
         const opened = await open().catch(async (err: unknown) => {
           // 本机目标不需要凭据：链路丢了直接补连一次，不让用户停在"目标 local 未连接"。
           if (targetId !== 'local' || (err as { code?: unknown })?.code !== 'not_connected') throw err
@@ -290,6 +311,27 @@ export const useCodex = create<CodexState>((set, get) => {
           typeof (opened as { agentVersion?: unknown })?.agentVersion === 'string'
             ? ((opened as { agentVersion: string }).agentVersion)
             : null
+        const capabilities = (opened as ServerResult<'codex.open'> | null)?.capabilities
+        if (directory && capabilities?.agentConfigDir !== true) {
+          throw new Error('目标服务暂不支持 Agent 配置目录，请升级目标服务后重试')
+        }
+        const replaced = agent === 'codex' && session.openedConfig !== null && session.openedConfig.directory !== directory
+        if (replaced) {
+          const prefix = targetAgentKeyPrefix(targetId, agent)
+          patchSession(key, (value) => ({ ...value, state: emptyState() }))
+          set((state) => ({
+            access: resetTargetAccess(state.access, targetId, agent),
+            pendingSends: Object.fromEntries(Object.entries(state.pendingSends).filter(([key]) => !key.startsWith(prefix))),
+            ...(state.currentTargetId === targetId ? {
+              threads: state.threads.filter((thread) => thread.agent !== agent),
+              ...(state.currentAgent === agent && state.currentThreadId !== null ? {
+                currentThreadId: null,
+                notice: 'Codex 配置目录已切换，请重新选择会话',
+              } : {}),
+            } : {}),
+            ...(state.sideTargetId === targetId && state.sideAgent === agent ? { sideOpen: false, sideThreadId: null } : {}),
+          }))
+        }
         let lastSeq = maxSeq(openSeq(opened), session.transport.getLastSeq())
 
         try {
@@ -312,6 +354,7 @@ export const useCodex = create<CodexState>((set, get) => {
         patchSession(key, (value) => ({
           ...value,
           opened: true,
+          openedConfig: { directory, accessModes: capabilities?.accessModes === true },
           opening: false,
           openError: null,
           openFailure: null,
@@ -329,7 +372,7 @@ export const useCodex = create<CodexState>((set, get) => {
             : friendlyError(err, agent === 'pi' ? '打开 pi 失败' : '打开 Claude 失败')
         patchSession(key, (value) => ({
           ...value,
-          opened: false,
+          opened: (err as { code?: unknown })?.code === 'config_dir_busy' && value.opened,
           opening: false,
           openError: message,
           openFailure: err,
@@ -352,7 +395,7 @@ export const useCodex = create<CodexState>((set, get) => {
       for (const agent of AGENTS) {
         const key = sessionKey(targetId, agent)
         const session = get().sessions[key]
-        if (session?.opened) {
+        if (session?.opened && session.openedConfig?.directory === configDirFor(targetId, agent)) {
           patchAgent(targetId, agent, {
             state: 'ready',
             ...(session.agentVersion ? { version: session.agentVersion } : {}),
@@ -507,8 +550,16 @@ export const useCodex = create<CodexState>((set, get) => {
       }
     })
     try {
+      const mode = getAccessMode(get().access, { targetId: session.targetId, agent: session.agent, threadId })
+      const access = turnAccessOverride(session.agent, mode)
+      if (access && session.openedConfig?.accessModes !== true) {
+        throw new Error('目标服务暂不支持当前访问模式，请升级目标服务后重试')
+      }
       // 文件类 mention 对 Codex 改成正文里的路径说明（Codex 的 mention 只认 app/plugin）。
-      const { turn } = await sendInput(session.rpc, threadId, adaptTurnInput(session.agent, input), overrides)
+      const adaptedInput = adaptTurnInput(session.agent, input)
+      const { turn } = access
+        ? await session.rpc.request('turn/start', { threadId, input: adaptedInput, ...overrides, ...access })
+        : await sendInput(session.rpc, threadId, adaptedInput, overrides)
       // 快速完成的轮次可能在 RPC 回包前已收到事件，不要把它重新标成运行中。
       if (!observed.has(turn.id)) {
         const method = turn.status === 'inProgress' ? 'turn/started' : 'turn/completed'
@@ -531,6 +582,7 @@ export const useCodex = create<CodexState>((set, get) => {
     const view = session?.state.threads[chat.threadId]
     const next = get().pendingSends[key]?.[0]
     if (!session?.opened || !view || !next || submitting.has(key)) return
+    if (session.openedConfig?.directory !== configDirFor(chat.targetId, chat.agent)) return
     if (view.status === 'running' || (!retry && (view.status !== 'idle' || next.error))) return
 
     submitting.add(key)
@@ -582,6 +634,7 @@ export const useCodex = create<CodexState>((set, get) => {
     threadsLoading: false,
     threadsError: null,
     sending: false,
+    access: emptyAccessMemory,
     pendingSends: {},
     error: null,
     notice: null,
@@ -725,8 +778,24 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     setDraftAgent: (agent) => {
-      if (get().currentThreadId) return
-      set({ currentAgent: agent, error: null })
+      set((state) => {
+        if (state.currentThreadId || state.currentAgent === agent) return state
+        return { currentAgent: agent, error: null, access: resetDraftAccess(state.access) }
+      })
+    },
+
+    setAccessMode: (address, draftRevision, mode) => {
+      set((state) => {
+        const { targetId, agent, threadId } = address
+        const session = state.sessions[sessionKey(targetId, agent)]
+        if (
+          state.currentTargetId !== targetId || state.currentAgent !== agent || state.currentThreadId !== threadId ||
+          session?.openedConfig?.accessModes !== true ||
+          state.sending || (threadId === null && state.access.draftRevision !== draftRevision) ||
+          (threadId !== null && (session.state.threads[threadId]?.status === 'running' || submitting.has(pendingSendKey({ targetId, agent, threadId }))))
+        ) return state
+        return { access: rememberAccessMode(state.access, address, mode) }
+      })
     },
 
     openThread: async (threadId, agent) => {
@@ -764,17 +833,19 @@ export const useCodex = create<CodexState>((set, get) => {
 
     send: async (text, options) => {
       const trimmed = text.trim()
-      const input: UserInput[] = options?.input ?? (trimmed ? [{ type: 'text', text: trimmed, text_elements: [] }] : [])
+      const userInput: UserInput[] = options?.input ?? (trimmed ? [{ type: 'text', text: trimmed, text_elements: [] }] : [])
       const context = get()
-      if (input.length === 0 || context.sending) return false
+      if (userInput.length === 0 || context.sending) return false
       const targetId = options?.targetId ?? context.currentTargetId
       if (!targetId) {
         set({ error: '请先选择目标' })
         return false
       }
       const agent = options?.agent ?? context.currentAgent
+      const input = options?.delegate && supportsSubagentRequests(agent) ? requestSubagents(userInput) : userInput
       const key = sessionKey(targetId, agent)
       let threadId = options?.threadId ?? context.currentThreadId
+      const draftMode = getAccessMode(context.access, { targetId, agent, threadId: null })
       let chat = threadId ? { targetId, agent, threadId } : null
       let chatKey = chat ? pendingSendKey(chat) : null
       const mode = options?.mode ?? 'queue'
@@ -789,7 +860,7 @@ export const useCodex = create<CodexState>((set, get) => {
         return true
       }
 
-      if (mode === 'queue' && chat && chatKey && (
+      if (mode === 'queue' && chat && chatKey && context.sessions[key]?.openedConfig?.directory === configDirFor(targetId, agent) && (
         context.sessions[key]?.state.threads[chat.threadId]?.status === 'running' ||
         context.pendingSends[chatKey]?.length || submitting.has(chatKey)
       )) return enqueue(chat)
@@ -811,20 +882,34 @@ export const useCodex = create<CodexState>((set, get) => {
         }
         const session = get().sessions[key]
         if (!session) throw new Error(`${agentLabel(agent)} 未就绪`)
+        const previousConfig = context.sessions[key]?.openedConfig
+        if (agent === 'codex' && threadId && previousConfig && previousConfig.directory !== session.openedConfig?.directory) {
+          throw new Error('Codex 配置目录已切换，请重新选择会话再发送')
+        }
         if (!threadId) {
           const created = await startThread(session.rpc, context.currentCwd ? { cwd: context.currentCwd } : {})
           const createdThreadId = created.thread.id
-          patchSession(key, (value) => ({
-            ...value,
-            state: moveOptimisticUsers(loadThread(value.state, created.thread), DRAFT_THREAD_ID, createdThreadId),
-          }))
+          set((state) => {
+            const value = state.sessions[key]
+            const address = { targetId, agent, threadId: createdThreadId }
+            return {
+              access: rememberAccessMode(state.access, address, draftMode),
+              ...(value ? { sessions: { ...state.sessions, [key]: {
+                ...value,
+                state: moveOptimisticUsers(loadThread(value.state, created.thread), DRAFT_THREAD_ID, createdThreadId),
+              } } } : {}),
+            }
+          })
           threadId = createdThreadId
           chat = { targetId, agent, threadId: createdThreadId }
           chatKey = pendingSendKey(chat)
           submitting.add(chatKey)
           const current = get()
-          if (current.currentTargetId === targetId && current.currentCwd === context.currentCwd && !current.currentThreadId) {
-            set({ currentThreadId: createdThreadId, currentAgent: agent })
+          if (
+            current.currentTargetId === targetId && current.currentCwd === context.currentCwd && !current.currentThreadId &&
+            current.access.draftRevision === context.access.draftRevision
+          ) {
+            set({ currentThreadId: createdThreadId, currentAgent: agent, access: resetDraftAccess(current.access) })
             void get().refreshThreads()
           }
         }

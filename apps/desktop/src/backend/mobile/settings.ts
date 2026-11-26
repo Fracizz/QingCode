@@ -16,12 +16,14 @@ export const PAIRING_SECRET_ID = 'mobile.pairing'
 
 export type MobileStoredSettings = {
   enabled: boolean
+  terminalEnabled?: boolean
   port: number
   publicAddresses: string[]
 }
 
 export type MobileSettingsPatch = {
   enabled?: boolean
+  terminalEnabled?: boolean
   port?: number
   password?: string
   publicAddresses?: string[]
@@ -70,6 +72,7 @@ export function parseSettings(raw: unknown): MobileStoredSettings {
     : []
   return {
     enabled: record.enabled === true,
+    ...(record.terminalEnabled === true ? { terminalEnabled: true } : {}),
     port: parsePort(record.port) ?? DEFAULT_MOBILE_SETTINGS.port,
     publicAddresses: addresses,
   }
@@ -82,6 +85,10 @@ export function validateSettingsPatch(raw: unknown): MobileSettingsPatch {
   if ('enabled' in raw) {
     if (typeof raw.enabled !== 'boolean') throw new RouterError('invalid_params', '启用开关必须是布尔值')
     patch.enabled = raw.enabled
+  }
+  if ('terminalEnabled' in raw) {
+    if (typeof raw.terminalEnabled !== 'boolean') throw new RouterError('invalid_params', '手机终端开关必须是布尔值')
+    patch.terminalEnabled = raw.terminalEnabled
   }
   if ('port' in raw) {
     const port = parsePort(raw.port)

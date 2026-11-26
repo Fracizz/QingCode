@@ -1,176 +1,282 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import type { Annotation } from '../state'
+import type { UserInput } from '@qn/codex-client'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { callDevice } from '../client'
+import { attachmentBytes, IMAGE_BYTES, insertFileMention, isDraftImage, MAX_IMAGES, mentionAt, type DraftImage } from '../composerLogic'
+import { suggestFiles, type ProjectFile } from '../projectApi'
+import { friendlyError, type Annotation } from '../state'
+import type { Project } from '../types'
 import { Button, Note } from './ui'
 
 export type ComposerProps = {
-  onSend: (text: string) => void
+  draftKey: string
+  text: string
+  onChangeText: (text: string) => void
+  onSend: (text: string, attachments: UserInput[], delegate: boolean) => Promise<boolean>
   onInterrupt: () => void
   running: boolean
   sending: boolean
   disabled?: boolean
-  error: string | null
-  onClearError: () => void
+  imageUnavailable?: string
+  project?: Project
   annotations: Annotation[]
   onUpdateAnnotation: (id: string, comment: string) => void
   onRemoveAnnotation: (id: string) => void
   quoteDraft: string | null
   onConfirmQuote: (quote: string, comment: string) => void
   onCancelQuote: () => void
-  /** 占位符随 Agent 变化（"和 Claude 一起工作"）。 */
   placeholder?: string
-  /** 输入框上方的工具条（Agent 标识、模型选择）。 */
   toolbar?: ReactNode
+  canRequestSubagents?: boolean
+}
+
+// 相册选择保留在当前应用进程中，避免将大段图片数据写进加密草稿。
+const photoDrafts = new Map<string, DraftImage[]>()
+const NO_IMAGES: DraftImage[] = []
+
+function rememberImages(key: string, images: DraftImage[]) {
+  photoDrafts.delete(key)
+  if (images.length > 0) photoDrafts.set(key, images)
+  if (photoDrafts.size > 12) photoDrafts.delete(photoDrafts.keys().next().value ?? '')
 }
 
 export function Composer({
-  onSend,
-  onInterrupt,
-  running,
-  sending,
-  disabled,
-  error,
-  onClearError,
-  annotations,
-  onUpdateAnnotation,
-  onRemoveAnnotation,
-  quoteDraft,
-  onConfirmQuote,
-  onCancelQuote,
-  placeholder = '和 Codex 一起工作',
-  toolbar,
+  draftKey, text, onChangeText, onSend, onInterrupt, running, sending, disabled, imageUnavailable,
+  project, annotations, onUpdateAnnotation, onRemoveAnnotation, quoteDraft, onConfirmQuote,
+  onCancelQuote, placeholder = '和 Codex 一起工作', toolbar, canRequestSubagents,
 }: ComposerProps) {
-  const [text, setText] = useState('')
   const [comment, setComment] = useState('')
   const [showAnnotations, setShowAnnotations] = useState(false)
+  const [images, setImages] = useState(() => photoDrafts.get(draftKey) ?? NO_IMAGES)
+  const [picking, setPicking] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
+  const [caret, setCaret] = useState<number | null>(null)
+  const [files, setFiles] = useState<ProjectFile[]>([])
+  const [fileStatus, setFileStatus] = useState('')
+  const [delegate, setDelegate] = useState(false)
+  const textarea = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
+  const mounted = useRef(true)
+  const mention = project && caret !== null ? mentionAt(text, caret) : null
+  const query = mention?.query
 
   useEffect(() => {
-    setComment('')
-  }, [quoteDraft])
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+  useEffect(() => setComment(''), [quoteDraft])
+  useLayoutEffect(() => {
+    const input = textarea.current
+    if (!input) return
+    input.style.height = 'auto'
+    input.style.height = `${Math.min(input.scrollHeight + 2, 126)}px`
+  }, [text])
+  useEffect(() => {
+    if (!project || query === undefined) return
+    let current = true
+    setFiles([])
+    setFileStatus('正在查找文件…')
+    const timer = setTimeout(() => {
+      void suggestFiles(project, query).then((entries) => {
+        if (!current) return
+        setFiles(entries)
+        setFileStatus(entries.length === 0 ? '没有匹配的文件' : '')
+      }, (error: unknown) => {
+        if (current) setFileStatus(friendlyError(error, '查找文件失败'))
+      })
+    }, 180)
+    return () => { current = false; clearTimeout(timer) }
+  }, [project, query])
 
-  const submit = () => {
-    const value = text.trim()
-    if ((!value && annotations.length === 0) || disabled || sending) return
-    onSend(value)
-    setText('')
+  function updateImages(next: DraftImage[]) {
+    rememberImages(draftKey, next)
+    if (mounted.current) setImages(next)
   }
 
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !composing.current) {
-      event.preventDefault()
-      submit()
+  async function pickImages() {
+    if (disabled || imageUnavailable || picking || images.length >= MAX_IMAGES) return
+    setPicking(true)
+    setStatus(null)
+    try {
+      const result = await callDevice<{ images: unknown[]; skipped: number }>('images.pick', {
+        maxCount: MAX_IMAGES - images.length,
+        maxBytes: IMAGE_BYTES - attachmentBytes(images),
+      }, 300_000)
+      if (!mounted.current) return
+      const incoming = Array.isArray(result?.images) ? result.images.filter(isDraftImage) : []
+      const next = [...images, ...incoming].slice(0, MAX_IMAGES)
+      if (attachmentBytes(next) > IMAGE_BYTES) {
+        setStatus('图片超过可用空间，请选择较小的图片')
+        return
+      }
+      updateImages(next)
+      if (result?.skipped) setStatus(`有 ${result.skipped} 张图片无法添加，请选择较小的图片`)
+    } catch (error) {
+      if (mounted.current) setStatus(friendlyError(error, '无法选择图片'))
+    } finally {
+      if (mounted.current) setPicking(false)
     }
   }
 
-  const confirmQuote = () => {
-    if (!quoteDraft) return
-    onConfirmQuote(quoteDraft, comment)
-    setComment('')
+  const canSend = (!running && !disabled && !sending && !picking &&
+    (!imageUnavailable || images.length === 0) && Boolean(text.trim() || images.length || annotations.length))
+
+  async function submit() {
+    if (!canSend || composing.current) return
+    setCaret(null)
+    const attachments: UserInput[] = images.map((image) => ({ type: 'image', url: image.dataUrl }))
+    if (await onSend(text, attachments, Boolean(canRequestSubagents && delegate))) {
+      updateImages([])
+      if (mounted.current) setDelegate(false)
+    }
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Escape' && mention) {
+      setCaret(null)
+      return
+    }
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+      event.preventDefault()
+      void submit()
+    }
+  }
+
+  function confirmQuote() {
+    if (quoteDraft) onConfirmQuote(quoteDraft, comment)
+  }
+
+  function selectFile(path: string) {
+    if (!mention) return
+    const next = insertFileMention(text, mention, path)
+    onChangeText(next.text)
+    setCaret(null)
+    requestAnimationFrame(() => {
+      textarea.current?.focus()
+      textarea.current?.setSelectionRange(next.caret, next.caret)
+    })
+  }
+
+  function beginMention() {
+    const input = textarea.current
+    if (!input) return
+    const prefix = text.slice(0, input.selectionStart)
+    const marker = prefix && !/\s$/.test(prefix) ? ' @' : '@'
+    const nextCaret = prefix.length + marker.length
+    onChangeText(prefix + marker + text.slice(input.selectionEnd))
+    requestAnimationFrame(() => {
+      input.focus()
+      input.setSelectionRange(nextCaret, nextCaret)
+      setCaret(nextCaret)
+    })
   }
 
   return (
-    <div className="qn-footer">
-      {error && <Note message={error} tone="error" onClose={onClearError} />}
-
+    <div className="qn-footer relative">
+      {status && <Note message={status} tone="warn" onClose={() => setStatus(null)} />}
       {quoteDraft && (
-        <div className="mb-2 rounded-xl border border-qn-accent/50 bg-qn-card p-2">
-          <div className="mb-1 text-[11px] text-qn-muted">添加到对话（可选评论）</div>
-          <div className="qn-mono mb-2 max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-[11px] text-qn-text/80">
-            {quoteDraft}
-          </div>
+        <div className="mb-2 rounded-xl border border-qn-border bg-qn-card p-2">
+          <div className="qn-mono mb-2 max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-xs text-qn-muted">{quoteDraft}</div>
           <div className="flex gap-2">
             <input
               className="qn-input flex-1"
               value={comment}
+              aria-label="引用评论"
               placeholder="添加可选评论…"
               onChange={(event) => setComment(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                  event.preventDefault()
-                  confirmQuote()
-                } else if (event.key === 'Escape') {
-                  onCancelQuote()
-                }
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing) confirmQuote()
+                if (event.key === 'Escape') onCancelQuote()
               }}
             />
-            <Button variant="primary" className="px-3" onClick={confirmQuote} aria-label="确认引用">
-              ✓
-            </Button>
-            <Button className="px-3" onClick={onCancelQuote} aria-label="取消引用">
-              ✕
-            </Button>
+            <Button variant="primary" className="px-3" onClick={confirmQuote}>引用</Button>
+            <Button variant="ghost" className="px-3" onClick={onCancelQuote} aria-label="取消引用">×</Button>
           </div>
         </div>
       )}
-
       {annotations.length > 0 && (
         <div className="mb-2">
-          <button
-            type="button"
-            className="qn-button qn-button-ghost w-full justify-start px-3 py-1 text-xs"
-            onClick={() => setShowAnnotations((value) => !value)}
-          >
-            💬 {annotations.length} 条注释 {showAnnotations ? '▴' : '▾'}
-          </button>
+          <Button variant="ghost" className="px-2 text-xs" aria-expanded={showAnnotations} onClick={() => setShowAnnotations(!showAnnotations)}>
+            {annotations.length} 条引用 <span aria-hidden>{showAnnotations ? '▴' : '▾'}</span>
+          </Button>
           {showAnnotations && (
-            <div className="mt-1 space-y-2">
+            <div className="mt-1 max-h-36 space-y-2 overflow-y-auto">
               {annotations.map((annotation) => (
-                <div key={annotation.id} className="rounded-lg border border-qn-border bg-black/20 p-2">
+                <div key={annotation.id} className="rounded-xl border border-qn-border bg-qn-card p-2">
                   <div className="mb-1 flex items-start gap-2">
-                    <div className="qn-mono min-w-0 flex-1 whitespace-pre-wrap break-words text-[11px] text-qn-muted">
-                      {annotation.quote}
-                    </div>
-                    <Button
-                      variant="ghost"
-                      className="px-3 py-1 text-xs"
-                      onClick={() => onRemoveAnnotation(annotation.id)}
-                      aria-label="删除注释"
-                    >
-                      ✕
-                    </Button>
+                    <div className="qn-mono min-w-0 flex-1 whitespace-pre-wrap break-words text-xs text-qn-muted">{annotation.quote}</div>
+                    <Button variant="ghost" onClick={() => onRemoveAnnotation(annotation.id)} aria-label="删除引用">×</Button>
                   </div>
-                  <input
-                    className="qn-input"
-                    value={annotation.comment}
-                    placeholder="评论（可空）"
-                    onChange={(event) => onUpdateAnnotation(annotation.id, event.target.value)}
-                  />
+                  <input className="qn-input" value={annotation.comment} aria-label="引用评论" placeholder="评论（可空）"
+                    onChange={(event) => onUpdateAnnotation(annotation.id, event.target.value)} />
                 </div>
               ))}
             </div>
           )}
         </div>
       )}
-
-      {toolbar && <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2">{toolbar}</div>}
-
-      <textarea
-        className="qn-textarea"
-        rows={3}
-        value={text}
-        disabled={disabled}
-        placeholder={disabled ? '请先连接目标' : placeholder}
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={onKeyDown}
-        onCompositionStart={() => {
-          composing.current = true
-        }}
-        onCompositionEnd={() => {
-          composing.current = false
-        }}
-      />
-      <div className="mt-2 flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-[11px] text-qn-muted">
-          {running ? 'Agent 正在运行…' : sending ? '正在发送…' : 'Enter 发送 · Shift+Enter 换行'}
-        </span>
-        {running && (
-          <Button variant="danger" className="px-3" onClick={onInterrupt}>
-            ■ 中断
+      {mention && (
+        <div className="absolute inset-x-3 bottom-full z-10 mb-1 max-h-48 overflow-y-auto rounded-xl border border-qn-border bg-qn-panel shadow-lg">
+          {fileStatus && <div className="px-3 py-2 text-xs text-qn-muted" role="status">{fileStatus}</div>}
+          {files.map((file) => (
+            <button key={file.path} type="button" className="qn-row border-b border-qn-border px-3 text-sm last:border-0"
+              onPointerDown={(event) => event.preventDefault()} onClick={() => selectFile(file.path)}>
+              <span aria-hidden>↳</span><span className="min-w-0 truncate" title={file.path}>{file.path}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {images.length > 0 && (
+        <ul className="mb-2 flex flex-wrap gap-2" aria-label="图片附件">
+          {images.map((image, index) => (
+            <li className="flex items-center gap-1 rounded-xl border border-qn-border px-1" key={`${image.name}:${index}`}>
+              <img className="h-9 w-9 rounded object-cover" src={image.dataUrl} alt={image.name} />
+              <Button variant="ghost" className="p-0!" disabled={sending || picking} onClick={() => updateImages(images.filter((_, at) => at !== index))} aria-label={`移除 ${image.name}`}>×</Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {images.length > 0 && imageUnavailable && <div className="mb-2 text-xs text-qn-warn">{imageUnavailable}</div>}
+      <div className="rounded-xl border border-qn-border bg-qn-card focus-within:border-qn-accent">
+        <textarea
+          ref={textarea}
+          className="qn-textarea block min-h-11 resize-none rounded-none border-0 bg-transparent px-3 py-2.5 text-base"
+          rows={1}
+          value={text}
+          disabled={disabled}
+          aria-label="消息"
+          placeholder={placeholder}
+          onChange={(event) => { onChangeText(event.target.value); setCaret(event.target.selectionStart) }}
+          onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+          onBlur={() => setCaret(null)}
+          onKeyDown={onKeyDown}
+          onCompositionStart={() => { composing.current = true }}
+          onCompositionEnd={() => { composing.current = false }}
+        />
+        <div className="flex min-w-0 flex-wrap items-center gap-1 px-1 pb-1">
+          <Button variant="ghost" className="p-0!" aria-label="添加图片" title={imageUnavailable}
+            onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="1.5" /><path d="m3 17 5-4 3 3 4-5 6 6" /></svg>
           </Button>
-        )}
-        <Button variant="primary" className="px-4" onClick={submit} disabled={disabled || sending}>
-          发送 ↑
-        </Button>
+          {project && <Button variant="ghost" className="p-0!" aria-label="引用项目文件" onClick={beginMention} disabled={disabled}>@</Button>}
+          {toolbar}
+          {canRequestSubagents && (
+            <Button variant={delegate ? 'primary' : 'ghost'} className="px-2 text-xs"
+              aria-label="本条消息请求子代理" aria-pressed={delegate}
+              title="随本条消息请求子代理协作，由当前智能体决定如何委派"
+              disabled={disabled || sending || running} onClick={() => setDelegate(!delegate)}>
+              子代理
+            </Button>
+          )}
+          <span className="flex-1" />
+          {picking && <span className="text-xs text-qn-muted" role="status">选图中…</span>}
+          {running ? (
+            <Button variant="danger" className="px-2" onClick={onInterrupt}>■ 中断</Button>
+          ) : (
+            <Button variant="primary" className="px-3" disabled={!canSend} onClick={() => void submit()}>
+              {sending ? '发送中…' : '发送'} <span aria-hidden>↑</span>
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   )

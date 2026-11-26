@@ -1,5 +1,6 @@
 import { backendConfig } from './config'
 import { MobileService } from './mobile/service'
+import { encodePairQr } from './mobile/pairQr'
 import { RouterError, type BackendRouter } from './router'
 import { defaultSecretCipher } from './secretStore'
 
@@ -26,6 +27,12 @@ export function registerMobileMethods(router: BackendRouter): void {
     const address = typeof params?.address === 'string' ? params.address.trim() : ''
     if (!address) throw new RouterError('invalid_params', '请选择连接地址')
     return current.connectionInfo({ address })
+  })
+  router.register('mobile.pairQr', async (params) => {
+    const address = typeof params?.address === 'string' ? params.address.trim() : ''
+    if (!address) throw new RouterError('invalid_params', '请选择连接地址')
+    const info = await current.connectionInfo({ address })
+    return { rows: encodePairQr(info.link) }
   })
   router.register('mobile.devices', () => current.devices())
   router.register('mobile.revokeDevice', (params) => {

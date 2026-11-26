@@ -1,4 +1,5 @@
 import { SETTINGS_SECTIONS, openSettings, type SettingsSectionId } from '../settings'
+import { TERMINAL_SHORTCUT, useTerminalDock } from '../terminal/dockState'
 import { useCodex } from '../../store/codex'
 import { useDock } from '../../store/dock'
 import { useLegacy } from '../../store/legacy'
@@ -14,6 +15,8 @@ export function storeCommandDeps(): DefaultCommandDeps<SettingsSectionId> {
     toggleDockTool: (tool) => useDock.getState().toggleTool(tool),
     hideDockTool: () => useDock.getState().hideTool(),
     toggleSidebar: () => useUi.getState().toggleSidebar(),
+    toggleTerminal: useTerminalDock.getState().toggle,
+    terminalShortcut: TERMINAL_SHORTCUT,
     addProject: () => useUi.getState().openDirectoryPicker(),
     newThread: () => useCodex.getState().startDraft(),
     interrupt: () => useCodex.getState().interrupt(),

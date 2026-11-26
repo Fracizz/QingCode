@@ -3,7 +3,6 @@ import {
   applyNotification,
   applyRateLimitsUpdate,
   applyServerRequest,
-  approvalResponse,
   CodexRpc,
   emptyState,
   interruptTurn,
@@ -13,17 +12,19 @@ import {
   pickAccount,
   pickSnapshot,
   readThread,
+  requestSubagents,
   resolveServerRequest,
   resumeThread,
-  sendText,
+  sendInput,
   startThread,
+  supportsSubagentRequests,
   type AccountSummary,
-  type ApprovalDecision,
   type ConversationState,
   type RateLimitSnapshot,
   type RequestId,
   type ServerNotification,
   type ServerRequest,
+  type UserInput,
 } from '@qn/codex-client'
 import { create } from 'zustand'
 import {
@@ -39,7 +40,7 @@ import {
   type MobileAgentSettings,
 } from './agents'
 import { getGateway, isMockGateway } from './client'
-import { isImagePath, type FileLocation } from './fileLinks'
+import { isImagePath, normalizePath, pathStyle, type FileLocation } from './fileLinks'
 import {
   draftFromInfo,
   isValidPairingCode,
@@ -52,25 +53,39 @@ import {
   EMPTY_PREFS,
   overridesFor,
   parsePrefs,
+  resolveSelection,
   toModelOptions,
   type ModelList,
   type ModelPrefs,
 } from './models'
 import {
   applyTargetState,
+  availableApprovalDecisions,
+  buildMobileTurnInput,
+  connectionRepairReason,
+  draftKey,
+  errorCode,
   formatQuotedMessage,
   friendlyError,
   HOST_KEY_HINT,
   hostKeyMessage,
   isHostKeyError,
   makeId,
+  mobileApprovalReply,
   parentPath,
   parseConnections,
+  parseDrafts,
   parseProjects,
+  parseSavedChats,
+  parseStoredRecord,
   parseTargets,
   serializeConnections,
   toThreadSummaries,
   type Annotation,
+  type ChatDraft,
+  type MobileApprovalDecision,
+  type RepairReason,
+  type SavedChat,
   type ThreadSummary,
 } from './state'
 import {
@@ -81,6 +96,7 @@ import {
   MobileCodexTransport,
   openSeq,
 } from './transport'
+import { deliverTerminalEvent } from './terminalEvents'
 import type {
   AgentKind,
   Connection,
@@ -97,6 +113,12 @@ import type {
 } from './types'
 import { appendRead, nextOffset, parseFsRead, READ_CHUNK_BYTES, viewerError, type FsReadView } from './viewer'
 
+declare global {
+  interface Window {
+    __qnResume?: () => void
+  }
+}
+
 type JsonRecord = Record<string, unknown>
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -104,6 +126,9 @@ const isRecord = (value: unknown): value is JsonRecord =>
 const STORAGE_CONNECTIONS = 'connections'
 const STORAGE_ACTIVE = 'active'
 const STORAGE_MODEL_PREFS = 'modelPrefs'
+const STORAGE_DESKTOP_MODEL_PREFS = 'desktopModelPrefs'
+const STORAGE_DRAFTS = 'chatDrafts'
+const STORAGE_SAVED_CHATS = 'savedChats'
 const REFRESH_INTERVAL_MS = 60_000
 // pi 等 Agent 在会话进程启动前返回空模型列表，空列表隔一段时间允许重取。
 const EMPTY_MODELS_RETRY_MS = 15_000
@@ -111,12 +136,12 @@ const DEVICE_NAME = 'QingCode Next 手机'
 const FINGERPRINT_MISMATCH_HINT =
   '地址指向了另一台电脑或证书已重新生成，请从电脑重新复制连接信息'
 
-export type Page = 'connections' | 'form' | 'targets' | 'projects' | 'threads' | 'chat'
+export type Page = 'connections' | 'form' | 'workspace' | 'targets' | 'projects' | 'threads' | 'chat'
 
 export type FormState = {
-  mode: 'add' | 'edit'
+  mode: 'add' | 'edit' | 'repair'
   editId: string | null
-  returnPage: 'connections' | 'targets'
+  returnPage: Exclude<Page, 'form'>
   draft: Omit<ConnectionDraft, 'port'> & { port: string }
   paste: string
   error: string | null
@@ -157,7 +182,6 @@ export type AgentSession = {
   opening: boolean
   openError: string | null
   lastSeq: number | null
-  lastTurnId: string | null
 }
 
 /** 只读查看页：文件（fs.read）或差异（git.diff，失败回退到改动卡片自带 diff）。 */
@@ -178,6 +202,7 @@ export type ViewerState = {
 }
 
 export type DiffRequest = { path: string; diff?: string | null }
+type DiscoveredThread = ThreadSummary & { targetId: string; projectId: string }
 
 type AppState = {
   page: Page
@@ -186,6 +211,7 @@ type AppState = {
   connections: Connection[]
   activeId: string | null
   connectionStatus: Record<string, ConnectionStatus>
+  needsRepair: Record<string, RepairReason>
   form: FormState | null
   credential: CredentialPrompt | null
   directory: DirectoryState | null
@@ -213,8 +239,12 @@ type AppState = {
   models: Record<string, ModelList>
   modelPrefs: Record<string, ModelPrefs>
   rateLimits: Record<string, RateLimitEntry>
+  claudeRateLimits: Record<string, RateLimitSnapshot>
+  claudeCosts: Record<string, number>
   viewer: ViewerState | null
   annotations: Annotation[]
+  draftText: string
+  approvalSubmitting: Record<string, boolean>
   sending: boolean
   error: string | null
   notice: string | null
@@ -223,6 +253,7 @@ type AppState = {
   refreshStatuses: () => Promise<void>
   openAddForm: () => void
   openEditForm: (id: string) => void
+  beginRepair: (id: string) => void
   setFormPaste: (text: string) => void
   parsePaste: () => void
   pasteFromClipboard: () => Promise<void>
@@ -251,11 +282,13 @@ type AppState = {
   attachOpened: () => Promise<void>
   /** skipFailed：后台刷新（如 turn 完成后）不重试已确认打不开的 Agent，避免反复拉起。 */
   refreshThreads: (options?: { skipFailed?: boolean }) => Promise<void>
+  discoverWorkspaceSessions: (projects: readonly Project[]) => Promise<DiscoveredThread[]>
   newThread: (agent?: AgentKind) => Promise<void>
   openThread: (id: string, agent?: AgentKind) => Promise<void>
-  send: (text: string) => Promise<void>
+  setDraftText: (text: string) => void
+  send: (text: string, attachments?: UserInput[], delegate?: boolean) => Promise<boolean>
   interrupt: () => Promise<void>
-  respondApproval: (requestId: RequestId, decision: ApprovalDecision) => void
+  respondApproval: (requestId: RequestId, decision: MobileApprovalDecision) => Promise<boolean>
   loadModels: (targetId: string, agent: AgentKind, force?: boolean) => Promise<void>
   setModelPrefs: (targetId: string, agent: AgentKind, prefs: ModelPrefs) => void
   refreshRateLimits: (targetId: string) => Promise<void>
@@ -281,7 +314,7 @@ const emptyRateLimit = (): RateLimitEntry => ({
 })
 
 const emptyForm = (
-  mode: 'add' | 'edit', editId: string | null, returnPage: FormState['returnPage'], draft: ConnectionDraft,
+  mode: FormState['mode'], editId: string | null, returnPage: FormState['returnPage'], draft: ConnectionDraft,
 ): FormState => ({
   mode,
   editId,
@@ -347,6 +380,142 @@ const opening = new Map<string, Promise<boolean>>()
 const rateRefresh = new Map<string, Promise<void>>()
 
 export const useApp = create<AppState>((set, get) => {
+  let desktopEpoch = 0
+  let navigationEpoch = 0
+  let drafts: Record<string, ChatDraft> = {}
+  let savedChats: Record<string, SavedChat> = {}
+  let pendingRestore: SavedChat | null = null
+  let restoreTask: Promise<void> | null = null
+  let reconnectTask: Promise<void> | null = null
+  let desktopModelPrefs: Record<string, Record<string, ModelPrefs>> = {}
+  const claudeCostPerTurn = new Map<string, number>()
+  const completedTurns = new WeakMap<MobileCodexTransport, Set<string>>()
+  const approvalFlights = new WeakMap<MobileCodexTransport, Map<RequestId, string>>()
+  const storageWrites = new Map<string, Promise<void>>()
+
+  const saveRecord = (key: string, data: unknown): void => {
+    const json = JSON.stringify(data)
+    const previous = storageWrites.get(key) ?? Promise.resolve()
+    const task = previous.catch(() => undefined).then(() => getGateway().storageSet(key, json))
+    storageWrites.set(key, task)
+    void task.catch(() => undefined).finally(() => {
+      if (storageWrites.get(key) === task) storageWrites.delete(key)
+    })
+  }
+
+  const currentDraftKey = (state = get()): string | null => {
+    const { activeId, selectedTargetId, selectedProjectId, selectedAgent, selectedThreadId, page } = state
+    const conn = activeConnection(state)
+    return conn && activeId && selectedTargetId && page === 'chat'
+      ? draftKey(activeId, selectedTargetId, selectedProjectId, selectedAgent, selectedThreadId, conn.fp)
+      : null
+  }
+
+  const showDraft = (): void => {
+    const state = get()
+    const key = currentDraftKey(state)
+    const value = key ? drafts[key] : undefined
+    const session = state.selectedTargetId && state.sessions[sessionKey(state.selectedTargetId, state.selectedAgent)]
+    const flights = session ? approvalFlights.get(session.transport) : undefined
+    const approvalSubmitting = Object.fromEntries([...(flights ?? [])]
+      .filter(([, threadId]) => threadId === state.selectedThreadId)
+      .map(([requestId]) => [String(requestId), true]))
+    set({ draftText: value?.text ?? '', annotations: value?.annotations ?? [], approvalSubmitting })
+  }
+
+  const saveDraft = (key: string, draft: ChatDraft): void => {
+    if (draft.text || draft.annotations.length) drafts[key] = draft
+    else delete drafts[key]
+    saveRecord(STORAGE_DRAFTS, drafts)
+    if (currentDraftKey() === key) set({ draftText: draft.text, annotations: draft.annotations })
+  }
+
+  const saveActiveChat = (): void => {
+    const { activeId, selectedTargetId, selectedProjectId, selectedThreadId, selectedAgent } = get()
+    if (!activeId) return
+    if (selectedTargetId && selectedProjectId && selectedThreadId) {
+      savedChats[activeId] = { targetId: selectedTargetId, projectId: selectedProjectId, threadId: selectedThreadId, agent: selectedAgent }
+    } else {
+      delete savedChats[activeId]
+    }
+    saveRecord(STORAGE_SAVED_CHATS, savedChats)
+  }
+
+  const removeSavedDesktopState = (id: string): void => {
+    delete savedChats[id]
+    delete desktopModelPrefs[id]
+    for (const key of Object.keys(drafts)) {
+      if (key.startsWith(`[${JSON.stringify(id)},`)) delete drafts[key]
+    }
+    saveRecord(STORAGE_SAVED_CHATS, savedChats)
+    saveRecord(STORAGE_DESKTOP_MODEL_PREFS, desktopModelPrefs)
+    saveRecord(STORAGE_DRAFTS, drafts)
+  }
+
+  const markRepair = (id: string, reason: RepairReason, message: string): void => {
+    set((state) => {
+      const active = state.activeId === id
+      return {
+        needsRepair: { ...state.needsRepair, [id]: reason },
+        connectionStatus: { ...state.connectionStatus, [id]: reason === 'fingerprint' ? 'mismatch' : 'offline' },
+        ...(active ? { eventsConnected: false, eventsError: message } : {}),
+      }
+    })
+    if (get().activeId === id) controller?.stop()
+  }
+
+  const markRepairError = (conn: Connection, epoch: number, err: unknown): void => {
+    if (epoch !== desktopEpoch) return
+    const active = activeConnection(get())
+    if (active?.host !== conn.host || active.port !== conn.port || active.token !== conn.token) return
+    const reason = connectionRepairReason(err)
+    if (reason) markRepair(conn.id, reason, friendlyError(err, '请重新配对电脑'))
+  }
+
+  const connectSavedTarget = (conn: Connection, targetId: string): Promise<unknown> =>
+    getGateway().rpc(conn, 'target.connect', { id: targetId }, undefined, 120_000)
+
+  const restoreSavedChat = async (conn: Connection): Promise<void> => {
+    if (restoreTask || !pendingRestore) return
+    const chat = pendingRestore
+    const epoch = desktopEpoch
+    const navigation = navigationEpoch
+    const isCurrent = () => epoch === desktopEpoch && navigation === navigationEpoch && get().page === 'workspace'
+    const task = (async () => {
+      try {
+        const [result] = await Promise.all([
+          getGateway().rpc<unknown>(conn, 'projects.list', { targetId: chat.targetId }),
+          get().loadAgentSettings(),
+        ])
+        const projects = parseProjects(result)
+        if (!isCurrent()) return
+        if (!projects.some((project) => project.id === chat.projectId) || !targetAgents(get(), chat.targetId).includes(chat.agent)) {
+          pendingRestore = null
+          return
+        }
+        try {
+          await getGateway().rpc(conn, 'server.req', { targetId: chat.targetId, method: 'ping' })
+        } catch (err) {
+          if (!isCurrent()) return
+          if (errorCode(err) !== 'not_connected') throw err
+          await connectSavedTarget(conn, chat.targetId)
+        }
+        if (!isCurrent()) return
+        set({ projects, selectedTargetId: chat.targetId, selectedProjectId: chat.projectId })
+        await get().openThread(chat.threadId, chat.agent)
+        if (epoch === desktopEpoch && get().page === 'chat') pendingRestore = null
+      } catch (err) {
+        if (isCurrent()) markRepairError(conn, epoch, err)
+      }
+    })()
+    restoreTask = task
+    try {
+      await task
+    } finally {
+      if (restoreTask === task) restoreTask = null
+    }
+  }
+
   const persist = async (connections: Connection[], activeId: string | null): Promise<void> => {
     try {
       await getGateway().storageSet(STORAGE_CONNECTIONS, serializeConnections(connections))
@@ -356,10 +525,10 @@ export const useApp = create<AppState>((set, get) => {
     }
   }
 
-  const patchSession = (key: string, update: (session: AgentSession) => AgentSession): void => {
+  const patchSession = (key: string, update: (session: AgentSession) => AgentSession, source?: AgentSession): void => {
     set((state) => {
       const session = state.sessions[key]
-      if (!session) return state
+      if (!session || (source && session.transport !== source.transport)) return state
       const next = update(session)
       return next === session ? state : { sessions: { ...state.sessions, [key]: next } }
     })
@@ -386,12 +555,20 @@ export const useApp = create<AppState>((set, get) => {
     }
     opening.clear()
     rateRefresh.clear()
+    claudeCostPerTurn.clear()
+    reconnectTask = null
   }
 
-  const serverReq = <T>(targetId: string, method: string, params: unknown): Promise<T> => {
+  const serverReq = async <T>(targetId: string, method: string, params: unknown): Promise<T> => {
     const conn = activeConnection(get())
-    if (!conn) return Promise.reject(new Error('尚未选择电脑'))
-    return getGateway().rpc<T>(conn, 'server.req', { targetId, method, params })
+    if (!conn) throw new Error('尚未选择电脑')
+    const epoch = desktopEpoch
+    try {
+      return await getGateway().rpc<T>(conn, 'server.req', { targetId, method, params })
+    } catch (err) {
+      markRepairError(conn, epoch, err)
+      throw err
+    }
   }
 
   const handleRateLimitNotification = (targetId: string, msg: unknown): void => {
@@ -414,13 +591,20 @@ export const useApp = create<AppState>((set, get) => {
     const existing = get().sessions[key]
     if (existing) return existing
 
+    const epoch = desktopEpoch
+    const conn = activeConnection(get())!
     const transport = new MobileCodexTransport(
       targetId,
-      (msg) => {
-        const conn = activeConnection(get())
-        if (!conn) return Promise.reject(new Error('尚未选择电脑'))
+      async (msg) => {
+        if (epoch !== desktopEpoch) throw new Error('电脑连接已切换')
         // agent 直接放进 params：网关与 backend 都按 params.agent 路由，旧桌面会忽略它。
-        return getGateway().rpc(conn, 'codex.send', { targetId, agent, msg })
+        const current = activeConnection(get()) ?? conn
+        try {
+          return await getGateway().rpc(current, 'codex.send', { targetId, agent, msg })
+        } catch (err) {
+          markRepairError(current, epoch, err)
+          throw err
+        }
       },
       agent,
     )
@@ -436,18 +620,63 @@ export const useApp = create<AppState>((set, get) => {
       opening: false,
       openError: null,
       lastSeq: null,
-      lastTurnId: null,
     }
     set((state) => ({ sessions: { ...state.sessions, [key]: session } }))
 
     rpc.onNotification((notification: ServerNotification) => {
+      if (epoch !== desktopEpoch) return
+      const rawParams: unknown = notification.params
+      const params = isRecord(rawParams) ? rawParams : null
+      const method = (notification as unknown as JsonRecord).method
+      const resolutionId = method === 'serverRequest/resolved' ? params?.requestId ?? params?.id : null
+      const resolved = typeof resolutionId === 'string' || typeof resolutionId === 'number' ? resolutionId : null
+      if (resolved !== null) approvalFlights.get(transport)?.delete(resolved)
+      const selected = get()
+      const currentThreadId = selected.selectedThreadId
+      const visibleResolution = resolved !== null && currentThreadId !== null
+        && selected.selectedTargetId === targetId && selected.selectedAgent === agent
+        && selected.sessions[key]?.state.threads[currentThreadId]?.pendingApprovals.some((item) => item.requestId === resolved)
       patchSession(key, (current) => ({
         ...current,
-        state: applyNotification(current.state, notification),
-      }))
-      // 额度面板只展示 Codex 账号（mvp §10），其他 Agent 的限额事件不混进来。
+        state: resolved !== null ? resolveServerRequest(current.state, resolved) : applyNotification(current.state, notification),
+      }), session)
       if (agent === 'codex') handleRateLimitNotification(targetId, notification)
-      const method = (notification as unknown as JsonRecord).method
+      if (method === 'turn/completed') {
+        const turnId = isRecord(params?.turn) ? params.turn.id : params?.turnId
+        if (typeof turnId === 'string') {
+          const turns = completedTurns.get(transport) ?? new Set<string>()
+          turns.add(turnId)
+          if (turns.size > 1024) {
+            const oldest = turns.values().next().value
+            if (oldest !== undefined) turns.delete(oldest)
+          }
+          completedTurns.set(transport, turns)
+        }
+      }
+      if (visibleResolution) {
+        set((state) => {
+          const approvalSubmitting = { ...state.approvalSubmitting }
+          delete approvalSubmitting[String(resolved)]
+          return { approvalSubmitting, notice: '审批已处理' }
+        })
+      }
+      if (agent === 'claude' && method === 'account/rateLimits/updated') {
+        const snapshot = applyRateLimitsUpdate(get().claudeRateLimits[targetId] ?? null, notification)
+        if (snapshot) set((state) => ({ claudeRateLimits: { ...state.claudeRateLimits, [targetId]: snapshot } }))
+      } else if (agent === 'claude' && method === 'thread/tokenUsage/updated') {
+        const threadId = params?.threadId
+        const turnId = params?.turnId
+        const cost = isRecord(params?.tokenUsage) ? params.tokenUsage.estimatedCostUsd : null
+        if (typeof threadId === 'string' && typeof turnId === 'string' && typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) {
+          const costKey = JSON.stringify([targetId, threadId])
+          const turnKey = JSON.stringify([targetId, threadId, turnId])
+          const previous = claudeCostPerTurn.get(turnKey) ?? 0
+          claudeCostPerTurn.set(turnKey, cost)
+          set((state) => ({
+            claudeCosts: { ...state.claudeCosts, [costKey]: (state.claudeCosts[costKey] ?? 0) + cost - previous },
+          }))
+        }
+      }
       if (method === 'turn/completed' || method === 'thread/started') {
         if (get().selectedTargetId === targetId) void get().refreshThreads({ skipFailed: true })
       }
@@ -457,25 +686,105 @@ export const useApp = create<AppState>((set, get) => {
       patchSession(key, (current) => ({
         ...current,
         state: applyServerRequest(current.state, request),
-      }))
+      }), session)
     })
     return session
   }
 
-  const persistModelPrefs = (prefs: Record<string, ModelPrefs>): void => {
-    void getGateway()
-      .storageSet(STORAGE_MODEL_PREFS, JSON.stringify(prefs))
-      .catch(() => undefined)
-  }
-
   /** 确认会话通道可用后执行；失败把原因写到 error。 */
-  const withSession = async (targetId: string, agent: AgentKind): Promise<AgentSession | null> => {
+  const withSession = async (targetId: string, agent: AgentKind, navigation: number): Promise<AgentSession | null> => {
+    const epoch = desktopEpoch
     if (!(await get().ensureOpen(targetId, agent))) {
+      if (epoch !== desktopEpoch || navigation !== navigationEpoch) return null
       const key = sessionKey(targetId, agent)
       set({ error: get().sessions[key]?.openError ?? `${agentLabel(agent)} 未就绪` })
       return null
     }
+    if (epoch !== desktopEpoch || navigation !== navigationEpoch) return null
     return get().sessions[sessionKey(targetId, agent)] ?? null
+  }
+
+  const reloadConversation = async (session: AgentSession, threadId: string): Promise<void> => {
+    try {
+      const result = await readThread(session.rpc, threadId)
+      patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
+    } catch (err) {
+      if (get().sessions[session.key]?.transport === session.transport) {
+        set({ notice: friendlyError(err, '暂时无法补齐会话历史，可再次打开会话') })
+      }
+    }
+  }
+
+  const clearPendingApprovals = (session: AgentSession): void => {
+    approvalFlights.get(session.transport)?.clear()
+    patchSession(session.key, (value) => ({
+      ...value,
+      state: {
+        threads: Object.fromEntries(
+          Object.entries(value.state.threads).map(([id, thread]) => [id, { ...thread, pendingApprovals: [] }]),
+        ),
+      },
+    }), session)
+    if (get().selectedTargetId === session.targetId && get().selectedAgent === session.agent) {
+      set({ approvalSubmitting: {} })
+    }
+  }
+
+  const attachSession = (conn: Connection, session: AgentSession, sinceSeq: number) =>
+    getGateway().rpc<unknown>(conn, 'server.req', {
+      targetId: session.targetId,
+      method: 'codex.attach',
+      params: { agent: session.agent, sinceSeq },
+    })
+
+  const attachExisting = async (conn: Connection, targetId: string, agent: AgentKind, epoch: number): Promise<AgentSession | null> => {
+    const status = await getGateway().rpc<unknown>(conn, 'server.req', { targetId, method: 'codex.status', params: { agent } })
+    if (epoch !== desktopEpoch || !isRecord(status) || status.running !== true) return null
+    const key = sessionKey(targetId, agent)
+    const busy = opening.get(key)
+    if (busy) await busy
+    if (epoch !== desktopEpoch) return null
+    const session = sessionFor(targetId, agent)
+    if (!session.opened) {
+      const task = (async () => {
+        try {
+          // 发现首页会话时只订阅正在运行的 Agent；游标前的未决审批仍会由 daemon 补发。
+          const attached = attachResult(await attachSession(conn, session, Number.MAX_SAFE_INTEGER))
+          if (epoch !== desktopEpoch) return false
+          session.transport.setLastSeq(attached.lastSeq)
+          patchSession(key, (current) => ({
+            ...current,
+            opened: true,
+            openError: null,
+            lastSeq: attached.lastSeq,
+          }), session)
+          return true
+        } catch (err) {
+          markRepairError(conn, epoch, err)
+          return false
+        }
+      })()
+      opening.set(key, task)
+      try {
+        if (!(await task)) return null
+      } finally {
+        if (opening.get(key) === task) opening.delete(key)
+      }
+    }
+    return epoch === desktopEpoch ? get().sessions[key] ?? null : null
+  }
+
+  const reloadActiveConversation = async (session: AgentSession): Promise<void> => {
+    const { selectedTargetId, selectedThreadId, selectedAgent } = get()
+    if (selectedThreadId && selectedTargetId === session.targetId && selectedAgent === session.agent) {
+      await reloadConversation(session, selectedThreadId)
+    }
+  }
+
+  const showsConversation = (session: AgentSession): boolean => {
+    const state = get()
+    return state.page === 'chat' && state.selectedThreadId !== null
+      && state.selectedTargetId === session.targetId && state.selectedAgent === session.agent
   }
 
   return {
@@ -485,6 +794,7 @@ export const useApp = create<AppState>((set, get) => {
     connections: [],
     activeId: null,
     connectionStatus: {},
+    needsRepair: {},
     form: null,
     credential: null,
     directory: null,
@@ -509,8 +819,12 @@ export const useApp = create<AppState>((set, get) => {
     models: {},
     modelPrefs: {},
     rateLimits: {},
+    claudeRateLimits: {},
+    claudeCosts: {},
     viewer: null,
     annotations: [],
+    draftText: '',
+    approvalSubmitting: {},
     sending: false,
     error: null,
     notice: null,
@@ -520,27 +834,58 @@ export const useApp = create<AppState>((set, get) => {
       initialized = true
       const gateway = getGateway()
       set({ mock: isMockGateway() })
+      const onResume = () => {
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+        controller?.wake()
+      }
       if (typeof window !== 'undefined') {
         window.__qnBack = () => get().goBack()
+        window.__qnResume = onResume
+        window.addEventListener('online', () => controller?.wake(true))
       }
+      if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onResume)
       controller = new EventStreamController(gateway, () => activeConnection(get()), {
         onEvent: (event) => get().handleGatewayEvent(event),
         onOpen: (reconnected) => {
+          if (reconnected) {
+            const task = get().attachOpened()
+            reconnectTask = task
+            void task.finally(() => {
+              if (reconnectTask === task) reconnectTask = null
+            })
+          }
           set({ eventsConnected: true, eventsError: null })
-          if (reconnected) void get().attachOpened()
+          const conn = activeConnection(get())
+          if (conn && pendingRestore) void restoreSavedChat(conn)
         },
         onClose: (error) => set({ eventsConnected: false, eventsError: error }),
+        onRepair: (reason, message) => {
+          const id = get().activeId
+          if (id) markRepair(id, reason, message)
+        },
       })
       void (async () => {
         try {
-          const [raw, active, prefs] = await Promise.all([
+          const optional = (key: string) => gateway.storageGet(key).catch(() => null)
+          const [raw, active, legacyPrefs, prefs, storedDrafts, chats] = await Promise.all([
             gateway.storageGet(STORAGE_CONNECTIONS),
             gateway.storageGet(STORAGE_ACTIVE),
-            gateway.storageGet(STORAGE_MODEL_PREFS).catch(() => null),
+            optional(STORAGE_MODEL_PREFS),
+            optional(STORAGE_DESKTOP_MODEL_PREFS),
+            optional(STORAGE_DRAFTS),
+            optional(STORAGE_SAVED_CHATS),
           ])
           const connections = parseConnections(raw)
           const activeId = active && connections.some((item) => item.id === active) ? active : null
-          set({ connections, activeId, booting: false, modelPrefs: parsePrefs(prefs) })
+          drafts = parseDrafts(storedDrafts)
+          savedChats = parseSavedChats(chats)
+          desktopModelPrefs = Object.fromEntries(Object.entries(parseStoredRecord(prefs))
+            .map(([id, value]) => [id, parsePrefs(JSON.stringify(value))]))
+          if (activeId && !prefs && legacyPrefs) {
+            desktopModelPrefs[activeId] = parsePrefs(legacyPrefs)
+            saveRecord(STORAGE_DESKTOP_MODEL_PREFS, desktopModelPrefs)
+          }
+          set({ connections, booting: false })
           if (activeId) await get().activate(activeId)
           else void get().refreshStatuses()
         } catch (err) {
@@ -549,6 +894,7 @@ export const useApp = create<AppState>((set, get) => {
       })()
       setInterval(() => {
         if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+        controller?.wake()
         for (const session of Object.values(get().sessions)) {
           if (session.opened && session.agent === 'codex') void get().refreshRateLimits(session.targetId)
         }
@@ -574,15 +920,24 @@ export const useApp = create<AppState>((set, get) => {
           } catch {
             status = 'offline'
           }
-          set((state) => ({ connectionStatus: { ...state.connectionStatus, [item.id]: status } }))
+          const current = get().connections.find((conn) => conn.id === item.id)
+          if (!current || current.host !== item.host || current.port !== item.port || current.fp !== item.fp) return
+          if (status === 'mismatch') markRepair(item.id, 'fingerprint', FINGERPRINT_MISMATCH_HINT)
+          else if (!get().needsRepair[item.id]) {
+            set((state) => ({ connectionStatus: { ...state.connectionStatus, [item.id]: status } }))
+          }
         }),
       )
     },
 
     openAddForm: () => {
+      navigationEpoch += 1
+      pendingRestore = null
       set({
         page: 'form',
-        form: emptyForm('add', null, 'connections', { name: '', host: '', port: 38500, fp: '', code: '' }),
+        form: emptyForm('add', null, get().page === 'workspace' ? 'workspace' : 'connections', {
+          name: '', host: '', port: 38500, fp: '', code: '',
+        }),
         error: null,
       })
     },
@@ -590,7 +945,10 @@ export const useApp = create<AppState>((set, get) => {
     openEditForm: (id) => {
       const conn = get().connections.find((item) => item.id === id)
       if (!conn) return
-      const returnPage = get().page === 'targets' ? 'targets' : 'connections'
+      navigationEpoch += 1
+      pendingRestore = null
+      const page = get().page
+      const returnPage = page === 'form' ? 'connections' : page
       set({
         page: 'form',
         form: emptyForm('edit', id, returnPage, {
@@ -601,6 +959,24 @@ export const useApp = create<AppState>((set, get) => {
           code: '',
         }),
         error: null,
+      })
+    },
+
+    beginRepair: (id) => {
+      const conn = get().connections.find((item) => item.id === id)
+      if (!conn) return
+      navigationEpoch += 1
+      pendingRestore = null
+      const page = get().page
+      set({
+        page: 'form',
+        form: emptyForm('repair', id, page === 'form' ? 'connections' : page, {
+          name: conn.name,
+          host: conn.host,
+          port: conn.port,
+          fp: get().needsRepair[id] === 'fingerprint' ? '' : conn.fp,
+          code: '',
+        }),
       })
     },
 
@@ -691,7 +1067,7 @@ export const useApp = create<AppState>((set, get) => {
 
     pairAndSave: async () => {
       const form = get().form
-      if (!form || form.mode !== 'add' || form.saving || form.testing) return
+      if (!form || form.mode === 'edit' || form.saving || form.testing) return
       const endpoint = draftEndpoint(form.draft)
       const fp = normalizeFingerprint(form.draft.fp)
       if (!endpoint || !fp) {
@@ -707,30 +1083,44 @@ export const useApp = create<AppState>((set, get) => {
         set({ form: { ...form, error: FINGERPRINT_MISMATCH_HINT } })
         return
       }
-      set({ form: { ...form, saving: true, error: null } })
+      const pending = { ...form, saving: true, error: null }
+      set({ form: pending })
       try {
         const result = await getGateway().pair(
           draft,
           get().mock ? '浏览器调试' : DEVICE_NAME,
         )
+        if (get().form !== pending) return
+        const previous = form.mode === 'repair' ? get().connections.find((item) => item.id === form.editId) : null
+        if (form.mode === 'repair' && !previous) throw new Error('此电脑连接已移除')
         const conn: Connection = {
-          id: makeId(),
+          id: previous?.id ?? makeId(),
           name: draft.name.trim() || '未命名电脑',
           host: draft.host,
           port: draft.port,
           fp,
           token: result.token,
           desktopName: result.desktopName || draft.name,
-          createdAt: Date.now(),
+          createdAt: previous?.createdAt ?? Date.now(),
         }
-        const connections = [...get().connections, conn]
-        set({ connections, form: null, page: 'connections' })
-        await persist(connections, get().activeId)
+        const connections = previous
+          ? get().connections.map((item) => item.id === conn.id ? conn : item)
+          : [...get().connections, conn]
+        await getGateway().storageSet(STORAGE_CONNECTIONS, serializeConnections(connections))
+        if (get().form !== pending) return
+        const needsRepair = { ...get().needsRepair }
+        delete needsRepair[conn.id]
+        if (previous && previous.fp !== fp) {
+          // 新证书只能证明刚确认的电脑，旧会话及草稿不能自动带过去。
+          delete savedChats[conn.id]
+          saveRecord(STORAGE_SAVED_CHATS, savedChats)
+        }
+        set({ connections, needsRepair, form: null, page: 'connections' })
         void get().refreshStatuses()
         await get().activate(conn.id)
       } catch (err) {
         const current = get().form
-        if (current) {
+        if (current === pending) {
           set({ form: { ...current, saving: false, error: friendlyError(err, '配对失败') } })
         }
       }
@@ -778,12 +1168,19 @@ export const useApp = create<AppState>((set, get) => {
       const activeId = wasActive ? null : get().activeId
       if (wasActive) {
         controller?.stop()
+        desktopEpoch += 1
+        navigationEpoch += 1
+        pendingRestore = null
+        restoreTask = null
         resetSessions()
         viewerToken += 1
         set({
           sessions: {},
           models: {},
           rateLimits: {},
+          claudeRateLimits: {},
+          claudeCosts: {},
+          modelPrefs: {},
           targets: [],
           projects: [],
           threads: [],
@@ -795,9 +1192,17 @@ export const useApp = create<AppState>((set, get) => {
           selectedProjectId: null,
           selectedThreadId: null,
           eventsConnected: false,
+          eventsError: null,
+          sending: false,
+          draftText: '',
+          annotations: [],
+          approvalSubmitting: {},
         })
       }
-      set({ connections, activeId, page: wasActive ? 'connections' : get().page })
+      removeSavedDesktopState(id)
+      const needsRepair = { ...get().needsRepair }
+      delete needsRepair[id]
+      set({ connections, activeId, needsRepair, page: wasActive ? 'connections' : get().page })
       await persist(connections, activeId)
       void get().refreshStatuses()
     },
@@ -805,9 +1210,23 @@ export const useApp = create<AppState>((set, get) => {
     activate: async (id) => {
       const conn = get().connections.find((item) => item.id === id)
       if (!conn) return
+      if (get().needsRepair[id]) {
+        get().beginRepair(id)
+        return
+      }
+      controller?.stop()
+      desktopEpoch += 1
+      navigationEpoch += 1
+      refreshToken += 1
+      viewerToken += 1
+      resetSessions()
+      pendingRestore = savedChats[id] ?? null
+      restoreTask = null
       set({
         activeId: id,
-        page: 'targets',
+        page: 'workspace',
+        eventsConnected: false,
+        eventsError: null,
         targets: [],
         targetStates: {},
         targetErrors: {},
@@ -818,25 +1237,49 @@ export const useApp = create<AppState>((set, get) => {
         threads: [],
         agentErrors: {},
         agentSettings: null,
+        sessions: {},
+        models: {},
+        rateLimits: {},
+        claudeRateLimits: {},
+        claudeCosts: {},
+        modelPrefs: desktopModelPrefs[id] ?? {},
+        selectedAgent: DEFAULT_AGENT,
+        connectingId: null,
+        projectsLoading: false,
+        threadsLoading: false,
+        threadsError: null,
+        credential: null,
+        directory: null,
+        sending: false,
+        draftText: '',
+        annotations: [],
+        approvalSubmitting: {},
         viewer: null,
         error: null,
         notice: null,
       })
       void persist(get().connections, id)
-      controller?.stop()
-      controller?.start()
+      controller?.start(false)
       await Promise.all([get().loadTargets(), get().loadAgentSettings()])
     },
 
-    deactivate: () => set({ page: 'connections' }),
+    deactivate: () => {
+      navigationEpoch += 1
+      pendingRestore = null
+      set({ page: 'connections' })
+    },
 
     loadTargets: async () => {
       const conn = activeConnection(get())
       if (!conn) return
+      const epoch = desktopEpoch
       try {
         const result = await getGateway().rpc<unknown>(conn, 'targets.list', {})
+        if (epoch !== desktopEpoch || get().needsRepair[conn.id]) return
         set({ targets: parseTargets(result), connectionStatus: { ...get().connectionStatus, [conn.id]: 'online' } })
       } catch (err) {
+        if (epoch !== desktopEpoch) return
+        markRepairError(conn, epoch, err)
         set({ error: friendlyError(err, '读取目标列表失败') })
       }
     },
@@ -844,12 +1287,16 @@ export const useApp = create<AppState>((set, get) => {
     loadAgentSettings: async () => {
       const conn = activeConnection(get())
       if (!conn) return
+      const epoch = desktopEpoch
       try {
         const result = await getGateway().rpc<unknown>(conn, 'mobile.agents', {})
-        if (activeConnection(get())?.id === conn.id) set({ agentSettings: parseMobileAgents(result) })
-      } catch {
+        if (epoch === desktopEpoch) set({ agentSettings: parseMobileAgents(result) })
+      } catch (err) {
         // 旧桌面版本没有 mobile.agents：只用 Codex。
-        if (activeConnection(get())?.id === conn.id) set({ agentSettings: null })
+        if (epoch === desktopEpoch) {
+          markRepairError(conn, epoch, err)
+          set({ agentSettings: null })
+        }
       }
     },
 
@@ -880,6 +1327,7 @@ export const useApp = create<AppState>((set, get) => {
         set({ error: '尚未选择电脑' })
         return
       }
+      const epoch = desktopEpoch
       set((state) => {
         const errors = { ...state.targetErrors }
         delete errors[id]
@@ -894,6 +1342,8 @@ export const useApp = create<AppState>((set, get) => {
         // SSH 部署 + 电脑端指纹确认可能超过默认 40s，单独放宽等待。
         await getGateway().rpc(conn, 'target.connect', { id, ...credentials }, undefined, 120_000)
       } catch (err) {
+        if (epoch !== desktopEpoch) return
+        markRepairError(conn, epoch, err)
         const message = hostKeyMessage(err, '连接失败')
         set((state) => ({
           targetErrors: { ...state.targetErrors, [id]: message },
@@ -901,17 +1351,21 @@ export const useApp = create<AppState>((set, get) => {
           notice: isHostKeyError(err) ? HOST_KEY_HINT : null,
         }))
       } finally {
-        set({ connectingId: null })
+        if (epoch === desktopEpoch && get().connectingId === id) set({ connectingId: null })
       }
     },
 
     disconnectTarget: async (id) => {
       const conn = activeConnection(get())
       if (!conn) return
+      const epoch = desktopEpoch
       try {
         await getGateway().rpc(conn, 'target.disconnect', { id })
+        if (epoch !== desktopEpoch) return
         set((state) => ({ targetStates: applyTargetState(state.targetStates, { id, state: 'idle' }) }))
       } catch (err) {
+        if (epoch !== desktopEpoch) return
+        markRepairError(conn, epoch, err)
         set({ notice: friendlyError(err, '断开失败') })
       }
     },
@@ -919,6 +1373,11 @@ export const useApp = create<AppState>((set, get) => {
     selectTarget: async (id) => {
       const conn = activeConnection(get())
       if (!conn) return
+      navigationEpoch += 1
+      pendingRestore = null
+      const epoch = desktopEpoch
+      const navigation = navigationEpoch
+      const isCurrent = () => epoch === desktopEpoch && navigation === navigationEpoch && get().selectedTargetId === id
       set({
         selectedTargetId: id,
         selectedProjectId: null,
@@ -929,12 +1388,17 @@ export const useApp = create<AppState>((set, get) => {
         agentErrors: {},
         page: 'projects',
       })
+      showDraft()
+      saveActiveChat()
       // 启用状态可能在电脑上刚改过，每次进入目标都重新取一次（失败不阻断）。
       void get().loadAgentSettings()
       try {
         const result = await getGateway().rpc<unknown>(conn, 'projects.list', { targetId: id })
+        if (!isCurrent()) return
         set({ projects: parseProjects(result), projectsLoading: false })
       } catch (err) {
+        if (!isCurrent()) return
+        markRepairError(conn, epoch, err)
         set({ projectsLoading: false, error: friendlyError(err, '读取项目列表失败') })
       }
     },
@@ -943,6 +1407,10 @@ export const useApp = create<AppState>((set, get) => {
       const conn = activeConnection(get())
       const project = get().projects.find((item) => item.id === id)
       if (!conn || !project) return
+      navigationEpoch += 1
+      pendingRestore = null
+      const epoch = desktopEpoch
+      const navigation = navigationEpoch
       // 打开项目时刷新 lastOpenedAt（与电脑端一致）。
       try {
         await getGateway().rpc(conn, 'projects.save', {
@@ -954,6 +1422,7 @@ export const useApp = create<AppState>((set, get) => {
       } catch {
         // 刷新失败不阻断打开会话。
       }
+      if (epoch !== desktopEpoch || navigation !== navigationEpoch) return
       set({
         selectedProjectId: id,
         selectedThreadId: null,
@@ -962,6 +1431,8 @@ export const useApp = create<AppState>((set, get) => {
         agentErrors: {},
         page: 'threads',
       })
+      showDraft()
+      saveActiveChat()
       await get().refreshThreads()
     },
 
@@ -969,17 +1440,20 @@ export const useApp = create<AppState>((set, get) => {
       const conn = activeConnection(get())
       const targetId = get().selectedTargetId
       if (!conn || !targetId) return
-      set({ directory: { path: '', entries: [], parent: null, loading: true, error: null, saving: false } })
+      const epoch = desktopEpoch
+      const directory = { path: '', entries: [], parent: null, loading: true, error: null, saving: false }
+      set({ directory })
       try {
         const home = await getGateway().rpc<{ path: string }>(conn, 'server.req', {
           targetId,
           method: 'fs.home',
           params: {},
         })
-        await get().browseDirectory(home.path)
+        if (epoch === desktopEpoch && get().directory === directory) await get().browseDirectory(home.path)
       } catch (err) {
-        const current = get().directory
-        if (current) set({ directory: { ...current, loading: false, error: friendlyError(err, '读取主目录失败') } })
+        if (epoch !== desktopEpoch || get().directory !== directory) return
+        markRepairError(conn, epoch, err)
+        set({ directory: { ...directory, loading: false, error: friendlyError(err, '读取主目录失败') } })
       }
     },
 
@@ -987,14 +1461,17 @@ export const useApp = create<AppState>((set, get) => {
       const conn = activeConnection(get())
       const targetId = get().selectedTargetId
       if (!conn || !targetId) return
+      const epoch = desktopEpoch
       const current = get().directory
-      set({ directory: { path, entries: current?.entries ?? [], parent: parentPath(path), loading: true, error: null, saving: false } })
+      const pending = { path, entries: current?.entries ?? [], parent: parentPath(path), loading: true, error: null, saving: false }
+      set({ directory: pending })
       try {
         const result = await getGateway().rpc<FsListResult>(conn, 'server.req', {
           targetId,
           method: 'fs.list',
           params: { path, dirsOnly: true },
         })
+        if (epoch !== desktopEpoch || get().directory !== pending) return
         const entries = Array.isArray(result.entries) ? result.entries : []
         set({
           directory: {
@@ -1007,6 +1484,8 @@ export const useApp = create<AppState>((set, get) => {
           },
         })
       } catch (err) {
+        if (epoch !== desktopEpoch || get().directory !== pending) return
+        markRepairError(conn, epoch, err)
         set({
           directory: {
             path,
@@ -1027,9 +1506,12 @@ export const useApp = create<AppState>((set, get) => {
       const dir = get().directory
       const targetId = get().selectedTargetId
       if (!conn || !dir || !targetId || !dir.path) return
-      set({ directory: { ...dir, saving: true, error: null } })
+      const epoch = desktopEpoch
+      const pending = { ...dir, saving: true, error: null }
+      set({ directory: pending })
       try {
         const saved = await getGateway().rpc<unknown>(conn, 'projects.save', { targetId, path: dir.path })
+        if (epoch !== desktopEpoch || get().directory !== pending) return
         const parsed = parseProjects([saved])
         const project =
           parsed[0] ??
@@ -1050,12 +1532,16 @@ export const useApp = create<AppState>((set, get) => {
         }))
         await get().refreshThreads()
       } catch (err) {
-        const current = get().directory
-        if (current) set({ directory: { ...current, saving: false, error: friendlyError(err, '添加项目失败') } })
+        if (epoch !== desktopEpoch || get().directory !== pending) return
+        markRepairError(conn, epoch, err)
+        set({ directory: { ...pending, saving: false, error: friendlyError(err, '添加项目失败') } })
       }
     },
 
     ensureOpen: async (targetId, agent = DEFAULT_AGENT) => {
+      const epoch = desktopEpoch
+      if (reconnectTask) await reconnectTask
+      if (epoch !== desktopEpoch) return false
       const key = sessionKey(targetId, agent)
       const existing = get().sessions[key]
       if (existing?.opened) return true
@@ -1067,7 +1553,7 @@ export const useApp = create<AppState>((set, get) => {
         return false
       }
       const session = sessionFor(targetId, agent)
-      patchSession(key, (value) => ({ ...value, opening: true, openError: null }))
+      patchSession(key, (value) => ({ ...value, opening: true, openError: null }), session)
       const task = (async () => {
         try {
           // 可执行文件路径由网关按电脑设置补上，手机不传路径。
@@ -1076,22 +1562,26 @@ export const useApp = create<AppState>((set, get) => {
             method: 'codex.open',
             params: { agent },
           })
-          let lastSeq = maxSeq(openSeq(opened), session.transport.getLastSeq())
+          if (epoch !== desktopEpoch) return false
+          const hostSeq = openSeq(opened)
+          const seen = session.transport.getLastSeq()
+          const reset = seen !== null && hostSeq !== null && hostSeq < seen
+          if (reset) {
+            session.transport.resetSequence()
+            clearPendingApprovals(session)
+          }
+          let lastSeq = reset ? hostSeq : seen ?? hostSeq
+          let truncated = reset
           try {
             // 每个 agent 有独立的回放缓冲，attach 必须带上 agent。
-            const attached = await getGateway().rpc<unknown>(conn, 'server.req', {
-              targetId,
-              method: 'codex.attach',
-              params: { agent, sinceSeq: lastSeq ?? 0 },
-            })
+            const attached = await attachSession(conn, session, lastSeq ?? 0)
             const info = attachResult(attached)
             lastSeq = maxSeq(lastSeq, info.lastSeq)
-            if (info.truncated) {
-              set({ notice: `${agentLabel(agent)} 历史缓冲已裁剪，请重新打开会话加载完整记录` })
-            }
-          } catch {
-            // 旧版 daemon 没有 attach 时仍能正常对话。
+            truncated ||= info.truncated
+          } catch (err) {
+            if (!['unknown_method', 'method_not_found', '-32601'].includes(errorCode(err))) throw err
           }
+          if (epoch !== desktopEpoch) return false
           session.transport.setLastSeq(lastSeq)
           patchSession(key, (value) => ({
             ...value,
@@ -1099,20 +1589,25 @@ export const useApp = create<AppState>((set, get) => {
             opening: false,
             openError: null,
             lastSeq,
-          }))
+          }), session)
+          if (truncated) void reloadActiveConversation(session)
           if (agent === 'codex') void get().refreshRateLimits(targetId)
           return true
         } catch (err) {
+          if (epoch !== desktopEpoch) return false
+          markRepairError(conn, epoch, err)
           patchSession(key, (value) => ({
             ...value,
             opened: false,
             opening: false,
             openError: openFailureMessage(agent, err),
-          }))
+          }), session)
           return false
         } finally {
-          opening.delete(key)
-          patchSession(key, (value) => ({ ...value, opening: false }))
+          if (epoch === desktopEpoch) {
+            opening.delete(key)
+            patchSession(key, (value) => ({ ...value, opening: false }), session)
+          }
         }
       })()
       opening.set(key, task)
@@ -1122,27 +1617,54 @@ export const useApp = create<AppState>((set, get) => {
     attachOpened: async () => {
       const conn = activeConnection(get())
       if (!conn) return
-      for (const [key, session] of Object.entries(get().sessions)) {
-        if (!session.opened) continue
+      const epoch = desktopEpoch
+      await Promise.all(Object.values(get().sessions).filter((session) => session.opened).map(async (session) => {
         try {
-          const result = await getGateway().rpc<unknown>(conn, 'server.req', {
-            targetId: session.targetId,
-            method: 'codex.attach',
-            params: { agent: session.agent, sinceSeq: session.transport.getLastSeq() ?? 0 },
-          })
-          const info = attachResult(result)
+          const cursor = session.transport.getLastSeq() ?? 0
+          let info
+          try {
+            info = attachResult(await attachSession(conn, session, cursor))
+          } catch (err) {
+            if (epoch !== desktopEpoch || !showsConversation(session) || errorCode(err) !== 'not_connected') throw err
+            await connectSavedTarget(conn, session.targetId)
+            if (epoch !== desktopEpoch) return
+            info = attachResult(await attachSession(conn, session, cursor))
+          }
+          if (epoch !== desktopEpoch) return
+          const restarted = info.lastSeq !== null && info.lastSeq < cursor
+          if (restarted) {
+            session.transport.resetSequence()
+            clearPendingApprovals(session)
+            // 接回用户正在看的一条对话时才允许启动重启后还没恢复的 Agent。
+            if (showsConversation(session)) {
+              await getGateway().rpc(conn, 'server.req', {
+                targetId: session.targetId,
+                method: 'codex.open',
+                params: { agent: session.agent },
+              })
+              if (epoch !== desktopEpoch) return
+            }
+            info = attachResult(await attachSession(conn, session, 0))
+            if (epoch !== desktopEpoch) return
+          }
           session.transport.setLastSeq(info.lastSeq)
-          patchSession(key, (value) => ({ ...value, lastSeq: maxSeq(value.lastSeq, info.lastSeq) }))
-          if (info.truncated) set({ notice: '事件流重连后有历史消息被裁剪，请重新打开会话' })
-        } catch {
-          // 下次操作会再尝试，不打断页面。
+          patchSession(session.key, (value) => ({
+            ...value,
+            opened: true,
+            openError: null,
+            lastSeq: restarted ? info.lastSeq : maxSeq(value.lastSeq, info.lastSeq),
+          }), session)
+          if (restarted || info.truncated) await reloadActiveConversation(session)
+        } catch (err) {
+          if (epoch === desktopEpoch) markRepairError(conn, epoch, err)
+          patchSession(session.key, (value) => ({ ...value, opened: false, openError: '会话连接已断开，操作时会尝试重新连接' }), session)
         }
-      }
+      }))
     },
 
     refreshThreads: async (options) => {
       const token = ++refreshToken
-      const targetId = get().selectedTargetId
+      const { selectedProjectId, selectedTargetId: targetId } = get()
       if (!targetId) {
         set({ threads: [], threadsLoading: false, threadsError: null, agentErrors: {} })
         return
@@ -1169,7 +1691,7 @@ export const useApp = create<AppState>((set, get) => {
           }
         }),
       )
-      if (token !== refreshToken || get().selectedTargetId !== targetId) return
+      if (token !== refreshToken || get().selectedTargetId !== targetId || get().selectedProjectId !== selectedProjectId) return
       const agentErrors: Partial<Record<AgentKind, string>> = {}
       for (const agent of skipped) {
         const previous = previousErrors[agent]
@@ -1187,39 +1709,76 @@ export const useApp = create<AppState>((set, get) => {
       })
     },
 
+    discoverWorkspaceSessions: async (projects) => {
+      const conn = activeConnection(get())
+      if (!conn || get().page !== 'workspace' || !get().eventsConnected || !projects.length) return []
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return []
+      const epoch = desktopEpoch
+      const normalized = (path: string) => {
+        const kind = pathStyle(path)
+        const value = normalizePath(path, kind).replace(/\\/g, '/')
+        return kind === 'windows' ? value.toLowerCase() : value
+      }
+      const candidates = new Map<string, Map<string, string>>()
+      for (const project of projects) {
+        const paths = candidates.get(project.targetId) ?? new Map<string, string>()
+        paths.set(normalized(project.path), project.id)
+        candidates.set(project.targetId, paths)
+      }
+      await get().loadAgentSettings()
+      if (epoch !== desktopEpoch || get().page !== 'workspace') return []
+      const discovery = await Promise.allSettled([...candidates].flatMap(([targetId, paths]) =>
+        targetAgents(get(), targetId).map(async (agent): Promise<DiscoveredThread[]> => {
+          const session = await attachExisting(conn, targetId, agent, epoch)
+          if (!session || get().page !== 'workspace') return []
+          const result = await session.rpc.request('thread/list', { limit: 100, sortKey: 'updated_at' })
+          return toThreadSummaries(result, agent).flatMap((thread) => {
+            const projectId = paths.get(normalized(thread.cwd))
+            return projectId ? [{ ...thread, targetId, projectId, activity: thread.activity }] : []
+          })
+        }),
+      ))
+      if (epoch !== desktopEpoch) return []
+      return discovery.flatMap((item) => item.status === 'fulfilled' ? item.value : [])
+    },
+
     newThread: async (agent) => {
       const targetId = get().selectedTargetId
       if (!targetId) return
+      const navigation = ++navigationEpoch
+      const cwd = currentCwd(get())
       const picked = agent ?? defaultAgentFor(get(), targetId)
       if (!targetAgents(get(), targetId).includes(picked)) {
         set({ error: `${agentLabel(picked)} 已在电脑设置中关闭` })
         return
       }
-      const session = await withSession(targetId, picked)
-      if (!session) return
-      const cwd = currentCwd(get())
+      const session = await withSession(targetId, picked, navigation)
+      if (!session || navigation !== navigationEpoch) return
       try {
         const result = await startThread(session.rpc, cwd ? { cwd } : {})
-        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }))
+        if (navigation !== navigationEpoch) return
+        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
         set({
           selectedThreadId: result.thread.id,
           selectedAgent: picked,
           page: 'chat',
           error: null,
-          annotations: [],
         })
+        showDraft()
+        saveActiveChat()
         void get().refreshThreads({ skipFailed: true })
       } catch (err) {
-        set({ error: friendlyError(err, '新建会话失败') })
+        if (navigation === navigationEpoch) set({ error: friendlyError(err, '新建会话失败') })
       }
     },
 
     openThread: async (id, agent) => {
       const targetId = get().selectedTargetId
       if (!targetId) return
+      const navigation = ++navigationEpoch
       const picked = agent ?? get().threads.find((item) => item.id === id)?.agent ?? DEFAULT_AGENT
-      const session = await withSession(targetId, picked)
-      if (!session) return
+      const session = await withSession(targetId, picked, navigation)
+      if (!session || navigation !== navigationEpoch) return
       try {
         let result: { thread: Parameters<typeof loadThread>[1] }
         try {
@@ -1227,52 +1786,108 @@ export const useApp = create<AppState>((set, get) => {
         } catch {
           result = await readThread(session.rpc, id)
         }
-        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }))
-        set({ selectedThreadId: id, selectedAgent: picked, page: 'chat', error: null, annotations: [] })
+        if (navigation !== navigationEpoch) return
+        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
+        set({ selectedThreadId: id, selectedAgent: picked, page: 'chat', error: null })
+        showDraft()
+        saveActiveChat()
       } catch (err) {
-        set({ error: friendlyError(err, '打开会话失败') })
+        if (navigation === navigationEpoch) set({ error: friendlyError(err, '打开会话失败') })
       }
     },
 
-    send: async (text) => {
-      const annotations = get().annotations
+    setDraftText: (text) => {
+      const key = currentDraftKey()
+      if (key) saveDraft(key, { text, annotations: get().annotations })
+    },
+
+    send: async (text, attachments = [], delegate = false) => {
+      const initial = get()
+      const conn = activeConnection(initial)
+      const { annotations, selectedTargetId: targetId, selectedAgent: agent } = initial
       const finalText = formatQuotedMessage(annotations, text)
-      if (!finalText.trim() || get().sending) return
-      const targetId = get().selectedTargetId
-      if (!targetId) {
+      if ((!finalText.trim() && !attachments.length) || initial.sending) return false
+      const key = currentDraftKey(initial)
+      if (!targetId || !key || !conn) {
         set({ error: '请先选择目标' })
-        return
+        return false
       }
-      const agent = get().selectedAgent
-      const session = await withSession(targetId, agent)
-      if (!session) return
+      const draft = { text, annotations }
+      saveDraft(key, draft)
+      const epoch = desktopEpoch
+      const navigation = navigationEpoch
+      const sessionId = sessionKey(targetId, agent)
+      const models = initial.models[sessionId]?.models ?? []
+      const prefs = initial.modelPrefs[sessionId] ?? EMPTY_PREFS
+      const hasImage = attachments.some((item) => item.type === 'image' || item.type === 'localImage')
+      if (attachments.some((item) => item.type === 'localImage')
+        || (hasImage && (agent === 'pi' || resolveSelection(models, prefs).model?.imageInput === false))) {
+        set({ error: '当前 Agent 或模型不支持此图片附件' })
+        return false
+      }
+      const userInput = buildMobileTurnInput(agent, finalText, attachments)
+      const input = delegate && supportsSubagentRequests(agent) ? requestSubagents(userInput) : userInput
+      // 手机网关的完整 JSON（含方法、目标和参数）有 1 MiB 上限，预留尚未创建的会话 ID。
+      const overrides = overridesFor(agent, models, prefs)
+      const wire = { method: 'codex.send', params: {
+        targetId, agent,
+        msg: { id: Number.MAX_SAFE_INTEGER, method: 'turn/start',
+          params: { threadId: initial.selectedThreadId ?? 'x'.repeat(256), input, ...overrides } },
+      } }
+      if (new TextEncoder().encode(JSON.stringify(wire)).length > 1_048_576) {
+        set({ error: '消息和附件合计超过 1 MiB，请移除部分内容后再发送' })
+        return false
+      }
+      const view = initial.selectedThreadId && initial.sessions[sessionId]?.state.threads[initial.selectedThreadId]
+      if (view && view.status === 'running') {
+        set({ error: '会话正在运行，请等当前回复完成或先中断' })
+        return false
+      }
       set({ sending: true, error: null })
       try {
-        let threadId = get().selectedThreadId
+        const session = await withSession(targetId, agent, navigation)
+        if (!session || epoch !== desktopEpoch || navigation !== navigationEpoch) return false
+        let threadId = initial.selectedThreadId
+        let sentDraftKey = key
         if (!threadId) {
-          const cwd = currentCwd(get())
+          const cwd = currentCwd(initial)
           const created = await startThread(session.rpc, cwd ? { cwd } : {})
-          patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, created.thread) }))
+          if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
+          patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, created.thread) }), session)
           threadId = created.thread.id
           set({ selectedThreadId: threadId })
+          sentDraftKey = draftKey(conn.id, targetId, initial.selectedProjectId, agent, threadId, conn.fp)
+          saveDraft(sentDraftKey, drafts[key] ?? draft)
+          saveDraft(key, { text: '', annotations: [] })
+          saveActiveChat()
           void get().refreshThreads({ skipFailed: true })
         }
-        const models = get().models[session.key]?.models ?? []
-        const prefs = get().modelPrefs[session.key] ?? EMPTY_PREFS
-        const started = await sendText(session.rpc, threadId, finalText, overridesFor(agent, models, prefs))
-        // turn/started 通知可能晚于响应，先按返回值把状态置为运行中，保证中断按钮可用。
+        const started = await sendInput(session.rpc, threadId, input, overrides)
+        if (epoch !== desktopEpoch) return true
+        // 极短的一轮可能先发 completed，不能用较晚的响应把它恢复成运行中。
         const synthetic = {
           method: 'turn/started',
           params: { threadId, turnId: started.turn.id, turn: started.turn },
         } as unknown as ServerNotification
         patchSession(session.key, (value) => ({
           ...value,
-          lastTurnId: started.turn.id || value.lastTurnId,
-          state: applyNotification(value.state, synthetic),
-        }))
-        set({ sending: false, annotations: [], page: 'chat' })
+          state: completedTurns.get(session.transport)?.has(started.turn.id)
+            || value.state.threads[threadId]?.activeTurnId === started.turn.id
+            ? value.state
+            : applyNotification(value.state, synthetic),
+        }), session)
+        const current = drafts[sentDraftKey]
+        if (current?.text === draft.text && current.annotations === draft.annotations) {
+          saveDraft(sentDraftKey, { text: '', annotations: [] })
+        }
+        return true
       } catch (err) {
-        set({ sending: false, error: friendlyError(err, '发送消息失败') })
+        if (epoch === desktopEpoch && navigation === navigationEpoch) {
+          set({ error: friendlyError(err, '未确认消息已发送，草稿已保留') })
+        }
+        return false
+      } finally {
+        if (epoch === desktopEpoch) set({ sending: false })
       }
     },
 
@@ -1285,45 +1900,70 @@ export const useApp = create<AppState>((set, get) => {
       const session = sessions[sessionKey(selectedTargetId, selectedAgent)]
       if (!session) return
       const view = session.state.threads[selectedThreadId]
-      const turnId = view?.activeTurnId ?? session.lastTurnId
+      const turnId = view?.activeTurnId
       if (!turnId) {
         set({ notice: '当前没有运行中的 turn' })
         return
       }
+      const epoch = desktopEpoch
+      const navigation = navigationEpoch
       try {
         await interruptTurn(session.rpc, selectedThreadId, turnId)
-        set({ notice: '已请求中断当前 turn' })
+        if (epoch === desktopEpoch && navigation === navigationEpoch) set({ notice: '已请求中断当前轮' })
       } catch (err) {
-        set({ error: friendlyError(err, '中断失败') })
+        if (epoch === desktopEpoch && navigation === navigationEpoch) set({ error: friendlyError(err, '中断失败') })
       }
     },
 
-    respondApproval: (requestId, decision) => {
-      const targetId = get().selectedTargetId
-      if (!targetId) return
-      // 先找当前 Agent，再找同目标的其他 Agent；只响应用户点过的这一条。
-      const preferred = sessionKey(targetId, get().selectedAgent)
-      const candidates = Object.values(get().sessions)
-        .filter((session) => session.targetId === targetId)
-        .sort((a, b) => (a.key === preferred ? -1 : b.key === preferred ? 1 : 0))
-      for (const session of candidates) {
-        const approval = Object.values(session.state.threads)
-          .flatMap((thread) => thread.pendingApprovals)
-          .find((item) => item.requestId === requestId)
-        if (!approval) continue
-        try {
-          session.rpc.respond(approval.requestId, approvalResponse(approval, decision))
-          patchSession(session.key, (value) => ({
-            ...value,
-            state: resolveServerRequest(value.state, approval.requestId),
-          }))
-          set({ error: null })
-        } catch (err) {
-          set({ error: friendlyError(err, '提交审批失败') })
-        }
-        return
+    respondApproval: async (requestId, decision) => {
+      const { selectedTargetId, selectedThreadId, selectedAgent, sessions, approvalSubmitting } = get()
+      const submittingKey = String(requestId)
+      if (!selectedTargetId || !selectedThreadId || approvalSubmitting[submittingKey]) return false
+      const session = sessions[sessionKey(selectedTargetId, selectedAgent)]
+      const approval = session?.state.threads[selectedThreadId]?.pendingApprovals.find((item) => item.requestId === requestId)
+      if (!session || !approval) {
+        set({ notice: '该审批已处理或失效' })
+        return false
       }
-      set({ error: '该审批请求已失效' })
+      if (!availableApprovalDecisions(approval, selectedAgent).includes(decision)) {
+        set({ error: '当前请求不支持该审批选项' })
+        return false
+      }
+      const flights = approvalFlights.get(session.transport) ?? new Map<RequestId, string>()
+      if (flights.has(requestId)) return false
+      flights.set(requestId, selectedThreadId)
+      approvalFlights.set(session.transport, flights)
+      const epoch = desktopEpoch
+      const navigation = navigationEpoch
+      let acknowledged = false
+      set({ approvalSubmitting: { ...approvalSubmitting, [submittingKey]: true }, error: null })
+      try {
+        if (reconnectTask) await reconnectTask
+        if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
+        const pending = get().sessions[session.key]?.state.threads[selectedThreadId]?.pendingApprovals
+        if (!pending?.some((item) => item.requestId === requestId)) return false
+        await session.transport.respond(approval.requestId, mobileApprovalReply(approval, decision))
+        acknowledged = true
+        // HTTP 仅确认网关收到响应，桌面也可能先处理，等待 Agent 的 resolved 广播。
+        return true
+      } catch (err) {
+        if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
+        const pending = get().sessions[session.key]?.state.threads[selectedThreadId]?.pendingApprovals
+        if (!pending?.some((item) => item.requestId === requestId)) return true
+        set({ error: friendlyError(err, '提交审批失败') })
+        return false
+      } finally {
+        if (!acknowledged) {
+          flights.delete(requestId)
+          const current = get()
+          if (epoch === desktopEpoch && current.selectedTargetId === selectedTargetId
+            && current.selectedAgent === selectedAgent && current.selectedThreadId === selectedThreadId) {
+            const updated = { ...current.approvalSubmitting }
+            delete updated[submittingKey]
+            set({ approvalSubmitting: updated })
+          }
+        }
+      }
     },
 
     loadModels: async (targetId, agent, force = false) => {
@@ -1336,15 +1976,18 @@ export const useApp = create<AppState>((set, get) => {
       if (current?.loading || (current && !current.error && !force && !staleEmpty)) return
       const session = get().sessions[key]
       if (!session?.opened) return
+      const isCurrent = () => get().sessions[key]?.transport === session.transport
       set((state) => ({
         models: { ...state.models, [key]: { models: current?.models ?? [], loading: true, error: null } },
       }))
       try {
         const models = toModelOptions(await listModels(session.rpc))
+        if (!isCurrent()) return
         set((state) => ({
           models: { ...state.models, [key]: { models, loading: false, error: null, loadedAt: Date.now() } },
         }))
       } catch (err) {
+        if (!isCurrent()) return
         // 不支持 model/list 的 Agent 视为没有可选模型，界面不显示选择器。
         set((state) => ({
           models: {
@@ -1356,9 +1999,12 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     setModelPrefs: (targetId, agent, prefs) => {
-      const next = { ...get().modelPrefs, [sessionKey(targetId, agent)]: prefs }
+      const { activeId, modelPrefs } = get()
+      if (!activeId) return
+      const next = { ...modelPrefs, [sessionKey(targetId, agent)]: prefs }
       set({ modelPrefs: next })
-      persistModelPrefs(next)
+      desktopModelPrefs[activeId] = next
+      saveRecord(STORAGE_DESKTOP_MODEL_PREFS, desktopModelPrefs)
     },
 
     refreshRateLimits: async (targetId) => {
@@ -1366,6 +2012,7 @@ export const useApp = create<AppState>((set, get) => {
       if (busy) return busy
       const session = get().sessions[sessionKey(targetId, 'codex')]
       if (!session?.opened) return
+      const epoch = desktopEpoch
       patchRate(targetId, { loading: true })
       const task = (async () => {
         try {
@@ -1374,6 +2021,7 @@ export const useApp = create<AppState>((set, get) => {
             session.rpc.request('account/rateLimits/read', {}),
             session.rpc.request('account/read', {}),
           ])
+          if (epoch !== desktopEpoch) return
           const snapshot = limits.status === 'fulfilled' ? pickSnapshot(limits.value) : null
           const accountInfo = account.status === 'fulfilled' ? pickAccount(account.value) : null
           const changes: Partial<RateLimitEntry> = {
@@ -1385,9 +2033,9 @@ export const useApp = create<AppState>((set, get) => {
           if (snapshot || accountInfo) changes.updatedAt = Date.now()
           patchRate(targetId, changes)
         } catch (err) {
-          patchRate(targetId, { loading: false, error: friendlyError(err, '读取额度失败') })
+          if (epoch === desktopEpoch) patchRate(targetId, { loading: false, error: friendlyError(err, '读取额度失败') })
         } finally {
-          rateRefresh.delete(targetId)
+          if (epoch === desktopEpoch) rateRefresh.delete(targetId)
         }
       })()
       rateRefresh.set(targetId, task)
@@ -1507,25 +2155,34 @@ export const useApp = create<AppState>((set, get) => {
 
     addAnnotation: (quote, comment = '') => {
       const value = quote.trim()
-      if (!value) return
-      set((state) => ({
-        annotations: [...state.annotations, { id: makeId(), quote: value, comment }],
-      }))
+      const key = currentDraftKey()
+      if (!value || !key) return
+      const { draftText, annotations } = get()
+      saveDraft(key, { text: draftText, annotations: [...annotations, { id: makeId(), quote: value, comment }] })
     },
 
     updateAnnotation: (id, comment) => {
-      set((state) => ({
-        annotations: state.annotations.map((item) => (item.id === id ? { ...item, comment } : item)),
-      }))
+      const key = currentDraftKey()
+      if (!key) return
+      const { draftText, annotations } = get()
+      saveDraft(key, { text: draftText, annotations: annotations.map((item) => (item.id === id ? { ...item, comment } : item)) })
     },
 
     removeAnnotation: (id) => {
-      set((state) => ({ annotations: state.annotations.filter((item) => item.id !== id) }))
+      const key = currentDraftKey()
+      if (!key) return
+      const { draftText, annotations } = get()
+      saveDraft(key, { text: draftText, annotations: annotations.filter((item) => item.id !== id) })
     },
 
     handleGatewayEvent: (event) => {
       if (isHeartbeat(event)) return
       switch (event.name) {
+        case 'mobile.terminal': {
+          const desktopId = get().activeId
+          if (desktopId) deliverTerminalEvent(desktopId, event.payload)
+          return
+        }
         case 'target.state': {
           const payload = event.payload
           set((state) => ({ targetStates: applyTargetState(state.targetStates, payload) }))
@@ -1572,6 +2229,7 @@ export const useApp = create<AppState>((set, get) => {
             const agent = exitedAgent(payload)
             for (const session of Object.values(get().sessions)) {
               if (session.targetId !== targetId || (agent !== null && session.agent !== agent)) continue
+              clearPendingApprovals(session)
               patchSession(session.key, (value) => ({
                 ...value,
                 opened: false,
@@ -1595,6 +2253,11 @@ export const useApp = create<AppState>((set, get) => {
           if (message) set({ notice: message })
           return
         }
+        case 'unauthorized': {
+          const id = get().activeId
+          if (id) markRepair(id, 'unauthorized', '设备已被撤销，请重新配对')
+          return
+        }
         default:
           return
       }
@@ -1611,18 +2274,28 @@ export const useApp = create<AppState>((set, get) => {
         return true
       }
       if (page === 'chat') {
-        set({ page: 'threads', selectedThreadId: null, annotations: [] })
+        navigationEpoch += 1
+        set({ page: 'threads', selectedThreadId: null })
+        showDraft()
+        saveActiveChat()
         return true
       }
       if (page === 'threads') {
+        navigationEpoch += 1
         set({ page: 'projects', selectedProjectId: null, selectedThreadId: null })
         return true
       }
       if (page === 'projects') {
-        set({ page: 'targets', selectedTargetId: null, directory: null })
+        navigationEpoch += 1
+        set({ page: 'workspace', selectedTargetId: null, directory: null })
         return true
       }
       if (page === 'targets') {
+        navigationEpoch += 1
+        set({ page: 'workspace' })
+        return true
+      }
+      if (page === 'workspace') {
         get().deactivate()
         void get().refreshStatuses()
         return true

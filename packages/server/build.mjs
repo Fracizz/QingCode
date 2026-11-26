@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(await readFile(path.join(here, 'package.json'), 'utf8'))
-const outDir = path.resolve(here, '../../apps/desktop/resources/server')
+const desktopDir = path.resolve(here, '../../apps/desktop')
+const outDir = path.join(desktopDir, 'resources/server')
 const outFile = path.join(outDir, 'qn-server.cjs')
 
 await mkdir(outDir, { recursive: true })
@@ -39,3 +41,22 @@ await writeFile(
   'utf8',
 )
 console.log(`built ${outFile} (${bytes.byteLength} bytes, sha256 ${sha256.slice(0, 12)})`)
+
+if (process.platform === 'win32') {
+  const destination = path.join(outDir, 'conpty')
+  await rm(destination, { recursive: true, force: true })
+  const desktopRequire = createRequire(path.join(desktopDir, 'package.json'))
+  let addonEntry
+  try {
+    const entry = desktopRequire.resolve('@lydell/node-pty')
+    // 平台包是入口包的 optionalDependency，在 pnpm 下不能从桌面包直接解析。
+    addonEntry = createRequire(entry).resolve('@lydell/node-pty-win32-x64')
+  } catch (err) {
+    if (err.code !== 'MODULE_NOT_FOUND') throw err
+    console.warn('Windows ConPTY 资源缺失：需要 @lydell/node-pty 和对应的 win32-x64 预编译包')
+  }
+  if (addonEntry) {
+    // Electron 的 extraResources 已将整个 server 目录复制到 ASAR 外。
+    await cp(path.dirname(path.dirname(addonEntry)), destination, { recursive: true })
+  }
+}

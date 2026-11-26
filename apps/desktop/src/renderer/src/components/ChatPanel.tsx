@@ -15,6 +15,7 @@ import {
   type SlashItem,
 } from '../lib/attachments'
 import { readImage, uploadToTarget } from '../lib/attachmentIo'
+import { screenFiles, useImageSupport } from '../features/composer'
 import { isAtBottom } from '../lib/diff'
 import type { Box } from '../lib/selection'
 import { targetDotClass } from '../lib/targetStatus'
@@ -68,9 +69,12 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [highlights, setHighlights] = useState<Record<string, Box[]>>({})
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [readingImages, setReadingImages] = useState(0)
+  const attachmentReads = useRef({ pending: 0 })
   const [skills, setSkills] = useState<SkillRef[]>([])
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
+  const imageSupport = useImageSupport(currentTargetId, currentAgent, !!currentTargetId)
 
   const session = currentTargetId ? sessions[sessionKey(currentTargetId, currentAgent)] : undefined
   // 草稿态没有 threadId，发送中的用户消息先放在草稿线程里，避免对话区空白。
@@ -136,15 +140,16 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     })
   }
 
-  const submit = async (text: string, mode: SendMode) => {
+  const submit = async (text: string, mode: SendMode, delegate: boolean): Promise<boolean> => {
     const message = buildAnnotatedMessage(annotations, text)
     const input = buildUserInput(message, attachments, skills)
-    if (input.length === 0) return
-    if (!(await send(message, { input, mode }))) return
+    if (input.length === 0) return false
+    if (!(await send(message, { input, mode, delegate }))) return false
     setDraft((current) => current === text ? '' : current)
     for (const annotation of annotations) removeAnnotation(annotation.id)
     setAttachments((current) => current.filter((item) => !attachments.some((sent) => sent.id === item.id)))
     setSkills((current) => current.filter((item) => !skills.includes(item)))
+    return true
   }
 
   const notify = (message: string) => useCodex.setState({ notice: message })
@@ -156,22 +161,44 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const addFiles = (files: File[]) => {
     if (!currentTargetId) return
     const targetId = currentTargetId
-    const room = MAX_ATTACHMENTS - attachments.length
+    const reads = attachmentReads.current
+    const { accepted, rejected } = screenFiles(files, {
+      existingImages: attachments.filter((item) => item.kind === 'image').length + reads.pending,
+      imagesAllowed: imageSupport.allowed,
+      unsupportedReason: imageSupport.reason ?? undefined,
+    })
+    if (rejected.length > 0) {
+      const detail = rejected.map((item) => `${item.name}：${item.reason}`).join('；')
+      notify(`未添加 ${rejected.length} 张图片（${detail}）`)
+    }
+    if (accepted.length === 0) return
+    const room = MAX_ATTACHMENTS - attachments.length - reads.pending
     if (room <= 0) {
       notify('最多添加 ' + MAX_ATTACHMENTS + ' 个附件')
       return
     }
-    if (files.length > room) notify('最多添加 ' + MAX_ATTACHMENTS + ' 个附件，已忽略多出的 ' + (files.length - room) + ' 个')
+    if (accepted.length > room) notify('最多添加 ' + MAX_ATTACHMENTS + ' 个附件，已忽略多出的 ' + (accepted.length - room) + ' 个')
     // 只有本机目标能直接引用本机路径；SSH 与直连目标都要先上传。
     const isLocal = targets.find((item) => item.id === targetId)?.kind === 'local'
-    for (const file of files.slice(0, room)) {
+    for (const file of accepted.slice(0, room)) {
       const id = 'att-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7)
       if (isImageFile(file)) {
+        reads.pending += 1
+        setReadingImages(reads.pending)
         void readImage(file)
-          .then(({ dataUrl, size }) =>
-            setAttachments((prev) => [...prev, { id, kind: 'image', name: file.name || '粘贴的图片', size, dataUrl }]),
-          )
-          .catch((err: unknown) => notify((file.name || '图片') + '：' + (err instanceof Error ? err.message : '读取失败')))
+          .then(({ dataUrl, size }) => {
+            if (attachmentReads.current !== reads) return
+            setAttachments((prev) => [...prev, { id, kind: 'image', name: file.name || '粘贴的图片', size, dataUrl }])
+          })
+          .catch((err: unknown) => {
+            if (attachmentReads.current === reads) {
+              notify((file.name || '图片') + '：' + (err instanceof Error ? err.message : '读取失败'))
+            }
+          })
+          .finally(() => {
+            reads.pending -= 1
+            if (attachmentReads.current === reads) setReadingImages(reads.pending)
+          })
         continue
       }
       if (file.size > MAX_FILE_BYTES) {
@@ -271,7 +298,9 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   }
 
   // 切换目标或 Agent 后，旧目标上传的附件路径不再有效。
-  useEffect(() => {
+  useLayoutEffect(() => {
+    attachmentReads.current = { pending: 0 }
+    setReadingImages(0)
     setAttachments([])
     setSkills([])
   }, [currentTargetId, currentAgent])
@@ -392,9 +421,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         annotationCount={annotations.length}
         attach={{
           attachments,
+          imageSupport,
           onAddFiles: addFiles,
           onRemoveAttachment: removeAttachment,
-          blockedReason: attachmentsBlocking(attachments),
+          blockedReason: readingImages > 0 ? '正在读取图片…' : attachmentsBlocking(attachments),
         }}
         slash={{
           items: slashItems,

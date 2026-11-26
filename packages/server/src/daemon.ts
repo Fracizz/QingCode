@@ -188,9 +188,17 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
           const claudePath = typeof p?.claudePath === 'string' ? p.claudePath : undefined
           const piPath = typeof p?.piPath === 'string' ? p.piPath : undefined
           // piPath 是 pi 桥的注入点；AgentOpenOptions 未改，用交叉类型透传额外字段。
-          const openOptions = { codexPath, claudePath, ...(piPath ? { piPath } : {}) }
+          const openOptions = {
+            codexPath,
+            claudePath,
+            ...(piPath ? { piPath } : {}),
+            ...(agent === 'codex' ? { codexHome: p?.codexHome } : {}),
+            ...(agent === 'claude' ? { claudeConfigDir: p?.claudeConfigDir } : {}),
+          }
           const opened = await hosts[agent].open(openOptions)
-          const capabilities = asRecord((opened as { capabilities?: unknown }).capabilities)
+          const capabilities = agent === 'pi'
+            ? asRecord((opened as { capabilities?: unknown }).capabilities)
+            : { approvals: true, rateLimits: true, accessModes: true, agentConfigDir: true }
           return sendOk(session, id, {
             initialize: opened.initialize ?? null,
             lastSeq: opened.lastSeq,
@@ -215,10 +223,15 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
           return sendOk(session, id, await direct.reload().then(afterDirectReload))
         case 'direct.status':
           return sendOk(session, id, direct.status())
-        case 'server.shutdown':
+        case 'server.shutdown': {
+          const whenIdle = p?.whenIdle === true
+          if (whenIdle && hasActiveWork()) {
+            return sendErr(session, id, 'server_busy', '有进行中的对话或终端，稍后可再次升级')
+          }
           sendOk(session, id, {})
-          scheduleShutdown('server.shutdown')
+          scheduleShutdown('server.shutdown', whenIdle)
           return
+        }
         default: {
           const handler = findWorkspaceHandler(method)
           if (!handler) return sendErr(session, id, 'method', `未知方法: ${method}`)
@@ -260,19 +273,22 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     timer.unref()
   }
 
-  const scheduleShutdown = (reason: string): void => {
+  const hasActiveWork = (): boolean =>
+    allHosts.some((host) => host.activeTurns > 0) || terminalManager().activeCount > 0
+
+  const scheduleShutdown = (reason: string, whenIdle = false): void => {
     // 先让 shutdown 的 res 帧送达调用方（ensure --replace 会等这个响应）。
-    setTimeout(() => shutdown(reason), 100).unref()
+    setTimeout(() => {
+      if (!whenIdle || !hasActiveWork()) shutdown(reason)
+    }, 100).unref()
   }
 
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
   let idleSince: number | null = null
   const idleTimer = setInterval(() => {
-    const activeTurns = allHosts.reduce((total, host) => total + host.activeTurns, 0)
     // 开着直连时 daemon 就是对外服务，不能空闲退出（否则远端客户端无处可连）。
     // 终端归 daemon 所有：还有运行中的终端时不回收，否则断线期间的会话会丢。
-    const idle =
-      clients.size === 0 && activeTurns === 0 && !direct.listening && terminalManager().activeCount === 0
+    const idle = clients.size === 0 && !direct.listening && !hasActiveWork()
     if (!idle) {
       idleSince = null
       return

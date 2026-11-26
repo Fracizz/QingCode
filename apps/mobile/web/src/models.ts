@@ -12,6 +12,7 @@ export type ModelOption = {
   efforts: { value: string; description: string }[]
   defaultEffort: string | null
   serviceTiers: { id: string; name: string; description: string }[]
+  imageInput?: boolean
 }
 
 /** model 为 null 表示跟随 Agent 自身默认；fast 只对 Codex 有意义。 */
@@ -60,6 +61,9 @@ export function toModelOptions(raw: unknown): ModelOption[] {
       efforts,
       defaultEffort: text(entry.defaultReasoningEffort) || null,
       serviceTiers,
+      ...(Array.isArray(entry.inputModalities) && entry.inputModalities.length > 0
+        ? { imageInput: entry.inputModalities.includes('image') }
+        : {}),
     })
   }
   return options

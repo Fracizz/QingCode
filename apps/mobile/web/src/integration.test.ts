@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createGateway, setGateway } from './client'
 import { buildConnectionInfo } from './link'
 import { MOCK_FP, type MockNativePort } from './mock'
-import { parseConnections } from './state'
+import { draftKey, parseConnections, serializeConnections } from './state'
 import { useApp } from './store'
 import { EventStreamController } from './transport'
 
@@ -55,7 +55,7 @@ describe('模拟网关全链路', () => {
     expect(state().form?.error).toBe('本地存储暂不可用')
     expect(state().connections[0]).toEqual(original)
     await state().saveEdit()
-    expect(state().page).toBe('targets')
+    expect(state().page).toBe('workspace')
     const edited = { ...original, name: '转发后的电脑', host: 'frp.example.com', port: 7002 }
     expect(state().connections[0]).toEqual(edited)
     expect(parseConnections(await gateway.storageGet('connections'))).toEqual([edited])
@@ -70,12 +70,28 @@ describe('模拟网关全链路', () => {
       },
       {
         onEvent: (event) => state().handleGatewayEvent(event),
-        onOpen: () => undefined,
+        onOpen: () => { useApp.setState({ eventsConnected: true }) },
         onClose: () => undefined,
       },
     )
     controller.start()
     await wait(30)
+    const discovery = vi.spyOn(gateway, 'rpc')
+    const workspaceThreads = await state().discoverWorkspaceSessions([
+      { id: 'p-local', targetId: 'local', name: 'qin', path: 'D:\\code\\qingcode-next', lastOpenedAt: 0 },
+    ])
+    expect(workspaceThreads.map((thread) => [thread.projectId, thread.agent]).sort()).toEqual([
+      ['p-local', 'claude'], ['p-local', 'codex'],
+    ])
+    const discoveryRequests = discovery.mock.calls.flatMap(([, method, params]) => method === 'server.req' ? [params] : [])
+    expect(discoveryRequests).toContainEqual({
+      targetId: 'local', method: 'codex.status', params: { agent: 'pi' },
+    })
+    expect(discoveryRequests).not.toContainEqual(expect.objectContaining({ method: 'codex.open' }))
+    expect(discoveryRequests).not.toContainEqual(expect.objectContaining({
+      method: 'codex.attach', params: expect.objectContaining({ agent: 'pi' }),
+    }))
+    discovery.mockRestore()
 
     state().requestConnect('ssh-93')
     expect(state().credential?.targetId).toBe('ssh-93')
@@ -122,6 +138,32 @@ describe('模拟网关全链路', () => {
 
     await state().send('你好')
     await wait(600)
+
+    // 浏览器开发模式也能检索项目文件并按稳定版本分块读取。
+    const fileScope = { targetId: 'local', projectId: 'p-local' }
+    const files = await gateway.rpc<{ entries: { path: string }[] }>(edited, 'mobile.files.list', fileScope)
+    expect(files.entries.map((file) => file.path)).toContain('README.md')
+    const found = await gateway.rpc<{ entries: { path: string }[] }>(
+      edited, 'mobile.files.search', { ...fileScope, query: 'store.ts' },
+    )
+    expect(found.entries.map((file) => file.path)).toEqual(['apps/mobile/web/src/store.ts'])
+    const chunk = await gateway.rpc<{ content: string; version: string }>(
+      edited, 'mobile.files.read', { ...fileScope, path: 'README.md', length: 7 },
+    )
+    expect(atob(chunk.content)).toBe('// mock')
+    const nextChunk = await gateway.rpc<{ content: string }>(
+      edited, 'mobile.files.read', { ...fileScope, path: 'README.md', offset: 7, length: 6, version: chunk.version },
+    )
+    expect(atob(nextChunk.content)).toBe(' file:')
+    const terminal = await gateway.rpc<{ termId: string }>(edited, 'mobile.term.open', fileScope)
+    const termScope = { ...fileScope, termId: terminal.termId }
+    await expect(gateway.rpc(edited, 'mobile.term.write', { ...termScope, data: btoa('hello\r') }))
+      .resolves.toEqual({ acceptedBytes: 6 })
+    const replay = await gateway.rpc<{ chunks: { seq: number; data: string }[] }>(edited, 'mobile.term.attach', {
+      ...termScope, sinceSeq: 1,
+    })
+    expect(replay.chunks.map((entry) => [entry.seq, atob(entry.data)])).toEqual([[2, 'hello\r\n> ']])
+    await gateway.rpc(edited, 'mobile.term.close', termScope)
     const threadId = state().selectedThreadId
     const view = threadId ? state().sessions['codex:local']?.state.threads[threadId] : undefined
     expect(view?.items.some((item) => item.kind === 'user')).toBe(true)
@@ -129,7 +171,10 @@ describe('模拟网关全链路', () => {
     expect(view?.items.some((item) => item.kind === 'fileChange')).toBe(true)
     expect(state().rateLimits['local']?.snapshot?.primary?.usedPercent).toBeGreaterThan(0)
     const port = (gateway as unknown as { native: { port: MockNativePort } }).native.port
-    expect(port.lastTurnParams).toMatchObject({ agent: 'codex', model: 'gpt-5.5-mini', effort: 'minimal' })
+    expect(port.lastTurnParams).toMatchObject({
+      agent: 'codex', model: 'gpt-5.5-mini', effort: 'minimal',
+      input: [{ type: 'text', text: '你好', text_elements: [] }],
+    })
     // turn 完成后的后台刷新不重试打不开的 pi，但保留它的提示。
     expect(state().agentErrors.pi).toContain('pi')
 
@@ -137,12 +182,18 @@ describe('模拟网关全链路', () => {
     await state().newThread('claude')
     expect(state().selectedAgent).toBe('claude')
     await state().loadModels('local', 'claude')
-    await state().send('审查一下')
+    await state().send('审查一下', [], true)
     await wait(50)
     expect(port.lastTurnParams?.agent).toBe('claude')
+    expect(port.lastTurnParams?.input).toEqual([
+      { type: 'text', text: expect.stringMatching(/^审查一下\n\n请.*子代理/), text_elements: [] },
+    ])
     expect(port.lastTurnParams?.model).toBeUndefined()
     expect(port.lastTurnParams?.effort).toBeUndefined()
     await wait(600)
+    const claudeThread = state().selectedThreadId
+    expect(state().claudeCosts[JSON.stringify(['local', claudeThread])]).toBeCloseTo(0.012)
+    expect(state().claudeRateLimits.local?.primary?.usedPercent).toBe(81)
 
     // 只读查看：文本分段续读、行号定位，差异优先 git.diff，失败回退到卡片 diff。
     await state().openFile({ path: 'D:\code\qingcode-next\README.md', line: 3 })
@@ -166,10 +217,126 @@ describe('模拟网关全链路', () => {
     expect(state().viewer?.diff).toBe('+card')
     state().closeViewer()
 
+    state().setDraftText('失败仍保留')
+    state().addAnnotation('引用', '备注')
+    vi.spyOn(gateway, 'rpc').mockRejectedValueOnce(new Error('模拟网络中断'))
+    await expect(state().send(state().draftText)).resolves.toBe(false)
+    expect(state().draftText).toBe('失败仍保留')
+    expect(state().annotations).toMatchObject([{ quote: '引用', comment: '备注' }])
+    expect(state().error).toBe('模拟网络中断')
+
+    vi.spyOn(gateway, 'rpc').mockRestore()
+    const actualRpc = gateway.rpc.bind(gateway)
+    const rpc = vi.spyOn(gateway, 'rpc').mockImplementation((conn, method, params, agent, timeout) => {
+      const request = params as { method?: string; params?: { agent?: string }; msg?: { method?: string } }
+      if (method === 'server.req' && request.method === 'codex.attach' && request.params?.agent === 'claude') {
+        return Promise.resolve({
+          lastSeq: state().sessions['claude:local']?.transport.getLastSeq() ?? 0, truncated: true,
+        } as never)
+      }
+      return actualRpc(conn, method, params, agent, timeout)
+    })
+    await state().attachOpened()
+    expect(rpc).toHaveBeenCalledWith(edited, 'codex.send', expect.objectContaining({
+      agent: 'claude', msg: expect.objectContaining({ method: 'thread/read' }),
+    }))
+    rpc.mockRestore()
+
+    const firstTransport = state().sessions['claude:local']!.transport
+    const secondDesktop = { ...edited, id: 'second-desktop' }
+    useApp.setState({ connections: [edited, secondDesktop] })
+    let releaseProjects!: () => void
+    const waiting = new Promise<never>((resolve) => {
+      releaseProjects = () => resolve([{ id: 'old-project', targetId: 'local', path: '/went-to-old-host' }] as never)
+    })
+    const stale = vi.spyOn(gateway, 'rpc').mockImplementation((conn, method, params, agent, timeout) => {
+      return conn.id === edited.id && method === 'projects.list'
+        ? waiting
+        : actualRpc(conn, method, params, agent, timeout)
+    })
+    const previousProjects = state().selectTarget('local')
+    await state().activate(secondDesktop.id)
+    releaseProjects()
+    await previousProjects
+    stale.mockRestore()
+    expect(state().projects).toEqual([])
+    expect(state().page).toBe('workspace')
+    expect(state().sessions).toEqual({})
+    expect(state().rateLimits).toEqual({})
+    expect(state().claudeRateLimits).toEqual({})
+    expect(state().modelPrefs).toEqual({})
+    await state().selectTarget('local')
+    await state().selectProject('p-local')
+    await state().openThread(claudeThread!, 'claude')
+    expect(state().sessions['claude:local']?.transport).not.toBe(firstTransport)
+    expect(state().draftText).toBe('')
+
+    await state().activate(edited.id)
+    await state().selectTarget('local')
+    await state().selectProject('p-local')
+    await state().openThread(claudeThread!, 'claude')
+    expect(state().draftText).toBe('失败仍保留')
+    expect(state().annotations).toMatchObject([{ quote: '引用', comment: '备注' }])
+    expect(state().modelPrefs['codex:local']?.model).toBe('gpt-5.5-mini')
+
+    const approvalRequestId = 98765
+    const approvalEvent = (msg: unknown, seq: number) => state().handleGatewayEvent({
+      name: 'codex.recv', payload: { targetId: 'local', agent: 'claude', seq, msg },
+    })
+    approvalEvent({
+      id: approvalRequestId, method: 'item/commandExecution/requestApproval',
+      params: { threadId: claudeThread, turnId: 'approval-turn', command: 'git status' },
+    }, 10000)
+    const pending = () => state().sessions['claude:local']?.state.threads[claudeThread!]?.pendingApprovals
+    expect(pending()).toHaveLength(1)
+    vi.spyOn(gateway, 'rpc').mockRejectedValueOnce(new Error('模拟审批 HTTP 失败'))
+    await expect(state().respondApproval(approvalRequestId, 'decline')).resolves.toBe(false)
+    expect(state().approvalSubmitting).toEqual({})
+    expect(pending()).toHaveLength(1)
+    await expect(state().respondApproval(approvalRequestId, 'decline')).resolves.toBe(true)
+    expect(state().approvalSubmitting[String(approvalRequestId)]).toBe(true)
+    expect(pending()).toHaveLength(1)
+    approvalEvent({ method: 'serverRequest/resolved', params: { threadId: claudeThread, requestId: approvalRequestId } }, 10001)
+    expect(state().approvalSubmitting).toEqual({})
+    expect(pending()).toHaveLength(0)
+
+    state().handleGatewayEvent({ name: 'unauthorized' })
+    expect(state().needsRepair[edited.id]).toBe('unauthorized')
+    state().beginRepair(edited.id)
+    expect(state().form).toMatchObject({ mode: 'repair', editId: edited.id })
+    await state().pasteFromClipboard()
+    await state().pairAndSave()
+    expect(state().connections.map((item) => item.id)).toEqual([edited.id, secondDesktop.id])
+    expect(state().needsRepair[edited.id]).toBeUndefined()
+
     controller.stop()
     for (const session of Object.values(state().sessions)) {
       session.rpc.dispose()
       session.transport.dispose()
     }
   }, 15_000)
+
+  it('冷启动从加密存储恢复电脑的当前会话及对应草稿', async () => {
+    const gateway = createGateway()
+    setGateway(gateway)
+    const conn = {
+      id: 'cold-start-desktop', name: '电脑', host: '192.168.1.2', port: 38500,
+      fp: MOCK_FP, token: 'mock-token', desktopName: '电脑', createdAt: Date.now(),
+    }
+    const chat = { targetId: 'local', projectId: 'p-local', agent: 'codex', threadId: 't-demo' } as const
+    const key = draftKey(conn.id, chat.targetId, chat.projectId, chat.agent, chat.threadId, conn.fp)
+    await Promise.all([
+      gateway.storageSet('connections', serializeConnections([conn])),
+      gateway.storageSet('active', conn.id),
+      gateway.storageSet('savedChats', JSON.stringify({ [conn.id]: chat })),
+      gateway.storageSet('chatDrafts', JSON.stringify({ [key]: { text: '冷启动草稿', annotations: [] } })),
+    ])
+    useApp.getState().init()
+    await vi.waitFor(() => {
+      expect(useApp.getState()).toMatchObject({
+        page: 'chat', selectedThreadId: chat.threadId, activeId: conn.id, draftText: '冷启动草稿',
+      })
+    })
+    await useApp.getState().removeConnection(conn.id)
+  })
 })

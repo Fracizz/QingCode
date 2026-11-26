@@ -29,6 +29,8 @@ export interface CodexOpenResult {
 export interface AgentOpenOptions {
   codexPath?: unknown
   claudePath?: unknown
+  codexHome?: unknown
+  claudeConfigDir?: unknown
 }
 
 export interface AgentHost {
@@ -53,6 +55,32 @@ export class AgentHostError extends Error {
   }
 }
 
+export function parseAgentConfigDir(value: unknown, name: string, platform = process.platform): string | undefined {
+  if (value === undefined) return undefined
+  const directory = typeof value === 'string' ? value.trim() : ''
+  const paths = platform === 'win32' ? path.win32 : path.posix
+  if (!paths.isAbsolute(directory) || directory.includes('\0') || (platform === 'win32' && paths.parse(directory).root.length < 2)) {
+    throw new AgentHostError('params', `${name} 需要目标主机上的绝对路径`)
+  }
+  return directory
+}
+
+export function agentConfigEnv<T extends string | undefined>(
+  env: Record<string, T>,
+  variable: 'CODEX_HOME' | 'CLAUDE_CONFIG_DIR',
+  directory: string | undefined,
+  platform = process.platform,
+): Record<string, T | string> {
+  const next = { ...env } as Record<string, T | string>
+  if (directory === undefined) return next
+  if (platform === 'win32') {
+    // Windows 环境变量名不区分大小写，避免旧值与覆盖项同时传给子进程。
+    for (const name of Object.keys(next)) if (name.toUpperCase() === variable) delete next[name]
+  }
+  next[variable] = directory
+  return next
+}
+
 export interface AgentExitInfo {
   code: number | null
   signal: NodeJS.Signals | null
@@ -75,6 +103,9 @@ interface InitDeferred {
   resolve(): void
   reject(err: Error): void
 }
+
+type AccessSettings = { approvalPolicy: unknown; sandboxPolicy: Record<string, unknown> }
+type StartingTurn = { threadId: unknown; completed: Set<string> }
 
 export interface CodexCommand {
   command: string
@@ -291,6 +322,10 @@ export abstract class JsonRpcAgentHost implements AgentHost {
     )
   }
 
+  protected clearReplay(): void {
+    this.buffer.clear()
+  }
+
   private trackTurn(msg: Record<string, unknown>): void {
     if (msg.method === 'turn/started') this.turns += 1
     else if (msg.method === 'turn/completed' || msg.method === 'turn/aborted') {
@@ -317,22 +352,51 @@ export class CodexHost extends JsonRpcAgentHost {
   private initDone = false
   private initializeResult: unknown = null
   private initCounter = 0
+  private readonly loadingThreads = new Set<string>()
+  private readonly startingTurns = new Map<string, StartingTurn>()
+  private readonly acknowledgedTurns = new Set<string>()
+  private readonly threadAccess = new Map<string, AccessSettings>()
+  private readonly managedAccess = new Set<string>()
+  private codexHome: string | undefined
+  private openQueue: Promise<unknown> = Promise.resolve()
+  private replacingChild = false
+  private shuttingDown = false
 
   constructor(hub: AgentHostHub, version: string = VERSION) {
     super(hub, version, 'codex app-server', 'codex')
   }
 
-  protected async openAgent(options: AgentOpenOptions): Promise<AgentRuntimeOpen> {
-    if (!this.child) this.start(options.codexPath)
-    const init = this.init
-    if (!init) throw new Error('codex 初始化状态异常')
-    await init.promise
-    return { initialize: this.initializeResult ?? null }
+  protected openAgent(options: AgentOpenOptions): Promise<AgentRuntimeOpen> {
+    const open = this.openQueue.then(async () => {
+      const directory = parseAgentConfigDir(options.codexHome, 'CODEX_HOME')
+      if (this.initCounter > 0 && this.codexHome !== directory) {
+        if (this.child) {
+          if (this.activeTurns > 0 || this.startingTurns.size > 0 || this.acknowledgedTurns.size > 0) {
+            throw new AgentHostError('config_dir_busy', 'Codex 正在运行，请在当前轮次结束后再切换配置目录')
+          }
+          await this.replaceChild(this.child)
+        }
+        this.clearReplay()
+      }
+      if (this.shuttingDown) throw new Error('server 正在退出')
+      if (!this.child) this.start(options.codexPath, directory)
+      const init = this.init
+      if (!init) throw new Error('codex 初始化状态异常')
+      try {
+        await init.promise
+      } catch (err) {
+        if (this.child && !this.shuttingDown) await this.replaceChild(this.child)
+        throw err
+      }
+      return { initialize: this.initializeResult ?? null }
+    })
+    this.openQueue = open.catch(() => {})
+    return open
   }
 
   protected agentStatus(): RuntimeStatus {
     const child = this.child
-    if (child && typeof child.pid === 'number') return { running: true, pid: child.pid }
+    if (child && !this.replacingChild && typeof child.pid === 'number') return { running: true, pid: child.pid }
     return { running: false }
   }
 
@@ -343,7 +407,9 @@ export class CodexHost extends JsonRpcAgentHost {
       return
     }
     try {
-      const line = JSON.stringify(msg)
+      const outgoing = this.prepareRequest(msg)
+      if (!outgoing) return
+      const line = JSON.stringify(outgoing)
       if (typeof line === 'string') stdin.write(`${line}\n`)
     } catch {
       this.hub.log('序列化发往 codex 的消息失败')
@@ -353,11 +419,13 @@ export class CodexHost extends JsonRpcAgentHost {
   protected detachAgent(_clientId: number): void {}
 
   protected closeAgent(): void {
+    this.shuttingDown = true
     const child = this.child
     this.child = null
     this.initDone = false
     this.init?.reject(new Error('server 正在退出'))
     this.init = null
+    this.clearRequestState()
     if (!child) return
     try {
       child.stdin?.end()
@@ -371,16 +439,37 @@ export class CodexHost extends JsonRpcAgentHost {
     }
   }
 
-  private start(codexPath?: unknown): void {
+  private async replaceChild(child: ChildProcess): Promise<void> {
+    this.replacingChild = true
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onExit = () => {
+          clearTimeout(timer)
+          resolve()
+        }
+        const timer = setTimeout(() => {
+          child.removeListener('exit', onExit)
+          reject(new AgentHostError('config_dir_busy', 'Codex 尚未退出，配置目录未切换，请稍后重试'))
+        }, 3000)
+        child.once('exit', onExit)
+        child.kill()
+      })
+    } finally {
+      this.replacingChild = false
+    }
+  }
+
+  private start(codexPath: unknown, directory: string | undefined): void {
     const spec = resolveCodexCommand(codexPath)
     const child = spawn(spec.command, spec.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       shell: spec.shell,
       ...(spec.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
-      env: { ...process.env },
+      env: agentConfigEnv(process.env, 'CODEX_HOME', directory),
     })
     this.child = child
+    this.codexHome = directory
     this.stdoutRemainder = ''
     this.stderrRemainder = ''
     this.initializeResult = null
@@ -389,8 +478,12 @@ export class CodexHost extends JsonRpcAgentHost {
     this.initDone = false
     this.init = makeDeferred(initId, INIT_TIMEOUT_MS)
 
-    child.stdout?.on('data', (chunk: unknown) => this.onStdout(toText(chunk)))
-    child.stderr?.on('data', (chunk: unknown) => this.onStderr(toText(chunk)))
+    child.stdout?.on('data', (chunk: unknown) => {
+      if (this.child === child) this.onStdout(toText(chunk))
+    })
+    child.stderr?.on('data', (chunk: unknown) => {
+      if (this.child === child) this.onStderr(toText(chunk))
+    })
     child.stdin?.on('error', () => this.hub.log('codex stdin 写入失败'))
     child.on('error', (err: Error) => {
       if (this.child !== child) return
@@ -468,7 +561,72 @@ export class CodexHost extends JsonRpcAgentHost {
       init.resolve()
       return
     }
+    if (typeof msg.id === 'string' && ('result' in msg || 'error' in msg)) {
+      const pending = this.startingTurns.get(msg.id)
+      if (pending) {
+        this.startingTurns.delete(msg.id)
+        const turn = isRecord(msg.result) && isRecord(msg.result.turn) ? msg.result.turn : null
+        // RPC 响应可能先于 turn/started 通知抵达，配置目录切换也要保护这段间隔。
+        if (turn?.status === 'inProgress' && typeof turn.id === 'string' && !pending.completed.has(turn.id)) {
+          this.acknowledgedTurns.add(turn.id)
+        }
+      }
+      if (this.loadingThreads.delete(msg.id)) this.readThreadAccess(msg.result)
+    }
+    if (msg.method === 'turn/completed' && isRecord(msg.params) && isRecord(msg.params.turn)) {
+      const id = msg.params.turn.id
+      const threadId = msg.params.threadId
+      if (typeof id === 'string') {
+        this.acknowledgedTurns.delete(id)
+        for (const pending of this.startingTurns.values()) {
+          if (pending.threadId === threadId) pending.completed.add(id)
+        }
+      }
+    }
     this.emit(msg)
+  }
+
+  private prepareRequest(msg: Record<string, unknown>): Record<string, unknown> | null {
+    if (typeof msg.id !== 'string') return msg
+    if (msg.method === 'thread/start' || msg.method === 'thread/resume' || msg.method === 'thread/fork') {
+      this.loadingThreads.add(msg.id)
+    }
+    if (msg.method !== 'turn/start' || !isRecord(msg.params)) return msg
+    const { qingcodeAccessOverride, ...params } = msg.params
+    const threadId = params.threadId
+    if (typeof threadId === 'string') {
+      const baseline = this.threadAccess.get(threadId)
+      if (qingcodeAccessOverride === true) {
+        if (!baseline) {
+          this.emit({ id: msg.id, error: { code: -32602, message: '无法确认会话默认权限，请重新打开会话后重试' } })
+          return null
+        }
+        this.managedAccess.add(threadId)
+      } else if (baseline && this.managedAccess.has(threadId)) {
+        // app-server 将每轮覆盖项沿用到后续轮次，普通发送需要恢复会话原有权限。
+        params.approvalPolicy ??= baseline.approvalPolicy
+        params.sandboxPolicy ??= baseline.sandboxPolicy
+      }
+    }
+    this.startingTurns.set(msg.id, { threadId, completed: new Set() })
+    return { ...msg, params }
+  }
+
+  private readThreadAccess(result: unknown): void {
+    if (!isRecord(result) || !isRecord(result.thread) || !isRecord(result.sandbox)) return
+    const id = result.thread.id
+    const { approvalPolicy, sandbox } = result
+    if (typeof id !== 'string' || this.managedAccess.has(id)) return
+    if (typeof approvalPolicy !== 'string' && !isRecord(approvalPolicy)) return
+    this.threadAccess.set(id, { approvalPolicy, sandboxPolicy: sandbox })
+  }
+
+  private clearRequestState(): void {
+    this.loadingThreads.clear()
+    this.startingTurns.clear()
+    this.acknowledgedTurns.clear()
+    this.threadAccess.clear()
+    this.managedAccess.clear()
   }
 
   private finishChild(
@@ -480,6 +638,7 @@ export class CodexHost extends JsonRpcAgentHost {
     this.initDone = false
     this.init?.reject(new Error('codex app-server 已退出'))
     this.init = null
+    this.clearRequestState()
     this.emitExit({
       code,
       signal,

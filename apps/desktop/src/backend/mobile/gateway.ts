@@ -2,9 +2,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createServer, type Server as HttpsServer } from 'node:https'
 import { redactToken } from '../remoteCommands'
 import { toWireError } from '../router'
+import { mobileProjectFiles } from './projectAccess'
 import type { MobileCertificate } from './cert'
 import type { DeviceStore, MobileDevice, PairFailureState } from './pairing'
 import { constantTimeEqual, isPairLocked, normalizePairFailure, recordPairFailure } from './pairing'
+import { MOBILE_TERMINAL_METHODS, MobileTerminals } from './terminals'
 
 export const MAX_REQUEST_BYTES = 1024 * 1024
 export const EVENT_HEARTBEAT_MS = 20_000
@@ -55,6 +57,10 @@ const RPC_METHODS = new Set([
   'codex.send',
   // 网关自有方法，不转发给同名 backend 方法。
   'mobile.agents',
+  'mobile.files.list',
+  'mobile.files.search',
+  'mobile.files.read',
+  ...MOBILE_TERMINAL_METHODS,
 ])
 
 const SERVER_REQ_METHODS = new Set([
@@ -108,6 +114,10 @@ export function checkRpcWhitelist(method: unknown, params: unknown): RpcWhitelis
 
 /** 主机指纹确认只能发生在电脑端；手机只收到不含 promptId 的提示。 */
 export function mobileEventFromRouter(name: string, payload: unknown): GatewayEvent | null {
+  // 桌面连接订阅的终端输出可能含敏感内容，不能通过共享事件总线转给手机。
+  if (name === 'server.evt' && isRecord(payload) && typeof payload.name === 'string' && payload.name.startsWith('term.')) {
+    return null
+  }
   if (FORWARDED_EVENTS.has(name)) return { name, payload }
   if (name === 'hostKey.prompt') {
     const source = isRecord(payload) ? payload : {}
@@ -176,18 +186,23 @@ const AGENT_PATH_KEYS: Record<AgentName, 'codexPath' | 'claudePath' | 'piPath'> 
 }
 
 /**
- * 手机经 server.req 调 codex.open 时按电脑设置补可执行文件路径（与桌面 openParams 同义）。
- * 手机传来的路径字段一律丢弃、以设置为准：不允许远端设备指定电脑/目标机上要执行的程序。
+ * 手机经 server.req 调 codex.open 时沿用电脑为该目标保存的 Agent 路径与配置目录。
+ * 远端设备不能指定目标机上的程序或配置目录。
  */
 export function injectAgentPath(serverReqParams: unknown, settings: unknown): unknown {
   if (!isRecord(serverReqParams) || serverReqParams.method !== 'codex.open') return serverReqParams
   const inner: JsonRecord = isRecord(serverReqParams.params) ? { ...serverReqParams.params } : {}
   for (const key of Object.values(AGENT_PATH_KEYS)) delete inner[key]
+  delete inner.codexHome
+  delete inner.claudeConfigDir
   const agent: AgentName = isAgent(inner.agent) ? inner.agent : 'codex'
   const targetId = typeof serverReqParams.targetId === 'string' ? serverReqParams.targetId : ''
   const prefs = targetId ? ownRecord(ownRecord(ownRecord(settings, 'agents'), targetId), agent) : null
   const path = typeof prefs?.path === 'string' ? prefs.path.trim() : ''
   if (path) inner[AGENT_PATH_KEYS[agent]] = path
+  const configDir = typeof prefs?.configDir === 'string' ? prefs.configDir.trim() : ''
+  if (configDir && agent === 'codex') inner.codexHome = configDir
+  if (configDir && agent === 'claude') inner.claudeConfigDir = configDir
   return { ...serverReqParams, params: inner }
 }
 
@@ -198,6 +213,15 @@ function forwardRpcParams(body: JsonRecord, method: string): unknown {
   if (method === 'codex.send') {
     const next: JsonRecord = isRecord(params) ? { ...params } : {}
     if (agent && !hasOwn(next, 'agent')) next.agent = agent
+    if (isRecord(next.msg) && next.msg.method === 'turn/start' && isRecord(next.msg.params)) {
+      // 访问模式只能在电脑的会话输入框里显式选择。
+      const input = { ...next.msg.params }
+      delete input.claudePermissionMode
+      delete input.qingcodeAccessOverride
+      delete input.approvalPolicy
+      delete input.sandboxPolicy
+      next.msg = { ...next.msg, params: input }
+    }
     return next
   }
   if (method === 'server.req') {
@@ -258,6 +282,7 @@ export class MobileGateway {
   private readonly maxBodyBytes: number
   private readonly failures = new Map<string, PairFailureState>()
   private readonly eventClients = new Set<EventClient>()
+  private readonly terminals = new MobileTerminals()
   private server: HttpsServer | null = null
   private unsubscribe: (() => void) | null = null
   private certificate: MobileCertificate | null = null
@@ -283,6 +308,10 @@ export class MobileGateway {
     return this.certificate?.fingerprint ?? ''
   }
 
+  setTerminalEnabled(enabled: boolean): void {
+    this.terminals.setEnabled(enabled)
+  }
+
   async start(port: number, certificate: MobileCertificate): Promise<void> {
     if (this.server) await this.stop()
     this.certificate = certificate
@@ -294,6 +323,17 @@ export class MobileGateway {
     )
     this.server = server
     this.unsubscribe = this.options.router.onEmit((name, payload) => {
+      if (name === 'server.evt') {
+        const terminal = this.terminals.toDevice(payload)
+        if (terminal) {
+          for (const client of this.eventClients) {
+            if (client.deviceId !== terminal.deviceId) continue
+            if (client.res.writableLength > MAX_REQUEST_BYTES) this.closeClient(client)
+            else this.writeEvent(client, terminal.event)
+          }
+          return
+        }
+      }
       const event = mobileEventFromRouter(name, payload)
       if (event) this.broadcast(event)
     })
@@ -324,6 +364,7 @@ export class MobileGateway {
     this.server = null
     this.unsubscribe?.()
     this.unsubscribe = null
+    this.terminals.clear()
     this.closeAllEventClients()
     if (!server) return
     await new Promise<void>((resolve) => {
@@ -346,12 +387,14 @@ export class MobileGateway {
   }
 
   disconnectDevice(id: string): void {
+    this.terminals.disconnectDevice(id)
     for (const client of [...this.eventClients]) {
       if (client.deviceId === id) this.closeClient(client)
     }
   }
 
   disconnectAllDevices(): void {
+    this.terminals.clear()
     this.closeAllEventClients()
   }
 
@@ -458,11 +501,17 @@ export class MobileGateway {
       params = injectAgentPath(params, await this.readSettings())
     }
     try {
-      const result = await this.options.router.invoke(method, params)
+      const invoke = (name: string, value: unknown) => this.options.router.invoke(name, value)
+      const result = method.startsWith('mobile.files.')
+        ? await mobileProjectFiles(invoke, method, params)
+        : MOBILE_TERMINAL_METHODS.has(method)
+          ? await this.terminals.run(invoke, device.id, method, params)
+          : await invoke(method, params)
       return this.sendJson(res, 200, result ?? null)
     } catch (err) {
       const error = toWireError(err)
-      const status = error.code === 'invalid_params' ? 400 : error.code === 'not_found' ? 404 : 502
+      const status = error.code === 'invalid_params' ? 400 : error.code === 'not_found' ? 404
+        : error.code === 'forbidden' || error.code === 'terminal_disabled' ? 403 : 502
       return this.sendError(res, status, error.code, redactToken(error.message) || '电脑端请求失败')
     }
   }
@@ -566,6 +615,9 @@ export class MobileGateway {
     if (client.timer) clearInterval(client.timer)
     client.timer = null
     this.eventClients.delete(client)
+    if (![...this.eventClients].some((candidate) => candidate.deviceId === client.deviceId)) {
+      this.terminals.disconnectDevice(client.deviceId)
+    }
     try {
       if (!client.res.writableEnded) client.res.end()
     } catch {

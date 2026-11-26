@@ -52,6 +52,34 @@ const userItem = item('userMessage', 'i-user', {
   content: [{ type: 'text', text: '请执行命令', text_elements: [] }],
 })
 
+describe('子代理条目', () => {
+  it('区分调用已返回和子代理自己的状态', () => {
+    const spawn = item('collabAgentToolCall', 'spawn', { tool: 'spawnAgent', status: 'inProgress' })
+    const atStart = applyNotification(emptyState(), note('item/started', { threadId: 't1', item: spawn }))
+    expect(itemOf(atStart, 'spawn')).toMatchObject({ kind: 'subagent', title: '启动子代理', status: '调用中' })
+    const completed = {
+      ...spawn, status: 'completed', agentsStates: { child: { status: 'running', message: null } },
+    }
+    const atReturn = applyNotification(atStart, note('item/completed', { threadId: 't1', item: completed }))
+    expect(itemOf(atReturn, 'spawn')).toMatchObject({ status: '调用已返回', detail: 'child · 运行中' })
+  })
+
+  it('从历史还原 Codex 子代理活动和 Claude 委派', () => {
+    const items = [
+      item('subAgentActivity', 'activity', { kind: 'completed', agentPath: '/root/review' }),
+      item('dynamicToolCall', 'delegate', {
+        tool: 'Agent', namespace: 'claude', status: 'failed', arguments: { description: '核对文档' },
+      }),
+    ]
+    const thread = { id: 't1', status: { type: 'idle' }, turns: [{ id: 'turn', status: 'completed', items }] }
+    const state = loadThread(emptyState(), thread as unknown as LoadableThread)
+    expect(threadOf(state).items).toEqual([
+      { kind: 'subagent', id: 'activity', title: '子代理', status: '已完成', detail: '/root/review' },
+      { kind: 'subagent', id: 'delegate', title: '委派给子代理', status: '调用失败', detail: '核对文档' },
+    ])
+  })
+})
+
 const reasoningStart = item('reasoning', 'i-reason', { summary: [], content: [] })
 const reasoningDone = item('reasoning', 'i-reason', { summary: ['分析', '确认'], content: [] })
 
