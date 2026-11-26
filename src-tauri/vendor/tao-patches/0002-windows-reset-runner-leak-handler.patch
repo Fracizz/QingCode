@@ -1,0 +1,27 @@
+QingCode patch 2/2：reset_runner 不再 drop 装箱的事件回调。
+
+event_handler.set(None) 会 drop Tauri 的 run 闭包，其析构重入 Win32 窗口 /
+WebView 拆除，曾观测到 HEAP_FAILURE_BLOCK_NOT_BUSY / double-free。
+EventLoop::run 在 run_return 之后立即 process::exit，泄漏到进程退出等价于
+跳过一个 OS 马上要回收的析构。截至 tao 0.38.0 上游仍是 set(None)，需保留。
+
+--- a/src/platform_impl/windows/event_loop/runner.rs
++++ b/src/platform_impl/windows/event_loop/runner.rs
+@@ -107,7 +107,16 @@
+     runner_state.set(RunnerState::Uninitialized);
+     panic_error.set(None);
+     control_flow.set(ControlFlow::Poll);
+-    event_handler.set(None);
++    // Take the boxed callback out of the Cell, then leak it.
++    //
++    // `event_handler.set(None)` drops a ~0x260-byte `Box<dyn FnMut>` (Tauri's
++    // run closure). That Drop re-enters Win32 window/WebView teardown and has
++    // been observed as HEAP_FAILURE_BLOCK_NOT_BUSY / double-free on Windows
++    // (`RtlFreeHeap` of the same block during this function's epilogue).
++    // `EventLoop::run` calls `process::exit` immediately after `run_return`,
++    // so leaking until process exit is equivalent to skipping a destructor
++    // the OS is about to reclaim anyway.
++    mem::forget(event_handler.take());
+   }
+ }
+

@@ -1,0 +1,49 @@
+QingCode patch 1/2：EventLoopRunnerShared 由 Rc 改为 Arc。
+
+tauri-runtime-wry <= 2.12 会把 EventLoopWindowTarget 克隆到 tokio worker 上，
+非原子 Rc 的 clone/drop 竞态会破坏 Windows 堆（0xc0000374）。
+上游没有接受 tao 侧的改法（tao#1290、#1334 未合并），根因由 tauri#15411
+（tauri-runtime-wry 2.13.0）修复；升到 2.13 并压测通过后可删除本补丁。
+
+--- a/src/platform_impl/windows/event_loop/runner.rs
++++ b/src/platform_impl/windows/event_loop/runner.rs
+@@ -7,7 +7,7 @@
+   cell::{Cell, RefCell},
+   collections::{HashSet, VecDeque},
+   mem, panic,
+-  rc::Rc,
++  sync::Arc,
+   time::Instant,
+ };
+
+@@ -24,7 +24,10 @@
+   window::WindowId,
+ };
+
+-pub(crate) type EventLoopRunnerShared<T> = Rc<EventLoopRunner<T>>;
++// Atomic because tauri-runtime-wry clones EventLoopWindowTarget onto tokio
++// workers. A non-atomic Rc races clone/drop and corrupts the Windows heap
++// (0xc0000374). See tauri-apps/tao#1290 and QINGCODE.md.
++pub(crate) type EventLoopRunnerShared<T> = Arc<EventLoopRunner<T>>;
+ pub(crate) struct EventLoopRunner<T: 'static> {
+   // The event loop's win32 handles
+   thread_msg_target: HWND,
+--- a/src/platform_impl/windows/event_loop.rs
++++ b/src/platform_impl/windows/event_loop.rs
+@@ -15,7 +15,6 @@
+   ffi::c_void,
+   marker::PhantomData,
+   mem, panic,
+-  rc::Rc,
+   sync::Arc,
+   thread,
+   time::{Duration, Instant},
+@@ -198,7 +197,7 @@
+     thread::spawn(move || wait_thread(thread_id, HWND(send_thread_msg_target as _)));
+     let wait_thread_id = get_wait_thread_id();
+
+-    let runner_shared = Rc::new(EventLoopRunner::new(thread_msg_target, wait_thread_id));
++    let runner_shared = Arc::new(EventLoopRunner::new(thread_msg_target, wait_thread_id));
+
+     let thread_msg_sender = subclass_event_target_window(thread_msg_target, runner_shared.clone());
+     raw_input::register_all_mice_and_keyboards_for_raw_input(thread_msg_target, Default::default());
