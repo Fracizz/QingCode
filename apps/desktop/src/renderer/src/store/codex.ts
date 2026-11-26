@@ -98,7 +98,8 @@ type CodexState = {
   init: () => () => void
   setContext: (targetId: string | null, cwd: string | null, refresh?: boolean) => void
   ensureOpen: (targetId: string, agent?: AgentKind) => Promise<boolean>
-  probeAgents: (targetId: string) => Promise<void>
+  /** force=false 时跳过已确认未安装的 Agent，避免每次刷新列表都重新拉起一个必然失败的进程。 */
+  probeAgents: (targetId: string, force?: boolean) => Promise<void>
   refreshThreads: () => Promise<void>
   newThread: (agent?: AgentKind) => Promise<void>
   /** 回到"新会话"草稿态（参考 Codex 的 New thread）：不立即建会话，发第一条消息时再创建，避免留下空会话。 */
@@ -311,13 +312,14 @@ export const useCodex = create<CodexState>((set, get) => {
     return task
   }
 
-  const probeAgents = async (targetId: string): Promise<void> => {
+  const probeAgents = async (targetId: string, force = false): Promise<void> => {
     const busy = probing.get(targetId)
     if (busy) return busy
     const task = (async () => {
       for (const agent of AGENTS) {
         const key = sessionKey(targetId, agent)
         const session = get().sessions[key]
+        if (!force && !session?.opened && statusFor(targetId, agent)?.state === 'unavailable') continue
         if (session?.opened) {
           patchAgent(targetId, agent, {
             state: 'ready',
@@ -466,8 +468,15 @@ export const useCodex = create<CodexState>((set, get) => {
             .filter(([, session]) => session.targetId === payload.targetId)
             .filter(([, session]) => exitedAgent === undefined || exitedAgent === session.agent)
             .map(([key]) => key)
+          // 只有原本在用的会话退出才提示；启动失败（如未安装）本身已有错误说明，不再重复弹提示。
+          const wasOpened = keys.some((key) => {
+            const session = get().sessions[key]
+            return session?.opened === true && session.agent === get().currentAgent
+          })
           for (const key of keys) {
             const agent = get().sessions[key]?.agent
+            // 没打开成功的会话保留 open 失败时的具体原因与可用性判断（如"未找到 codex"）。
+            if (!get().sessions[key]?.opened) continue
             patchSession(key, (value) => ({
               ...value,
               opened: false,
@@ -475,8 +484,8 @@ export const useCodex = create<CodexState>((set, get) => {
             }))
             if (agent) patchAgent(payload.targetId, agent, { state: 'unknown' })
           }
-          if (get().currentTargetId === payload.targetId) {
-            set({ notice: 'Agent 进程已退出，请重试' })
+          if (wasOpened && get().currentTargetId === payload.targetId) {
+            set({ notice: `${agentLabel(get().currentAgent)} 进程已退出，请重试` })
           }
         }),
         on('target.state', (payload) => {
@@ -490,7 +499,7 @@ export const useCodex = create<CodexState>((set, get) => {
           }
           if (get().currentTargetId !== payload.id) return
           // 连接就绪后检测两个 agent，用于新建会话的可选项与占位符。
-          void get().probeAgents(payload.id)
+          void get().probeAgents(payload.id, true)
         }),
       ]
       return () => {

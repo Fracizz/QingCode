@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, LoaderCircle, RotateCw, Search, Zap } from 'lucide-react'
+import { Check, ChevronDown, LoaderCircle, PencilLine, RotateCw, Search, Zap } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { sessionKey } from '../lib/agents'
 import { cn } from '../lib/cn'
@@ -41,14 +41,29 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
 
   const models = list?.models ?? []
   const selection = useMemo(() => resolveSelection(models, prefs), [models, prefs])
-  const visible = useMemo(() => filterModels(models, query), [models, query])
+  const visible = useMemo(() => {
+    const filtered = filterModels(models, query)
+    // 当前生效的自定义模型不在服务端列表里，放在最前面，让用户看得到自己选了什么。
+    const current = selection.model
+    if (current && current.id.startsWith('custom:') && filterModels([current], query).length > 0) {
+      return [current, ...filtered]
+    }
+    return filtered
+  }, [models, query, selection.model])
+  const typed = query.trim()
+  const canUseCustom = typed.length > 0 && !/\s/.test(typed) && !visible.some((item) => item.model === typed)
 
   if (!opened || (models.length === 0 && !list?.loading && !list?.error)) return null
 
   const pick = (model: string) => {
     const option = models.find((item) => item.model === model)
     // 换模型时强度若不被新模型支持，交给 resolveSelection 回落到默认，这里不清空偏好里的强度。
-    setPrefs(agent, { model, ...(option && prefs.effort && !option.efforts.some((e) => e.value === prefs.effort) ? { effort: null } : {}) })
+    setPrefs(agent, { model, custom: false, ...(option && prefs.effort && !option.efforts.some((e) => e.value === prefs.effort) ? { effort: null } : {}) })
+  }
+
+  const pickCustom = (model: string) => {
+    setPrefs(agent, { model, custom: true })
+    setQuery('')
   }
 
   return (
@@ -88,14 +103,19 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
           <input
             ref={searchRef}
             className="min-w-0 flex-1 bg-transparent text-[14px] text-qn-text outline-none placeholder:text-qn-dim"
-            placeholder="搜索模型…"
+            placeholder="搜索模型，或输入模型 ID…"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && visible[0]) {
+              if (event.key !== 'Enter') return
+              if (visible[0]) {
                 event.preventDefault()
-                pick(visible[0].model)
+                if (visible[0].id.startsWith('custom:')) pickCustom(visible[0].model)
+                else pick(visible[0].model)
                 setQuery('')
+              } else if (canUseCustom) {
+                event.preventDefault()
+                pickCustom(typed)
               }
             }}
           />
@@ -117,7 +137,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
           {list?.loading && models.length === 0 && (
             <div className="px-2.5 py-3 text-[13px] text-qn-muted">正在加载模型…</div>
           )}
-          {!list?.loading && visible.length === 0 && models.length > 0 && (
+          {!list?.loading && visible.length === 0 && models.length > 0 && !canUseCustom && (
             <div className="px-2.5 py-3 text-center text-[13px] text-qn-muted">没有匹配的模型</div>
           )}
           {visible.map((model) => {
@@ -132,7 +152,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                   'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left outline-none focus-visible:bg-qn-hover',
                   selected ? 'bg-qn-active' : 'hover:bg-qn-hover',
                 )}
-                onClick={() => pick(model.model)}
+                onClick={() => (model.id.startsWith('custom:') ? pickCustom(model.model) : pick(model.model))}
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14px] font-medium text-qn-text">{model.displayName}</span>
@@ -146,6 +166,21 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
               </button>
             )
           })}
+          {canUseCustom && (
+            <button
+              type="button"
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left outline-none hover:bg-qn-hover focus-visible:bg-qn-hover"
+              onClick={() => pickCustom(typed)}
+            >
+              <PencilLine size={15} className="shrink-0 text-qn-dim" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[14px] text-qn-text">
+                  使用模型 ID「<span className="font-mono">{typed}</span>」
+                </span>
+                <span className="mt-0.5 block text-[12px] text-qn-muted">不在列表中，按原样发送给 Agent（适合代理/自定义模型）</span>
+              </span>
+            </button>
+          )}
         </div>
 
         {selection.model && (selection.model.efforts.length > 0 || selection.fastTier) && (

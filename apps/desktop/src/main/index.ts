@@ -13,6 +13,9 @@ import { registerSecretHandlers } from './secrets'
 
 const smoke = process.argv.includes('--smoke')
 const isDev = !app.isPackaged
+// 开发时允许另起一份独立数据目录，和正在使用的实例互不抢单实例锁、互不共享目标配置。
+const devUserData = isDev ? process.env['QN_DEV_USER_DATA'] : undefined
+if (devUserData) app.setPath('userData', devUserData)
 const appRoot = app.getAppPath()
 const preloadPath = join(appRoot, 'out', 'preload', 'index.cjs')
 const backendPath = join(appRoot, 'out', 'main', 'backend.js')

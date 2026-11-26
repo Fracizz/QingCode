@@ -113,6 +113,7 @@ export function Modal({
   onClose,
   width = 'max-w-lg',
   bodyClassName,
+  dismissOnOutside = true,
 }: {
   title: string
   description?: ReactNode
@@ -121,6 +122,8 @@ export function Modal({
   onClose?: () => void
   width?: string
   bodyClassName?: string
+  /** 表单类对话框设为 false：误点遮罩不应丢掉已填写的内容（Esc / 关闭按钮仍可关闭）。 */
+  dismissOnOutside?: boolean
 }) {
   // 没有 onClose 的对话框（如必须作答的主机密钥确认）不允许被 Esc / 点遮罩关掉。
   const block = onClose ? undefined : (event: Event) => event.preventDefault()
@@ -136,7 +139,7 @@ export function Modal({
           <Dialog.Content
             {...(description ? {} : { 'aria-describedby': undefined })}
             onEscapeKeyDown={block}
-            onPointerDownOutside={block}
+            onPointerDownOutside={block ?? (dismissOnOutside ? undefined : (event: Event) => event.preventDefault())}
             className={cn(
               'qn-dialog flex max-h-[min(680px,calc(100vh-80px))] w-full flex-col overflow-hidden rounded-2xl border border-qn-border-strong bg-qn-panel shadow-[0_24px_80px_rgba(0,0,0,0.55)] outline-none',
               width,

@@ -478,7 +478,13 @@ export class CodexHost extends JsonRpcAgentHost {
   ): void {
     this.child = null
     this.initDone = false
-    this.init?.reject(new Error('codex app-server 已退出'))
+    // spawn 找不到可执行文件时明确报"未安装"，客户端据此把 Codex 置灰并改用其它 Agent，而不是反复重试。
+    const missing = errorMessage !== null && /ENOENT/.test(errorMessage)
+    this.init?.reject(
+      missing
+        ? new AgentHostError('agent_unavailable', '未找到 codex（未安装或不在 PATH 中，可在设置里指定路径）')
+        : new Error('codex app-server 已退出'),
+    )
     this.init = null
     this.emitExit({
       code,

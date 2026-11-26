@@ -84,7 +84,7 @@ export function WelcomePane({ onConnect, onAddTarget }: { onConnect: (id: string
             onClick={() => onConnect(selectedId)}
           >
             <PlugZap size={16} />
-            {isTargetBusy(state) ? '正在连接…' : `连接${target?.name ?? '本机'}`}
+            {isTargetBusy(state) ? '正在连接…' : `连接 ${target?.name ?? '本机'}`}
           </button>
         </div>
       )}
@@ -103,7 +103,7 @@ export function WelcomePane({ onConnect, onAddTarget }: { onConnect: (id: string
         className="mt-8 flex items-center gap-1.5 text-[13px] text-qn-dim hover:text-qn-text"
         onClick={onAddTarget}
       >
-        <ServerCog size={14} /> 添加 SSH 连接，在远端主机上使用 Agent
+        <ServerCog size={14} /> 添加远程连接（SSH / 连接码），在其它电脑上使用 Agent
       </button>
     </div>
   )

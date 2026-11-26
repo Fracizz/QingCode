@@ -57,6 +57,15 @@ export default function App() {
   const workspace = useWorkspaceScope()
   const settingsDialog = useSettingsDialog()
   const autoConnectDone = useRef(false)
+  // 必须在首次渲染时读出：下面"记住上次目标"的 effect 挂载时会先把初始值 'local' 写回去。
+  const lastTargetAtStartup = useRef<string | null | undefined>(undefined)
+  if (lastTargetAtStartup.current === undefined) {
+    try {
+      lastTargetAtStartup.current = localStorage.getItem('qn-last-target')
+    } catch {
+      lastTargetAtStartup.current = null
+    }
+  }
 
   useWorkspaceWatch()
 
@@ -145,7 +154,7 @@ export default function App() {
     requestConnect(id)
   }
 
-  // 记住上次使用的目标；设置里开了"启动时自动连接上次目标"时，目标与设置都加载完后连一次。
+  // 记住上次使用的目标；启动时回到该目标，设置里开了"启动时自动连接上次目标"时再连一次。
   useEffect(() => {
     try {
       localStorage.setItem('qn-last-target', selectedId)
@@ -154,20 +163,20 @@ export default function App() {
     }
   }, [selectedId])
   const settingsLoaded = useSettings((s) => s.loaded)
+  // 界面密度：样式在 styles.css 里按 html[data-density] 生效。
+  const density = useSettings((s) => s.settings.general.density)
+  useEffect(() => {
+    document.documentElement.dataset['density'] = density
+  }, [density])
   const autoConnectLast = useSettings((s) => s.settings.general.autoConnectLast)
   useEffect(() => {
     if (autoConnectDone.current || !settingsLoaded || targets.length === 0 || window.qn?.isSmoke) return
     autoConnectDone.current = true
-    if (!autoConnectLast) return
-    let last: string | null = null
-    try {
-      last = localStorage.getItem('qn-last-target')
-    } catch {
-      last = null
-    }
+    const last = lastTargetAtStartup.current
     if (!last || last === 'local' || !targets.some((item) => item.id === last)) return
+    // 没开自动连接时也回到上次的目标（不连接），用户点一下"连接"即可，不必每次重新切换。
     select(last)
-    requestConnect(last)
+    if (autoConnectLast) requestConnect(last)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在首次满足条件时执行一次
   }, [settingsLoaded, targets, autoConnectLast])
 

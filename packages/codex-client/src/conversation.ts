@@ -24,6 +24,8 @@ export type ThreadView = {
   items: ItemView[]
   pendingApprovals: ApprovalView[]
   error?: string
+  /** 最近一轮被用户停止（无错误信息）：不算失败，界面只给中性提示。 */
+  interrupted?: boolean
   tokenUsage?: unknown
   /** 每轮的计时与所含条目，用于"工作了 4m 56s"折叠头。 */
   turns?: TurnMeta[]
@@ -241,6 +243,7 @@ function withThread(
 function clearError(thread: ThreadView): ThreadView {
   const next = { ...thread }
   delete next.error
+  delete next.interrupted
   return next
 }
 
@@ -769,10 +772,11 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
       if (!id) return s
       const turn = asRecord(params.turn)
       const turnStatus = scalarText(turn?.status) || 'completed'
-      const failed = turnStatus === 'failed' || turnStatus === 'interrupted'
-      const message =
-        errorText(turn?.error) ??
-        (turnStatus === 'interrupted' ? 'Turn interrupted' : turnStatus === 'failed' ? 'Turn failed' : undefined)
+      const explicitError = errorText(turn?.error)
+      // 用户主动停止且没有附带错误时不算失败，避免红色"Turn 失败"误导。
+      const stopped = turnStatus === 'interrupted' && !explicitError
+      const failed = turnStatus === 'failed' || (turnStatus === 'interrupted' && !stopped)
+      const message = explicitError ?? (turnStatus === 'failed' ? 'Turn failed' : undefined)
       return withThread(s, id, (current) => {
         let next = mergeTurnItems(current, params.turn, false, 'completed')
         const completedId = idValue(turn?.id) || idValue(params.turnId) || current.activeTurnId || ''
@@ -785,6 +789,8 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         }
         if (message) next.error = message
         else delete next.error
+        if (stopped) next.interrupted = true
+        else delete next.interrupted
         return next
       })
     }

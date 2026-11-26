@@ -51,5 +51,7 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react(), tailwindcss(), devCspPlugin()],
+    // 部分环境（沙箱/安全软件）禁止访问 IPv6 回环，允许用环境变量把 dev server 固定到 127.0.0.1。
+    server: process.env['QN_DEV_HOST'] ? { host: process.env['QN_DEV_HOST'] } : {},
   },
 })

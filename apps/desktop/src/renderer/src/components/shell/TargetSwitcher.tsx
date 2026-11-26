@@ -19,7 +19,7 @@ import { isTargetActive, matchTarget, targetDotClass, targetStateLabel } from '.
 import { useTargets } from '../../store/targets'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, PopoverContent, PopoverRoot, PopoverTrigger } from '../primitives'
 import { RateLimitHint } from '../RateLimitHint'
-import { IconButton } from '../ui'
+import { IconButton, Modal } from '../ui'
 
 export type TargetActions = {
   onAdd: () => void
@@ -68,12 +68,17 @@ export function TargetSwitcher(actions: TargetActions) {
 
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  // 删除会一并丢掉已保存的密码 / 直连授权，必须二次确认。
+  const [pendingDelete, setPendingDelete] = useState<Target | null>(null)
 
   const stateOf = (id: string): TargetState => states[id]?.state ?? 'idle'
   const current = targets.find((item) => item.id === selectedId) ?? targets[0]
   const currentState = current ? stateOf(current.id) : 'idle'
   const currentDetail = current ? states[current.id]?.detail : undefined
-  const currentError = current ? connectErrors[current.id] : undefined
+  // 掉线/自动重连失败只经 target.state 带回原因（不进 connectErrors），也要显示出来，不能只剩"连接失败"四个字。
+  const currentError = current
+    ? (connectErrors[current.id] ?? (currentState === 'error' ? currentDetail : undefined))
+    : undefined
   const visible = targets.filter((target) => matchTarget(target, query))
 
   const run = (action: () => void) => {
@@ -154,12 +159,13 @@ export function TargetSwitcher(actions: TargetActions) {
                       <span className="block truncate text-[13px] text-qn-text">{target.name}</span>
                       <span className="block truncate font-mono text-[11px] leading-4 text-qn-dim">{subtitle(target)}</span>
                     </span>
-                    <span className={`shrink-0 text-[11px] ${state === 'error' ? 'text-qn-danger' : 'text-qn-dim'} group-hover:hidden`}>
+                    <span className={`shrink-0 text-[11px] ${state === 'error' ? 'text-qn-danger' : 'text-qn-dim'} group-hover:hidden group-focus-within:hidden [@media(hover:none)]:hidden`}>
                       {targetStateLabel[state]}
                     </span>
-                    {selected && <Check size={14} className="shrink-0 text-qn-brand group-hover:hidden" />}
+                    {selected && <Check size={14} className="shrink-0 text-qn-brand group-hover:hidden group-focus-within:hidden [@media(hover:none)]:hidden" />}
                   </button>
-                  <div className="hidden shrink-0 items-center group-hover:flex group-has-[[data-state=open]]:flex">
+                  {/* 悬停、键盘焦点在本行、或设备没有悬停能力（触屏）时都要能看到操作，否则无法编辑/删除连接。 */}
+                  <div className="hidden shrink-0 items-center group-hover:flex group-focus-within:flex group-has-[[data-state=open]]:flex [@media(hover:none)]:flex">
                     {isTargetActive(state) ? (
                       target.kind !== 'local' && (
                         <IconButton label="断开" className="h-7 w-7" onClick={() => run(() => actions.onDisconnect(target.id))}>
@@ -186,7 +192,7 @@ export function TargetSwitcher(actions: TargetActions) {
                             忘记已保存的密码
                           </MenuItem>
                           <MenuSeparator />
-                          <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => run(() => void remove(target.id))}>
+                          <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => run(() => setPendingDelete(target))}>
                             删除连接
                           </MenuItem>
                         </MenuContent>
@@ -204,7 +210,7 @@ export function TargetSwitcher(actions: TargetActions) {
               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-qn-text outline-none hover:bg-qn-hover focus-visible:bg-qn-hover"
               onClick={() => run(actions.onAdd)}
             >
-              <Plus size={15} className="text-qn-muted" /> 添加 SSH 连接
+              <Plus size={15} className="text-qn-muted" /> 添加连接（SSH / 连接码）
             </button>
           </div>
         </PopoverContent>
@@ -220,6 +226,32 @@ export function TargetSwitcher(actions: TargetActions) {
       )}
       {loadError && (
         <div className="mx-1 mt-1.5 rounded-lg bg-qn-danger/10 px-2.5 py-1.5 text-[12px] text-qn-danger">{loadError}</div>
+      )}
+      {pendingDelete && (
+        <Modal
+          title="删除连接"
+          onClose={() => setPendingDelete(null)}
+          footer={
+            <div className="flex justify-end gap-2">
+              <button className="qn-button-subtle" type="button" onClick={() => setPendingDelete(null)}>
+                取消
+              </button>
+              <button
+                className="qn-button bg-qn-danger hover:bg-qn-danger/90"
+                type="button"
+                onClick={() => {
+                  const id = pendingDelete.id
+                  setPendingDelete(null)
+                  void remove(id)
+                }}
+              >
+                删除
+              </button>
+            </div>
+          }
+        >
+          确定删除「{pendingDelete.name}」？本机保存的密码与授权会一并移除；目标电脑上的文件和会话记录不受影响。
+        </Modal>
       )}
     </div>
   )

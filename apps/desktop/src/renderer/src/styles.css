@@ -27,6 +27,11 @@
   --font-mono: "Cascadia Mono", "JetBrains Mono", "Consolas", "Microsoft YaHei", monospace;
 }
 
+/* 紧凑密度：间距/尺寸多为 rem，缩小根字号即可整体收紧留白；正文字号多为 px，不受影响。 */
+html[data-density='compact'] {
+  font-size: 14px;
+}
+
 :root {
   color-scheme: dark;
   font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;

@@ -4,7 +4,6 @@ import { AGENTS, agentLabel, availabilityReason } from '../lib/agents'
 import { agentPrefs, useSettings } from '../features/settings'
 import { useAgentPrefs } from '../store/agentPrefs'
 import { useCodex } from '../store/codex'
-import { useTargets } from '../store/targets'
 import { AgentIcon } from './AgentIcon'
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from './primitives'
 import { Badge } from './ui'
@@ -19,7 +18,6 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
   const probeAgents = useCodex((s) => s.probeAgents)
   const defaultAgent = useAgentPrefs((s) => (targetId ? s.byTarget[targetId] : undefined))
   const setDefault = useAgentPrefs((s) => s.setDefault)
-  const targetName = useTargets((s) => s.targets.find((item) => item.id === targetId)?.name)
   const isDefault = defaultAgent === agent
   // 设置 → Agent 里对该目标关闭的 Agent 不出现在新建会话的选择里（当前所选除外，避免选中项消失）。
   const settings = useSettings((s) => s.settings)
@@ -78,15 +76,15 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
           }}
         >
           {isDefault
-            ? `取消「${targetName ?? '此连接'}」的默认 Agent`
-            : `将 ${agentLabel(agent)} 设为「${targetName ?? '此连接'}」默认`}
+            ? '取消此连接的默认 Agent'
+            : `将 ${agentLabel(agent)} 设为此连接的默认`}
         </MenuItem>
         <MenuItem
           icon={<RotateCw size={14} />}
           disabled={!targetId}
           onSelect={(event) => {
             event.preventDefault()
-            if (targetId) void probeAgents(targetId)
+            if (targetId) void probeAgents(targetId, true)
           }}
         >
           重新检测

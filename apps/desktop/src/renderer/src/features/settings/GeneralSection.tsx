@@ -32,7 +32,7 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
       )}
 
       {visible('autoConnectLast') && (
-        <SettingRow title="启动时自动连接上次使用的目标" description="仅记住目标 id，不保存任何连接凭据。">
+        <SettingRow title="启动时自动连接上次使用的目标" description="关闭时启动后仍会回到上次的目标，但需手动点击连接；不会额外保存密码。">
           <Checkbox
             checked={general.autoConnectLast}
             onChange={(value) => void update({ general: { autoConnectLast: value } })}
@@ -58,7 +58,7 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
       {visible('density') && (
         <SettingRow
           title="界面密度"
-          description="写入 html[data-density]，只提供样式钩子；具体紧凑规则由界面 token 决定。"
+          description="紧凑模式会缩小行距与留白，一屏显示更多内容。"
         >
           <Segmented
             value={general.density}

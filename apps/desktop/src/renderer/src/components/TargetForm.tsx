@@ -386,6 +386,7 @@ export function TargetForm({
     <Modal
       title={modalTitle}
       onClose={onClose}
+      dismissOnOutside={false}
       footer={
         <div className="flex justify-end gap-2">
           {!directMode && (
@@ -429,11 +430,17 @@ export function TargetForm({
                   onChange={(event) => applyCode(event.target.value)}
                 />
                 <ErrorNote message={codeError} onClose={() => setCodeError(null)} />
+                {!codeInfo && (
+                  <p className="text-[12px] leading-5 text-qn-dim">
+                    连接码在目标电脑上生成：运行 <span className="font-mono">node qn-server.cjs direct grant --host 本机地址</span>
+                    ，适合没有 SSH 权限的场景。
+                  </p>
+                )}
               </>
             )}
             {codeInfo && (
               <>
-                <input className="qn-input" placeholder="名称" value={directDraft.name}
+                <input className="qn-input" placeholder="名称" aria-label="名称" title="名称" value={directDraft.name}
                   onChange={(event) => patchDirect({ name: event.target.value })} />
                 {codeInfo.hosts.length > 1 && (
                   <Select
@@ -445,9 +452,9 @@ export function TargetForm({
                   />
                 )}
                 <div className="flex gap-2">
-                  <input className="qn-input min-w-0 flex-1" placeholder="主机" value={directDraft.host}
+                  <input className="qn-input min-w-0 flex-1" placeholder="主机" aria-label="主机" title="主机" value={directDraft.host}
                     onChange={(event) => patchDirect({ host: event.target.value })} />
-                  <input className="qn-input w-20" placeholder="端口" inputMode="numeric" value={directDraft.port}
+                  <input className="qn-input w-20" placeholder="端口" aria-label="端口" title="端口" inputMode="numeric" value={directDraft.port}
                     onChange={(event) => patchDirect({ port: event.target.value })} />
                 </div>
                 <div className="rounded-lg border border-qn-border px-3 py-2 text-[12px] leading-5 text-qn-muted">

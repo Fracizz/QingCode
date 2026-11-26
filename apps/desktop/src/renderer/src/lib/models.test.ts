@@ -120,6 +120,14 @@ describe('resolveSelection', () => {
     expect(turnOverrides(slow)).toEqual({ model: 'gpt-astra', effort: 'high', serviceTier: null })
     expect(turnOverrides(resolveSelection([], { model: null, effort: null, fast: false }))).toEqual({})
   })
+
+  it('自定义模型 ID 不在列表里也生效，沿用默认模型的强度档位且不发速度档', () => {
+    const s = resolveSelection(models, { model: 'proxy/my-model', effort: 'low', fast: true, custom: true })
+    expect(s.model?.model).toBe('proxy/my-model')
+    expect(s.model?.efforts).toEqual(models.find((m) => m.isDefault)?.efforts)
+    expect(turnOverrides(s)).toEqual({ model: 'proxy/my-model', effort: 'low' })
+    expect(parsePrefs('{"claude":{"model":"proxy/x","custom":true}}').claude?.custom).toBe(true)
+  })
 })
 
 describe('parsePrefs', () => {

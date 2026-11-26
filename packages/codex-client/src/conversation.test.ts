@@ -366,9 +366,10 @@ describe('conversation reducer', () => {
         turn: { id: 'turn1', status: 'interrupted', items: [], error: null },
       }),
     ])
-    expect(threadOf(state).status).toBe('error')
+    expect(threadOf(state).status).toBe('idle')
     expect(threadOf(state).activeTurnId).toBeNull()
-    expect(threadOf(state).error).toBe('Turn interrupted')
+    expect(threadOf(state).error).toBeUndefined()
+    expect(threadOf(state).interrupted).toBe(true)
     expect(itemOf(state, 'i-agent')).toMatchObject({ streaming: false })
 
     state = applyNotification(state, note('error', {

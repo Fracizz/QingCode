@@ -12,14 +12,37 @@ export type ModelOption = {
   serviceTiers: { id: string; name: string; description: string }[]
 }
 
-/** 每个 agent 的模型偏好：model 为 null 表示跟随服务端默认。 */
+/**
+ * 每个 agent 的模型偏好：model 为 null 表示跟随服务端默认。
+ * custom 表示用户手动输入的模型 ID（如经代理转发的模型），不在 model/list 里也照样发送。
+ */
 export type ModelPrefs = {
   model: string | null
   effort: string | null
   fast: boolean
+  custom?: boolean
 }
 
 export const EMPTY_PREFS: ModelPrefs = { model: null, effort: null, fast: false }
+
+/**
+ * 手动输入的模型 ID 合成为一个选项：推理强度沿用默认模型的档位（同一 Agent 的档位集合一致），
+ * 不带速度档位，避免把 Codex 专有的 serviceTier 发给未知模型。
+ */
+export function customModelOption(model: string, models: ModelOption[]): ModelOption {
+  const base = models.find((item) => item.isDefault) ?? models[0]
+  return {
+    id: `custom:${model}`,
+    model,
+    displayName: model,
+    description: '自定义模型 ID',
+    hidden: false,
+    isDefault: false,
+    efforts: base?.efforts ?? [],
+    defaultEffort: base?.defaultEffort ?? null,
+    serviceTiers: [],
+  }
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -146,8 +169,10 @@ export type ResolvedSelection = {
  * 偏好里的模型已下线时回落到默认模型；强度不被该模型支持时回落到模型默认强度。
  */
 export function resolveSelection(models: ModelOption[], prefs: ModelPrefs): ResolvedSelection {
+  const listed = prefs.model ? models.find((item) => item.model === prefs.model) : undefined
   const model =
-    (prefs.model ? models.find((item) => item.model === prefs.model) : undefined) ??
+    listed ??
+    (prefs.model && prefs.custom ? customModelOption(prefs.model, models) : undefined) ??
     models.find((item) => item.isDefault) ??
     models.find((item) => !item.hidden) ??
     models[0]
@@ -192,6 +217,7 @@ export function parsePrefs(raw: string | null | undefined): Record<string, Model
         model: text(entry.model) || null,
         effort: text(entry.effort) || null,
         fast: entry.fast === true,
+        ...(entry.custom === true && text(entry.model) ? { custom: true } : {}),
       }
     }
     return result

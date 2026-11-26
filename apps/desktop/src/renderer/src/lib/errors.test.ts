@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BackendCallError } from './backend'
-import { describeCodexOpenError, friendlyError, isNotImplemented, jsonRpcErrorCode } from './errors'
+import { describeCodexOpenError, friendlyError, isNotImplemented, jsonRpcErrorCode, readableAgentError } from './errors'
 
 describe('错误提示', () => {
   it('把 not_implemented 翻译成友好提示', () => {
@@ -30,5 +30,20 @@ describe('错误提示', () => {
     expect(jsonRpcErrorCode(new BackendCallError('not_implemented', 'x'))).toBe(-32000)
     expect(jsonRpcErrorCode(new BackendCallError('-32601', 'x'))).toBe(-32601)
     expect(jsonRpcErrorCode(new Error('x'))).toBe(-32000)
+  })
+})
+
+describe('readableAgentError', () => {
+  it('把内嵌的 JSON 换成其中的 message', () => {
+    expect(readableAgentError('429: {"type":"GoUsageLimitError","message":"usage limit reached"}')).toBe(
+      '429 · usage limit reached',
+    )
+    expect(readableAgentError('API Error: 400 {"error":{"message":"bad model"}}')).toBe('API Error: 400 · bad model')
+  })
+
+  it('不是 JSON 或没有 message 时原样返回', () => {
+    expect(readableAgentError('Turn failed')).toBe('Turn failed')
+    expect(readableAgentError('x {not json}')).toBe('x {not json}')
+    expect(readableAgentError('x {"code":1}')).toBe('x {"code":1}')
   })
 })

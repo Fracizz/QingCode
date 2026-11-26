@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
-import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
+import { ArrowDown, CircleStop, FolderGit2, ImagePlus, LoaderCircle, Monitor, Server } from 'lucide-react'
 import type { ApprovalDecision, ApprovalView, ItemView, RequestId } from '@qn/codex-client'
 import { DRAFT_THREAD_ID } from '@qn/codex-client'
 import { buildAnnotatedMessage, quoteBlock, type Annotation } from '../lib/annotations'
@@ -16,6 +16,7 @@ import {
 } from '../lib/attachments'
 import { readImage, uploadToTarget } from '../lib/attachmentIo'
 import { isAtBottom } from '../lib/diff'
+import { readableAgentError } from '../lib/errors'
 import type { Box } from '../lib/selection'
 import { targetDotClass } from '../lib/targetStatus'
 import { groupTurns } from '../lib/turnGroups'
@@ -78,8 +79,20 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     : Object.values(session?.state.threads ?? {}).flatMap((thread) => thread.pendingApprovals)
   const running = view?.status === 'running'
   const flow = useMemo(() => groupTurns(items, view?.turns, running), [items, view?.turns, running])
-
+  // 刚发出、还没有任何输出时给一个"正在思考"占位，否则界面看起来像没反应。
   const lastItem = items[items.length - 1]
+  const waitingFirstOutput = running && (!lastItem || lastItem.kind === 'user')
+  // 错误放在对话末尾（发生的位置）；Agent 已把同样的错误作为回复输出时只给简短标记，不重复整段。
+  const turnError = useMemo(() => {
+    const message = view?.error
+    if (!message || running) return null
+    const last = items[items.length - 1]
+    if (last?.kind === 'agent' && last.text.trim() && message.includes(last.text.trim().slice(0, 60))) {
+      return '本轮失败，原因见上方回复'
+    }
+    return `本轮失败：${readableAgentError(message)}`
+  }, [view?.error, running, items])
+
   const signature = `${items.length}:${approvals.length}:${
     lastItem?.kind === 'agent'
       ? lastItem.text.length
@@ -317,11 +330,6 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                 />
               </div>
             )}
-            {view?.error && (
-              <div className="mb-3">
-                <ErrorNote message={`Turn 失败：${view.error}`} />
-              </div>
-            )}
 
             {isDraft && items.length === 0 && approvals.length === 0 ? (
               <div className="flex flex-1 flex-col">
@@ -349,6 +357,18 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                     onDecide={(decision: ApprovalDecision) => respondApproval(approval.requestId as RequestId, decision)}
                   />
                 ))}
+                {waitingFirstOutput && (
+                  <div className="flex items-center gap-2 text-[13px] text-qn-muted" role="status">
+                    <LoaderCircle size={14} className="animate-spin" />
+                    {agentLabel(currentAgent)} 正在思考…
+                  </div>
+                )}
+                {turnError && <ErrorNote message={turnError} />}
+                {view?.interrupted && !running && (
+                  <div className="flex items-center gap-1.5 text-[12.5px] text-qn-dim">
+                    <CircleStop size={13} /> 已停止本轮
+                  </div>
+                )}
               </div>
             )}
           </div>

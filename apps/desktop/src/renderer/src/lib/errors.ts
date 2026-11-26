@@ -53,3 +53,25 @@ export function jsonRpcErrorCode(err: unknown): number {
   }
   return -32000
 }
+
+/**
+ * Agent 回传的错误常把服务端 JSON 原样拼在后面（如 `429: {"type":"…","message":"…"}`），
+ * 把其中的 JSON 换成它的 message 字段，便于阅读；解析不了就原样返回。
+ */
+export function readableAgentError(message: string): string {
+  const start = message.indexOf('{')
+  const end = message.lastIndexOf('}')
+  if (start < 0 || end <= start) return message
+  try {
+    const parsed: unknown = JSON.parse(message.slice(start, end + 1))
+    const record = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null
+    const nested = record && typeof record.error === 'object' && record.error !== null ? (record.error as Record<string, unknown>) : null
+    const inner = typeof record?.message === 'string' ? record.message : typeof nested?.message === 'string' ? nested.message : null
+    if (!inner) return message
+    const prefix = message.slice(0, start).replace(/[\s:：·-]+$/, '')
+    const suffix = message.slice(end + 1).trim()
+    return [prefix, inner, suffix].filter(Boolean).join(' · ')
+  } catch {
+    return message
+  }
+}

@@ -6,6 +6,7 @@ import { useUi } from '../../store/ui'
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from '../../lib/layout'
 import { LegacyBanner } from '../LegacyImport'
 import { ResizeHandle } from '../ResizeHandle'
+import { Tip } from '../primitives'
 import { ProjectTree } from './ProjectTree'
 import { TargetSwitcher, type TargetActions } from './TargetSwitcher'
 
@@ -57,10 +58,10 @@ export function Sidebar({
       </div>
 
       <div className="flex items-center gap-0.5 border-t border-qn-border px-2 py-1.5">
-        <FooterButton label="手机连接" onClick={onMobile}>
+        <FooterButton label="手机连接" iconOnly onClick={onMobile}>
           <Smartphone size={15} />
         </FooterButton>
-        <FooterButton label="导入旧版" onClick={onImport}>
+        <FooterButton label="导入旧版数据" iconOnly onClick={onImport}>
           <Upload size={15} />
         </FooterButton>
         <FooterButton label="设置" onClick={onSettings}>
@@ -83,15 +84,28 @@ export function Sidebar({
   )
 }
 
-function FooterButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
-  return (
+function FooterButton({
+  label,
+  iconOnly = false,
+  onClick,
+  children,
+}: {
+  label: string
+  /** 侧栏默认宽度放不下三个带文字的按钮（会被截成"手机连…"），次要入口只放图标 + 提示。 */
+  iconOnly?: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  const button = (
     <button
       type="button"
-      className="flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
+      aria-label={iconOnly ? label : undefined}
+      className="flex min-w-0 shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
       onClick={onClick}
     >
       {children}
-      <span className="truncate">{label}</span>
+      {!iconOnly && <span className="truncate">{label}</span>}
     </button>
   )
+  return iconOnly ? <Tip label={label}>{button}</Tip> : button
 }
