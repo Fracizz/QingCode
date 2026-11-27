@@ -4,7 +4,7 @@ type AgentKind = 'codex' | 'claude' | 'pi'
 
 export type AccessMode = 'default' | 'readOnly' | 'fullAccess' | 'plan' | 'acceptEdits' | 'bypassPermissions'
 export type AccessSelection = AccessMode | 'inherit'
-export type GlobalAccessMode = 'default' | 'restricted'
+export type GlobalAccessMode = 'default' | 'restricted' | 'fullAccess'
 
 type AccessOption<Mode extends AccessSelection = AccessMode> = {
   mode: Mode
@@ -37,7 +37,7 @@ export const accessOptions: Record<AgentKind, readonly AccessOption[]> = {
 }
 
 export function isGlobalAccessMode(value: unknown): value is GlobalAccessMode {
-  return value === 'default' || value === 'restricted'
+  return value === 'default' || value === 'restricted' || value === 'fullAccess'
 }
 
 export function resolveAccessMode(agent: AgentKind, globalMode: GlobalAccessMode | undefined, selection: AccessSelection = 'inherit'): AccessMode {
@@ -45,6 +45,10 @@ export function resolveAccessMode(agent: AgentKind, globalMode: GlobalAccessMode
   if (globalMode === 'restricted') {
     if (agent === 'codex') return 'readOnly'
     if (agent === 'claude') return 'plan'
+  }
+  if (globalMode === 'fullAccess') {
+    if (agent === 'codex') return 'fullAccess'
+    if (agent === 'claude') return 'bypassPermissions'
   }
   return 'default'
 }

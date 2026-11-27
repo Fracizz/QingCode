@@ -328,7 +328,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     id: 'globalAccessMode',
     section: 'general',
     title: '权限总控',
-    keywords: ['权限', '总控', '继承', '访问模式', '只读', '计划模式', 'permission', 'access'],
+    keywords: ['权限', '总控', '继承', '访问模式', '只读', '计划模式', '完全访问', '跳过审批', 'permission', 'access'],
   },
   {
     id: 'density',

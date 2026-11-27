@@ -53,7 +53,7 @@ describe('sanitizeAppSettings', () => {
         sendKey: 'ctrlEnter',
         autoConnectLast: 'yes',
         defaultAgent: 'pi',
-        globalAccessMode: 'fullAccess',
+        globalAccessMode: 'bypassPermissions',
         density: 'compact',
         theme: 'light',
         unknown: 1,

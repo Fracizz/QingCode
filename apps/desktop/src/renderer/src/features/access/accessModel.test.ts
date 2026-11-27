@@ -14,6 +14,20 @@ describe('会话访问模式', () => {
     expect(getAccessMode(rememberAccessMode(override, session, 'inherit'), session, 'restricted')).toBe('readOnly')
   })
 
+  it('总控为完全访问时，Codex 关闭沙箱、Claude 跳过审批，显式选择仍优先', () => {
+    expect(getAccessMode(emptyAccessMemory, draft, 'fullAccess')).toBe('fullAccess')
+    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'claude' }, 'fullAccess')).toBe('bypassPermissions')
+    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'pi' }, 'fullAccess')).toBe('default')
+    expect(getAccessMode(rememberAccessMode(emptyAccessMemory, session, 'readOnly'), session, 'fullAccess')).toBe('readOnly')
+  })
+
+  it('总控为完全访问时，Codex 关闭沙箱、Claude 跳过审批，显式选择仍优先', () => {
+    expect(getAccessMode(emptyAccessMemory, draft, 'fullAccess')).toBe('fullAccess')
+    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'claude' }, 'fullAccess')).toBe('bypassPermissions')
+    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'pi' }, 'fullAccess')).toBe('default')
+    expect(getAccessMode(rememberAccessMode(emptyAccessMemory, session, 'readOnly'), session, 'fullAccess')).toBe('readOnly')
+  })
+
   it('在草稿转会话后保留选择，新草稿、其他目标和其他会话使用默认权限', () => {
     const withDraft = rememberAccessMode(emptyAccessMemory, draft, 'fullAccess')
     const mode = getAccessMode(withDraft, draft)

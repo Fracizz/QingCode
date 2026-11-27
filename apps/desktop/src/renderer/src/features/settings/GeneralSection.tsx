@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import { isGlobalAccessMode } from '@qn/codex-client'
 import { Select } from '../../components/primitives'
-import { Checkbox } from '../../components/ui'
+import { Checkbox, Modal } from '../../components/ui'
 import { DEFAULT_FONT_SIZES, FONT_SIZES, isFontSize } from '../../../../shared/fontSizes'
 import { AUTO_ARCHIVE_DAYS, isAutoArchiveDays } from '../../../../shared/backendApi'
 import { useSettings } from './settingsStore'
@@ -16,6 +17,12 @@ import {
 } from './settingsModel'
 import { SectionHeading, Segmented, SettingRow } from './fields'
 
+const globalAccessOptions = [
+  { value: 'default', label: 'Agent 默认权限' },
+  { value: 'restricted', label: '受限权限' },
+  { value: 'fullAccess', label: '完全访问' },
+]
+
 const archiveOptions = AUTO_ARCHIVE_DAYS.map((days) => ({
   value: String(days),
   label: days === 0 ? '永不' : `${days} 天`,
@@ -25,6 +32,7 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
   const general = useSettings((state) => state.settings.general)
   const update = useSettings((state) => state.update)
   const fontSizes = FONT_SIZE_SETTINGS.filter(({ id }) => visible(id))
+  const [confirmFullAccess, setConfirmFullAccess] = useState(false)
 
   return (
     <div>
@@ -83,13 +91,19 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
       )}
 
       {visible('globalAccessMode') && (
-        <SettingRow title="权限总控" description="使用「继承总控」的会话采用此设置。受限权限对应 Codex 只读、Claude 计划模式。">
+        <SettingRow
+          title="权限总控"
+          description="使用「继承总控」的会话采用此设置，桌面与手机端同步生效。受限权限对应 Codex 只读、Claude 计划模式；完全访问对应 Codex 完全访问、Claude 跳过审批。"
+        >
           <Select
             aria-label="权限总控"
             value={general.globalAccessMode}
-            options={[{ value: 'default', label: 'Agent 默认权限' }, { value: 'restricted', label: '受限权限' }]}
+            options={globalAccessOptions}
             onValueChange={(value) => {
-              if (isGlobalAccessMode(value)) void update({ general: { globalAccessMode: value } })
+              if (!isGlobalAccessMode(value) || value === general.globalAccessMode) return
+              // 完全访问会关闭沙箱与审批，切换前需二次确认。
+              if (value === 'fullAccess') setConfirmFullAccess(true)
+              else void update({ general: { globalAccessMode: value } })
             }}
           />
         </SettingRow>
@@ -136,6 +150,29 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
             </SettingRow>
           ))}
         </section>
+      )}
+      {confirmFullAccess && (
+        <Modal
+          title="将权限总控设为完全访问？"
+          description="所有「继承总控」的会话（含手机端发起的）将关闭沙箱与审批：Agent 能直接访问会话所在主机的文件、运行命令并访问网络。"
+          onClose={() => setConfirmFullAccess(false)}
+          width="max-w-md"
+          footer={(
+            <div className="flex justify-end gap-2">
+              <button type="button" className="qn-button-subtle" onClick={() => setConfirmFullAccess(false)}>取消</button>
+              <button
+                type="button"
+                className="qn-button bg-qn-danger hover:bg-qn-danger"
+                onClick={() => {
+                  setConfirmFullAccess(false)
+                  void update({ general: { globalAccessMode: 'fullAccess' } })
+                }}
+              >启用</button>
+            </div>
+          )}
+        >
+          已单独指定访问模式的会话不受影响。
+        </Modal>
       )}
     </div>
   )
