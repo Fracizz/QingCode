@@ -52,6 +52,8 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
   private boolean desktopConnectionActive;
   private boolean connectionServiceStarted;
   private boolean backPending;
+  /** 状态栏高度（CSS px）：页面画到状态栏下面，由前端自己留出这段空白。 */
+  private float safeTopCss;
   private final AtomicReference<String> pendingPairing = new AtomicReference<>();
 
   @Override protected void onCreate(Bundle saved) {
@@ -263,9 +265,19 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
       // 键盘、刘海和系统栏由原生层合并，WebView 只计算实际可用大小。
       Insets safe = windowInsets.getInsets(WindowInsets.Type.systemBars()
         | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
-      view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+      // 顶部不由原生让位：WebView 延伸到状态栏下方（沉浸式），高度交给页面的 --qn-safe-top。
+      view.setPadding(safe.left, 0, safe.right, safe.bottom);
+      Insets top = windowInsets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+      safeTopCss = top.top / getResources().getDisplayMetrics().density;
+      pushSafeTop();
       return WindowInsets.CONSUMED;
     });
+  }
+
+  private void pushSafeTop() {
+    if (destroyed || webView == null) return;
+    String value = String.format(Locale.ROOT, "%.2fpx", safeTopCss);
+    webView.evaluateJavascript("document.documentElement.style.setProperty('--qn-safe-top'," + Json.quote(value) + ")", null);
   }
 
   private void configureWebView(WebView view) {
@@ -298,6 +310,15 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
       @Override public boolean shouldOverrideUrlLoading(WebView current, WebResourceRequest request) {
         if (!request.isForMainFrame()) return true;
         return overrideUrl(request.getUrl().toString());
+      }
+
+      // 每次页面加载后重新下发状态栏高度，原生侧的 insets 回调可能早于页面就绪。
+      @Override public void onPageCommitVisible(WebView current, String url) {
+        pushSafeTop();
+      }
+
+      @Override public void onPageFinished(WebView current, String url) {
+        pushSafeTop();
       }
 
       @Override public WebResourceResponse shouldInterceptRequest(WebView current, String url) {

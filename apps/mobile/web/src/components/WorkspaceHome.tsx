@@ -11,6 +11,7 @@ import {
   isWorkspaceTabDoubleTap,
   openWorkspaceThread,
   orderWorkspaceProjects,
+  placeWorkspaceProject,
   renameCachedThread,
   recentThreadStatus,
   threadPreviewLine,
@@ -30,6 +31,7 @@ import { AgentTag, Badge, Button, Dialog, Empty, Loading, LoadingIcon, Note, She
 import { NewSessionButton } from './NewSessionButton'
 import { ProjectTools } from './ProjectTools'
 import { PullToRefresh } from './PullToRefresh'
+import { SortableList } from './SortableList'
 
 const tabs: { id: WorkspaceTab; title: string }[] = [
   { id: 'sessions', title: '会话' },
@@ -298,14 +300,14 @@ export function WorkspaceThreadRow({
               activate()
             }}>
             <span className="qn-row-copy">
-              <span className="qn-list-primary">
+              <span className="qn-list-primary qn-thread-title">
                 <span className="truncate">{thread.title}</span>
                 {preference?.pinned && <Pin size={13} className="inline shrink-0 text-qn-muted" aria-label="已置顶" />}
               </span>
               {preview && <span className="qn-subtitle block">{preview}</span>}
               <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="qn-subtitle">{formatTime(thread.updatedAt)}</span>
                 <AgentTag agent={thread.agent} />
+                <span className="qn-subtitle">{formatTime(thread.updatedAt)}</span>
               </span>
             </span>
             {/* 空闲、已完成、已中断是常态，不再逐行挂徽标；只标出需要注意的状态。 */}
@@ -358,11 +360,11 @@ export function WorkspaceThreadRow({
   )
 }
 
-export function WorkspaceProjectRow({ project, target, onOpen, orderedProjects }: {
+export function WorkspaceProjectRow({ project, target, onOpen, sortable = false }: {
   project: Project
   target?: Target
   onOpen: () => void
-  orderedProjects?: Project[]
+  sortable?: boolean
 }) {
   return (
     <div className="qn-row qn-list-row">
@@ -373,7 +375,7 @@ export function WorkspaceProjectRow({ project, target, onOpen, orderedProjects }
         </span>
       </button>
       {target && <NewSessionButton project={project} iconOnly className="qn-list-action" />}
-      <ProjectTools project={project} compact orderedProjects={orderedProjects} />
+      <ProjectTools project={project} compact sortable={sortable} />
     </div>
   )
 }
@@ -468,12 +470,8 @@ export function WorkspaceHome() {
       )}
       {projectList?.loading && projects.length === 0 ? <Loading text="正在读取项目…" /> : (
         <>
-          <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1">
-              <WorkspaceSearch label={isSessions ? '搜索会话或项目' : '搜索项目、主机或路径'} query={query} onChange={setQuery} />
-            </div>
-            {isSessions && <NewSessionButton projects={projects} iconOnly primary className="qn-header-icon" />}
-          </div>
+          {/* 新建会话从各项目分组标题的 + 进入，顶部不再放全局入口。 */}
+          <WorkspaceSearch label={isSessions ? '搜索会话或项目' : '搜索项目、主机或路径'} query={query} onChange={setQuery} />
           {!isSessions && (
             <>
               <button type="button" className="qn-row qn-project-filter"
@@ -527,10 +525,11 @@ export function WorkspaceHome() {
                 <div className="qn-group-heading">
                   <h2><ProjectOrigin target={target} /></h2>
                 </div>
-                <div className="qn-list-group">
-                  {rows.map((project) => <WorkspaceProjectRow key={project.id} project={project} target={target}
-                    orderedProjects={searching ? undefined : rows} onOpen={() => void showWorkspaceProject(project)} />)}
-                </div>
+                <SortableList items={rows} itemKey={(project) => project.id} disabled={searching || !desktopId}
+                  label={`${target.name} 的项目`} onMove={(from, to) => desktopId && placeWorkspaceProject(desktopId, rows, from, to)}>
+                  {(project) => <WorkspaceProjectRow project={project} target={target} sortable={!searching && rows.length > 1}
+                    onOpen={() => void showWorkspaceProject(project)} />}
+                </SortableList>
               </section>
             )) : (
               <Empty>

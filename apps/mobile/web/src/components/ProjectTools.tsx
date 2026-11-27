@@ -1,4 +1,4 @@
-import { Archive, ArrowDown, ArrowUp, Ellipsis, FileText, Folder, RotateCw, Terminal } from 'lucide-react'
+import { Archive, Ellipsis, FileText, Folder, RotateCw, Terminal } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { callDevice } from '../client'
 import { getWindowNativePort, NativeRequestError } from '../native'
@@ -7,20 +7,15 @@ import { friendlyError } from '../state'
 import { useApp } from '../store'
 import type { Project } from '../types'
 import { formatBytes } from '../viewer'
-import { moveWorkspaceProject, threadPreferenceKey, useWorkspace, useWorkspacePreferences } from '../workspace'
+import { threadPreferenceKey, useWorkspace, useWorkspacePreferences } from '../workspace'
 import { AgentTag, Button, Dialog, Empty, Loading, Note, SheetAction } from './ui'
 
 const CHUNK_BYTES = 256 * 1024
 const TerminalPanel = lazy(async () => ({ default: (await import('./TerminalPanel')).TerminalPanel }))
 
-export function ProjectTools({ project, compact = false, orderedProjects }: { project: Project; compact?: boolean; orderedProjects?: Project[] }) {
+export function ProjectTools({ project, compact = false, sortable = false }: { project: Project; compact?: boolean; sortable?: boolean }) {
   const [tool, setTool] = useState<'files' | 'terminal' | 'menu' | 'archive' | null>(null)
   const desktopId = useApp((s) => s.activeId)
-  const index = orderedProjects?.findIndex(({ id }) => id === project.id) ?? -1
-  function move(offset: -1 | 1) {
-    if (desktopId && orderedProjects) moveWorkspaceProject(desktopId, project, orderedProjects, offset)
-    setTool(null)
-  }
   return (
     <>
       {!compact && (
@@ -39,11 +34,8 @@ export function ProjectTools({ project, compact = false, orderedProjects }: { pr
             {compact && <SheetAction icon={Folder} onClick={() => setTool('files')}>浏览项目文件</SheetAction>}
             <SheetAction icon={Terminal} onClick={() => setTool('terminal')}>打开项目终端</SheetAction>
             <SheetAction icon={Archive} onClick={() => setTool('archive')}>已归档会话</SheetAction>
-            {index >= 0 && orderedProjects && orderedProjects.length > 1 && <>
-              <SheetAction icon={ArrowUp} disabled={index === 0} onClick={() => move(-1)}>上移项目（仅此手机）</SheetAction>
-              <SheetAction icon={ArrowDown} disabled={index === orderedProjects.length - 1} onClick={() => move(1)}>下移项目（仅此手机）</SheetAction>
-            </>}
           </div>
+          {sortable && <p className="qn-hint mt-2">长按项目行可拖动排序（仅此手机）</p>}
         </Dialog>
       )}
       {tool === 'files' && <ProjectFileBrowser key={`${desktopId}:${project.id}`} desktopId={desktopId} project={project} onClose={() => setTool(null)} />}

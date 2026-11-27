@@ -192,9 +192,6 @@ export function ConnectionsPage() {
           <div className="qn-workspace-context">
             <span className="text-[13px]">{[connections.length ? `已配对 ${connections.length} 台电脑` : '尚未配对电脑', mock && '浏览器预览'].filter(Boolean).join(' · ')}</span>
             <div className="flex">
-              {activeId && eventsConnected && !needsRepair[activeId] && (
-                <Button variant="ghost" className="px-2 text-xs" onClick={() => void activate(activeId, 'targets')}>目标与额度</Button>
-              )}
               {connections.length > 0 && (
                 <Button variant="ghost" className="qn-list-action" onClick={() => void refreshStatuses()} aria-label="刷新连接">
                   <WorkspaceIcon name="refresh" />

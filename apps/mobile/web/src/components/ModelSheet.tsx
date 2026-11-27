@@ -5,6 +5,7 @@ import { sessionKey } from '../agents'
 import { EMPTY_PREFS, effortHint, effortLabel, pickModel, resolveSelection, triggerLabel, visibleModels } from '../models'
 import { useApp } from '../store'
 import type { AgentKind } from '../types'
+import { AgentQuota } from './RateLimitView'
 import { Button, Dialog, Loading, LoadingIcon, Note } from './ui'
 import { WorkspaceSearch } from './WorkspaceHome'
 
@@ -123,6 +124,8 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
               <p className="qn-hint">快速档响应更快，额度消耗更多</p>
             </div>
           )}
+
+          <AgentQuota targetId={targetId} agent={agent} />
 
           <div className="flex gap-2">
             {agent !== 'codex' && (prefs.model || prefs.effort) && (

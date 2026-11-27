@@ -2,6 +2,7 @@ import { isActiveThread, isThreadOutcome, sessionStatus } from '@qn/codex-client
 import { create } from 'zustand'
 import { archivedThreadKey, sessionKey } from './agents'
 import { getGateway } from './client'
+import { reorder } from './sortable'
 import { parseProjects, parseStoredRecord, type ThreadSummary } from './state'
 import { useApp } from './store'
 import type { AgentKind, Project, Target } from './types'
@@ -259,6 +260,14 @@ export function moveWorkspaceProject(desktopId: string, project: Project, rows: 
   ids[index] = neighbor.id
   ids[index + offset] = project.id
   changePreferences(desktopId, (current) => ({ ...current, projectOrders: { ...current.projectOrders, [project.targetId]: ids } }))
+}
+
+/** 长按拖动后保存当前目标下的项目顺序（仅此手机）。 */
+export function placeWorkspaceProject(desktopId: string, rows: Project[], from: number, to: number): void {
+  const moved = rows[from]
+  if (!moved || from === to || !rows[to]) return
+  const ids = reorder(rows.map(({ id }) => id), from, to)
+  changePreferences(desktopId, (current) => ({ ...current, projectOrders: { ...current.projectOrders, [moved.targetId]: ids } }))
 }
 
 export function startWorkspaceObserver(): () => void {

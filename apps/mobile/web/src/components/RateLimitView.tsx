@@ -82,6 +82,33 @@ export function TargetRateLimits({ targetId, targetName, available }: {
   )
 }
 
+/** 对话里模型弹层下方的额度区：只看当前目标、当前 Agent，比在连接页单独开入口更贴近使用场景。 */
+export function AgentQuota({ targetId, agent }: { targetId: string; agent: string }) {
+  const opened = useApp((s) => s.sessions[sessionKey(targetId, 'codex')]?.opened === true)
+  const claude = useApp((s) => s.claudeRateLimits[targetId])
+  if (agent === 'codex') {
+    return (
+      <section className="mb-3" aria-label="Codex 额度">
+        <div className="qn-label">额度</div>
+        <RateLimitDetails targetId={targetId} available={opened} />
+      </section>
+    )
+  }
+  if (agent !== 'claude' || !claude) return null
+  const used = claude.primary?.usedPercent
+  const summary = claude.rateLimitReachedType || claude.spendControlReached
+    ? '已达额度上限'
+    : used != null ? `上报剩余 ${Math.round(remainingQuotaPercent(used))}%` : null
+  if (!summary) return null
+  return (
+    <section className="mb-3 space-y-1 text-sm" aria-label="Claude 额度">
+      <div className="qn-label">额度</div>
+      <p className={toneText(severity(claude))}>{summary}</p>
+      {claude.primary?.resetsAt != null && <p className="text-xs text-qn-muted">{formatReset(claude.primary.resetsAt, Date.now())}</p>}
+    </section>
+  )
+}
+
 function WindowRow({ label, window, now }: { label: string; window: RateLimitWindow; now: number }) {
   const level = severityForPercent(window.usedPercent)
   const remaining = remainingQuotaPercent(window.usedPercent)
