@@ -3,7 +3,6 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import { ContextMenu } from 'radix-ui'
 import {
   Archive,
-  Check,
   ChevronRight,
   CircleAlert,
   CirclePause,
@@ -38,7 +37,7 @@ const statusIcons: Record<ThreadRowStatus, ReactNode> = {
   running: <LoadingIcon />,
   pending: <ShieldAlert size={13} className="text-amber-300" aria-hidden />,
   input: <MessageSquare size={13} className="text-amber-300" aria-hidden />,
-  completed: <Check size={13} className="text-qn-muted" aria-hidden />,
+  completed: <StatusDot className="size-2 bg-emerald-500" />,
   failed: <CircleAlert size={13} className="text-qn-danger" aria-hidden />,
   interrupted: <CirclePause size={13} className="text-qn-muted" aria-hidden />,
   unread: <StatusDot className="size-2 bg-qn-brand" />,
