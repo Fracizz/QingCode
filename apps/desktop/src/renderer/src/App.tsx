@@ -57,7 +57,7 @@ export default function App() {
   const [credentialTarget, setCredentialTarget] = useState<SshTarget | null>(null)
   const [rememberPrefs, setRememberPrefs] = useState<Record<string, boolean>>({})
   const [quickOpen, setQuickOpen] = useState(false)
-  const filesView = useDock((s) => s.view === 'files')
+  const view = useDock((s) => s.view)
   const workspace = useWorkspaceScope()
   const settingsOpen = useSettingsDialog((s) => s.open)
   const autoConnectDone = useRef(false)
@@ -238,15 +238,15 @@ export default function App() {
             onForgetSecret={(id) => void forgetSecret(id)}
           />
         )}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className={filesView ? 'hidden' : 'relative flex min-h-0 min-w-0 flex-1'}>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-end">
+          <div className={view === 'chat' ? 'relative flex min-h-0 min-w-0 flex-1' : 'hidden'}>
             <ChatPanel onConnect={requestConnect} onAddTarget={openAddTarget} />
             <SideChat />
           </div>
-          {filesView && <ProjectFilesView onQuickOpen={() => setQuickOpen(true)} />}
+          {view === 'files' && <ProjectFilesView onQuickOpen={() => setQuickOpen(true)} />}
           <TerminalDock />
         </div>
-        {!filesView && <WorkspaceDock />}
+        {view === 'chat' && <WorkspaceDock />}
       </div>
       {settingsOpen && (
         <SettingsPage

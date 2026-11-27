@@ -112,7 +112,10 @@ export const useFiles = create<FilesState>((set, get) => ({
   handleOpen: (req) => {
     const incoming = createTab(req, `tab-${nextTabId++}`)
     const result = upsertTab(get().tabs, incoming)
-    set({ tabs: result.tabs, activeId: result.id, open: get().open || useDock.getState().view === 'chat' })
+    const { view, setView } = useDock.getState()
+    set({ tabs: result.tabs, activeId: result.id, open: get().open || view !== 'files' })
+    // 收起工作视图后，仍可通过快速打开直接看到文件。
+    if (view === null) setView('chat')
     const tab = result.tabs.find((item) => item.id === result.id)
     if (!tab || !(result.created || result.retry)) return
     if (tab.kind === 'file') startRead(tab.id, false)
