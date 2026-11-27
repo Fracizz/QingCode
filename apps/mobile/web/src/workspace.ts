@@ -4,7 +4,8 @@ import { archivedThreadKey, sessionKey } from './agents'
 import { getGateway } from './client'
 import { reorder } from './sortable'
 import { byCreatedAt, parseProjects, parseStoredRecord, type ThreadSummary } from './state'
-import { onThreadArchived, useApp } from './store'
+import { onServerEvt, onThreadArchived, useApp } from './store'
+import { parseUnreadChange, unreadKeysFromList, unreadThreadKey } from './unread'
 import type { AgentKind, Project, Target } from './types'
 
 export type WorkspaceTab = 'sessions' | 'projects' | 'usage' | 'connections'
@@ -356,11 +357,87 @@ export function startWorkspaceObserver(): () => void {
     })
   }).catch(() => undefined)
 
-  const visibleChat = (state: ReturnType<typeof useApp.getState>, thread: WorkspaceThread) =>
+  const visibleChat = (state: ReturnType<typeof useApp.getState>, thread: Pick<WorkspaceThread, 'targetId' | 'agent' | 'id'>) =>
     (typeof document === 'undefined' || document.visibilityState !== 'hidden')
     && state.page === 'chat' && state.selectedTargetId === thread.targetId
     && state.selectedThreadId === thread.id && state.selectedAgent === thread.agent
+  // 未读状态以目标机 daemon 为准，电脑与手机共用：手机看过的会话，电脑上也算已读。
+  // 记录哪些目标的 daemon 支持共享未读；旧版 daemon 仍按手机本地规则标记。
+  const sharedUnread = new Set<string>()
+  const targetKey = (desktopId: string, targetId: string) => JSON.stringify([desktopId, targetId])
+  const unreadReq = (targetId: string, method: string, params: unknown): Promise<unknown> => {
+    const state = useApp.getState()
+    const conn = state.connections.find((item) => item.id === state.activeId)
+    if (!conn) return Promise.reject(new Error('no connection'))
+    return getGateway().rpc<unknown>(conn, 'server.req', { targetId, method, params })
+  }
+  const markRead = (targetId: string, agent: AgentKind, threadId: string) => {
+    void unreadReq(targetId, 'thread.unread.set', { agent, threadId, unread: false }).catch(() => undefined)
+  }
+  /** 只改未读标记，不动排序时间。 */
+  const patchUnread = (desktopId: string, unreadOf: (thread: WorkspaceThread) => boolean | undefined) => {
+    const threads = useWorkspace.getState().threads[desktopId]
+    if (!threads) return
+    let changed = false
+    const next = threads.map((thread) => {
+      const unread = unreadOf(thread)
+      if (unread === undefined || !!thread.unread === unread) return thread
+      changed = true
+      return { ...thread, unread }
+    })
+    if (!changed) return
+    useWorkspace.setState((current) => ({ threads: { ...current.threads, [desktopId]: next } }))
+    persistWorkspace()
+  }
+  const pullUnread = async (desktopId: string, targetId: string) => {
+    let keys: Set<string> | null
+    try {
+      keys = unreadKeysFromList(await unreadReq(targetId, 'thread.unread.list', {}))
+    } catch {
+      return
+    }
+    if (!keys || useApp.getState().activeId !== desktopId) return
+    sharedUnread.add(targetKey(desktopId, targetId))
+    const state = useApp.getState()
+    patchUnread(desktopId, (thread) => {
+      if (thread.targetId !== targetId) return undefined
+      const unread = keys.has(unreadThreadKey(thread.agent, thread.id))
+      if (unread && visibleChat(state, thread)) {
+        markRead(thread.targetId, thread.agent, thread.id)
+        return false
+      }
+      return unread
+    })
+  }
+  // 正在查看的会话变化（或回到前台）时回写已读，电脑端随之清除未读。
+  let viewedKey: string | null = null
+  const syncViewed = () => {
+    const state = useApp.getState()
+    const { selectedTargetId: targetId, selectedThreadId: threadId, selectedAgent: agent } = state
+    const visible = !!state.activeId && !!targetId && !!threadId && !!agent
+      && visibleChat(state, { targetId, agent, id: threadId })
+    const key = visible ? JSON.stringify([state.activeId, targetId, agent, threadId]) : null
+    if (key === viewedKey) return
+    viewedKey = key
+    if (visible) markRead(targetId, agent, threadId)
+  }
+  const stopServerEvt = onServerEvt((desktopId, targetId, name, payload) => {
+    if (name !== 'thread.unread') return
+    const change = parseUnreadChange(payload)
+    if (!change) return
+    sharedUnread.add(targetKey(desktopId, targetId))
+    const thread = { targetId, agent: change.agent, id: change.threadId }
+    if (change.unread && visibleChat(useApp.getState(), thread)) {
+      markRead(targetId, change.agent, change.threadId)
+      return
+    }
+    patchUnread(desktopId, (item) => (
+      item.targetId === targetId && item.agent === change.agent && item.id === change.threadId ? change.unread : undefined
+    ))
+  })
+
   const clearViewed = () => {
+    syncViewed()
     const state = useApp.getState()
     const desktopId = state.activeId
     if (!desktopId) return
@@ -408,6 +485,13 @@ export function startWorkspaceObserver(): () => void {
     }
 
     if (!now.activeId) return
+    syncViewed()
+    if (now.targetStates !== before.targetStates || now.activeId !== before.activeId) {
+      for (const [id, value] of Object.entries(now.targetStates)) {
+        const wasReady = now.activeId === before.activeId && before.targetStates[id]?.state === 'ready'
+        if (value.state === 'ready' && !wasReady) void pullUnread(now.activeId, id)
+      }
+    }
     const { activeId: desktopId, selectedTargetId: targetId, selectedProjectId: projectId } = now
     const listed = targetId && projectId && now.threads !== before.threads
       ? now.threads.map((thread): WorkspaceThread => ({ ...thread, targetId, projectId, activity: thread.activity }))
@@ -426,7 +510,9 @@ export function startWorkspaceObserver(): () => void {
         // 只清未读，不动排序时间（0 在合并时取较大值会被忽略）。
         snapshots.push({ ...cached, unread: false, updatedAt: 0 })
       } else if (!currentChat && changed && isThreadOutcome(activity)) {
-        snapshots.push({ ...cached, activity, unread: true, updatedAt: Date.now() })
+        // 支持共享未读的目标由 daemon 广播未读；这里只把会话提到前面，避免电脑已看过的又标回未读。
+        const unread = sharedUnread.has(targetKey(desktopId, cached.targetId)) ? cached.unread : true
+        snapshots.push({ ...cached, activity, unread, updatedAt: Date.now() })
       }
     }
 
@@ -447,6 +533,7 @@ export function startWorkspaceObserver(): () => void {
     stop = true
     unsubscribe()
     stopArchive()
+    stopServerEvt()
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', clearViewed)
   }
 }

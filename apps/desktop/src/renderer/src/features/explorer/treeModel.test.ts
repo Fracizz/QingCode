@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  toWorkspaceRoot,
   baseName,
   collapseAll,
   createTreeState,
@@ -34,6 +35,13 @@ const entries = (...items: Array<[string, ExplorerEntry['kind']]>): ExplorerEntr
   items.map(([name, kind]) => ({ name, kind }))
 
 describe('路径运算', () => {
+  it('旧版 SFTP 盘符路径转成 Windows 本机路径', () => {
+    expect(toWorkspaceRoot('/D:/code/qingcode-next')).toBe('D:\\code\\qingcode-next')
+    expect(toWorkspaceRoot('/D:/')).toBe('D:\\')
+    expect(toWorkspaceRoot('D:\\code')).toBe('D:\\code')
+    expect(toWorkspaceRoot('/home/me/repo')).toBe('/home/me/repo')
+  })
+
   it('按 root 推断 POSIX / Windows 风格', () => {
     expect(detectPathStyle('/home/user/repo')).toBe('posix')
     expect(detectPathStyle('C:\\Users\\repo')).toBe('windows')

@@ -2,14 +2,21 @@ import { ShieldAlert } from 'lucide-react'
 import type { ApprovalDecision, ApprovalView } from '@qn/codex-client'
 import { t } from '@qn/codex-client'
 import { Badge } from './ui'
+import { UserInputCard } from './UserInputCard'
 
 export function ApprovalCard({
   approval,
   onDecide,
+  onAnswer,
 }: {
   approval: ApprovalView
   onDecide: (decision: ApprovalDecision) => void
+  /** Agent 提问（item/tool/requestUserInput）的回答；提供时按问答卡片渲染。 */
+  onAnswer?: (answers: Record<string, string[]>) => void
 }) {
+  if (approval.questions && approval.questions.length > 0 && onAnswer) {
+    return <UserInputCard approval={approval} onSubmit={onAnswer} />
+  }
   return (
     <div className="rounded-lg border border-qn-border-strong bg-amber-400/5 p-3">
       <div className="mb-2 flex items-center gap-2">

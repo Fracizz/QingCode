@@ -40,7 +40,9 @@ import { commandMetadata, SkillsCatalog } from './skills'
 import { isolatedClaudeSessionReader, type ClaudeSessionReader } from './sessionReader'
 import { ClaudeStatusLine, statusLineProfile } from './statusLine'
 import { resolveTurnInput, type ContentBlock, type TurnContent } from './userInput'
+import { ASK_USER_TOOL, askUserResult, buildUserInputRequest } from './askUser'
 import { resolveClaudeExecutable, type ClaudeExecutable } from './resolve'
+import { readVersionAsync } from '../versionProbe'
 import {
   activeSdkWindows,
   asRecord,
@@ -125,6 +127,8 @@ interface PendingApproval {
   session: BridgeSession
   resolve(result: PermissionResult): void
   suggestions: unknown
+  /** 提问类请求（AskUserQuestion）把回答转换成 canUseTool 结果；普通审批为空。 */
+  toResult?: (response: unknown) => PermissionResult
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000
@@ -239,11 +243,15 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       typeof options.claudePath === 'string' && options.claudePath.trim()
         ? options.claudePath.trim()
         : undefined
+    // 默认路径下版本号异步读取并与 SDK 加载并行，不用 spawnSync 阻塞 daemon。
     const resolved = this.options.resolve
       ? this.options.resolve(explicit)
-      : resolveClaudeExecutable(explicit)
+      : resolveClaudeExecutable(explicit, { versionOf: () => 'unknown' })
+    const version = this.options.resolve ? Promise.resolve(resolved.version) : readVersionAsync({ command: resolved.path })
     try {
-      this.deps = this.options.deps ?? (await loadSdk())
+      const [deps, detected] = await Promise.all([this.options.deps ?? loadSdk(), version])
+      this.deps = deps
+      resolved.version = detected
     } catch (err) {
       throw new AgentHostError('agent_unavailable', `Claude SDK 加载失败: ${describe(err)}`)
     }
@@ -970,8 +978,11 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private threadStatus(scope: ClaudeScope, threadId: string): ThreadStatus {
     const session = scope.sessions.get(threadId)
     if (!session?.turnId) return { type: 'idle' }
-    const waiting = [...this.approvals.values()].some((pending) => pending.session === session)
-    return { type: 'active', activeFlags: waiting ? ['waitingOnApproval'] : [] }
+    const pending = [...this.approvals.values()].filter((item) => item.session === session)
+    const flags: ('waitingOnApproval' | 'waitingOnUserInput')[] = []
+    if (pending.some((item) => !item.toResult)) flags.push('waitingOnApproval')
+    if (pending.some((item) => item.toResult)) flags.push('waitingOnUserInput')
+    return { type: 'active', activeFlags: flags }
   }
 
   private onCanUseTool(
@@ -988,17 +999,26 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const requestId = `qn-claude-approval-${++this.requestCounter}`
     const toolItem = extra.toolUseID ? session.state.toolItems[extra.toolUseID] : undefined
     const itemId = scalarText(toolItem?.id) || `${session.turnId ?? 'turn'}-tool`
-    const request = buildApprovalRequest({
-      requestId,
-      threadId: session.meta.id,
-      turnId: session.turnId ?? '',
-      itemId,
-      toolName,
-      input,
-      ...(extra.decisionReason ? { reason: extra.decisionReason } : {}),
-    })
+    // AskUserQuestion 是向用户要答案，不是权限审批：完全访问模式下也必须问，并按问答回填。
+    const asking = toolName === ASK_USER_TOOL
+    const request = asking
+      ? buildUserInputRequest({ requestId, threadId: session.meta.id, turnId: session.turnId ?? '', itemId, input })
+      : buildApprovalRequest({
+          requestId,
+          threadId: session.meta.id,
+          turnId: session.turnId ?? '',
+          itemId,
+          toolName,
+          input,
+          ...(extra.decisionReason ? { reason: extra.decisionReason } : {}),
+        })
     return new Promise<PermissionResult>((resolve) => {
-      this.approvals.set(requestId, { session, resolve, suggestions: extra.suggestions })
+      this.approvals.set(requestId, {
+        session,
+        resolve,
+        suggestions: extra.suggestions,
+        ...(asking ? { toResult: (response: unknown) => askUserResult(response, input) } : {}),
+      })
       if (extra.signal) {
         extra.signal.addEventListener(
           'abort',
@@ -1015,7 +1035,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const pending = this.approvals.get(id)
     if (!pending) return
     this.approvals.delete(id)
-    pending.resolve(permissionResult(msg, pending.suggestions))
+    pending.resolve(pending.toResult ? pending.toResult(msg) : permissionResult(msg, pending.suggestions))
     this.notify({
       method: 'serverRequest/resolved',
       params: { requestId: id },

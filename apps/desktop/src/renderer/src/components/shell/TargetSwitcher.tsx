@@ -305,7 +305,7 @@ export function TargetSectionHeader({
   return (
     <div className="pt-1">
       <div
-        className={`group flex items-center gap-1 rounded-lg pl-1 pr-1 ${collapsed ? 'h-9' : 'h-7'} ${menuOpen ? 'bg-qn-hover' : 'hover:bg-qn-hover'}`}
+        className={`group flex h-9 items-center gap-1 rounded-lg pl-1 pr-1 ${menuOpen ? 'bg-qn-hover' : 'hover:bg-qn-hover'}`}
         title={`${targetDisplayName(target)} · ${targetSubtitle(target)}${detail && state !== 'error' ? ` · ${translateMessage(detail)}` : ''}`}
       >
         <button
@@ -318,11 +318,10 @@ export function TargetSectionHeader({
             size={13}
             className={`shrink-0 text-qn-dim transition-transform ${collapsed ? '' : 'rotate-90'}`}
           />
-          {collapsed && <TargetGlyph target={target} state={state} size={22} />}
+          {/* 展开与折叠统一显示主机图标 + 加粗名称，分组布局下主机标题更醒目 */}
+          <TargetGlyph target={target} state={state} size={22} />
           <span
-            className={`min-w-0 flex-1 truncate ${collapsed
-              ? `text-[length:var(--qn-sidebar-list-font-size)] font-semibold ${current ? 'text-qn-text' : 'text-qn-text/80'}`
-              : `text-[length:var(--qn-sidebar-list-detail-font-size)] ${current ? 'text-qn-text' : 'text-qn-muted'}`}`}
+            className={`min-w-0 flex-1 truncate text-[length:var(--qn-sidebar-list-font-size)] font-semibold ${current ? 'text-qn-text' : 'text-qn-text/80'}`}
           >
             {targetDisplayName(target)}
           </span>

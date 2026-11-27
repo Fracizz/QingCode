@@ -37,7 +37,7 @@ export function buildAnnotatedMessage(annotations: readonly Annotation[], input:
 }
 
 export function annotationLabel(count: number): string {
-  return count === 1 ? t('💬 1 条注释') : t('💬 {count} 条注释', { count })
+  return count === 1 ? t('1 条注释') : t('{count} 条注释', { count })
 }
 
 export function annotationExcerpt(annotation: Annotation, limit = 120): string {

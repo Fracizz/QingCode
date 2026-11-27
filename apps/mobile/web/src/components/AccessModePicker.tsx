@@ -1,11 +1,12 @@
 import { accessOptions, type AccessMode, type AccessSelection, t } from '@qn/codex-client'
-import { Check, Shield, ShieldAlert, ShieldCheck, type LucideIcon } from 'lucide-react'
+import { Check, Shield, ShieldCheck, ShieldOff, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
 import type { AgentKind } from '../types'
 import { Button, Dialog } from './ui'
 
 // 三档各用一个盾牌图标：输入框里只放图标省出宽度，文字只在切换弹窗中显示。
-export const MODE_ICONS: Record<AccessMode, LucideIcon> = { default: Shield, auto: ShieldCheck, fullAccess: ShieldAlert }
+// 完全访问用「盾牌划掉」，与电脑端一致。
+export const MODE_ICONS: Record<AccessMode, LucideIcon> = { default: Shield, auto: ShieldCheck, fullAccess: ShieldOff }
 
 export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, supported, disabled, deferred = false, onChange }: {
   agent: AgentKind
@@ -38,7 +39,7 @@ export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, su
   return (
     <>
       <Button variant="ghost" className="qn-access-chip"
-        data-tone={current.warning ? 'danger' : effectiveMode !== 'default' ? 'warn' : undefined}
+        data-tone={current.warning ? undefined : effectiveMode !== 'default' ? 'warn' : undefined}
         aria-label={t('访问模式：{label}', { label })} aria-haspopup="dialog" aria-expanded={open}
         title={label} disabled={disabled} onClick={() => setOpen(true)}>
         <Icon size={18} strokeWidth={1.75} className="shrink-0" aria-hidden />

@@ -133,7 +133,8 @@ function UsageHostCard({ target, onOpen }: { target: Target; onOpen: () => void 
           <span className="qn-usage-host-name">{target.name}</span>
           {target.kind !== 'local' && <span className="qn-subtitle block truncate">{formatAddress(target.host, target.port)}</span>}
         </span>
-        <span className="qn-source-tag" data-kind={target.kind}>{targetKindLabel(target)}</span>
+        {/* 本机目标的名称就是「本机」，再加来源标签只是重复。 */}
+        {target.kind !== 'local' && <span className="qn-source-tag" data-kind={target.kind}>{targetKindLabel(target)}</span>}
         <ChevronRight size={18} className="shrink-0 text-qn-muted" aria-hidden />
       </span>
       {agents.length > 0 ? (
@@ -213,7 +214,7 @@ function UsageDetail({ target, onBack }: { target: Target; onBack: () => void })
   return (
     <>
       <Header title={target.name} onBack={onBack}
-        subtitle={target.kind === 'local' ? t('本机') : `${targetKindLabel(target)} · ${formatAddress(target.host, target.port)}`}
+        subtitle={target.kind === 'local' ? undefined : `${targetKindLabel(target)} · ${formatAddress(target.host, target.port)}`}
         right={(
           <Button variant="ghost" className="qn-header-icon" onClick={refresh} disabled={!available || busy}
             aria-label={busy ? t('刷新中…') : t('刷新')}>

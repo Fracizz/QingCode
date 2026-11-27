@@ -60,7 +60,7 @@ it('打开有新结果的会话后移除未读图标，同时保留当前会话�
 
   try {
     await act(() => render(false))
-    expect(host.querySelector('[aria-label="有新结果"] svg.lucide-check')).toBeTruthy()
+    expect(host.querySelector('[aria-label="有新结果"] svg.lucide-circle-check')).toBeTruthy()
     expect(host.querySelector('button')?.textContent).toBe(thread.title)
 
     await act(() => host.querySelector('button')!.click())

@@ -35,6 +35,7 @@ import { readSystemMetrics } from './systemMetrics'
 import { checkHello } from './validation'
 import { WorkspaceError, findWorkspaceHandler, type WorkspaceContext } from './workspace/index'
 import { terminalManager } from './terminal/index'
+import { UnreadStore } from './unreadStore'
 
 export interface DaemonOptions {
   stateDir?: string
@@ -85,6 +86,18 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   logger.info(`daemon 启动 v${options.version}`) // i18n-ignore: 仅进日志
 
   const clients = new Map<number, ClientSession>()
+  const broadcastAll = (frame: ServerMessage): void => {
+    for (const session of clients.values()) {
+      if (session.hello) session.conn.send(frame)
+    }
+  }
+  // 未读状态由 daemon 统一记录：电脑与手机共用，一端看过另一端也算已读。
+  const unread = new UnreadStore(paths.stateDir, (message) => logger.info(message))
+  const setUnread = (agent: AgentKind, threadId: string, value: boolean): boolean => {
+    if (!unread.set(agent, threadId, value)) return false
+    broadcastAll({ t: 'evt', name: 'thread.unread', payload: { agent, threadId, unread: value } })
+    return true
+  }
   // 每个 agent 的 codex.recv 必须带上自己的 agent（缺省等同 codex），否则客户端无法分流。
   const hubFor = (agent: AgentKind): AgentHostHub => ({
     send(clientId, msg) {
@@ -96,6 +109,11 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
       }
     },
     broadcastRecv(seq, msg) {
+      // 先广播未读事件再转发 turn/completed，正在查看该会话的客户端随后会回写已读。
+      if (msg.method === 'turn/completed') {
+        const params = asRecord(msg.params)
+        if (typeof params?.threadId === 'string' && params.threadId) setUnread(agent, params.threadId, true)
+      }
       const frame: ServerMessage =
         agent === 'codex'
           ? { t: 'codex.recv', seq, msg }
@@ -105,10 +123,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
       }
     },
     broadcastEvt(name, payload) {
-      const frame: ServerMessage = { t: 'evt', name, payload: payload ?? null }
-      for (const session of clients.values()) {
-        if (session.hello) session.conn.send(frame)
-      }
+      broadcastAll({ t: 'evt', name, payload: payload ?? null })
     },
     log(message) {
       logger.info(message)
@@ -226,6 +241,14 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
         }
         case 'codex.status':
           return sendOk(session, id, hosts[agent].status())
+        case 'thread.unread.list':
+          return sendOk(session, id, { threads: unread.list() })
+        case 'thread.unread.set': {
+          if (typeof p?.threadId !== 'string' || !p.threadId || typeof p.unread !== 'boolean') {
+            return sendErr(session, id, 'params', 'thread.unread.set 需要 threadId 与 unread')
+          }
+          return sendOk(session, id, { changed: setUnread(agent, p.threadId, p.unread) })
+        }
         case 'claude.statusline.publish': {
           const directory = parseAgentConfigDir(p?.directory, 'CLAUDE_CONFIG_DIR')
           if (!directory) return sendErr(session, id, 'params', 'claude.statusline.publish 需要配置目录')

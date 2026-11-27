@@ -40,6 +40,7 @@ export function SideChat() {
   const closeSideChat = useCodex((s) => s.closeSideChat)
   const interruptSide = useCodex((s) => s.interruptSide)
   const respondApproval = useCodex((s) => s.respondApproval)
+  const respondUserInput = useCodex((s) => s.respondUserInput)
   const panelRef = useRef<HTMLElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
@@ -182,10 +183,6 @@ export function SideChat() {
                 key={`${sideThreadId}:${entry.key}`}
                 item={entry.item}
                 showStreamingDots={entry.item.id === streamingId}
-                onEdit={sideThreadId && !side.expired && !side.busy ? (text, input) => {
-                  pinned.current = true
-                  return send(text, { targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId, input, sideKey: ownerKey })
-                } : undefined}
               />
             ))}
           </SubagentRpcContext.Provider>
@@ -197,6 +194,10 @@ export function SideChat() {
               onDecide={(decision) => respondApproval(
                 { targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId },
                 approval.requestId, decision,
+              )}
+              onAnswer={(answers) => respondUserInput(
+                { targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId },
+                approval.requestId, answers,
               )}
             />
           ))}

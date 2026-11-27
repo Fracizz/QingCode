@@ -11,6 +11,7 @@ import { chatTimeline, replyPhase, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { changeThreadPreference, threadPreferenceKey, useWorkspacePreferences } from '../workspace'
 import { ApprovalCard } from './ApprovalCard'
+import { UserInputCard } from './UserInputCard'
 import { AccessModePicker } from './AccessModePicker'
 import { Composer } from './Composer'
 import { ContextUsage } from './ContextUsage'
@@ -68,6 +69,7 @@ export function ChatPage() {
   const compactionBlockedReason = useApp(selectedCompactionBlockedReason)
   const compactionStarting = useApp(selectedCompactionStarting)
   const respondApproval = useApp((s) => s.respondApproval)
+  const respondUserInput = useApp((s) => s.respondUserInput)
   const approvalSubmitting = useApp((s) => s.approvalSubmitting)
   const addAnnotation = useApp((s) => s.addAnnotation)
   const updateAnnotation = useApp((s) => s.updateAnnotation)
@@ -423,7 +425,12 @@ export function ChatPage() {
               {turnError && <TurnErrorCard message={turnError} />}
               {approvals.length > 0 && (
                 <div ref={approvalsRef} className="space-y-3">
-                  {approvals.map((approval) => (
+                  {approvals.map((approval) => approval.questions?.length ? (
+                    <UserInputCard key={String(approval.requestId)} approval={approval}
+                      submitting={Boolean(approvalSubmitting[String(approval.requestId)])}
+                      offline={!eventsConnected}
+                      onSubmit={(answers) => void respondUserInput(approval.requestId, answers)} />
+                  ) : (
                     <ApprovalCard key={String(approval.requestId)} approval={approval}
                       agent={selectedAgent} submitting={Boolean(approvalSubmitting[String(approval.requestId)])}
                       offline={!eventsConnected}

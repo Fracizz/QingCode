@@ -18,11 +18,11 @@ describe('额度界面纯逻辑', () => {
 
   it('阈值对应配色类', () => {
     expect(severityTextClass('ok')).toContain('qn-muted')
-    expect(severityTextClass('warn')).toContain('amber')
-    expect(severityTextClass('danger')).toContain('qn-danger')
+    expect(severityTextClass('warn')).toContain('qn-quota-warn')
+    expect(severityTextClass('danger')).toContain('qn-quota-danger')
     expect(severityBarClass('ok')).toBe('bg-qn-accent')
-    expect(severityBarClass('warn')).toBe('bg-amber-400')
-    expect(severityBarClass('danger')).toBe('bg-qn-danger')
+    expect(severityBarClass('warn')).toBe('bg-qn-quota-warn')
+    expect(severityBarClass('danger')).toBe('bg-qn-quota-danger')
   })
 
   it('最后更新时间按本地日历显示', () => {

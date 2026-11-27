@@ -89,7 +89,7 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
           disabled={!targetId}
           onSelect={(event) => {
             event.preventDefault()
-            if (targetId) void probeAgents(targetId)
+            if (targetId) void probeAgents(targetId, true)
           }}
         >
           {t('重新检测')}

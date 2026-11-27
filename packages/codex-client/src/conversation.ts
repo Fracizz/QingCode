@@ -17,6 +17,7 @@ import type {
 import { t, translateMessage } from '../../protocol/src/i18n'
 import type { ThreadHistoryCursor, ThreadHistoryPage } from './api'
 import { describeSubagentItem, subagentThreadMetadata, type SubagentItemView, type SubagentThreadMetadata } from './subagents'
+import { USER_INPUT_METHOD, parseUserInputQuestions, type UserInputQuestion } from './userInput'
 import { isActiveThread, isThreadOutcome, threadActivityFromStatus, type ThreadActivity, type ThreadOutcome } from './threadStatus'
 
 export type ConversationState = { threads: Record<string, ThreadView> }
@@ -87,6 +88,8 @@ export type ApprovalView = {
   detail: string
   method: string
   raw: unknown
+  /** item/tool/requestUserInput 的问题；有值时界面按问答渲染，而不是允许/拒绝。 */
+  questions?: UserInputQuestion[]
 }
 
 export type ApprovalDecision = 'accept' | 'acceptForSession' | 'decline'
@@ -1234,6 +1237,11 @@ export function applyServerRequest(s: ConversationState, r: ServerRequest): Conv
       title = t('权限申请')
       detail = permissionsDetail(params)
       break
+    case USER_INPUT_METHOD:
+      kind = 'other'
+      title = t('Agent 需要你的回答')
+      detail = parseUserInputQuestions(params).map((question) => question.question).join('\n') || t('需要用户处理')
+      break
     default:
       kind = 'other'
       title = t('其他请求')
@@ -1251,6 +1259,7 @@ export function applyServerRequest(s: ConversationState, r: ServerRequest): Conv
     detail,
     method,
     raw: r,
+    ...(method === USER_INPUT_METHOD ? { questions: parseUserInputQuestions(params) } : {}),
   }
 
   return withThread(s, threadId, (thread) => {

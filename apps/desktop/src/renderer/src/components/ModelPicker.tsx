@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { estimatedTurnUsage, t, translateMessage } from '@qn/codex-client'
-import { Check, ChevronDown, Gauge, Zap } from 'lucide-react'
+import { Check, ChevronDown, Zap } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { sessionKey } from '../lib/agents'
 import { formatCost } from '../lib/claudeUsage'
@@ -10,7 +10,6 @@ import {
   effortHint,
   effortLabel,
   filterModels,
-  formatTokens,
   localizeModelDescription,
   resolveSelection,
   triggerLabel,
@@ -252,42 +251,74 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
   )
 }
 
-/** 有窗口大小时显示占用环；Claude 和 pi 只有单轮统计时显示用量详情。 */
-export function ContextRing({ tokenUsage, onClick }: { tokenUsage: unknown; onClick?: () => void }) {
+/** 详情卡用一位小数（126.7k），比输入框旁的 127K 更能看出实时变化。 */
+export function formatTokensPrecise(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  return String(value)
+}
+
+function usageTone(percent: number): string {
+  return percent >= 90 ? 'var(--color-qn-danger)' : percent >= 75 ? 'var(--color-qn-warn)' : 'var(--color-qn-muted)'
+}
+
+/** 悬浮详情卡：标题 + 已用/窗口 + 进度条；只有单轮统计时列出 tokens 与费用。 */
+function ContextUsageCard({ tokenUsage }: { tokenUsage: unknown }) {
   const usage = contextUsage(tokenUsage)
-  if (onClick) {
-    const tone = usage && (usage.percent >= 90 ? 'var(--color-qn-danger)' : usage.percent >= 75 ? 'var(--color-qn-warn)' : 'var(--color-qn-muted)')
-    return <IconButton label={usage ? t('上下文已用 {percent}%', { percent: usage.percent }) : t('查看会话用量')} onClick={onClick}>
-      {usage && tone ? <ProgressRing percent={usage.percent} size={14} color={tone} /> : <Gauge size={15} />}
-    </IconButton>
-  }
-  if (!usage) {
-    const turn = estimatedTurnUsage(tokenUsage)
-    if (!turn) return null
+  const turn = estimatedTurnUsage(tokenUsage)
+  if (usage) {
+    const fill = usage.percent >= 75 ? usageTone(usage.percent) : 'var(--color-qn-text)'
     return (
-      <PopoverRoot>
-        <PopoverTrigger asChild>
-          <IconButton label={t('查看最近一轮用量')}><Gauge size={15} /></IconButton>
-        </PopoverTrigger>
-        <PopoverContent align="end">
-          <div className="min-w-44 space-y-1 px-3 py-2 text-ui">
-            <p className="font-medium">{t('最近上报的单轮用量')}</p>
-            {turn.tokens !== null && <p className="text-qn-muted">{formatTokens(turn.tokens)} tokens</p>}
-            {turn.costUsd !== null && <p className="text-qn-muted">{t('费用估算 {cost}', { cost: formatCost(turn.costUsd) })}</p>}
-          </div>
-        </PopoverContent>
-      </PopoverRoot>
+      <div className="space-y-2.5">
+        <div className="flex items-baseline justify-between gap-6">
+          <span className="text-ui font-medium text-qn-text">{t('上下文')}</span>
+          <span className="text-ui tabular-nums text-qn-muted">
+            {formatTokensPrecise(usage.used)}/{formatTokensPrecise(usage.window)}
+          </span>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-qn-border-strong" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={usage.percent}>
+          <div className="h-full rounded-full transition-[width] duration-300" style={{ width: `${usage.percent}%`, background: fill }} />
+        </div>
+      </div>
     )
   }
-  const tone = usage.percent >= 90 ? 'var(--color-qn-danger)' : usage.percent >= 75 ? 'var(--color-qn-warn)' : 'var(--color-qn-muted)'
+  if (turn) {
+    return (
+      <div className="space-y-1">
+        <p className="text-ui font-medium text-qn-text">{t('最近上报的单轮用量')}</p>
+        {turn.tokens !== null && <p className="tabular-nums text-qn-muted">{formatTokensPrecise(turn.tokens)} tokens</p>}
+        {turn.costUsd !== null && <p className="text-qn-muted">{t('费用估算 {cost}', { cost: formatCost(turn.costUsd) })}</p>}
+      </div>
+    )
+  }
+  return <p className="text-qn-muted">{t('暂无会话用量')}</p>
+}
+
+/**
+ * 用量统一显示为圆环，随 tokenUsage 实时更新；悬浮显示详情卡，点击打开会话用量面板。
+ * 没有窗口大小（Claude、pi 只有单轮统计）时只画底环。
+ */
+export function ContextRing({ tokenUsage, onClick }: { tokenUsage: unknown; onClick?: () => void }) {
+  const usage = contextUsage(tokenUsage)
+  const turn = usage ? null : estimatedTurnUsage(tokenUsage)
+  // 草稿没有会话也没有用量时不占位置。
+  if (!onClick && !usage && !turn) return null
+  const label = usage ? t('上下文已用 {percent}%', { percent: usage.percent })
+    : turn ? t('查看最近一轮用量') : t('查看会话用量')
+  const ring = <ProgressRing percent={usage?.percent ?? 0} size={18} color={usage ? usageTone(usage.percent) : 'var(--color-qn-muted)'} />
+  const card = <ContextUsageCard tokenUsage={tokenUsage} />
+  const cardClass = 'w-64 rounded-xl px-3.5 py-3'
+  if (onClick) {
+    return (
+      <Tip label={card} side="top" align="end" className={cardClass}>
+        <IconButton label={label} tooltip={false} onClick={onClick}>{ring}</IconButton>
+      </Tip>
+    )
+  }
   return (
-    <Tip label={t('上下文已用 {percent}% · {used} / {window} tokens', {
-      percent: usage.percent,
-      used: formatTokens(usage.used),
-      window: formatTokens(usage.window),
-    })}>
-      <span className="inline-flex h-8 w-8 items-center justify-center" role="img" aria-label={t('上下文已用 {percent}%', { percent: usage.percent })}>
-        <ProgressRing percent={usage.percent} size={14} color={tone} />
+    <Tip label={card} side="top" align="end" className={cardClass}>
+      <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg" role="img" aria-label={label} tabIndex={0}>
+        {ring}
       </span>
     </Tip>
   )

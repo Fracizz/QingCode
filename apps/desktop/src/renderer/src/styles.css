@@ -17,7 +17,9 @@
   /* 可输入控件（输入框、对话输入框、复选框）的外框：与所在表面对比度 ≥ 3:1，强光下也能看清边界。见 docs/design/contrast.md。 */
   --color-qn-outline: #7a7a7a;
   --color-qn-outline-hover: #858585;
-  --color-qn-composer: #262626;
+  /* 对话输入框：参考 Codex，底色比页面亮一档、外框取 3:1 下限（#181818 上 3.19），不再显得发亮。 */
+  --color-qn-composer: #2a2a2a;
+  --color-qn-composer-outline: #686868;
   --color-qn-text: #e6e6e6;
   /* 对话正文：原 #d0d0d0 在 #181818 上偏灰、发虚，提亮到接近界面文字，只比 qn-text 暗一点避免纯白刺眼。 */
   --color-qn-prose: #e2e2e2;
@@ -32,6 +34,9 @@
   --color-qn-ok: #6fcf8f;
   --color-qn-warn: #e2b55d;
   --color-qn-danger: #ff6b63;
+  /* 额度提醒：常驻在底栏，比通用警告/危险色降低饱和度，避免长时间刺眼；文字对比度仍 ≥ 4.5:1。 */
+  --color-qn-quota-warn: #cdb27e;
+  --color-qn-quota-danger: #e0928b;
   /* 叠加色基准：半透明高亮（bg-qn-fg/5 之类）在深色主题叠白、浅色主题叠黑。 */
   --color-qn-fg: #ffffff;
   /* 内嵌凹槽（日志、指纹、列表框）：比所在卡片暗一点。 */
@@ -142,6 +147,7 @@ html[data-theme="gray"] {
   --color-qn-outline: #838489;
   --color-qn-outline-hover: #9b9ca1;
   --color-qn-composer: #37383b;
+  --color-qn-composer-outline: #76777b;
   --color-qn-text: #ececec;
   --color-qn-prose: #e8e8e8;
   --color-qn-bubble: #424347;
@@ -172,6 +178,7 @@ html[data-theme="light"] {
   --color-qn-outline: #858585;
   --color-qn-outline-hover: #5f5f5f;
   --color-qn-composer: #ffffff;
+  --color-qn-composer-outline: #8f8f8f;
   --color-qn-text: #1a1a1a;
   --color-qn-prose: #242424;
   --color-qn-bubble: #efefef;
@@ -182,6 +189,8 @@ html[data-theme="light"] {
   --color-qn-ok: #18864b;
   --color-qn-warn: #9a5b00;
   --color-qn-danger: #d1242f;
+  --color-qn-quota-warn: #8a6420;
+  --color-qn-quota-danger: #a5443d;
   --color-qn-fg: #000000;
   --color-qn-inset: rgb(0 0 0 / 0.035);
   --color-qn-code: #f6f8fa;
@@ -739,5 +748,36 @@ body.qn-resizing webview {
   .qn-dialog,
   .qn-float {
     animation: none !important;
+  }
+}
+
+/* 命令运行中：终端图标的光标缓慢闪烁，提示符轻微呼吸，节奏放慢避免抢眼。 */
+@media (prefers-reduced-motion: no-preference) {
+  .qn-terminal-cursor {
+    animation: qn-terminal-cursor 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
+
+  .qn-terminal-prompt {
+    animation: qn-terminal-prompt 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
+}
+
+@keyframes qn-terminal-cursor {
+  0%, 100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.15;
+  }
+}
+
+@keyframes qn-terminal-prompt {
+  0%, 100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.6;
   }
 }

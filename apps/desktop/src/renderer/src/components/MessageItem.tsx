@@ -1,7 +1,7 @@
 import { Children, isValidElement, memo, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Terminal, Wand2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Wand2 } from 'lucide-react'
 import { backgroundTaskLabel, formatReplyTime, getLocale, localReplyDay, splitMarkdownBlocks, subscribeToReplyDay, t, workSummaryLabel, type ItemView, type ThreadActivity, type UserInput } from '@qn/codex-client'
 import { basename, editUserText, embeddedImageLabel, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
@@ -15,6 +15,7 @@ import { CodeBlock } from './CodeBlock'
 import { RenderBoundary } from './RenderBoundary'
 import { FeedbackRow } from './FeedbackRow'
 import { LoadingIcon } from './LoadingIcon'
+import { TerminalIcon } from './TerminalIcon'
 import { MessageActions } from './MessageActions'
 import { MessageImage } from './MessageImage'
 import { SubagentDetails } from './SubagentDetails'
@@ -208,7 +209,7 @@ function CommandItem({ item }: { item: Extract<ItemView, { kind: 'command' }> })
   const failed = item.exitCode !== null && item.exitCode !== undefined && item.exitCode !== 0
   return (
     <ToolRow
-      icon={running ? <LoadingIcon /> : <Terminal size={14} />}
+      icon={<TerminalIcon running={running} />}
       summary={
         <>
           {running ? `${t('正在运行')} ` : `${t('已运行')} `}
@@ -358,8 +359,6 @@ type MessageItemProps = {
   replyTimeInSummary?: boolean
   onFork?: (itemId: string) => (() => void) | undefined
   onEdit?: (text: string, input: UserInput[]) => Promise<boolean>
-  editRestartsConversation?: boolean
-  showRevisionMarker?: boolean
 }
 
 export const MessageItem = memo(function MessageItem(props: MessageItemProps) {
@@ -367,11 +366,10 @@ export const MessageItem = memo(function MessageItem(props: MessageItemProps) {
   return <div data-chat-item={props.item.id} className="contents"><MessageContent {...props} /></div>
 })
 
-function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, onEdit, editRestartsConversation, showRevisionMarker }: MessageItemProps) {
+function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, onEdit }: MessageItemProps) {
   switch (item.kind) {
     case 'user':
-      return <UserMessage item={item} onEdit={item.pending ? undefined : onEdit}
-        editRestartsConversation={editRestartsConversation} showRevisionMarker={showRevisionMarker} />
+      return <UserMessage item={item} onEdit={item.pending ? undefined : onEdit} />
     case 'agent':
       return item.text.trim()
         ? <AgentMessage id={item.id} text={item.text} streaming={item.streaming === true}
@@ -423,10 +421,12 @@ function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, o
 // 展开状态交给原生 details，避免步骤状态变化时打断用户查看。
 export const ToolGroup = memo(function ToolGroup({ items }: { items: ItemView[] }) {
   const running = isGroupRunning(items)
+  // 摘要以「已运行 N 条命令」开头时用终端图标，运行中由图标自身的缓慢动效表示。
+  const hasCommands = items.some((item) => item.kind === 'command')
   return (
     <ActivityDetails summary={
       <>
-        {running ? <LoadingIcon /> : <ListChecks size={14} />}
+        {hasCommands ? <TerminalIcon running={running} /> : running ? <LoadingIcon /> : <ListChecks size={14} />}
         <span className="min-w-0 truncate">{summarizeTools(items)}</span>
       </>
     }>
@@ -462,11 +462,10 @@ export const WorkGroup = memo(function WorkGroup({
 })
 
 /** 用户消息：右侧灰色气泡；图片缩略图与附件/技能标签放在气泡上方。 */
-function UserMessage({ item, onEdit, editRestartsConversation, showRevisionMarker }: {
+function UserMessage({ item, onEdit }: {
   item: Extract<ItemView, { kind: 'user' }>
+  /** 从这条消息开始重来：删除它及之后的历史，再发送修改后的内容。 */
   onEdit?: (text: string, input: UserInput[]) => Promise<boolean>
-  editRestartsConversation?: boolean
-  showRevisionMarker?: boolean
 }) {
   const [edit, setEdit] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -489,7 +488,6 @@ function UserMessage({ item, onEdit, editRestartsConversation, showRevisionMarke
   const canSave = Boolean(onEdit) && edit !== null && (hasText || Boolean(item.inputExtras?.length))
   const sentAt = item.sentAt ? new Date(item.sentAt) : null
   const timestamp = sentAt && Number.isFinite(sentAt.getTime()) ? sentAt : null
-  const submitLabel = editRestartsConversation ? t('发送修订') : t('重新发送')
 
   const resend = async () => {
     if (!onEdit || edit === null || !canSave || saving) return
@@ -507,13 +505,6 @@ function UserMessage({ item, onEdit, editRestartsConversation, showRevisionMarke
 
   return (
     <div className="flex flex-col items-end gap-1.5">
-      {showRevisionMarker && (
-        <div className="mb-2 flex w-full items-center gap-3 text-ui-sm text-qn-muted">
-          <span className="h-px flex-1 bg-qn-border" aria-hidden="true" />
-          <span>{t('从这里重新开始')}</span>
-          <span className="h-px flex-1 bg-qn-border" aria-hidden="true" />
-        </div>
-      )}
       {item.steering && <span className="text-ui-sm text-qn-muted">
         {item.steering === 'nextTurn' ? t('引导 · 下一轮') : t('引导 · 当前轮')}
       </span>}
@@ -569,8 +560,9 @@ function UserMessage({ item, onEdit, editRestartsConversation, showRevisionMarke
           />
           {editFailed && <div role="status" className="px-1 text-ui-sm text-qn-warn">{t('发送失败，修改已保留')}</div>}
           <div className="mt-2 flex flex-wrap justify-end gap-1.5 text-ui-sm">
-            <button type="button" disabled={saving} className="rounded-md px-2 py-1 text-qn-muted hover:bg-qn-hover" onClick={() => setEdit(null)}>{t('取消')}</button>
-            <button type="submit" disabled={!canSave || saving} className="rounded-md bg-qn-text px-2 py-1 text-qn-bg disabled:opacity-40">{saving ? t('提交中…') : submitLabel}</button>
+            {/* 两个按钮同为 1px 边框，保证高度一致；取消用描边样式与主按钮区分。 */}
+            <button type="button" disabled={saving} className="rounded-md border border-qn-outline px-2.5 py-1 text-qn-text hover:border-qn-outline-hover hover:bg-qn-hover disabled:opacity-40" onClick={() => setEdit(null)}>{t('取消')}</button>
+            <button type="submit" disabled={!canSave || saving} className="rounded-md border border-transparent bg-qn-text px-2.5 py-1 text-qn-bg disabled:opacity-40">{saving ? t('提交中…') : t('重新发送')}</button>
           </div>
         </form>
       ) : parsed.text.trim() && (

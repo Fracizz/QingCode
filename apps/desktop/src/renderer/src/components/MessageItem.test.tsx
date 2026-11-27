@@ -127,11 +127,11 @@ it('编辑消息时保留输入框的选区和焦点，并用修订后的文字�
   const onEdit = vi.fn().mockResolvedValue(true)
   const item: ItemView = { kind: 'user', id: 'message', text: '五分钟刷一次' }
   try {
-    await act(() => root.render(<div onMouseUp={onMessageMouseUp}><MessageItem item={item} onEdit={onEdit} editRestartsConversation /></div>))
+    await act(() => root.render(<div onMouseUp={onMessageMouseUp}><MessageItem item={item} onEdit={onEdit} /></div>))
     await act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑消息"]')!.click())
     const area = host.querySelector('textarea')!
     const send = host.querySelector<HTMLButtonElement>('button[type="submit"]')!
-    expect(send.textContent).toBe('发送修订')
+    expect(send.textContent).toBe('重新发送')
     expect(document.activeElement).toBe(area)
     expect(send.disabled).toBe(false)
 
@@ -162,17 +162,13 @@ it('编辑消息时保留输入框的选区和焦点，并用修订后的文字�
   }
 })
 
-it('把重新开始标记显示在修订消息的上方', async () => {
+it('没有 onEdit 时不显示编辑按钮', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.createElement('div')
   const root = createRoot(host)
   try {
-    await act(() => root.render(<>
-      <MessageItem item={{ kind: 'user', id: 'earlier', text: '前一条消息' }} />
-      <MessageItem item={{ kind: 'user', id: 'revised', text: '修订后的消息' }} showRevisionMarker />
-    </>))
-    expect(host.textContent).toContain('前一条消息从这里重新开始修订后的消息')
-    expect(host.querySelector('[data-chat-item="revised"]')?.textContent).toContain('从这里重新开始')
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'plain', text: '不支持修订的 Agent' }} />))
+    expect(host.querySelector('[aria-label="编辑消息"]')).toBeNull()
   } finally {
     await act(() => root.unmount())
     vi.unstubAllGlobals()
@@ -250,7 +246,7 @@ it('没有摘要时只显示进行中的思考提示，收到摘要后可以展�
   }
 })
 
-it('工具组和处理提示共用加载圆环，停止后显示用时', async () => {
+it('处理提示用加载圆环，命令组用闪烁的终端图标，停止后显示用时', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.createElement('div')
   const root = createRoot(host)
@@ -263,7 +259,8 @@ it('工具组和处理提示共用加载圆环，停止后显示用时', async (
     </>))
     const reference = host.querySelector('svg')!.outerHTML
     expect(reference).toContain('viewBox="0 0 12 12"')
-    expect(host.querySelector('summary svg')?.outerHTML).toBe(reference)
+    // 命令组改用终端图标，运行中光标闪烁表示进行中。
+    expect(host.querySelector('summary svg .qn-terminal-cursor')).not.toBeNull()
     expect(host.querySelector('[role="status"]')?.previousElementSibling?.querySelector('svg')?.outerHTML).toBe(reference)
 
     await act(() => root.render(<>
@@ -271,6 +268,8 @@ it('工具组和处理提示共用加载圆环，停止后显示用时', async (
       <TurnStopped durationMs={0} />
     </>))
     expect(host.innerHTML).not.toContain(reference)
+    expect(host.querySelector('summary svg rect')).not.toBeNull()
+    expect(host.querySelector('.qn-terminal-cursor')).toBeNull()
     expect(host.querySelector('[role="status"]')?.textContent).toBe('你已停止，已用时 0秒')
     await act(() => root.render(<TurnStopped durationMs={null} />))
     expect(host.querySelector('[role="status"]')?.textContent).toBe('你已停止')

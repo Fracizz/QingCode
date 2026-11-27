@@ -119,8 +119,8 @@ export default {
   '无法获取目标机 home 目录': 'Cannot get the home directory on the target',
   '附件上传中…': 'Uploading attachments…',
   '有附件上传失败，请移除后再发送': 'Some attachments failed to upload. Remove them before sending',
-  '💬 1 条注释': '💬 1 annotation',
-  '💬 {count} 条注释': '💬 {count} annotations',
+  '1 条注释': '1 annotation',
+  '{count} 条注释': '{count} annotations',
 
   // 手机连接
   '已复制连接信息。含配对密码，请只发给自己': 'Connection info copied. It contains the pairing password, so send it only to yourself',
@@ -230,7 +230,8 @@ export default {
   '无法确认原会话的工作目录': "Cannot determine the original session's working directory",
   '无法确认修订会话已创建': 'Could not confirm the revision session was created',
   '发送修订失败': 'Failed to send the revision',
-  '已创建分支，未确认修订发送成功。{message}': 'Fork created, but sending the revision was not confirmed. {message}',
+  '历史已回退，但修改后的消息未确认发送成功。{message}': 'History was rewound, but sending the edited message was not confirmed. {message}',
+  '当前轮次仍在运行，请先停止再修改消息': 'The current turn is still running. Stop it before editing a message',
   '当前一轮已结束，请选择排队或发送': 'The turn has ended. Queue or send instead',
   '当前一轮已结束或切换，消息已保留': 'The turn ended or changed. Your message was kept',
   '请先确认丢弃侧边对话中未发送的内容': 'Confirm discarding the unsent side chat content first',

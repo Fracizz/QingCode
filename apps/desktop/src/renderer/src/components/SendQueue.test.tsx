@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { subscribeOpen } from '../features/workspace/openers'
 import { pendingSendKey, useCodex } from '../store/codex'
-import { SendQueue } from './SendQueue'
+import { SendQueue, newThreadActions } from './SendQueue'
 
 vi.mock('./ui', () => ({
   IconButton: ({ label, size: _size, tooltip: _tooltip, ...props }: ComponentProps<'button'> & {
@@ -67,4 +67,10 @@ it('排队消息用带标签的缩略图打开图片预览，用图标查看附�
     useCodex.setState(previous)
     vi.unstubAllGlobals()
   }
+})
+
+it('Claude 与 pi 不支持分支，第二个去向换成侧边栏开始', () => {
+  expect(newThreadActions('codex').map(({ mode }) => mode)).toEqual(['start', 'continue'])
+  expect(newThreadActions('claude').map(({ mode }) => mode)).toEqual(['start', 'side'])
+  expect(newThreadActions('pi').map(({ mode }) => mode)).toEqual(['start', 'side'])
 })

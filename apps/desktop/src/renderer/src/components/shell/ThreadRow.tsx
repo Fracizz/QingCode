@@ -3,9 +3,9 @@ import { memo, useEffect, useRef, useState, useSyncExternalStore, type KeyboardE
 import { ContextMenu } from 'radix-ui'
 import {
   Archive,
-  Check,
   ChevronRight,
   CircleAlert,
+  CircleCheck,
   CirclePause,
   Copy,
   Eye,
@@ -25,6 +25,7 @@ import { formatTime, threadKey, threadPreviewText, type ThreadSummary } from '..
 import { formatRelative } from '../../lib/time'
 import { useCodex } from '../../store/codex'
 import { useThreadPrefs } from '../../store/threadPrefs'
+import { markThreadUnread } from '../../store/unreadSync'
 import { AgentIcon } from '../AgentIcon'
 import { LoadingIcon } from '../LoadingIcon'
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, floatSurface, menuItemClass, MenuItemContent, Tip } from '../primitives'
@@ -38,7 +39,8 @@ const statusIcons: Record<ThreadRowStatus, ReactNode> = {
   input: <MessageSquare size={13} className="text-qn-warn" aria-hidden />,
   failed: <CircleAlert size={13} className="text-qn-danger" aria-hidden />,
   interrupted: <CirclePause size={13} className="text-qn-muted" aria-hidden />,
-  unread: <Check size={14} strokeWidth={2.5} className="text-qn-ok" aria-hidden />,
+  // 与失败、中断同用圆形图标，侧栏状态更统一。
+  unread: <CircleCheck size={13} className="text-qn-ok" aria-hidden />,
   opening: <LoadingIcon />,
 }
 
@@ -123,6 +125,20 @@ function onMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
  * 侧栏会话行：点击打开；悬停显示置顶/归档；右键菜单提供重命名、置顶、未读、分支、复制、归档、删除。
  * memo + 只订阅派生出的状态字符串：流式增量只改条目文本，状态不变时行不重渲染。
  */
+/** 新会话还在创建（等 Agent 启动和 thread/start）时的占位行：样式同当前会话，不可操作。 */
+export function PendingThreadRow({ title }: { title: string }) {
+  return (
+    <div
+      role="status"
+      aria-busy="true"
+      className="flex min-h-8 w-full cursor-default items-center gap-(--qn-tree-row-inset) rounded-lg bg-qn-active pl-(--qn-tree-row-inset) pr-2 text-[length:var(--qn-session-font-size)] leading-tight text-qn-text"
+    >
+      <ThreadStatusIcon status="opening" label={t('正在创建会话')} />
+      <span className="min-w-0 flex-1 truncate py-px">{title}</span>
+    </div>
+  )
+}
+
 export const ThreadRow = memo(function ThreadRow({
   thread,
   targetId,
@@ -144,7 +160,6 @@ export const ThreadRow = memo(function ThreadRow({
   const key = threadKey(thread.agent, thread.id)
   const prefs = useThreadPrefs((s) => s.byTarget[targetId])
   const setPinned = useThreadPrefs((s) => s.setPinned)
-  const setUnread = useThreadPrefs((s) => s.setUnread)
   const setLocalName = useThreadPrefs((s) => s.setLocalName)
   const forget = useThreadPrefs((s) => s.forget)
 
@@ -306,7 +321,7 @@ export const ThreadRow = memo(function ThreadRow({
             icon={unread ? <Eye size={14} /> : <EyeOff size={14} />}
             hint="U"
             disabled={current}
-            onSelect={() => setUnread(targetId, key, !unread)}
+            onSelect={() => markThreadUnread(targetId, thread.agent, thread.id, !unread)}
           >
             {unread ? t('标记为已读') : t('标记为未读')}
           </ShortcutItem>

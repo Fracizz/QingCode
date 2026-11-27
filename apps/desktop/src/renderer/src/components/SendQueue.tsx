@@ -1,5 +1,5 @@
 import type { UserInput } from '@qn/codex-client'
-import { CornerDownRight, FileText, GitBranch, Image as ImageIcon, ListEnd, MessageSquarePlus, Pencil, Wand2, X } from 'lucide-react'
+import { CornerDownRight, FileText, GitBranch, Image as ImageIcon, ListEnd, MessageSquarePlus, PanelRightOpen, Pencil, Wand2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { t, translateMessage } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
@@ -34,10 +34,20 @@ function attachmentPreviews(input: readonly UserInput[], targetId: string, cwd: 
   })
 }
 
-const newThreadActions = [
-  { mode: 'start', label: t('新会话开始'), Icon: MessageSquarePlus },
-  { mode: 'continue', label: t('新对话继续'), Icon: GitBranch },
-] as const
+const startAction = { mode: 'start', label: t('新会话开始'), Icon: MessageSquarePlus } as const
+const continueAction = { mode: 'continue', label: t('新对话继续'), Icon: GitBranch } as const
+const sideAction = { mode: 'side', label: t('侧边栏开始'), Icon: PanelRightOpen } as const
+
+/** 能分支的 Agent 在侧边继续当前上下文；Claude / pi 不支持分支，改为在侧边栏开空白侧聊。 */
+export function newThreadActions(agent: AgentKind) {
+  return [startAction, canContinueQueued(agent) ? continueAction : sideAction]
+}
+
+const destinationText = {
+  start: { title: t('新会话开始'), description: t('从空白会话开始，用这条消息作为第一条消息。'), submit: t('在新会话发送') },
+  continue: { title: t('新对话继续'), description: t('继承最后一个已结束轮次的上下文，在右侧打开分支并发送这条消息。'), submit: t('在侧边栏发送') },
+  side: { title: t('侧边栏开始'), description: t('在右侧打开空白侧边对话，用这条消息作为第一条消息；不继承本会话上下文，也不进入会话列表。'), submit: t('在侧边栏发送') },
+}
 
 export function SendQueue({
   targetId, agent, threadId, running, resumeDisabled, compact, allowNewThread, contentWidthClassName = 'max-w-3xl',
@@ -159,7 +169,7 @@ export function SendQueue({
                       <CornerDownRight size={12} aria-hidden />{t('引导')}
                     </button>
                   )}
-                  {!item.sending && allowNewThread && newThreadActions.map(({ mode, label, Icon }) => (
+                  {!item.sending && allowNewThread && newThreadActions(agent).map(({ mode, label, Icon }) => (
                     <IconButton key={mode} label={label} size="sm" onClick={() => {
                       if (holdItem(item.id)) setDestination({ id: item.id, mode })
                     }}>
@@ -216,16 +226,14 @@ export function SendQueue({
       )}
       {destination && (
         <Modal
-          title={continuing ? t('新对话继续') : t('新会话开始')}
-          description={continuing
-            ? t('继承最后一个已结束轮次的上下文，在右侧打开分支并发送这条消息。')
-            : t('从空白会话开始，用这条消息作为第一条消息。')}
+          title={destinationText[destination.mode].title}
+          description={destinationText[destination.mode].description}
           onClose={closeDestination}
           footer={
             <div className="flex justify-end gap-2">
               <button type="button" className="qn-button-subtle" disabled={moving} onClick={closeDestination}>{t('取消')}</button>
               <button type="button" className="qn-button disabled:opacity-40" disabled={!moved || moving || destinationBlocked}
-                onClick={() => void submitDestination()}>{moving ? t('正在发送…') : continuing ? t('在侧边栏发送') : t('在新会话发送')}</button>
+                onClick={() => void submitDestination()}>{moving ? t('正在发送…') : destinationText[destination.mode].submit}</button>
             </div>
           }
         >

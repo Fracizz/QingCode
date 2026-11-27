@@ -48,6 +48,15 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 // ---------- 路径 ----------
 
+/**
+ * 旧版 SSH 项目可能保存 SFTP 形式的 `/D:/code/repo`，Windows 上 readdir/watch 都会失败；
+ * 统一转成盘符路径，与 server 返回的本机路径（监听事件、搜索结果）保持同一形态。
+ */
+export function toWorkspaceRoot(path: string): string {
+  if (!/^\/[A-Za-z]:[\\/]/.test(path)) return path
+  return path.slice(1).replace(/\//g, '\\')
+}
+
 /** 按 root 的形态判断风格；远端可能是 POSIX，本机 Windows 目标可能是盘符或 UNC。 */
 export function detectPathStyle(root: string): PathStyle {
   if (/^[A-Za-z]:[\\/]/.test(root)) return 'windows'

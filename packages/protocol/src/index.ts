@@ -34,6 +34,8 @@ export type {
   ServerMethod,
   ServerParams,
   ServerResult,
+  ThreadUnreadEntry,
+  ThreadUnreadEvent,
 } from './messages'
 
 export { attachFramedStream } from './node'

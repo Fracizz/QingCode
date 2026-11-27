@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, MessageSquareText, Trash2 } from 'lucide-react'
 import { t } from '@qn/codex-client'
 import {
   annotationExcerpt,
@@ -32,6 +32,8 @@ export function AnnotationBar({
         >
           <span className="inline-flex items-center gap-1">
             {open ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
+            {/* 线性图标与界面其他图标一致，不用彩色 emoji。 */}
+            <MessageSquareText size={13} strokeWidth={1.75} aria-hidden />
             {annotationLabel(annotations.length)}
           </span>
           <span className="text-qn-muted">{t('随下一条消息发送')}</span>

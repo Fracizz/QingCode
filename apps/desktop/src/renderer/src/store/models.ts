@@ -12,16 +12,27 @@ import {
   type ModelOption,
   type ModelPrefs,
 } from '../lib/models'
+import { modalityTable, type ModalityTable } from '../features/composer/images'
 
 const PREFS_KEY = 'qn-model-prefs'
 const THREAD_PREFS_KEY = 'qn-thread-model-prefs'
 // 每个会话一条记录；只保留最近改动/发送过的会话，避免本地存储无限增长。
 const THREAD_PREFS_LIMIT = 500
 
-type ModelList = { models: ModelOption[]; loading: boolean; error: string | null; loadedAt?: number }
+type ModelList = {
+  models: ModelOption[]
+  loading: boolean
+  error: string | null
+  loadedAt?: number
+  startedAt?: number
+  /** 同一次 model/list 结果里的输入模态（发图判断用），避免图片能力检测再单独请求一次。 */
+  modalities?: ModalityTable
+}
 
 // pi 等 Agent 在会话进程启动前返回空列表（不为取列表而起进程），空列表隔一段时间允许重取。
 const EMPTY_RETRY_MS = 15_000
+// 强制刷新与刚发出的请求合并：同一次渲染里选择器和图片能力检测会先后触发加载。
+const FORCE_MERGE_MS = 2_000
 
 type ModelsState = {
   /** 按 sessionKey（agent + 目标）缓存：不同目标上的 Codex 版本可能给出不同模型。 */
@@ -34,6 +45,8 @@ type ModelsState = {
   /** 已有会话各自的选择，键见 threadPrefsKey；会话之间互不影响。 */
   threadPrefs: Record<string, ModelPrefs>
   load: (targetId: string, agent: AgentKind, rpc: CodexRpcLike, force?: boolean) => Promise<void>
+  /** 丢弃缓存的列表（如配置目录切换后），下次 load 重新请求。 */
+  invalidate: (targetId: string, agent: AgentKind) => void
   /** 带 threadId 时只改该会话；不带（草稿）时改 agent 默认，作为之后新会话的初始选择。 */
   setPrefs: (agent: AgentKind, patch: Partial<ModelPrefs>, scope?: PrefsScope) => void
   /** 把发送时实际使用的选择记到会话上，之后改默认不会再影响它。 */
@@ -135,7 +148,9 @@ export const useModels = create<ModelsState>((set, get) => ({
     const staleEmpty =
       current !== undefined && current.models.length === 0 && Date.now() - (current.loadedAt ?? 0) > EMPTY_RETRY_MS
     if (!force && (current?.loading || (current && !current.error && !staleEmpty))) return
-    const pending: ModelList = { models: current?.models ?? [], loading: true, error: null }
+    // pi 会话刚启动时的强制刷新必须重新请求（之前的请求可能还在返回启动前的空列表）。
+    if (force && agent !== 'pi' && current?.loading && Date.now() - (current.startedAt ?? 0) < FORCE_MERGE_MS) return
+    const pending: ModelList = { models: current?.models ?? [], modalities: current?.modalities, loading: true, error: null, startedAt: Date.now() }
     set((state) => ({
       lists: { ...state.lists, [key]: pending },
     }))
@@ -144,12 +159,22 @@ export const useModels = create<ModelsState>((set, get) => ({
       ? { lists: { ...state.lists, [key]: result } }
       : state)
     try {
-      const models = toModelOptions(await listModels(rpc))
-      finish({ models, loading: false, error: null, loadedAt: Date.now() })
+      const raw = await listModels(rpc)
+      finish({ models: toModelOptions(raw), modalities: modalityTable(raw), loading: false, error: null, loadedAt: Date.now() })
     } catch (err) {
       const error = err instanceof Error ? translateMessage(err.message) : t('加载模型列表失败')
-      finish({ models: pending.models, loading: false, error })
+      // 失败也记下时间并给出空模态表（按"未声明"允许发图），避免图片能力检测反复重试。
+      finish({ models: pending.models, modalities: pending.modalities ?? { models: {}, defaultModel: null }, loading: false, error, loadedAt: Date.now() })
     }
+  },
+
+  invalidate: (targetId, agent) => {
+    const key = sessionKey(targetId, agent)
+    if (!get().lists[key]) return
+    set((state) => {
+      const { [key]: _removed, ...lists } = state.lists
+      return { lists }
+    })
   },
 
   setPrefs: (agent, patch, scope) => {

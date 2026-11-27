@@ -8,6 +8,7 @@ import {
   applyNotification,
   applyServerRequest,
   approvalResponse,
+  userInputResponse,
   archiveThread,
   claudeQuotaBlocked,
   clearDraftThread,
@@ -93,6 +94,7 @@ import { useAgentPrefs } from './agentPrefs'
 import { overridesFor, prefsFor, useModels } from './models'
 import { useTargets } from './targets'
 import { useThreadPrefs } from './threadPrefs'
+import { markThreadUnread, parseUnreadChange, pullThreadUnread } from './unreadSync'
 import { isCwdUntrusted } from './projectTrust'
 
 type TargetSession = {
@@ -108,11 +110,16 @@ type TargetSession = {
   opening: boolean
   openError: string | null
   openFailure: unknown
+  /** 最近一次 codex.open 失败的时间；自动探测在短时间内不再重试，避免每轮结束都重新拉起不可用的 Agent。 */
+  openFailedAt?: number | null
   agentVersion: string | null
   lastSeq: number | null
 }
 
 export type SendMode = 'queue' | 'steer' | 'immediate'
+
+/** 草稿首条消息已发出、会话 id 还没返回时的侧栏占位。 */
+export type PendingDraftThread = { targetId: string; cwd: string | null; agent: AgentKind; title: string }
 
 type SendOptions = {
   agent?: AgentKind
@@ -226,6 +233,12 @@ export function threadListFor(state: CodexState, targetId: string, cwd: string |
   return state.threadLists[threadListKey({ targetId, cwd })]
 }
 
+/** 该项目下正在创建的草稿会话；id 返回后由 rememberLocalThread 插入真实行，占位随之消失。 */
+export function pendingDraftFor(state: CodexState, targetId: string, cwd: string | null): PendingDraftThread | null {
+  const draft = state.sendingMessage?.draft
+  return draft && draft.targetId === targetId && draft.cwd === cwd ? draft : null
+}
+
 /** 会话所在目录：优先取已加载列表里的线程 cwd，找不到时用当前项目目录。 */
 function threadCwd(state: CodexState, targetId: string, agent: AgentKind, threadId: string): string | null {
   const thread = Object.values(state.threadLists)
@@ -258,7 +271,8 @@ type CodexState = {
   currentAgent: AgentKind
   threadLists: Record<string, ThreadListState>
   sending: boolean
-  sendingMessage: { key: string; preview?: PendingUser } | null
+  /** draft：草稿首条消息正在创建会话（启动 Agent + thread/start），侧栏先显示占位行。 */
+  sendingMessage: { key: string; preview?: PendingUser; draft?: PendingDraftThread } | null
   access: AccessMemory
   composerDraftRevision: number
   pendingSends: Record<string, PendingSend[]>
@@ -269,7 +283,8 @@ type CodexState = {
   init: () => () => void
   setContext: (targetId: string | null, cwd: string | null, refresh?: boolean) => void
   ensureOpen: (targetId: string, agent?: AgentKind) => Promise<boolean>
-  probeAgents: (targetId: string) => Promise<void>
+  /** force 为 true（用户点"重新检测"）时忽略失败冷却，重新打开所有 Agent。 */
+  probeAgents: (targetId: string, force?: boolean) => Promise<void>
   refreshThreads: (scope?: ThreadListScope) => Promise<void>
   listArchivedThreads: (targetId: string) => Promise<{ threads: ThreadSummary[]; error: string | null }>
   restoreThread: (targetId: string, thread: ThreadSummary) => Promise<void>
@@ -309,6 +324,8 @@ type CodexState = {
   compactConversation: () => Promise<boolean>
   interruptSide: () => Promise<void>
   respondApproval: (chat: ChatAddress, requestId: RequestId, decision: ApprovalDecision) => void
+  /** 回答 Agent 的提问（item/tool/requestUserInput）；answers 为空对象表示跳过不答。 */
+  respondUserInput: (chat: ChatAddress, requestId: RequestId, answers: Record<string, string[]>) => void
   /** 归档在缺少原生 RPC 的 Agent 上保存在桌面端。 */
   renameThread: (threadId: string, agent: AgentKind, name: string) => Promise<boolean>
   archiveThread: (threadId: string, agent: AgentKind) => Promise<boolean>
@@ -323,6 +340,8 @@ type CodexState = {
 // 旧版 server 会丢弃超长回包，请求永远等不到响应；超时后释放“打开中”并允许重试。
 const OPEN_THREAD_TIMEOUT_MS = 30_000
 const AUTO_ARCHIVE_INTERVAL_MS = 60 * 60 * 1000
+// 自动探测失败后的冷却时间；用户手动"重新检测"或链路重连时不受限制。
+const OPEN_RETRY_COOLDOWN_MS = 30_000
 
 let subscribed = false
 let offEvents: Array<() => void> = []
@@ -341,6 +360,36 @@ export const useCodex = create<CodexState>((set, get) => {
         patchSide(key, { expired: true, error: side.forked ? t('分支已断开，可重新打开。') : t('侧聊已结束，可重新开始。') })
         pausePending({ targetId, agent, threadId: side.threadId }, side.forked ? t('分支已断开，重新打开后可继续发送') : t('侧聊已结束，重开后可继续发送'))
       }
+    }
+  }
+
+  /** 回复审批/提问类 server request：只处理当前可见会话里仍未决的请求。 */
+  const replyServerRequest = (chat: ChatAddress, requestId: RequestId, build: (approval: ApprovalView) => unknown): void => {
+    const state = get()
+    const main = isMainChat(state, chat)
+    const side = currentSideChat(state)
+    const inSide = side?.open && !side.expired && !side.ending && side.targetId === chat.targetId
+      && side.agent === chat.agent && side.threadId === chat.threadId
+    // 旧卡片可能在切换会话后才触发事件，审批仍须来自当前可见会话。
+    if (openingAnotherChat(state) || (!main && !inSide)) return
+
+    const report = (error: string | null) => main ? set({ error }) : patchSide(currentChatKey(state), { error })
+    const key = sessionKey(chat.targetId, chat.agent)
+    const session = state.sessions[key]
+    const approval = session?.state.threads[chat.threadId]?.pendingApprovals.find((item) => item.requestId === requestId)
+    if (!session || !approval) {
+      report(t('该审批请求已失效'))
+      return
+    }
+    try {
+      session.rpc.respond(approval.requestId, build(approval))
+      patchSession(key, (value) => ({
+        ...value,
+        state: resolveServerRequest(value.state, approval.requestId),
+      }))
+      report(null)
+    } catch (err) {
+      report(friendlyError(err, t('提交审批失败')))
     }
   }
 
@@ -503,6 +552,7 @@ export const useCodex = create<CodexState>((set, get) => {
       opening: false,
       openError: null,
       openFailure: null,
+      openFailedAt: null,
       agentVersion: null,
       lastSeq: null,
     }
@@ -530,7 +580,11 @@ export const useCodex = create<CodexState>((set, get) => {
             && (!side.forked || (side.open && isMainChat(state, parentAddress(side)))),
           )
           if (!isMainChat(state, chat) && !inSide) {
+            // 新版 daemon 会自行标记并广播；这里仅本地补记，兼容旧版 daemon。
             useThreadPrefs.getState().setUnread(targetId, threadKey(agent, chat.threadId), true)
+          } else {
+            // daemon 在 turn 完成时已标记未读；正在查看就回写已读，手机端随之同步。
+            markThreadUnread(targetId, agent, chat.threadId, false)
           }
           if (notification.params.turn.status === 'completed') void flushPending(chat)
           else if (!replacing.has(pendingSendKey(chat))) pausePending(chat, t('上一轮未完成，队列已暂停'), true)
@@ -589,6 +643,8 @@ export const useCodex = create<CodexState>((set, get) => {
         const replaced = session.openedConfig !== null && session.openedConfig.directory !== directory
         if (replaced) {
           expireSides(targetId, agent)
+          // 配置目录换了（账号/提供方可能不同），旧模型列表作废，选择器下次渲染时重新拉取。
+          useModels.getState().invalidate(targetId, agent)
           const prefix = targetAgentKeyPrefix(targetId, agent)
           patchSession(key, (value) => ({ ...value, state: emptyState(), threadsAwaitingResume: new Set() }))
           set((state) => ({
@@ -633,6 +689,7 @@ export const useCodex = create<CodexState>((set, get) => {
           opening: false,
           openError: null,
           openFailure: null,
+          openFailedAt: null,
           agentVersion: version,
           lastSeq,
         }))
@@ -651,6 +708,7 @@ export const useCodex = create<CodexState>((set, get) => {
           opening: false,
           openError: message,
           openFailure: err,
+          openFailedAt: Date.now(),
         }))
         return false
       } finally {
@@ -663,11 +721,16 @@ export const useCodex = create<CodexState>((set, get) => {
     return task
   }
 
-  const probeAgents = async (targetId: string): Promise<void> => {
+  const probeAgents = async (targetId: string, force = false): Promise<void> => {
     const busy = probing.get(targetId)
-    if (busy) return busy
+    if (busy) {
+      if (!force) return busy
+      await busy.catch(() => undefined)
+      return probeAgents(targetId, true)
+    }
     const task = (async () => {
-      for (const agent of AGENTS) {
+      // 三个 Agent 互不依赖，并行打开：首屏耗时取最慢的一个而不是三者之和（SSH 目标尤其明显）。
+      await Promise.all(AGENTS.map(async (agent) => {
         const key = sessionKey(targetId, agent)
         const session = get().sessions[key]
         if (session?.opened && session.openedConfig?.directory === configDirFor(targetId, agent)) {
@@ -675,8 +738,14 @@ export const useCodex = create<CodexState>((set, get) => {
             state: 'ready',
             ...(session.agentVersion ? { version: session.agentVersion } : {}),
           })
-          continue
+          return
         }
+        const status = statusFor(targetId, agent)
+        if (
+          !force && session && !session.opening && session.openFailedAt != null &&
+          Date.now() - session.openFailedAt < OPEN_RETRY_COOLDOWN_MS &&
+          (status?.state === 'unavailable' || status?.state === 'error')
+        ) return
         patchAgent(targetId, agent, { state: 'checking' })
         const ok = await ensureOpen(targetId, agent)
         const after = get().sessions[key]
@@ -687,7 +756,7 @@ export const useCodex = create<CodexState>((set, get) => {
             ? { state: 'ready', ...(after?.agentVersion ? { version: after.agentVersion } : {}) }
             : classifyAgentOpenError(agent, after?.openFailure ?? new Error(after?.openError ?? '')),
         )
-      }
+      }))
       set((state) => {
         if (state.currentTargetId !== targetId || state.currentThreadId) return state
         const nextAgent = defaultFor(targetId)
@@ -1193,6 +1262,15 @@ export const useCodex = create<CodexState>((set, get) => {
         })
       }
       const archiveTimer = setInterval(checkArchive, AUTO_ARCHIVE_INTERVAL_MS)
+      // 与 turn 完成时的判断一致：主对话或打开中的侧边对话都算正在查看。
+      const viewingThread = (targetId: string, agent: AgentKind, threadId: string): boolean => {
+        const state = get()
+        const chat = { targetId, agent, threadId }
+        return isMainChat(state, chat) || Object.values(state.sideChats).some((side) =>
+          side.targetId === targetId && side.agent === agent && side.threadId === threadId
+          && (!side.forked || (side.open && isMainChat(state, parentAddress(side)))),
+        )
+      }
       offEvents = [
         useSettings.subscribe((state, previous) => {
           if (!state.loaded || state.saving) return
@@ -1205,6 +1283,16 @@ export const useCodex = create<CodexState>((set, get) => {
           if (state.states.local?.state === 'ready' && previous.states.local?.state !== 'ready') checkArchive()
         }),
         on('server.evt', (payload) => {
+          if (payload.name === 'thread.unread') {
+            const change = parseUnreadChange(payload.payload)
+            if (!change) return
+            if (change.unread && viewingThread(payload.targetId, change.agent, change.threadId)) {
+              markThreadUnread(payload.targetId, change.agent, change.threadId, false)
+            } else {
+              useThreadPrefs.getState().setUnread(payload.targetId, threadKey(change.agent, change.threadId), change.unread)
+            }
+            return
+          }
           if (payload.name === 'server.restarted') {
             for (const session of Object.values(get().sessions)) {
               if (session.targetId !== payload.targetId) continue
@@ -1241,11 +1329,13 @@ export const useCodex = create<CodexState>((set, get) => {
           }
         }),
         on('target.state', (payload) => {
+          if (payload.state === 'ready') void pullThreadUnread(payload.id, (agent, threadId) => viewingThread(payload.id, agent, threadId))
           if (payload.state !== 'ready') {
             // 链路断过之后 agent 进程可能已经换了，下次操作必须重新 codex.open。
+            // 失败冷却也一并清掉：重连后目标环境可能已变化（如刚装好 Agent），应立即重新探测。
             for (const session of Object.values(get().sessions)) {
-              if (session.targetId !== payload.id || !session.opened) continue
-              patchSession(session.key, (value) => ({ ...value, opened: false }))
+              if (session.targetId !== payload.id || (!session.opened && session.openFailedAt == null)) continue
+              patchSession(session.key, (value) => ({ ...value, opened: false, openFailedAt: null }))
             }
             return
           }
@@ -1256,6 +1346,9 @@ export const useCodex = create<CodexState>((set, get) => {
         }),
       ]
       checkArchive()
+      for (const [targetId, value] of Object.entries(useTargets.getState().states)) {
+        if (value?.state === 'ready') void pullThreadUnread(targetId, (agent, threadId) => viewingThread(targetId, agent, threadId))
+      }
       return () => {
         stopped = true
         clearInterval(archiveTimer)
@@ -1458,7 +1551,7 @@ export const useCodex = create<CodexState>((set, get) => {
           }
         })
         set({ currentThreadId: threadId, currentAgent: picked, error: null })
-        useThreadPrefs.getState().setUnread(targetId, threadKey(picked, threadId), false)
+        markThreadUnread(targetId, picked, threadId, false)
         if (writerConflict) {
           const message = t('会话被另一个 Codex 进程占用，当前可查看历史。释放会话后可再次发送')
           pausePending(chat, message)
@@ -1528,89 +1621,56 @@ export const useCodex = create<CodexState>((set, get) => {
         report(t('连接未就绪或配置目录已切换，请重新打开会话'))
         return false
       }
+      // 截断历史会打断进行中的轮次，必须先停止。
+      if (view?.status === 'running') {
+        report(t('当前轮次仍在运行，请先停止再修改消息'))
+        return false
+      }
       const isSessionCurrent = () => {
         const live = get().sessions[session.key]
         return !!live?.opened && live.rpc === session.rpc && live.openedConfig === session.openedConfig &&
           live.openedConfig?.directory === configDirFor(targetId, agent)
       }
-      const turns = view?.turns ?? []
-      const index = turns.findIndex((turn) => turn.itemIds.includes(itemId))
-      if (index < 0 || !view?.items.some((item) => item.id === itemId && item.kind === 'user' && !item.pending)) {
+      const turn = view?.turns?.find((item) => item.itemIds.includes(itemId))
+      if (!turn || !view?.items.some((item) => item.id === itemId && item.kind === 'user' && !item.pending)) {
         report(t('未找到原消息的轮次，请重新打开会话后再试'))
         return false
       }
       report(null)
       // 修订沿用原会话的模型与推理强度。
-      useModels.getState().seedFromHistory(targetId, agent, threadId, view?.savedConfig)
-      const usedPrefs = prefsFor(useModels.getState(), targetId, agent, threadId)
+      useModels.getState().seedFromHistory(targetId, agent, threadId, view.savedConfig)
+      useModels.getState().rememberThreadPrefs(targetId, agent, threadId, prefsFor(useModels.getState(), targetId, agent, threadId))
       const overrides = overridesFor(targetId, agent, threadId)
-      let cwd = currentThreads(state).find((thread) => thread.id === threadId && thread.agent === agent)?.cwd
-      let destinationId: string | undefined
       const pendingUser = userItemFromInput(globalThis.crypto.randomUUID(), input)
+      let reverted = false
       submitting.add(key)
       try {
-        let previousTurnId = turns[index - 1]?.id
-        if (index === 0 && view.historyCursor) {
-          // 历史可能从长轮次的中间开始。只读上一轮，避免把同一轮的旧内容带入分支。
-          const cursor = view.historyCursor
-          const previousPage = 'items' in cursor ? (cursor.nextTurn ? { turns: cursor.nextTurn } : null) : cursor
-          if (previousPage) {
-            const history = await readThreadHistoryPage(session.rpc, threadId, previousPage, isSessionCurrent)
-            previousTurnId = history.turns.at(-1)?.id
-            if (!previousTurnId || previousTurnId === turns[index]?.id) throw new Error(t('无法确认修订前的历史位置，请重新加载会话'))
-          }
-        }
-        if (!previousTurnId && !cwd) {
-          const { thread } = await session.rpc.request('thread/read', { threadId, includeTurns: false })
-          if (thread?.id !== threadId || !thread.cwd) throw new Error(t('无法确认原会话的工作目录'))
-          cwd = thread.cwd
-        }
+        // 与 Codex app 一致：在原会话里删掉这条消息所在轮次及之后的历史，再发送修改后的内容。
+        // thread/revert 只改对话历史，不回退文件改动。
+        const result = await session.rpc.request('thread/revert', { threadId, beforeTurnId: turn.id })
+        if (result?.thread?.id !== threadId) throw new Error(t('返回的会话与所选会话不一致，请重试'))
+        reverted = true
         if (!isSessionCurrent()) throw new Error(t('连接或配置目录已切换，请重新打开会话'))
-        const { thread } = previousTurnId
-          ? await session.rpc.request('thread/fork', { threadId, lastTurnId: previousTurnId, excludeTurns: true })
-          : await startThread(session.rpc, { cwd })
-        if (!thread?.id || thread.id === threadId) throw new Error(t('无法确认修订会话已创建'))
-        destinationId = thread.id
-        const destination = { ...chat, threadId: destinationId }
-        submitting.add(pendingSendKey(destination))
-        useModels.getState().rememberThreadPrefs(targetId, agent, destinationId, usedPrefs)
-        const before = get().sessions[session.key]?.state.threads[destinationId]
-        const history = previousTurnId && !thread.turns?.length
-          ? await openThreadHistory(session.rpc, destinationId, 'read', isSessionCurrent)
-          : { thread, earlier: null }
+        const history = await openThreadHistory(session.rpc, threadId, 'read', isSessionCurrent)
         if (!isSessionCurrent()) throw new Error(t('连接或配置目录已切换，请重新打开会话'))
-        patchSession(session.key, (value) => ({
-          ...value,
-          state: loadRecentThreadHistory(value.state, history.thread, history.earlier, before),
-        }))
-        addPendingUser(session.key, destinationId, pendingUser)
-        const turnId = await startTurn(session, destinationId, input, overrides, pendingUser)
-        useThreadPrefs.getState().setRevisionTurn(targetId, threadKey(agent, destinationId), turnId)
-        rememberLocalThread(pendingSendKey(destination), targetId, {
-          id: destinationId,
-          title: thread.name || thread.preview || pendingUser.text.split('\n')[0]?.trim() || t('未命名会话'),
-          preview: thread.preview || pendingUser.text,
-          cwd: thread.cwd || cwd || '',
-          updatedAt: Date.now(),
-          agent,
+        patchSession(session.key, (value) => {
+          const live = value.state.threads[threadId]
+          // 清空本地条目与轮次，避免被截掉的历史与新历史合并。
+          const cleared = live ? { ...live, items: [], turns: [] } : undefined
+          const base = cleared ? { threads: { ...value.state.threads, [threadId]: cleared } } : value.state
+          return { ...value, state: loadRecentThreadHistory(base, history.thread, history.earlier, cleared) }
         })
-        if (isCurrent()) {
-          set({ currentThreadId: destinationId, error: null })
-          useThreadPrefs.getState().setUnread(targetId, threadKey(agent, destinationId), false)
-        }
-        refreshThreadListsFor(targetId, agent, destinationId, thread.cwd || cwd || undefined)
+        addPendingUser(session.key, threadId, pendingUser)
+        await startTurn(session, threadId, input, overrides, pendingUser)
+        if (isCurrent()) markThreadUnread(targetId, agent, threadId, false)
+        refreshThreadListsFor(targetId, agent, threadId, history.thread.cwd || undefined)
         return true
       } catch (error) {
-        if (destinationId) removePendingUser(session.key, [destinationId], pendingUser.id)
+        removePendingUser(session.key, [threadId], pendingUser.id)
         const message = friendlyError(error, t('发送修订失败'))
-        report(destinationId ? t('已创建分支，未确认修订发送成功。{message}', { message }) : message)
+        report(reverted ? t('历史已回退，但修改后的消息未确认发送成功。{message}', { message }) : message)
         return false
       } finally {
-        if (destinationId) {
-          const destination = { ...chat, threadId: destinationId }
-          submitting.delete(pendingSendKey(destination))
-          void flushPending(destination)
-        }
         submitting.delete(key)
         void flushPending(chat)
       }
@@ -1694,9 +1754,13 @@ export const useCodex = create<CodexState>((set, get) => {
       const pendingUser = userItemFromInput(globalThis.crypto.randomUUID(), input)
       // 等上一轮中断时先在界面显示气泡，避免旧轮次的回显替换这条新消息。
       const preview = mode !== 'queue' && threadId ? pendingUser : undefined
+      // 新会话要等 Agent 启动和 thread/start 返回才有 id，冷启动可能数秒；先给侧栏一个占位行。
+      const draft: PendingDraftThread | undefined = !threadId && !options?.sideKey
+        ? { targetId, cwd: context.currentCwd, agent, title: trimmed.split('\n')[0]?.trim() || t('未命名会话') }
+        : undefined
       set({
         sending: true,
-        sendingMessage: { key: chatKey ?? pendingSendKey({ targetId, agent, threadId: DRAFT_THREAD_ID }), preview },
+        sendingMessage: { key: chatKey ?? pendingSendKey({ targetId, agent, threadId: DRAFT_THREAD_ID }), preview, draft },
       })
       if (chatKey) submitting.add(chatKey)
       sessionFor(targetId, agent)
@@ -1893,7 +1957,7 @@ export const useCodex = create<CodexState>((set, get) => {
       const token = openThreadToken
       const cwd = currentThreads(state).find((thread) => thread.id === chat.threadId && thread.agent === chat.agent)?.cwd ||
         state.currentCwd
-      const sideKey = mode === 'continue'
+      const sideKey = mode !== 'start'
         ? JSON.stringify([chat.targetId, isMainChat(state, chat) ? state.currentCwd : cwd, chat.agent, chat.threadId])
         : null
       const previousSide = sideKey ? state.sideChats[sideKey] : undefined
@@ -1922,6 +1986,10 @@ export const useCodex = create<CodexState>((set, get) => {
           // 分支会复制原标题，自动加 (n) 后缀区分；改名失败不影响发送。
           const title = thread?.id ? forkedThreadTitle(get(), chat.targetId, chat.agent, chat.threadId) : null
           if (title) await setThreadName(session.rpc, thread.id, title).catch(() => undefined)
+        } else if (mode === 'side') {
+          // 与侧边对话一致：临时会话，不进会话列表；pi 需目标服务支持无工具临时会话。
+          if (chat.agent === 'pi' && !session.openedConfig?.ephemeralNoTools) throw new Error(t('请升级目标服务以使用 Pi 无工具侧聊'))
+          ;({ thread } = await startThread(session.rpc, { ...(cwd ? { cwd } : {}), ephemeral: true }))
         } else {
           ;({ thread } = await startThread(session.rpc, cwd ? { cwd } : {}))
         }
@@ -1944,7 +2012,11 @@ export const useCodex = create<CodexState>((set, get) => {
           })
         }
         if (sideKey) {
-          patchSide(sideKey, { threadId, forked: true, open: true, expired: false, error: null, firstMessage: '' })
+          patchSide(sideKey, {
+            threadId, forked: mode === 'continue' ? true : undefined, open: true, expired: false, error: null,
+            // 空白侧聊重开时用首条消息回填输入框，分支不需要。
+            firstMessage: mode === 'side' ? pendingUser.text : '',
+          })
         } else if (token === openThreadToken && isMainChat(get(), chat)) {
           set({ currentThreadId: threadId, error: null })
         }
@@ -2236,32 +2308,11 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     respondApproval: (chat, requestId, decision) => {
-      const state = get()
-      const main = isMainChat(state, chat)
-      const side = currentSideChat(state)
-      const inSide = side?.open && !side.expired && !side.ending && side.targetId === chat.targetId
-        && side.agent === chat.agent && side.threadId === chat.threadId
-      // 旧卡片可能在切换会话后才触发事件，审批仍须来自当前可见会话。
-      if (openingAnotherChat(state) || (!main && !inSide)) return
+      replyServerRequest(chat, requestId, (approval) => approvalResponse(approval, decision))
+    },
 
-      const report = (error: string | null) => main ? set({ error }) : patchSide(currentChatKey(state), { error })
-      const key = sessionKey(chat.targetId, chat.agent)
-      const session = state.sessions[key]
-      const approval = session?.state.threads[chat.threadId]?.pendingApprovals.find((item) => item.requestId === requestId)
-      if (!session || !approval) {
-        report(t('该审批请求已失效'))
-        return
-      }
-      try {
-        session.rpc.respond(approval.requestId, approvalResponse(approval, decision))
-        patchSession(key, (value) => ({
-          ...value,
-          state: resolveServerRequest(value.state, approval.requestId),
-        }))
-        report(null)
-      } catch (err) {
-        report(friendlyError(err, t('提交审批失败')))
-      }
+    respondUserInput: (chat, requestId, answers) => {
+      replyServerRequest(chat, requestId, () => userInputResponse(answers))
     },
 
     renameThread: async (threadId, agent, name) => {

@@ -9,6 +9,8 @@ type ThreadPrefsState = {
   byTarget: Record<string, ThreadPrefs>
   setPinned: (targetId: string, key: string, pinned: boolean) => void
   setUnread: (targetId: string, key: string, unread: boolean) => void
+  /** 用目标机的未读列表整体替换该目标的本地未读记录。 */
+  replaceUnread: (targetId: string, keys: string[]) => void
   setLocalName: (targetId: string, key: string, name: string | null) => void
   setArchived: (targetId: string, agent: AgentKind, threadId: string, archived: boolean) => void
   /** 旧版本地归档已补写到目标机后清除。 */
@@ -50,6 +52,12 @@ export const useThreadPrefs = create<ThreadPrefsState>((set, get) => {
       // 打开会话时会频繁调用清除，没有变化就不写存储。
       if (!unread && !get().byTarget[targetId]?.unread[key]) return
       patch(targetId, (prefs) => ({ ...prefs, unread: toggleKey(prefs.unread, key, unread ? true : undefined) }))
+    },
+    replaceUnread: (targetId, keys) => {
+      const current = get().byTarget[targetId]?.unread ?? {}
+      const same = keys.length === Object.keys(current).length && keys.every((key) => current[key])
+      if (same) return
+      patch(targetId, (prefs) => ({ ...prefs, unread: Object.fromEntries(keys.map((key) => [key, true as const])) }))
     },
     setLocalName: (targetId, key, name) =>
       patch(targetId, (prefs) => ({

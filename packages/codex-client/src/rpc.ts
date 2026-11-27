@@ -30,6 +30,8 @@ import type {
   ThreadReadResponse,
   ThreadResumeParams,
   ThreadResumeResponse,
+  ThreadRevertParams,
+  ThreadRevertResponse,
   ThreadSetNameParams,
   ThreadSetNameResponse,
   ThreadStartParams,
@@ -60,6 +62,7 @@ export type ClientRequestMap = {
   'thread/compact/start': { params: ThreadCompactStartParams; result: ThreadCompactStartResponse }
   'thread/delete': { params: ThreadDeleteParams; result: ThreadDeleteResponse }
   'thread/fork': { params: ThreadForkParams; result: ThreadForkResponse }
+  'thread/revert': { params: ThreadRevertParams; result: ThreadRevertResponse }
   'turn/start': { params: TurnStartParams; result: TurnStartResponse }
   'turn/interrupt': { params: TurnInterruptParams; result: TurnInterruptResponse }
   'turn/steer': { params: TurnSteerParams; result: TurnSteerResponse }

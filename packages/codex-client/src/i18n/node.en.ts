@@ -287,6 +287,7 @@ export default {
   '直连客户端不能调用 {method}': 'Direct clients cannot call {method}',
   'fs.list 需要 path': 'fs.list requires path',
   'codex.attach 需要 sinceSeq': 'codex.attach requires sinceSeq',
+  'thread.unread.set 需要 threadId 与 unread': 'thread.unread.set requires threadId and unread',
   '有进行中的对话或终端，稍后可再次升级': 'Conversations or terminals are active. Try upgrading again later',
   '空闲超时': 'Idle timeout',
   '无法识别的消息': 'Unrecognized message',

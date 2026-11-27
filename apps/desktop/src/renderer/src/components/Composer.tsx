@@ -302,7 +302,16 @@ export function Composer({
     setCaret(next.caret)
   }
 
+  // 输入法组合被失焦、截图等打断时可能收不到 compositionend，组合状态会卡住：
+  // 蓝色附件标签不再显示、回车也发不出去。遇到明确不在组合中的事件就复位。
+  const endComposition = () => {
+    if (!composing.current) return
+    composing.current = false
+    setImeActive(false)
+  }
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!event.nativeEvent.isComposing && event.keyCode !== 229) endComposition()
     if (event.nativeEvent.isComposing || composing.current) return
     if (mentionOpen) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -438,7 +447,7 @@ export function Composer({
         )}
         <div
           className={cn(
-            'rounded-xl border border-qn-outline bg-qn-composer shadow-[var(--qn-composer-shadow)] transition-colors focus-within:border-qn-outline-hover',
+            'rounded-[20px] border border-qn-composer-outline bg-qn-composer shadow-[var(--qn-composer-shadow)] transition-colors focus-within:border-qn-outline',
             disabled && 'opacity-70',
           )}
         >
@@ -532,6 +541,7 @@ export function Composer({
                     : agentPlaceholder(agent))
               }
               onChange={(event) => {
+                if (!(event.nativeEvent as InputEvent).isComposing) endComposition()
                 onChange(event.target.value)
                 setCaret(event.target.selectionStart ?? 0)
                 setDismissed(false)
@@ -552,6 +562,7 @@ export function Composer({
                 setImeActive(false)
                 syncCaret()
               }}
+              onBlur={endComposition}
             />
           </div>
           <div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1 whitespace-nowrap">

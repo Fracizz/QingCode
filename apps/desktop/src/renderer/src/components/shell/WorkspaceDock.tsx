@@ -1,7 +1,7 @@
 import { FolderTree, GitBranch, Play, Search, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { t } from '@qn/codex-client'
-import { FileExplorer, SearchPanel } from '../../features/explorer'
+import { FileExplorer, SearchPanel, toWorkspaceRoot } from '../../features/explorer'
 import { FilePane, useFiles } from '../../features/files'
 import { GitPanel } from '../../features/git'
 import { RunPanel } from '../../features/run'
@@ -26,7 +26,7 @@ export function useWorkspaceScope(): { targetId: string; cwd: string } | { reaso
   const ready = useTargets((s) => (targetId ? s.states[targetId]?.state === 'ready' : false))
   if (!targetId || !cwd) return { reason: t('先在左侧选择一个项目') }
   if (!ready) return { reason: t('目标未连接') }
-  return { targetId, cwd }
+  return { targetId, cwd: toWorkspaceRoot(cwd) }
 }
 
 function ToolBody({ tool }: { tool: DockTool }) {

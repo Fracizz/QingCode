@@ -35,6 +35,8 @@ import {
   startThread,
   startThreadCompaction,
   steerTurn,
+  userInputResponse,
+  type ApprovalView,
   type AccessMode,
   type AccessSelection,
   type AccountSummary,
@@ -375,6 +377,8 @@ type AppState = {
   retryQueuedSend: () => Promise<void>
   interrupt: () => Promise<void>
   respondApproval: (requestId: RequestId, decision: MobileApprovalDecision) => Promise<boolean>
+  /** 回答 Agent 的提问（item/tool/requestUserInput）；answers 为空对象表示跳过。 */
+  respondUserInput: (requestId: RequestId, answers: Record<string, string[]>) => Promise<boolean>
   loadModels: (targetId: string, agent: AgentKind, force?: boolean) => Promise<void>
   setModelPrefs: (targetId: string, agent: AgentKind, prefs: ModelPrefs) => void
   refreshRateLimits: (targetId: string) => Promise<void>
@@ -568,6 +572,15 @@ const archiveListeners = new Set<ArchiveListener>()
 export function onThreadArchived(listener: ArchiveListener): () => void {
   archiveListeners.add(listener)
   return () => { archiveListeners.delete(listener) }
+}
+
+type ServerEvtListener = (desktopId: string, targetId: string, name: string, payload: unknown) => void
+const serverEvtListeners = new Set<ServerEvtListener>()
+
+/** 订阅当前电脑转发来的目标机 server evt（如共享未读 thread.unread）。 */
+export function onServerEvt(listener: ServerEvtListener): () => void {
+  serverEvtListeners.add(listener)
+  return () => { serverEvtListeners.delete(listener) }
 }
 
 export const useApp = create<AppState>((set, get) => {
@@ -1569,6 +1582,63 @@ export const useApp = create<AppState>((set, get) => {
     const state = get()
     return state.page === 'chat' && state.selectedThreadId !== null
       && state.selectedTargetId === session.targetId && state.selectedAgent === session.agent
+  }
+
+  /** 提交审批/提问类 server request 的回复：去重、等重连、只在仍未决时发送，等 Agent 的 resolved 广播收尾。 */
+  const replyServerRequest = async (
+    requestId: RequestId,
+    check: (approval: ApprovalView, agent: AgentKind) => string | null,
+    build: (approval: ApprovalView) => unknown,
+  ): Promise<boolean> => {
+    const { selectedTargetId, selectedThreadId, selectedAgent, sessions, approvalSubmitting } = get()
+    const submittingKey = String(requestId)
+    if (!selectedTargetId || !selectedThreadId || approvalSubmitting[submittingKey]) return false
+    const session = sessions[sessionKey(selectedTargetId, selectedAgent)]
+    const approval = session?.state.threads[selectedThreadId]?.pendingApprovals.find((item) => item.requestId === requestId)
+    if (!session || !approval) {
+      set({ notice: t('该审批已处理或失效') })
+      return false
+    }
+    const invalid = check(approval, selectedAgent)
+    if (invalid) {
+      set({ error: invalid })
+      return false
+    }
+    const flights = approvalFlights.get(session.transport) ?? new Map<RequestId, string>()
+    if (flights.has(requestId)) return false
+    flights.set(requestId, selectedThreadId)
+    approvalFlights.set(session.transport, flights)
+    const epoch = desktopEpoch
+    const navigation = navigationEpoch
+    let acknowledged = false
+    set({ approvalSubmitting: { ...approvalSubmitting, [submittingKey]: true }, error: null })
+    try {
+      if (reconnectTask) await reconnectTask
+      if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
+      const pending = get().sessions[session.key]?.state.threads[selectedThreadId]?.pendingApprovals
+      if (!pending?.some((item) => item.requestId === requestId)) return false
+      await session.transport.respond(approval.requestId, build(approval))
+      acknowledged = true
+      // HTTP 仅确认网关收到响应，桌面也可能先处理，等待 Agent 的 resolved 广播。
+      return true
+    } catch (err) {
+      if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
+      const pending = get().sessions[session.key]?.state.threads[selectedThreadId]?.pendingApprovals
+      if (!pending?.some((item) => item.requestId === requestId)) return true
+      set({ error: friendlyError(err, t('提交审批失败')) })
+      return false
+    } finally {
+      if (!acknowledged) {
+        flights.delete(requestId)
+        const current = get()
+        if (epoch === desktopEpoch && current.selectedTargetId === selectedTargetId
+          && current.selectedAgent === selectedAgent && current.selectedThreadId === selectedThreadId) {
+          const updated = { ...current.approvalSubmitting }
+          delete updated[submittingKey]
+          set({ approvalSubmitting: updated })
+        }
+      }
+    }
   }
 
   return {
@@ -3446,56 +3516,17 @@ export const useApp = create<AppState>((set, get) => {
       if (session && turnId !== null) await interruptTurn(session.rpc, selectedThreadId, turnId)
     },
 
-    respondApproval: async (requestId, decision) => {
-      const { selectedTargetId, selectedThreadId, selectedAgent, sessions, approvalSubmitting } = get()
-      const submittingKey = String(requestId)
-      if (!selectedTargetId || !selectedThreadId || approvalSubmitting[submittingKey]) return false
-      const session = sessions[sessionKey(selectedTargetId, selectedAgent)]
-      const approval = session?.state.threads[selectedThreadId]?.pendingApprovals.find((item) => item.requestId === requestId)
-      if (!session || !approval) {
-        set({ notice: t('该审批已处理或失效') })
-        return false
-      }
-      if (!availableApprovalDecisions(approval, selectedAgent).includes(decision)) {
-        set({ error: t('当前请求不支持该审批选项') })
-        return false
-      }
-      const flights = approvalFlights.get(session.transport) ?? new Map<RequestId, string>()
-      if (flights.has(requestId)) return false
-      flights.set(requestId, selectedThreadId)
-      approvalFlights.set(session.transport, flights)
-      const epoch = desktopEpoch
-      const navigation = navigationEpoch
-      let acknowledged = false
-      set({ approvalSubmitting: { ...approvalSubmitting, [submittingKey]: true }, error: null })
-      try {
-        if (reconnectTask) await reconnectTask
-        if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
-        const pending = get().sessions[session.key]?.state.threads[selectedThreadId]?.pendingApprovals
-        if (!pending?.some((item) => item.requestId === requestId)) return false
-        await session.transport.respond(approval.requestId, mobileApprovalReply(approval, decision))
-        acknowledged = true
-        // HTTP 仅确认网关收到响应，桌面也可能先处理，等待 Agent 的 resolved 广播。
-        return true
-      } catch (err) {
-        if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
-        const pending = get().sessions[session.key]?.state.threads[selectedThreadId]?.pendingApprovals
-        if (!pending?.some((item) => item.requestId === requestId)) return true
-        set({ error: friendlyError(err, t('提交审批失败')) })
-        return false
-      } finally {
-        if (!acknowledged) {
-          flights.delete(requestId)
-          const current = get()
-          if (epoch === desktopEpoch && current.selectedTargetId === selectedTargetId
-            && current.selectedAgent === selectedAgent && current.selectedThreadId === selectedThreadId) {
-            const updated = { ...current.approvalSubmitting }
-            delete updated[submittingKey]
-            set({ approvalSubmitting: updated })
-          }
-        }
-      }
-    },
+    respondApproval: (requestId, decision) => replyServerRequest(
+      requestId,
+      (approval, agent) => availableApprovalDecisions(approval, agent).includes(decision) ? null : t('当前请求不支持该审批选项'),
+      (approval) => mobileApprovalReply(approval, decision),
+    ),
+
+    respondUserInput: (requestId, answers) => replyServerRequest(
+      requestId,
+      (approval) => approval.questions?.length ? null : t('当前请求不支持该审批选项'),
+      () => userInputResponse(answers),
+    ),
 
     loadModels: async (targetId, agent, force = false) => {
       const key = sessionKey(targetId, agent)
@@ -3806,6 +3837,10 @@ export const useApp = create<AppState>((set, get) => {
         case 'server.evt': {
           const payload = isRecord(event.payload) ? event.payload : null
           const targetId = typeof payload?.targetId === 'string' ? payload.targetId : ''
+          const eventDesktop = get().activeId
+          if (eventDesktop && targetId && typeof payload?.name === 'string') {
+            for (const listener of serverEvtListeners) listener(eventDesktop, targetId, payload.name, payload.payload)
+          }
           if (payload?.name === 'server.restarted' && targetId) {
             clearClaudeQuota(targetId)
             for (const session of Object.values(get().sessions)) {

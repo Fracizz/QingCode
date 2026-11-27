@@ -4,7 +4,7 @@ import { defaultAppSettings } from '../features/settings/settingsModel'
 import { useSettings } from '../features/settings/settingsStore'
 import { sessionKey } from '../lib/agents'
 import { applyThreadPrefs } from '../lib/threadPrefs'
-import { composerDraftKey, currentChatKey, currentSideApprovals, currentThreadApprovals, currentThreads, pendingSendKey, threadListFor, useCodex } from './codex'
+import { composerDraftKey, currentChatKey, currentSideApprovals, currentThreadApprovals, currentThreads, pendingDraftFor, pendingSendKey, threadListFor, useCodex } from './codex'
 import { useModels } from './models'
 import { useTargets } from './targets'
 import { useThreadPrefs } from './threadPrefs'
@@ -93,7 +93,6 @@ beforeEach(() => {
 
 describe('发送修订', () => {
   const chat = { targetId: 'local', agent: 'codex', threadId: 'revision-source' } as const
-  const destination = 'revision-destination'
   const input: UserInput[] = [{ type: 'text', text: '修订内容', text_elements: [] }, { type: 'localImage', path: '/project/image.png' }]
   const makeTurn = (id: string, itemId: string, text: string) => ({
     id, status: 'completed', items: [{ id: itemId, type: 'userMessage', content: [{ type: 'text', text, text_elements: [] }] }],
@@ -101,8 +100,21 @@ describe('发送修订', () => {
   const prior = makeTurn('prior-turn', 'prior-message', '保留的历史')
   const original = makeTurn('original-turn', 'original-message', '原来的消息')
   const later = makeTurn('later-turn', 'later-message', '原会话后续消息')
-  const thread = (id: string, turns: ReturnType<typeof makeTurn>[]) => ({ id, cwd: '/project', status: { type: 'idle' }, turns })
+  const thread = (id: string, turns: ReturnType<typeof makeTurn>[], status = 'idle') => ({ id, cwd: '/project', status: { type: status }, turns })
   const sent = () => callMock.mock.calls.filter(([method]) => method === 'codex.send').map(([, params]) => params.msg)
+  /** 模拟 app-server：revert 后历史只剩 prior，turn/start 按 turnResult 应答。 */
+  const fakeRevert = (turnResult: unknown) => callMock.mockImplementation((method: string, params?: CallParams) => {
+    const msg = params?.msg
+    if (method !== 'codex.send' || !msg) return fakeCall(method, params)
+    switch (msg.method) {
+      case 'thread/revert': emitRecv({ id: msg.id, result: { thread: thread(chat.threadId, []), turnsBackwardsCursor: 'c', itemsBackwardsCursor: null } }); break
+      case 'thread/read': emitRecv({ id: msg.id, result: { thread: thread(chat.threadId, []) } }); break
+      case 'thread/turns/list': emitRecv({ id: msg.id, result: { data: [prior], nextCursor: null } }); break
+      case 'turn/start': emitRecv({ id: msg.id, ...(turnResult as object) }); break
+      default: return fakeCall(method, params)
+    }
+    return Promise.resolve({})
+  })
 
   beforeEach(async () => {
     useCodex.setState({ currentCwd: '/project', currentThreadId: chat.threadId })
@@ -110,60 +122,29 @@ describe('发送修订', () => {
     emitRecv({ method: 'thread/started', params: { thread: thread(chat.threadId, [prior, original, later]) } })
   })
 
-  it.each([false, true])('继承修订前的历史并仅发送到分支（源历史分页 %s）', async (paginated) => {
-    if (paginated) {
-      const key = sessionKey(chat.targetId, chat.agent)
-      const session = useCodex.getState().sessions[key]!
-      const source = session.state.threads[chat.threadId]!
-      useCodex.setState((state) => ({ sessions: { ...state.sessions, [key]: { ...session, state: { threads: {
-        ...session.state.threads,
-        [chat.threadId]: { ...source, turns: source.turns?.slice(1), items: source.items.slice(1), historyCursor: { turns: 'earlier' } },
-      } } } } }))
-    }
-    callMock.mockImplementation((method: string, params?: CallParams) => {
-      const msg = params?.msg
-      if (method !== 'codex.send' || !msg) return fakeCall(method, params)
-      let result
-      switch (msg.method) {
-        case 'thread/fork':
-        case 'thread/read': result = { thread: thread(destination, []) }; break
-        case 'thread/turns/list': result = { data: [prior], nextCursor: null }; break
-        case 'turn/start': result = { turn: { id: 'revised-turn', status: 'inProgress', items: [] } }; break
-        default: return fakeCall(method, params)
-      }
-      emitRecv({ id: msg.id, result })
-      return Promise.resolve({})
-    })
+  it('在原会话里删除该消息及之后的历史，再发送修改后的内容', async () => {
+    fakeRevert({ result: { turn: { id: 'revised-turn', status: 'inProgress', items: [] } } })
 
     expect(await useCodex.getState().sendRevision(chat, 'original-message', input)).toBe(true)
-    expect(sent().find((msg) => msg.method === 'thread/fork')?.params).toEqual({
-      threadId: chat.threadId, lastTurnId: 'prior-turn', excludeTurns: true,
-    })
-    expect(sent().filter((msg) => msg.method === 'turn/start')).toMatchObject([{ params: { threadId: destination, input } }])
-    expect(useCodex.getState().currentThreadId).toBe(destination)
-    expect(viewItems(destination).map((item) => item.kind === 'user' && item.text)).toEqual(['保留的历史', '修订内容'])
-    expect(viewItems(chat.threadId).map((item) => item.id)).toContain('later-message')
-    expect(useThreadPrefs.getState().byTarget.local?.revisionTurns).toMatchObject({ [`codex:${destination}`]: 'revised-turn' })
+    expect(sent().find((msg) => msg.method === 'thread/revert')?.params).toEqual({ threadId: chat.threadId, beforeTurnId: 'original-turn' })
+    expect(sent().some((msg) => msg.method === 'thread/fork' || msg.method === 'thread/start')).toBe(false)
+    expect(sent().filter((msg) => msg.method === 'turn/start')).toMatchObject([{ params: { threadId: chat.threadId, input } }])
+    expect(useCodex.getState().currentThreadId).toBe(chat.threadId)
+    expect(viewItems(chat.threadId).map((item) => item.kind === 'user' && item.text)).toEqual(['保留的历史', '修订内容'])
   })
 
-  it('修订第一条消息时从原工作目录新建，发送失败后留在原会话', async () => {
-    callMock.mockImplementation((method: string, params?: CallParams) => {
-      const msg = params?.msg
-      if (method !== 'codex.send' || !msg) return fakeCall(method, params)
-      if (msg.method === 'thread/read') emitRecv({ id: msg.id, result: { thread: thread(chat.threadId, []) } })
-      else if (msg.method === 'thread/start') emitRecv({ id: msg.id, result: { thread: thread(destination, []) } })
-      else if (msg.method === 'turn/start') emitRecv({ id: msg.id, error: { code: -32603, message: '发送失败' } })
-      else return fakeCall(method, params)
-      return Promise.resolve({})
-    })
+  it('回退后发送失败时提示历史已回退，并移除待发送消息', async () => {
+    fakeRevert({ error: { code: -32603, message: '发送失败' } })
 
-    expect(await useCodex.getState().sendRevision(chat, 'prior-message', input)).toBe(false)
-    expect(sent().find((msg) => msg.method === 'thread/start')?.params).toEqual({ cwd: '/project' })
-    expect(sent().some((msg) => msg.method === 'thread/fork')).toBe(false)
-    expect(useCodex.getState()).toMatchObject({ currentThreadId: chat.threadId, error: expect.stringContaining('发送失败') })
-    expect(viewItems(chat.threadId).map((item) => item.id)).toEqual(['prior-message', 'original-message', 'later-message'])
-    expect(viewItems(destination)).toEqual([])
-    expect(useThreadPrefs.getState().byTarget.local?.revisionTurns?.[`codex:${destination}`]).toBeUndefined()
+    expect(await useCodex.getState().sendRevision(chat, 'original-message', input)).toBe(false)
+    expect(useCodex.getState().error).toEqual(expect.stringContaining('历史已回退'))
+    expect(viewItems(chat.threadId).map((item) => item.id)).toEqual(['prior-message'])
+  })
+
+  it('轮次运行中不回退历史', async () => {
+    emitRecv({ method: 'thread/started', params: { thread: thread(chat.threadId, [prior, original, later], 'active') } })
+    expect(await useCodex.getState().sendRevision(chat, 'original-message', input)).toBe(false)
+    expect(sent().some((msg) => msg.method === 'thread/revert')).toBe(false)
   })
 })
 
@@ -239,7 +220,8 @@ describe('归档会话', () => {
       const settings = defaultAppSettings()
       settings.general.autoArchiveDays = 1
       useSettings.setState({ settings, saving: true })
-      expect(callMock).not.toHaveBeenCalled()
+      // 初始化时会拉取目标机的共享未读列表，此外不应有其他调用。
+      expect(callMock.mock.calls.filter(([, params]) => params?.method !== 'thread.unread.list')).toEqual([])
       useSettings.setState({ saving: false })
       await vi.waitFor(() => {
         // Claude 也写到目标机，不再只记本地隐藏。
@@ -616,9 +598,13 @@ describe('发送时的乐观用户消息', () => {
     expect(viewItems(DRAFT_THREAD_ID)).toMatchObject([{ kind: 'user', text: '你好', pending: true }])
     expect(useCodex.getState().sending).toBe(true)
     expect(useCodex.getState().sendingMessage?.key).toBe(pendingSendKey({ targetId: 'local', agent: 'codex', threadId: DRAFT_THREAD_ID }))
+    // 会话 id 还没返回，侧栏先显示占位行。
+    expect(pendingDraftFor(useCodex.getState(), 'local', null)).toEqual({ targetId: 'local', cwd: null, agent: 'codex', title: '你好' })
+    expect(pendingDraftFor(useCodex.getState(), 'local', '/other')).toBeNull()
 
     gate.resolve?.({ initialize: {}, lastSeq: 0 })
     await expect(sending).resolves.toBe(true)
+    expect(pendingDraftFor(useCodex.getState(), 'local', null)).toBeNull()
     expect(viewItems('t1')).toMatchObject([{ kind: 'user', text: '你好' }])
     expect(useCodex.getState().sendingMessage).toBeNull()
   })

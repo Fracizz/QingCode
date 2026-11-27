@@ -15,14 +15,14 @@ export function notificationKind(msg: unknown): RateLimitNotificationKind {
 }
 
 export function severityTextClass(level: RateLimitSeverity): string {
-  if (level === 'danger') return 'border-qn-border-strong text-qn-danger'
-  if (level === 'warn') return 'border-qn-border-strong text-amber-300'
+  if (level === 'danger') return 'border-qn-border-strong text-qn-quota-danger'
+  if (level === 'warn') return 'border-qn-border-strong text-qn-quota-warn'
   return 'border-qn-border text-qn-muted'
 }
 
 export function severityBarClass(level: RateLimitSeverity): string {
-  if (level === 'danger') return 'bg-qn-danger'
-  if (level === 'warn') return 'bg-amber-400'
+  if (level === 'danger') return 'bg-qn-quota-danger'
+  if (level === 'warn') return 'bg-qn-quota-warn'
   return 'bg-qn-accent'
 }
 

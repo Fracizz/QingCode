@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android 13+ 主题图标沿用彩色前景的大小和位置，切换主题时保持对齐。 -->
+<!-- Android 13+ 主题图标沿用彩色前景的大小和位置；圆环缺口是真实几何，单色下光标条与圆环仍然分开。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -8,10 +8,10 @@
     <group
         android:scaleX="0.145"
         android:scaleY="0.145"
-        android:translateX="16.88"
-        android:translateY="17.68">
+        android:translateX="17.32"
+        android:translateY="17.17">
         <path
             android:fillColor="#FFFFFFFF"
-            android:pathData="M108,344h296a12,12 0,0 1,12 12v40a12,12 0,0 1,-12 12h-296a12,12 0,0 1,-12 -12v-40a12,12 0,0 1,12 -12zM130,93H262Q264,93 267,95L385,194Q389,197 385,200L267,299Q264,301 262,301H130Q124,301 128,297L247,197L128,97Q124,93 130,93Z" />
+            android:pathData="M248,403.52A150,150 0,1 1,372.59 316H301.24A90,90 0,1 0,248 343.2ZM280,336h128a12,12 0,0 1,12 12v32a12,12 0,0 1,-12 12h-128a12,12 0,0 1,-12 -12v-32a12,12 0,0 1,12 -12z" />
     </group>
 </vector>

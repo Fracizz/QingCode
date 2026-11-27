@@ -38,8 +38,8 @@ import { PopoverContent, PopoverRoot, PopoverTrigger } from './primitives'
 
 function percentClass(percent: number): string {
   const level = severityForPercent(percent)
-  if (level === 'danger') return 'text-qn-danger'
-  if (level === 'warn') return 'text-amber-300'
+  if (level === 'danger') return 'text-qn-quota-danger'
+  if (level === 'warn') return 'text-qn-quota-warn'
   return ''
 }
 

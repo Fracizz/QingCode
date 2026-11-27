@@ -1,31 +1,11 @@
-<!-- QingCode Next 应用图标母版：沿用旧版几何（底块 + 厚切尖括号 + 青色光标条，图形组以中心缩放 0.92 居中）。
-     参考 X 图标提高对比度：底块压到近纯黑；尖括号去掉上下两截的明暗分割，改成整块亮银斜向渐变（最暗处对底块仍超过 10:1）；
-     光标条提亮；图形组从 0.84 放大到 0.92，手机桌面小尺寸下更醒目。
+<!-- QingCode Next 应用图标母版（扁平版）：近黑圆角底块 + 青色圆环 + 白色光标条。
+     光标条压在圆环右下角充当 Q 的尾巴，同时表达命令行光标；圆环在光标条外 20 单位处直接裁出缺口，
+     不靠底色遮挡，Android 单色主题图标可原样复用。全部纯色，无渐变、无高光。
+     几何：圆环圆心 (236,254)，外半径 150、内半径 90；缺口为 x≥248 且 y≥316 的矩形；光标条 x268 y336 152×56。
+     颜色：底块 #0E0F11 比标题栏 #141414 略深，应用内仍能看出底块；青色 #4ECDB5 即主题 token --color-qn-brand。
      改动后运行 pnpm icons 重新生成各平台图标，并同步 Logo.tsx、index.html 进场页和 Android 自适应图标。 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <defs>
-    <linearGradient id="qn-tile" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#0F1114"/>
-      <stop offset="1" stop-color="#000000"/>
-    </linearGradient>
-    <linearGradient id="qn-rim" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
-      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0"/>
-    </linearGradient>
-    <linearGradient id="qn-chevron" x1="130" y1="93" x2="389" y2="301" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="0.5" stop-color="#F2F4F6"/>
-      <stop offset="1" stop-color="#D3D9DF"/>
-    </linearGradient>
-    <linearGradient id="qn-cursor" x1="0" y1="344" x2="0" y2="408" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#7CF5DC"/>
-      <stop offset="1" stop-color="#25C6A8"/>
-    </linearGradient>
-  </defs>
-  <rect width="512" height="512" rx="112" fill="url(#qn-tile)"/>
-  <rect x="2" y="2" width="508" height="508" rx="110" stroke="url(#qn-rim)" stroke-width="4"/>
-  <g transform="translate(256 256) scale(0.92) translate(-256 -250.5)">
-    <rect x="96" y="344" width="320" height="64" rx="12" fill="url(#qn-cursor)"/>
-    <path fill="url(#qn-chevron)" d="M130 93H262Q264 93 267 95L385 194Q389 197 385 200L267 299Q264 301 262 301H130Q124 301 128 297L247 197L128 97Q124 93 130 93Z"/>
-  </g>
+  <rect width="512" height="512" rx="112" fill="#0E0F11"/>
+  <path fill="#4ECDB5" d="M248 403.52A150 150 0 1 1 372.59 316H301.24A90 90 0 1 0 248 343.2Z"/>
+  <rect x="268" y="336" width="152" height="56" rx="12" fill="#FFFFFF"/>
 </svg>

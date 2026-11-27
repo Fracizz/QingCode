@@ -43,7 +43,7 @@ describe('引用与注释拼接', () => {
   })
 
   it('注释条文案与摘要', () => {
-    expect(annotationLabel(3)).toBe('💬 3 条注释')
+    expect(annotationLabel(3)).toBe('3 条注释')
     expect(annotationExcerpt(quote('a\n  b'), 10)).toBe('a b')
     expect(annotationExcerpt(quote('abcdef'), 3)).toBe('abc…')
   })

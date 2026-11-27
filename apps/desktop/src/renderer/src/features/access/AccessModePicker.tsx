@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Check, Shield, ShieldAlert } from 'lucide-react'
+import { Check, Shield, ShieldOff } from 'lucide-react'
 import { Menu, MenuContent, MenuItem, MenuTrigger, Tip } from '../../components/primitives'
 import { Modal } from '../../components/ui'
 import { cn } from '../../lib/cn'
@@ -29,7 +29,8 @@ export function AccessModePicker({
   const current = available.find((option) => option.mode === effectiveMode)
   const pending = available.find((option) => option.mode === confirm)
   if (!current) return null
-  const Icon = current.warning ? ShieldAlert : Shield
+  // 完全访问用「盾牌划掉」表示没有沙箱限制，只放图标、不加底色，与手机端一致。
+  const Icon = current.warning ? ShieldOff : Shield
   const label = lockedReason
     ? t('{mode}（{reason}）', { mode: current.label, reason: lockedReason })
     : mode === 'inherit' ? t('{mode}（跟随总控）', { mode: current.label }) : current.label
@@ -50,7 +51,7 @@ export function AccessModePicker({
               disabled={disabled || Boolean(lockedReason)}
               className={cn(
                 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg outline-none enabled:hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
-                current.warning ? 'bg-qn-danger/10 text-qn-danger' : effectiveMode !== 'default' ? 'bg-qn-warn/10 text-qn-warn' : 'text-qn-muted',
+                current.warning ? 'text-qn-muted' : effectiveMode !== 'default' ? 'bg-qn-warn/10 text-qn-warn' : 'text-qn-muted',
               )}
             >
               <Icon size={15} />

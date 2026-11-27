@@ -163,7 +163,6 @@ export default {
   '编辑已发送的消息': 'Edit sent message',
   '发送失败，修改已保留': 'Send failed. Your edit is kept',
   '提交中…': 'Submitting…',
-  '发送修订': 'Send edit',
   '复制消息': 'Copy message',
   '编辑消息': 'Edit message',
   '端口需为 1–65535 的整数': 'The port must be an integer from 1 to 65535',
@@ -365,6 +364,7 @@ export default {
   '断开': 'Disconnect',
   '更新于 {time}': 'Updated {time}',
   '正在打开会话': 'Opening session',
+  '正在创建会话': 'Creating session',
   '会话名称': 'Session name',
   '归档': 'Archive',
   '标记为已读': 'Mark as read',
@@ -547,12 +547,13 @@ export default {
   'Agent 默认权限': 'Agent default access',
   '在侧边栏发送': 'Send in side panel',
   '新对话继续': 'Continue in new chat',
+  '侧边栏开始': 'Start in side chat',
+  '在右侧打开空白侧边对话，用这条消息作为第一条消息；不继承本会话上下文，也不进入会话列表。': 'Open a blank side chat on the right with this message as the first message. It does not inherit this session’s context and is not added to the session list.',
   '新建对话继续': 'Continue in new chat',
   '继承最后一个已结束轮次的上下文，在右侧打开分支并发送这条消息。': 'Open a fork on the right with context up to the last finished turn, then send this message.',
 
   // 消息、轮次导航与用量
   '重新发送': 'Resend',
-  '从这里重新开始': 'Restarted from here',
   '引导 · 下一轮': 'Steer · next turn',
   '引导 · 当前轮': 'Steer · current turn',
   '会话轮次': 'Conversation turns',
@@ -562,6 +563,7 @@ export default {
   '查看会话用量': 'View session usage',
   '查看最近一轮用量': 'View latest turn usage',
   '最近上报的单轮用量': 'Latest reported turn usage',
+  '上下文': 'Context',
   '额度状态': 'Quota status',
   '暂无上报时间': 'No report time yet',
 

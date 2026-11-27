@@ -145,7 +145,10 @@ function AgentRecord({ entry, live, rpc, renderItem }: {
       </section>}
       {entry.result && <section className="space-y-1">
         <h4 className="text-ui-sm font-medium text-qn-muted">{t('返回结果')}</h4>
-        <div className="whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-bg/60 px-3 py-2 text-ui">{entry.result}</div>
+        {/* 结果多为 Markdown 报告，按回复同样的方式渲染（标题、列表、代码），并带复制按钮。 */}
+        <div className="min-w-0 rounded-lg border border-qn-border bg-qn-bg/60 px-3 py-2">
+          {renderItem({ kind: 'agent', id: `${entry.key}:result`, text: entry.result, streaming: false }, false)}
+        </div>
       </section>}
       {entry.activity.length > 0 && (
         <details className="rounded-lg border border-qn-border px-3 py-2 text-ui">

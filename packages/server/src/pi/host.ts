@@ -47,6 +47,7 @@ import {
   type UserMessageIdentity,
 } from './items'
 import { resolvePiExecutable, type PiExecutable } from './resolve'
+import { readVersionAsync } from '../versionProbe'
 import { PiRpcProcess, type PiRpcOptions, type RpcRecord } from './rpc'
 import { isPiLevel, parsePiModelKey, piModelList } from './models'
 import { listPiSessions, readPiSessionConfig, type PiSessionConfig, type PiSessionInfo } from './sessions'
@@ -110,6 +111,7 @@ export class PiHost extends JsonRpcAgentHost {
   private counter = 0
   // 最近一次从运行中进程取到的模型列表，daemon 生命周期内复用
   private cachedModels: Json | null = null
+  private modelListRequest: Promise<Json> | null = null
 
   constructor(
     hub: AgentHostHub,
@@ -136,9 +138,13 @@ export class PiHost extends JsonRpcAgentHost {
       typeof (options as { piPath?: unknown }).piPath === 'string'
         ? ((options as { piPath: string }).piPath).trim()
         : undefined
+    // 默认路径下版本号异步读取，不用 spawnSync 阻塞 daemon（Windows 上 .ps1 经 powershell 尤其慢）。
     const resolved = this.options.resolve
       ? this.options.resolve(explicit)
-      : resolvePiExecutable(explicit)
+      : resolvePiExecutable(explicit, { versionOf: () => 'unknown' })
+    if (!this.options.resolve && resolved.version === 'unknown') {
+      resolved.version = await readVersionAsync(resolved)
+    }
     this.pi = resolved
     this.opened = true
     this.hub.log(`pi 桥已就绪 ${resolved.version}`) // i18n-ignore: 仅进日志
@@ -463,7 +469,15 @@ export class PiHost extends JsonRpcAgentHost {
     return { turn }
   }
 
-  private async modelList(): Promise<Json> {
+  private modelList(): Promise<Json> {
+    // 并发的 model/list（桌面多个组件、手机同时请求）合并为一组 RPC，避免对 pi 进程重复串行发三条命令。
+    this.modelListRequest ??= this.fetchModelList().finally(() => {
+      this.modelListRequest = null
+    })
+    return this.modelListRequest
+  }
+
+  private async fetchModelList(): Promise<Json> {
     // 只借用已运行的会话进程（R9：后台取列表不为此启动 pi）；没有时返回上次缓存，首次则为空列表。
     let rpc: PiRpcProcess | null = null
     for (const session of this.sessions.values()) {

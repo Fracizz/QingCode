@@ -1,6 +1,7 @@
 export { FileExplorer } from './FileExplorer'
 export { QuickOpen } from './QuickOpen'
 export { SearchPanel } from './SearchPanel'
+export { toWorkspaceRoot } from './treeModel'
 export {
   useExplorer,
   getExplorerWatchPaths,

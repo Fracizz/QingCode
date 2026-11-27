@@ -8,7 +8,7 @@ import { sessionKey } from '../../lib/agents'
 import { isTargetActive, targetDotClass, targetStateLabel } from '../../lib/targetStatus'
 import { applyThreadPrefs } from '../../lib/threadPrefs'
 import { activeFirst, isThreadInProgress, threadKey, type ThreadSummary } from '../../lib/threads'
-import { threadListFor, useCodex } from '../../store/codex'
+import { pendingDraftFor, threadListFor, useCodex } from '../../store/codex'
 import { projectListOf, useProjects, type ProjectPlacement } from '../../store/projects'
 import { useTargets } from '../../store/targets'
 import { useThreadPrefs } from '../../store/threadPrefs'
@@ -18,7 +18,7 @@ import { StatusDot } from '../StatusDot'
 import { targetDisplayName } from '../targetName'
 import { ErrorNote, IconButton, Spinner } from '../ui'
 import type { TargetActions } from './TargetSwitcher'
-import { ThreadRow } from './ThreadRow'
+import { PendingThreadRow, ThreadRow } from './ThreadRow'
 
 const THREAD_PREVIEW_LIMIT = 8
 const noThreads: ThreadSummary[] = []
@@ -456,6 +456,7 @@ function ThreadList({ project, active, runningFirst, reveal, onActivate, onNewDr
   // 只取打开错误这一项：订阅整个 sessions 会让每个流式增量都重渲染整棵会话树。
   const openError = useCodex((s) => active ? s.sessions[sessionKey(targetId, s.currentAgent)]?.openError ?? null : null)
   const refreshThreads = useCodex((s) => s.refreshThreads)
+  const pendingDraft = useCodex((s) => pendingDraftFor(s, targetId, cwd))
   const showAll = useProjects((s) => s.fullThreadLists.includes(projectId))
   const setShowAll = useProjects((s) => s.setShowAllThreads)
   const prefs = useThreadPrefs((s) => s.byTarget[targetId])
@@ -508,13 +509,15 @@ function ThreadList({ project, active, runningFirst, reveal, onActivate, onNewDr
 
   return (
     <div ref={listRef} role="group" aria-label={t('{name}会话列表', { name: project.name })} tabIndex={-1} className="flex flex-col gap-0.5 pt-0.5 pb-1.5">
-      {threadsLoading && threads.length === 0 && (
+      {pendingDraft && <PendingThreadRow title={pendingDraft.title} />}
+
+      {threadsLoading && threads.length === 0 && !pendingDraft && (
         <div className="py-1.5 pl-(--qn-tree-title-start)">
           <Spinner label={t('加载会话…')} />
         </div>
       )}
 
-      {!threadsLoading && threads.length === 0 && !threadsError && (
+      {!threadsLoading && threads.length === 0 && !threadsError && !pendingDraft && (
         <button
           type="button"
           className="flex min-h-8 w-full items-center rounded-lg py-0.5 pl-(--qn-tree-title-start) text-left text-[length:var(--qn-session-font-size)] leading-tight text-qn-muted hover:bg-qn-hover hover:text-qn-text"

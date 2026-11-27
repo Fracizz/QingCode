@@ -76,6 +76,9 @@ const SERVER_REQ_METHODS = new Set([
   'codex.open',
   'codex.attach',
   'codex.status',
+  // 未读状态电脑与手机共用：手机看过的会话在电脑上也算已读。
+  'thread.unread.list',
+  'thread.unread.set',
   // 手机端只读查看文件与差异；fs.write / fs.delete / git.stage / git.commit / run.* 等写方法一律不放行。
   'fs.read',
   'git.status',

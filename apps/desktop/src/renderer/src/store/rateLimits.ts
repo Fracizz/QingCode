@@ -52,6 +52,8 @@ function emptyTarget(): TargetRateLimits {
 }
 
 export const RATE_LIMIT_REFRESH_MINUTES = 5
+// 窗口重新获得焦点时的最小刷新间隔。
+const VISIBLE_REFRESH_MIN_MS = 60_000
 let subscribed = false
 
 export const useRateLimits = create<RateLimitsState>((set, get) => {
@@ -191,8 +193,12 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
       }
       const isVisible = (): boolean =>
         typeof document === 'undefined' || document.visibilityState !== 'hidden'
+      // 切窗口/切标签会频繁触发 focus 与 visibilitychange，节流后再读，避免反复打到上游额度接口。
+      let lastVisibleRefresh = 0
       const onVisible = (): void => {
-        if (isVisible()) refreshVisible()
+        if (!isVisible() || Date.now() - lastVisibleRefresh < VISIBLE_REFRESH_MIN_MS) return
+        lastVisibleRefresh = Date.now()
+        refreshVisible()
       }
       if (typeof document !== 'undefined') {
         document.addEventListener('visibilitychange', onVisible)

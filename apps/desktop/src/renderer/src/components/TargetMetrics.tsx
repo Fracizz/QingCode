@@ -28,6 +28,8 @@ export function TargetMetrics({ targetId }: { targetId: string }) {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
 
   useEffect(() => {
+    // 切换目标时旧目标的数值不能沿用。
+    setMetrics(null)
     let stopped = false
     let inFlight = false
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -40,9 +42,12 @@ export function TargetMetrics({ targetId }: { targetId: string }) {
         const result = await call('server.req', { targetId, method: 'system.metrics' })
         if (!stopped) setMetrics(parseMetrics(result))
       } catch (err) {
-        if (!stopped) setMetrics(null)
         // 旧 daemon 没有这个方法，重连或回到对话后再探测。
-        if (err instanceof BackendCallError && err.code === 'method') stopped = true
+        if (err instanceof BackendCallError && err.code === 'method') {
+          if (!stopped) setMetrics(null)
+          stopped = true
+        }
+        // 偶发失败保留上一次数值，避免整块消失又出现造成闪动。
       } finally {
         inFlight = false
         if (!stopped && !document.hidden) timer = setTimeout(refresh, POLL_MS)
@@ -66,20 +71,27 @@ export function TargetMetrics({ targetId }: { targetId: string }) {
   const unit = memoryTotal >= 1024 ** 3 ? 'GiB' : 'MiB'
   const scale = unit === 'GiB' ? 1024 ** 3 : 1024 ** 2
   const size = (bytes: number) => (bytes / scale).toFixed(1).replace(/\.0$/, '')
-  const capacity = `${size(memoryUsed)}/${size(memoryTotal)} ${unit}`
+  const total = size(memoryTotal)
+  const capacity = `${size(memoryUsed)}/${total} ${unit}`
+  // 数值宽度随读数变化，按最长形态预留宽度并右对齐，避免整行左右跳动。
+  // 已用最长为「总量整数位 + 一位小数」，如总量 32 时为 31.9。
+  const usedWidth = `${total.split('.')[0]!.length + 2}ch`
   const cpuPercent = cpuUsage === null ? '—' : `${cpuUsage.toFixed(1)}%`
   const memoryPercentLabel = `${memoryPercent.toFixed(1)}%`
 
   return (
     <span className="flex shrink-0 items-center gap-3 whitespace-nowrap text-ui-xs text-qn-muted tabular-nums">
       <span title={cpuThreads > 0 ? t('CPU 占用率 · {count} 个逻辑核心', { count: cpuThreads }) : t('CPU 占用率')}>
-        CPU <span className={usageClass(cpuUsage)}>{cpuPercent}</span>
+        CPU <span className={`inline-block text-right ${usageClass(cpuUsage)}`} style={{ minWidth: '6ch' }}>{cpuPercent}</span>
       </span>
       <span title={t('内存已用 {capacity} · {percent}', { capacity, percent: memoryPercentLabel })}>
         {t('内存')}{' '}
         <span className={usageClass(memoryPercent)}>
-          <span className="@max-[26rem]:hidden">{capacity}</span>
-          <span className="hidden @max-[26rem]:inline">{memoryPercentLabel}</span>
+          <span className="@max-[26rem]:hidden">
+            <span className="inline-block text-right" style={{ minWidth: usedWidth }}>{size(memoryUsed)}</span>
+            /{total} {unit}
+          </span>
+          <span className="hidden text-right @max-[26rem]:inline-block" style={{ minWidth: '6ch' }}>{memoryPercentLabel}</span>
         </span>
       </span>
     </span>

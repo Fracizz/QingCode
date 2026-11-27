@@ -128,6 +128,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const sendRevision = useCodex((s) => s.sendRevision)
   const interrupt = useCodex((s) => s.interrupt)
   const respondApproval = useCodex((s) => s.respondApproval)
+  const respondUserInput = useCodex((s) => s.respondUserInput)
   const ensureOpen = useCodex((s) => s.ensureOpen)
   const refreshThreads = useCodex((s) => s.refreshThreads)
   const openSideChat = useCodex((s) => s.openSideChat)
@@ -212,12 +213,6 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const view = useCodex((s) => sessionId ? s.sessions[sessionId]?.state.threads[visibleThreadId] : undefined)
   const preview = sendingMessage?.preview
   const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? noItems), preview] : view?.items ?? noItems, [preview, view?.items])
-  const revisionTurnId = useThreadPrefs((s) => currentTargetId && currentThreadId
-    ? s.byTarget[currentTargetId]?.revisionTurns[threadKey(currentAgent, currentThreadId)]
-    : undefined)
-  const revisionTurn = revisionTurnId ? view?.turns?.find((turn) => turn.id === revisionTurnId) : undefined
-  const revisionItemId = revisionTurn && (items.find((item) => item.kind === 'user' && revisionTurn.itemIds.includes(item.id))?.id
-    ?? (view?.activeTurnId === revisionTurn.id ? view.items.find((item) => item.kind === 'user' && item.pending)?.id : undefined))
   const revisionChat = currentAgent === 'codex' && currentTargetId && currentThreadId
     ? { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId } as const : null
   const approvals = useCodex(currentThreadApprovals)
@@ -765,11 +760,10 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
                       showStreamingDots={entry.item.id === streamingId}
                       replyTimeInSummary={previous?.kind === 'work' && previous.reply?.id === entry.item.id}
                       onFork={forkFromMessage}
-                      showRevisionMarker={entry.item.id === revisionItemId}
-                      editRestartsConversation={!!revisionChat}
-                      onEdit={revisionChat
+                      // 只有 Codex 能在原会话里截断历史（thread/revert）；其他 Agent 不提供编辑重发。
+                      onEdit={revisionChat && !running
                         ? (_text, input) => sendRevision(revisionChat, entry.item.id, input)
-                        : (text, input) => sendAndFollow(text, { input })}
+                        : undefined}
                     />
                   )
                   return entry.item.kind === 'user' ? (
@@ -784,6 +778,10 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
                     onDecide={(decision) => respondApproval(
                       { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId },
                       approval.requestId, decision,
+                    )}
+                    onAnswer={(answers) => respondUserInput(
+                      { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId },
+                      approval.requestId, answers,
                     )}
                   />
                 ))}

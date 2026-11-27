@@ -136,4 +136,12 @@ export default {
   '来源为 Claude CLI 状态栏': 'Source: Claude CLI status line',
   '来源为 Claude SDK 限额事件': 'Source: Claude SDK limit event',
   '上报时间 {time}': 'Reported {time}',
+  // Agent 提问卡片（桌面与手机共用）
+  'Agent 需要你的回答': 'The agent needs your answer',
+  '等待回答': 'Awaiting answer',
+  '其他（自行输入）': 'Other (type your own)',
+  '输入你的回答': 'Type your answer',
+  '提交回答': 'Submit answer',
+  '跳过': 'Skip',
+  '（可多选）': '(select all that apply)',
 } satisfies Record<string, string>

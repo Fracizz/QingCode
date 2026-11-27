@@ -97,7 +97,17 @@ export interface ServerMethods extends WorkspaceMethods {
     result: { running: boolean; pid?: number; activeTurns: number }
   }
   'server.shutdown': { params: { whenIdle: true } | void; result: Record<string, never> }
+  /** 目标机记录的会话未读状态，电脑和手机共用；变化时广播 evt `thread.unread`。 */
+  'thread.unread.list': { params: void; result: { threads: ThreadUnreadEntry[] } }
+  'thread.unread.set': {
+    params: { agent?: AgentKind; threadId: string; unread: boolean }
+    result: { changed: boolean }
+  }
 }
+
+export type ThreadUnreadEntry = { agent: AgentKind; threadId: string; at: number }
+/** evt `thread.unread` 的负载：turn 完成时 daemon 自动标记未读，客户端查看后回写已读。 */
+export type ThreadUnreadEvent = { agent: AgentKind; threadId: string; unread: boolean }
 
 export type ServerMethod = keyof ServerMethods
 export type ServerParams<M extends ServerMethod> = ServerMethods[M]['params']
