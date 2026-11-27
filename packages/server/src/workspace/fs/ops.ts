@@ -12,6 +12,7 @@ import {
   mtimeConflicts,
   nodeErrorCode,
   parseDeleteParams,
+  parseMkdirParams,
   parseReadParams,
   parseRenameParams,
   parseWriteParams,
@@ -140,9 +141,10 @@ export async function fsWrite(p: Record<string, unknown>): Promise<{ mtimeMs: nu
 }
 
 export async function fsMkdir(p: Record<string, unknown>): Promise<Record<string, never>> {
-  const dir = requireAbsolutePath(p.path)
+  const { path: dir, recursive } = parseMkdirParams(p)
   return runFs(async () => {
-    await fsp.mkdir(dir, { recursive: true })
+    // 目录选择器只创建一级，让同名目录和已被移走的父目录由文件系统直接报错。
+    await fsp.mkdir(dir, { recursive })
     return {}
   })
 }

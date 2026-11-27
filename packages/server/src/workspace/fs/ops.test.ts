@@ -222,6 +222,37 @@ describe('fs.mkdir / createFile / rename / delete', () => {
     expect(await errorCodeOf(remove({ path: path.join(tempDir(), 'nope') }))).toBe('not_found')
   })
 
+  it('单级创建报告同名冲突，且不会重建缺失的父目录', async () => {
+    const fake = fakeCtx()
+    const dir = tempDir()
+    const create = (target: string) => handler('fs.mkdir')({ path: target, recursive: false }, fake.ctx)
+    const child = path.join(dir, '项目')
+
+    await create(child)
+    expect(fs.statSync(child).isDirectory()).toBe(true)
+    expect(await errorCodeOf(create(child))).toBe('exists')
+    expect(await errorCodeOf(create(path.join(dir, 'missing', 'child')))).toBe('not_found')
+    expect(fs.existsSync(path.join(dir, 'missing'))).toBe(false)
+  })
+
+  it('重命名目录时保留内容并拒绝覆盖已有目录', async () => {
+    const fake = fakeCtx()
+    const dir = tempDir()
+    const from = path.join(dir, '旧目录')
+    const to = path.join(dir, '新目录')
+    const taken = path.join(dir, '已有目录')
+    fs.mkdirSync(from)
+    fs.mkdirSync(taken)
+    fs.writeFileSync(path.join(from, 'file.txt'), '测试')
+
+    const rename = handler('fs.rename')
+    expect(await errorCodeOf(rename({ from, to: taken }, fake.ctx))).toBe('exists')
+    await rename({ from, to }, fake.ctx)
+    expect(fs.existsSync(from)).toBe(false)
+    expect(fs.statSync(taken).isDirectory()).toBe(true)
+    expect(fs.readFileSync(path.join(to, 'file.txt'), 'utf8')).toBe('测试')
+  })
+
   it('非绝对路径报 params', async () => {
     const fake = fakeCtx()
     expect(await errorCodeOf(handler('fs.stat')({ path: 'rel' }, fake.ctx))).toBe('params')

@@ -19,6 +19,7 @@ import {
 } from './conversation'
 import type { ConversationState, ItemView, LoadableThread } from './conversation'
 import { sessionStatus } from './threadStatus'
+import { groupTurns, streamingReplyId } from './turnGroups'
 
 type Params = Record<string, unknown>
 
@@ -71,6 +72,25 @@ function itemOf(s: ConversationState, id: string): ItemView {
   if (!found) throw new Error(`missing item ${id}`)
   return found
 }
+
+it('后台任务通知保留流式回复和用户占位，状态与结果在主时间线中可见', () => {
+  const pending = addOptimisticUser(emptyState(), 't1', { kind: 'user', id: 'pending', text: '继续检查', pending: true })
+  const task = item('backgroundTaskNotification', 'task', { status: 'stopped', summary: '检查', result: '**已停止**' })
+  const state = reduce(pending, [
+    note('item/agentMessage/delta', { threadId: 't1', turnId: 'active', itemId: 'reply', delta: '正在回复' }),
+    note('item/completed', { threadId: 't1', turnId: '', item: task }),
+  ])
+  expect(itemOf(state, 'pending')).toMatchObject({ kind: 'user', pending: true })
+  expect(itemOf(state, 'reply')).toMatchObject({ streaming: true })
+  expect(threadOf(state)).toMatchObject({ status: 'running', activeTurnId: 'active', turns: [{ itemIds: ['reply'] }] })
+  const thread = threadOf(state)
+  expect(streamingReplyId(thread)).toBe('reply')
+  const inTurn = applyNotification(state, note('item/completed', { threadId: 't1', turnId: 'active', item: task }))
+  expect(streamingReplyId(threadOf(inTurn))).toBe('reply')
+  expect(groupTurns(thread.items, thread.turns, true)).toContainEqual({
+    kind: 'item', key: 'task', item: { kind: 'backgroundTask', id: 'task', status: 'stopped', summary: '检查', result: '**已停止**' },
+  })
+})
 
 it('记录实际回复完成时间，重读历史时保留同条回复已收到的时间', () => {
   const raw = item('agentMessage', 'reply', { text: '已完成' })
@@ -180,17 +200,24 @@ describe('跨端会话状态', () => {
     expect(threadOf(paged).turns?.[0]).toMatchObject({ ...expected, id: 'older' })
   })
 
-  it('缺少服务端用时则记录本地经过时间，重放结束事件时保留用时', () => {
+  it('实时、回放和历史读取使用服务端用时，缺少计时不按客户端时钟估算', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(1_796_000_000_050)
       const started = applyNotification(emptyState(), note('turn/started', { threadId: 't1', turn: { id: 't', status: 'inProgress', items: [] } }))
-      const stopped = note('turn/completed', { threadId: 't1', turn: { id: 't', status: 'interrupted', items: [] } })
+      const turn = { id: 't', status: 'interrupted', items: [], durationMs: 544_000 }
+      const stopped = note('turn/completed', { threadId: 't1', turn })
       vi.setSystemTime(1_796_000_000_450)
       const done = applyNotification(started, stopped)
       vi.setSystemTime(1_796_000_010_000)
-      expect(threadOf(applyNotification(done, stopped)).turns?.[0]).toMatchObject({ outcome: 'interrupted', durationMs: 400 })
-      expect(threadOf(applyNotification(emptyState(), stopped)).turns?.[0]).toMatchObject({ outcome: 'interrupted', durationMs: null })
+      const expected = { outcome: 'interrupted', durationMs: 544_000 }
+      expect(threadOf(done).turns?.[0]).toMatchObject(expected)
+      expect(threadOf(applyNotification(emptyState(), stopped)).turns?.[0]).toMatchObject(expected)
+      const read = (durationMs: number | null) => loadThread(emptyState(), { id: 't1', turns: [{ ...turn, durationMs }] } as unknown as LoadableThread)
+      expect(threadOf(read(544_000)).turns?.[0]).toMatchObject(expected)
+      expect(threadOf(read(null)).turns?.[0]?.durationMs).toBeNull()
+      const missing = note('turn/completed', { threadId: 't1', turn: { ...turn, durationMs: null } })
+      expect(threadOf(applyNotification(started, missing)).turns?.[0]?.durationMs).toBeNull()
     } finally {
       vi.useRealTimers()
     }
@@ -712,6 +739,88 @@ describe('乐观用户消息', () => {
       turn: { id: 'turn1', status: 'inProgress', items: [userItem] },
     }))
     expect(threadOf(state).items.map((item) => item.id)).toEqual(['i-user'])
+  })
+
+  it('历史快照和实时回显用同一个客户端消息 ID 合并带图消息', () => {
+    const input: UserInput[] = [...textInput('看图'), { type: 'image', url: 'data:image/png;base64,AAAA' }]
+    let state = addOptimisticUser(emptyState(), 't1', userItemFromInput('local-1', input))
+    const before = threadOf(state)
+    const turn = { id: 'turn1', status: 'inProgress', items: [] }
+    state = reduce(state, [
+      note('turn/started', { threadId: 't1', turn }),
+      note('item/started', { threadId: 't1', turnId: turn.id, item: item('userMessage', 'live-user', {
+        clientId: 'local-1', content: input,
+      }), startedAtMs: 1760000000000 }),
+      note('item/agentMessage/delta', { threadId: 't1', turnId: turn.id, itemId: 'reply', delta: '正在看图' }),
+    ])
+    const history = { ...turn, items: [item('userMessage', 'history-user', { clientId: 'local-1', content: input })] }
+    const thread = { id: 't1', status: { type: 'active' }, turns: [history] } as unknown as Thread
+    state = loadRecentThreadHistory(state, thread, null, before)
+    expect(threadOf(state).items).toMatchObject([
+      { id: 'local-1', kind: 'user', text: '看图', images: ['data:image/png;base64,AAAA'], sentAt: 1760000000000 },
+      { id: 'reply', kind: 'agent', text: '正在看图' },
+    ])
+    expect(threadOf(state).turns?.[0]?.itemIds).toEqual(['local-1', 'reply'])
+  })
+
+  it('历史先收到回显时，合并与恢复发送都不会重新加回占位', () => {
+    const input = textInput('问题')
+    const pending = userItemFromInput('local-1', input)
+    let state = addOptimisticUser(emptyState(), 't1', pending)
+    const echo = item('userMessage', 'server-id', { clientId: 'local-1', content: input })
+    const turn = { id: 'turn1', status: 'inProgress', items: [echo] }
+    const thread = { id: 't1', turns: [turn] } as unknown as Thread
+    state = loadRecentThreadHistory(state, thread, null, undefined)
+    state = addOptimisticUser(state, 't1', pending)
+    expect(threadOf(state).items).toMatchObject([{ id: 'local-1', text: '问题' }])
+    expect(threadOf(state).items[0]).not.toHaveProperty('pending', true)
+  })
+
+  it('历史加载保留尚未回显的占位，确认后同内容的两次发送各显示一条', () => {
+    const input: UserInput[] = [{ type: 'image', url: 'data:image/png;base64,AAAA' }]
+    const older = item('userMessage', 'first-send', { content: input })
+    const history = { id: 't1', turns: [{ id: 'older', items: [older] }] } as unknown as Thread
+    let state = loadThread(emptyState(), history)
+    state = addOptimisticUser(state, 't1', userItemFromInput('second-send', input))
+    state = loadRecentThreadHistory(state, history, null, threadOf(state))
+    expect(threadOf(state).items.map((entry) => entry.id)).toEqual(['first-send', 'second-send'])
+    state = applyNotification(state, note('turn/started', {
+      threadId: 't1',
+      turn: { id: 'next', status: 'inProgress', items: [
+        item('userMessage', 'second-item', { clientId: 'second-send', content: input }),
+      ] },
+    }))
+    expect(threadOf(state).items.map((entry) => entry.id)).toEqual(['first-send', 'second-send'])
+    expect(threadOf(state).items.every((entry) => entry.kind === 'user' && !entry.pending)).toBe(true)
+  })
+
+  it('搬运草稿占位时保留真实会话先到的回显', () => {
+    const input = textInput('同一条消息')
+    let state = addOptimisticUser(emptyState(), DRAFT_THREAD_ID, userItemFromInput('local-1', input))
+    state = applyNotification(state, note('item/completed', {
+      threadId: 't1', item: item('userMessage', 'echo', { clientId: 'local-1', content: input }),
+    }))
+    state = moveOptimisticUsers(state, DRAFT_THREAD_ID, 't1')
+    expect(state.threads[DRAFT_THREAD_ID]).toBeUndefined()
+    expect(threadOf(state).items).toMatchObject([{ id: 'local-1', text: '同一条消息' }])
+    expect(threadOf(state).items[0]).not.toHaveProperty('pending', true)
+  })
+
+  it('旧消息的重复通知和其他客户端的相同正文都保留本地占位', () => {
+    const input = textInput('相同正文')
+    const first = item('userMessage', 'old', { content: input })
+    const receive = (state: ConversationState, raw: Params) => applyNotification(state, note('item/completed', {
+      threadId: 't1', turnId: 'turn1', item: raw,
+    }))
+    let state = receive(emptyState(), first)
+    state = addOptimisticUser(state, 't1', userItemFromInput('local-1', input))
+    state = receive(state, first)
+    state = receive(state, item('userMessage', 'external', { clientId: 'external-1', content: input }))
+    expect(threadOf(state).items.map((entry) => entry.id)).toEqual(['old', 'local-1', 'external-1'])
+    expect(threadOf(state).items[1]).toMatchObject({ pending: true })
+    state = receive(state, item('userMessage', 'local-echo', { clientId: 'local-1', content: input }))
+    expect(threadOf(state).items.map((entry) => entry.id)).toEqual(['old', 'local-1', 'external-1'])
+    expect(threadOf(state).items[1]).not.toHaveProperty('pending', true)
   })
 
   it('连续两条占位按到达顺序分别被回显替换', () => {

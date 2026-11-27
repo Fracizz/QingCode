@@ -10,6 +10,7 @@ import { ThreadsPage } from './components/ThreadsPage'
 import { WorkspaceHome, WorkspaceNav } from './components/WorkspaceHome'
 import { Note } from './components/ui'
 import { parsePairingLink } from './link'
+import { useMobileAppearance } from './mobilePreferences'
 import { getWindowNativePort } from './native'
 import { useApp } from './store'
 import { closeTopSheet, startWorkspaceObserver, useWorkspace } from './workspace'
@@ -31,6 +32,7 @@ declare global {
 }
 
 export function App() {
+  useMobileAppearance()
   const page = useApp((s) => s.page)
   const booting = useApp((s) => s.booting)
   const savingPair = useApp((s) => s.form?.saving)

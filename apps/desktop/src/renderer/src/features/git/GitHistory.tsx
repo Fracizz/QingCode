@@ -164,7 +164,7 @@ const CommitRow = memo(function CommitRow({
     <div className="mb-0.5">
       <button
         type="button"
-        className="flex w-full items-start gap-1.5 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
+        className="flex w-full items-start gap-1.5 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover"
         onClick={() => void onToggle(item.hash)}
         title={item.hash}
       >
@@ -194,7 +194,7 @@ const CommitRow = memo(function CommitRow({
               <button
                 key={file.path}
                 type="button"
-                className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-ui-xs outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
+                className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-ui-xs outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover"
                 title={t('查看 {hash} 中的差异', { hash: shortHash(item.hash) })}
                 onClick={() =>
                   openDiff({

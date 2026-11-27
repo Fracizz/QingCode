@@ -69,11 +69,22 @@ Claude 订阅登录的灰区说明：Anthropic 允许"end user signing in to the
 
 ## 4. 用量、限额与并发
 
-- 额度只读官方接口：Codex `account/rateLimits/read` + `account/rateLimits/updated`；Claude 只用 SDK 推送的 `rate_limit_event` 与 `result.total_cost_usd`（标注"估算"）。不抓取网页、不调用私有用量接口。
+- 引导从桌面或手机对活动轮次发 `turn/steer`。pi 使用官方 `steer` RPC（安装包 `docs/rpc-commands.md`），收到原生用户消息事件后回显。Claude 使用 [Agent SDK 流式输入](https://code.claude.com/docs/en/agent-sdk/typescript#sdkusermessage) 的 `priority: 'next'`，根据 SDK 回显的用户消息 UUID 确认归属。本轮先结束时，Claude 可以在下一轮处理这条补充。
+- 持久会话的引导归属保存在 QingCode daemon 状态目录的 `steering/`，只记录消息标识及轮次归属。临时会话只在内存记录。
+
+- 手动压缩只在用户确认后执行。Codex 用公开的 [`thread/compact/start`](https://developers.openai.com/codex/app-server)，Claude 用 [Agent SDK 的 `/compact`](https://code.claude.com/docs/en/agent-sdk/agent-loop) 且须由 `supportedCommands()` 声明，pi 用官方 RPC `compact`（随安装包提供的 `docs/rpc-commands.md`）。压缩减少上下文占用，已用账号额度不会恢复。
+
+- 额度只读官方接口：Codex `account/rateLimits/read` + `account/rateLimits/updated`。Claude 默认使用 SDK 的 `rate_limit_event`，费用使用 `result.total_cost_usd`（标注"估算"）。个人自用可以主动配置官方 CLI 的 [`statusLine`](https://code.claude.com/docs/en/statusline#rate-limit-usage) 转发两个订阅窗口；对外分发仍遵守 §3.3。不抓取网页、不调用私有用量接口。
 - Codex `account/rateLimitResetCredit/consume`、`account/sendAddCreditsNudgeEmail` 等有副作用的账户方法：只能由用户显式点击触发，带确认框，禁止自动调用。
 - 刷新频率：界面可见时 ≥60 秒一次；不可见时停止。禁止为"保持在线""预热"发送空 turn 或心跳 prompt。
 - 触发限额（`usage_limit` / `rateLimitReachedType` 非空 / Claude 限额错误）时：**停止**、清晰告知重置时间；禁止自动重试风暴、禁止换号续跑。重试最多 1 次且需退避（≥ 官方给出的重置/`retry-after`）。
 - 并发：同一目标同一 Agent 的并发 turn 数由用户操作产生，不做后台批量派发；任何"批量/定时自动发 prompt"功能都必须用户显式开启，并在 UI 标注会消耗其额度。注意 Anthropic："Advertised usage limits… assume ordinary, individual usage"。
+
+### Claude CLI 状态栏（个人自用）
+
+在运行 Claude CLI 的同一台目标机上，将官方状态栏传给脚本的 stdin JSON 交给 `node "/目标机上的/qn-server.cjs" claude-statusline`。自定义 daemon 目录加 `--state-dir <目录>`。已有状态栏时，在自己的脚本内将同一份 JSON 分别传给原脚本和此命令。
+
+命令只通过已有本机 IPC 发送 5 小时和每周窗口的百分比、重置时间及配置目录。daemon 按配置目录隔离，每 15 秒最多推送一次有变化的读数，保留期间最新值，窗口过期后移除。互动终端执行正常请求后才可能有读数；SDK 的限额事件仍可独立使用。QingCode 不自动安装状态栏或启动 Claude 来刷新额度。
 
 ## 5. 品牌与界面文案
 

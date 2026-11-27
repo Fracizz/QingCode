@@ -44,13 +44,10 @@ export function TargetGlyph({
   target,
   state,
   size = 28,
-  dot = true,
 }: {
   target: Target
   state: TargetState
   size?: number
-  /** 是否在图标角上叠加状态点；侧栏分组头把状态点移到行尾，这里关闭。 */
-  dot?: boolean
 }) {
   const Icon = target.kind === 'ssh' ? Server : target.kind === 'direct' ? Zap : Monitor
   return (
@@ -59,11 +56,9 @@ export function TargetGlyph({
       style={{ width: size, height: size }}
     >
       <Icon size={Math.round(size * 0.5)} strokeWidth={1.7} />
-      {dot && (
-        <StatusDot
-          className={`absolute -bottom-0.5 -right-0.5 size-2.5 border-2 border-qn-sidebar ${targetDotClass[state]}`}
-        />
-      )}
+      <StatusDot
+        className={`absolute -bottom-0.5 -right-0.5 size-2.5 border-2 border-qn-sidebar ${targetDotClass[state]}`}
+      />
     </span>
   )
 }
@@ -138,7 +133,8 @@ function TargetMenu({
           <MoreHorizontal size={14} />
         </IconButton>
       </MenuTrigger>
-      <MenuContent align="end">
+      {/* 关闭时悬停按钮可能先隐藏，菜单淡出期间也要随锚点隐藏，避免跳到左上角。 */}
+      <MenuContent align="end" hideWhenDetached>
         {inSidebar && (
           <MenuItem icon={<ChevronsDownUp size={14} />} onSelect={() => useProjects.getState().collapseAll(target.id)}>
             {t('收起全部会话')}
@@ -283,18 +279,19 @@ export function TargetPicker(actions: TargetActions) {
 }
 
 /**
- * 侧栏里一个目标分组的标题行：折叠箭头 + 图标 + 名称 + 行尾状态点（悬停提示状态文案）；
- * 悬停显出"添加项目 / 连接或断开 / 更多"。活动目标（主区正在用的）高亮。
+ * 展开时用紧凑标题保留折叠入口，连接提示与目标操作仍放在这一行。
  */
 export function TargetSectionHeader({
   target,
   actions,
   collapsed,
+  hasActiveSessions,
   onToggle,
 }: {
   target: Target
   actions: TargetActions
   collapsed: boolean
+  hasActiveSessions?: boolean
   onToggle: () => void
 }) {
   const state = useTargets((s) => s.states[target.id]?.state ?? 'idle')
@@ -304,16 +301,17 @@ export function TargetSectionHeader({
   const openPicker = useUi((s) => s.openDirectoryPicker)
   const [menuOpen, setMenuOpen] = useState(false)
   const active = isTargetActive(state)
+  const showState = collapsed || state !== 'ready'
 
   return (
     <div className="pt-1">
       <div
-        className={`group flex h-9 items-center gap-1 rounded-lg pl-1 pr-1 ${menuOpen ? 'bg-qn-hover' : 'hover:bg-qn-hover'}`}
+        className={`group flex items-center gap-1 rounded-lg pl-1 pr-1 ${collapsed ? 'h-9' : 'h-7'} ${menuOpen ? 'bg-qn-hover' : 'hover:bg-qn-hover'}`}
         title={`${targetDisplayName(target)} · ${targetSubtitle(target)}${detail && state !== 'error' ? ` · ${translateMessage(detail)}` : ''}`}
       >
         <button
           type="button"
-          className="flex h-full min-w-0 flex-1 items-center text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent rounded-lg"
+          className="flex h-full min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover rounded-lg"
           aria-expanded={!collapsed}
           onClick={onToggle}
         >
@@ -321,18 +319,26 @@ export function TargetSectionHeader({
             size={13}
             className={`shrink-0 text-qn-dim transition-transform ${collapsed ? '' : 'rotate-90'}`}
           />
-          {/* 与 ProjectTree 对齐：项目行左缩进 pl-5 + row-inset，本行已占 pl-1 + 箭头 13px；
-              图标比项目图标宽，文字间距相应收窄，保证图标左缘与文字起点都和项目行一致。 */}
-          <span className="inline-flex shrink-0" style={{ marginLeft: 'calc(var(--spacing) * 4 + var(--qn-tree-row-inset) - 13px)' }}>
-            <TargetGlyph target={target} state={state} size={22} dot={false} />
-          </span>
+          {collapsed && <TargetGlyph target={target} state={state} size={22} />}
           <span
-            style={{ marginLeft: 'calc(var(--qn-tree-row-inset) + var(--qn-tree-icon-size) - 22px)' }}
-            className={`min-w-0 flex-1 truncate text-[length:var(--qn-sidebar-list-font-size)] font-semibold ${current ? 'text-qn-text' : 'text-qn-text/80'}`}
+            className={`min-w-0 flex-1 truncate ${collapsed
+              ? `text-[length:var(--qn-sidebar-list-font-size)] font-semibold ${current ? 'text-qn-text' : 'text-qn-text/80'}`
+              : `text-[length:var(--qn-sidebar-list-detail-font-size)] ${current ? 'text-qn-text' : 'text-qn-muted'}`}`}
           >
             {targetDisplayName(target)}
           </span>
+          {hasActiveSessions && <StatusDot className="bg-qn-brand" title={t('有活动会话')} />}
+          {!showState && <span className="sr-only">{targetStateLabel[state]}</span>}
         </button>
+        {showState && (
+          <span
+            className={`shrink-0 pr-1.5 text-[length:var(--qn-sidebar-list-detail-font-size)] group-hover:hidden ${menuOpen ? 'hidden' : ''} ${
+              state === 'error' ? 'text-qn-danger' : collapsed ? 'text-qn-dim' : 'text-qn-muted'
+            }`}
+          >
+            {targetStateLabel[state]}
+          </span>
+        )}
         <span className={`shrink-0 items-center group-hover:flex ${menuOpen ? 'flex' : 'hidden'}`}>
           <IconButton label={t('添加项目')} size="sm" onClick={() => openPicker(target.id)}>
             <FolderPlus size={14} />
@@ -349,15 +355,6 @@ export function TargetSectionHeader({
             </IconButton>
           )}
           <TargetMenu target={target} actions={actions} inSidebar onOpenChange={setMenuOpen} />
-        </span>
-        {/* 状态点常驻行尾，悬停操作按钮出现在它左侧；外层留出热区，方便悬停看提示。 */}
-        <span
-          role="img"
-          aria-label={targetStateLabel[state]}
-          title={targetStateLabel[state]}
-          className="flex size-6 shrink-0 items-center justify-center"
-        >
-          <StatusDot className={`size-2 ${targetDotClass[state]}`} />
         </span>
       </div>
       {error && (

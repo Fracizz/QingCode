@@ -34,6 +34,14 @@ it('无用量数据也能打开压缩入口，只有确认按钮发送请求', a
     await click('确认压缩')
     expect(onConfirm).toHaveBeenCalledTimes(1)
     expect(host.querySelector('dialog')).toBeNull()
+
+    const tokenUsage = { last: { totalTokens: 128 }, modelContextWindow: null, estimated: true, estimatedCostUsd: 0.012 }
+    await act(() => root.render(<ContextUsage tokenUsage={tokenUsage} />))
+    await click('查看会话用量')
+    const usage = host.querySelector('[aria-label="会话用量"]')
+    expect(usage?.textContent).toContain('128 tokens')
+    expect(usage?.textContent).toMatch(/费用估算 .*0\.012/)
+    expect(usage?.querySelector('progress')).toBeNull()
   } finally {
     await act(() => root.unmount())
     host.remove()

@@ -42,20 +42,21 @@ const useModalities = create<ModalityState>((set, get) => ({
  */
 export function useImageSupport(targetId: string | null, agent: AgentKind, enabled: boolean, threadId: string | null = null): ImageSupport {
   const key = targetId ? sessionKey(targetId, agent) : ''
-  const session = useCodex((s) => (key ? s.sessions[key] : undefined))
+  const rpc = useCodex((s) => {
+    const session = key ? s.sessions[key] : undefined
+    return session?.opened ? session.rpc : undefined
+  })
   const list = useModels((s) => (key ? s.lists[key] : undefined))
   const prefs = useModels((s) => prefsFor(s, targetId, agent, threadId))
   const entry = useModalities((s) => (key ? s.entries[key] : undefined))
   const load = useModalities((s) => s.load)
 
-  const opened = session?.opened === true
-  const rpc = session?.rpc
   const stamp = list?.loadedAt ?? 0
   useEffect(() => {
-    if (!enabled || !key || !opened || !rpc) return
+    if (!enabled || !key || !rpc) return
     if (entry && entry.stamp >= stamp) return
     void load(key, rpc, stamp)
-  }, [enabled, key, opened, rpc, entry, stamp, load])
+  }, [enabled, key, rpc, entry, stamp, load])
 
   if (!enabled || !entry) return { allowed: true, reason: null }
   const model = resolveSelection(list?.models ?? [], prefs).model

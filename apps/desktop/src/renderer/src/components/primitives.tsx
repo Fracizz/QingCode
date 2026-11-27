@@ -160,7 +160,7 @@ export function Tip({
           align={align}
           sideOffset={6}
           collisionPadding={8}
-          className={cn('qn-no-drag qn-float qn-surface-float z-[60] max-w-xs rounded-lg px-2.5 py-1.5 text-ui-sm leading-4', className)}
+          className={cn('qn-no-drag qn-float qn-surface-float z-[60] max-w-[min(20rem,calc(100vw-1rem))] rounded-lg px-2.5 py-1.5 text-ui-sm leading-4 whitespace-normal wrap-anywhere', className)}
         >
           {label}
         </Tooltip.Content>
@@ -203,7 +203,7 @@ export function Select({
       <RadixSelect.Trigger
         aria-label={ariaLabel}
         className={cn(
-          'qn-input flex items-center justify-between gap-2 text-left data-[placeholder]:text-qn-dim data-[state=open]:border-qn-accent disabled:cursor-not-allowed disabled:opacity-55',
+          'qn-input flex items-center justify-between gap-2 text-left data-[placeholder]:text-qn-dim data-[state=open]:border-qn-outline-hover disabled:cursor-not-allowed disabled:opacity-55',
           className,
         )}
       >
@@ -268,7 +268,7 @@ export function TabsTrigger({ className, ...props }: ComponentProps<typeof Tabs.
   return (
     <Tabs.Trigger
       className={cn(
-        'h-8 rounded-lg px-3 text-ui text-qn-muted outline-none hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=active]:bg-qn-hover data-[state=active]:text-qn-text',
+        'h-8 rounded-lg px-3 text-ui text-qn-muted outline-none hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover data-[state=active]:bg-qn-hover data-[state=active]:text-qn-text',
         className,
       )}
       {...props}

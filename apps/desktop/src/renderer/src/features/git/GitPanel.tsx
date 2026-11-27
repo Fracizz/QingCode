@@ -36,6 +36,7 @@ import {
 import { copyText } from '../../lib/clipboard'
 import { cn } from '../../lib/cn'
 import { openDiff, openFile } from '../workspace/openers'
+import { CopyGitRemoteButton } from './CopyGitRemoteButton'
 import { GitHistory } from './GitHistory'
 import {
   aheadBehindText,
@@ -229,7 +230,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="flex min-w-0 max-w-[52%] items-center gap-1.5 rounded-lg px-2 py-1 text-ui-sm outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover"
+              className="flex min-w-0 max-w-[52%] items-center gap-1.5 rounded-lg px-2 py-1 text-ui-sm outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover data-[state=open]:bg-qn-hover"
             >
               <GitBranch size={14} className="shrink-0 text-qn-muted" />
               <span className="truncate">{branchLabel(current)}</span>
@@ -310,6 +311,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
         )}
 
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          <CopyGitRemoteButton key={key} targetId={targetId} cwd={cwd} disabled={!status} />
           <IconButton label={t('抓取远端更新（fetch）')} className="h-7 w-7" disabled={busy || !status} onClick={() => void fetch(targetId, cwd)}>
             <Download size={14} />
           </IconButton>
@@ -624,7 +626,7 @@ const FileRow = memo(function FileRow({
     >
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent"
+        className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover"
         onClick={() => onOpen(file, group)}
         title={t('查看差异')}
       >

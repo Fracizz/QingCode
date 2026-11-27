@@ -479,11 +479,11 @@ export function TargetForm({
         {!initial && (
           <div className="flex gap-1 rounded-lg border border-qn-border bg-qn-bg p-1">
             <button type="button" disabled={busy !== null} onClick={() => switchMode('ssh')}
-              className={`h-8 flex-1 rounded-lg px-3 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent ${mode === 'ssh' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
+              className={`h-8 flex-1 rounded-lg px-3 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover ${mode === 'ssh' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
               {t('SSH 连接')}
             </button>
             <button type="button" disabled={busy !== null} onClick={() => switchMode('direct')}
-              className={`h-8 flex-1 rounded-lg px-3 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent ${mode === 'direct' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
+              className={`h-8 flex-1 rounded-lg px-3 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover ${mode === 'direct' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
               {t('直连（连接码）')}
             </button>
           </div>
@@ -626,7 +626,7 @@ export function TargetForm({
       <FeedbackRow
         message={passed}
         icon={<CircleCheck size={15} />}
-        className="rounded-lg border border-qn-ok/30 bg-qn-ok/10 px-3 py-2 text-ui leading-5 text-qn-ok"
+        className="rounded-lg border border-qn-border bg-qn-ok/10 px-3 py-2 text-ui leading-5 text-qn-ok"
       />
       <ErrorNote message={error} onClose={() => setError(null)} />
       </form>

@@ -1,20 +1,26 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { Archive, Settings, Smartphone, SquarePen, Upload } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Archive, Bell, Settings, Smartphone, SquarePen, Upload } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import { t } from '@qn/codex-client'
-import { useCodex } from '../../store/codex'
-import { useTargets } from '../../store/targets'
-import { useUi } from '../../store/ui'
+import type { Project } from '../../../../shared/backendApi'
+import { sessionKey } from '../../lib/agents'
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from '../../lib/layout'
+import { activeFirst, isThreadInProgress, threadKey } from '../../lib/threads'
+import { useCodex } from '../../store/codex'
+import { useProjects } from '../../store/projects'
+import { sidebarTargets, useTargets } from '../../store/targets'
+import { useThreadPrefs } from '../../store/threadPrefs'
+import { useUi } from '../../store/ui'
 import { LegacyBanner } from '../LegacyImport'
 import { ResizeHandle } from '../ResizeHandle'
 import { targetDisplayName } from '../targetName'
-import { ErrorNote } from '../ui'
+import { ErrorNote, IconButton } from '../ui'
 import { ArchivedThreadsDialog } from './ArchivedThreadsDialog'
 import { ProjectTree } from './ProjectTree'
 import { ForceUpdateDialog, TargetPicker, TargetSectionHeader, type TargetActions } from './TargetSwitcher'
-import { sidebarTargets } from '../../store/targets'
 
 const COLLAPSED_KEY = 'qn-sidebar-collapsed-targets'
+const noActivePaths = new Set<string>()
 
 function readCollapsed(): string[] {
   try {
@@ -43,6 +49,44 @@ export function Sidebar({
   const loaded = useTargets((s) => s.loaded)
   const loadError = useTargets((s) => s.error)
   const shown = sidebarTargets(targets, sidebarIds, selectedId)
+  const [runningFirst, setRunningFirst] = useState(false)
+  const listRef = useRef<HTMLDivElement>(null)
+  const states = useTargets((s) => runningFirst ? s.states : null)
+  const projectLists = useProjects((s) => runningFirst ? s.byTarget : null)
+  const prefs = useThreadPrefs((s) => runningFirst ? s.byTarget : null)
+  const projectPaths = useMemo(() => new Map(Object.entries(projectLists ?? {}).map(([targetId, list]) => [
+    targetId, new Map(list.projects.map((project) => [project.path, project])),
+  ])), [projectLists])
+  const activeProjects = useCodex(useShallow(({ threadLists, sessions }) => {
+    if (!runningFirst) return null
+    const result = new Set<Project>()
+    for (const { targetId, cwd, threads } of Object.values(threadLists)) {
+      const knownPaths = projectPaths.get(targetId)
+      if (!knownPaths || states?.[targetId]?.state !== 'ready') continue
+      const scopedProject = cwd ? knownPaths.get(cwd) : undefined
+      if (cwd && (!scopedProject || result.has(scopedProject))) continue
+      for (const thread of threads) {
+        const project = scopedProject ?? knownPaths.get(thread.cwd)
+        if (!project || result.has(project) || prefs?.[targetId]?.hidden[threadKey(thread.agent, thread.id)]) continue
+        const view = sessions[sessionKey(targetId, thread.agent)]?.state.threads[thread.id]
+        if (!isThreadInProgress(thread, view)) continue
+        result.add(project)
+        if (scopedProject) break
+      }
+    }
+    return result
+  }))
+  const activePaths = useMemo(() => {
+    if (!activeProjects) return null
+    const result = new Map<string, Set<string>>()
+    for (const { targetId, path } of activeProjects) {
+      let paths = result.get(targetId)
+      if (!paths) result.set(targetId, (paths = new Set()))
+      paths.add(path)
+    }
+    return result
+  }, [activeProjects])
+  const orderedTargets = activePaths ? activeFirst(shown, (target) => activePaths.has(target.id)) : shown
   const [collapsed, setCollapsed] = useState(readCollapsed)
   const toggleCollapsed = (id: string) =>
     setCollapsed((list) => {
@@ -71,7 +115,7 @@ export function Sidebar({
       <div className="px-2 pt-2">
         <button
           type="button"
-          className={`group flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 py-0.5 text-[length:var(--qn-sidebar-font-size)] leading-tight outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent ${
+          className={`group flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 py-0.5 text-[length:var(--qn-sidebar-font-size)] leading-tight outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover ${
             isDraft ? 'bg-qn-hover text-qn-text' : 'text-qn-text/90'
           }`}
           onClick={() => startDraft()}
@@ -84,7 +128,7 @@ export function Sidebar({
         </button>
         <button
           type="button"
-          className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 py-0.5 text-left text-[length:var(--qn-sidebar-font-size)] leading-tight text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
+          className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 py-0.5 text-left text-[length:var(--qn-sidebar-font-size)] leading-tight text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover"
           onClick={() => setArchiveOpen(true)}
         >
           <Archive size={16} className="text-qn-muted" aria-hidden="true" />
@@ -94,10 +138,23 @@ export function Sidebar({
 
       <div className="flex items-center justify-between pb-0.5 pl-4 pr-2 pt-3">
         <span className="text-[length:var(--qn-sidebar-list-font-size)] text-qn-muted">{t('工作区')}</span>
-        <TargetPicker {...targetActions} />
+        <div className="flex items-center gap-0.5">
+          <IconButton
+            label={t('查看活动会话')}
+            className="h-7 w-7 aria-pressed:bg-qn-active aria-pressed:text-qn-text"
+            aria-pressed={runningFirst}
+            onClick={() => {
+              if (!runningFirst && listRef.current) listRef.current.scrollTop = 0
+              setRunningFirst(!runningFirst)
+            }}
+          >
+            <Bell size={15} aria-hidden />
+          </IconButton>
+          <TargetPicker {...targetActions} />
+        </div>
       </div>
 
-      <div className="qn-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <div ref={listRef} className="qn-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {!loaded && !loadError && (
           <div className="space-y-1.5 px-2 py-2">
             {[0, 1, 2].map((key) => (
@@ -105,7 +162,7 @@ export function Sidebar({
             ))}
           </div>
         )}
-        {shown.map((target) => {
+        {orderedTargets.map((target) => {
           const isCollapsed = collapsed.includes(target.id)
           return (
             <section key={target.id} aria-label={targetDisplayName(target)}>
@@ -113,9 +170,16 @@ export function Sidebar({
                 target={target}
                 actions={targetActions}
                 collapsed={isCollapsed}
+                hasActiveSessions={isCollapsed && activePaths?.has(target.id)}
                 onToggle={() => toggleCollapsed(target.id)}
               />
-              {!isCollapsed && <ProjectTree targetId={target.id} onSelectTarget={targetActions.onSelect} />}
+              {!isCollapsed && (
+                <ProjectTree
+                  target={target}
+                  onSelectTarget={targetActions.onSelect}
+                  activeSessionPaths={activePaths ? activePaths.get(target.id) ?? noActivePaths : undefined}
+                />
+              )}
             </section>
           )
         })}
@@ -168,7 +232,7 @@ function FooterButton({ label, onClick, children }: { label: string; onClick: ()
   return (
     <button
       type="button"
-      className="flex shrink-0 items-center gap-1 rounded-lg px-1 py-1.5 text-[length:var(--qn-sidebar-detail-font-size)] leading-tight whitespace-nowrap text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
+      className="flex shrink-0 items-center gap-1 rounded-lg px-1 py-1.5 text-[length:var(--qn-sidebar-detail-font-size)] leading-tight whitespace-nowrap text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover"
       onClick={onClick}
     >
       {children}

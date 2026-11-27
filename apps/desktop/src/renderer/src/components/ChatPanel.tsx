@@ -1,30 +1,44 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
 import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
-import type { ItemView } from '@qn/codex-client'
-import { t, translateMessage, collectSubagents, DRAFT_THREAD_ID, supportsSubagentRequests } from '@qn/codex-client'
+import { useShallow } from 'zustand/react/shallow'
+import type { CodexRpcLike, ItemView, ThreadView } from '@qn/codex-client'
+import { accessOptions, chatCommands, chatCommandUnavailable, claudeQuotaBlocked, collectSubagents, contextUsage, DRAFT_THREAD_ID,
+  estimatedTurnUsage, formatTokens, includeWorkSummary, t, translateMessage, type ChatCommandId } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
-import { buildAnnotatedMessage, quoteBlock, sideChatExcerpt, type Annotation } from '../lib/annotations'
+import { buildAnnotatedMessage, sideChatExcerpt, type Annotation } from '../lib/annotations'
 import { agentLabel, sessionKey } from '../lib/agents'
 import {
   attachmentsBlocking,
   buildUserInput,
+  insertImagePlaceholders,
   isImageFile,
   MAX_ATTACHMENTS,
   MAX_FILE_BYTES,
+  removePlaceholder,
+  stripImagePlaceholders,
+  uniqueImageName,
   type Attachment,
   type SkillRef,
   type SlashItem,
 } from '../lib/attachments'
 import { readImage, uploadToTarget } from '../lib/attachmentIo'
+import { getAccessMode } from '../features/access/accessModel'
 import { screenFiles, useImageSupport } from '../features/composer'
+import { useSettings } from '../features/settings/settingsStore'
+import { formatCost } from '../lib/claudeUsage'
+import { copyText } from '../lib/clipboard'
 import { isAtBottom } from '../lib/diff'
 import { friendlyError } from '../lib/errors'
 import { targetDotClass } from '../lib/targetStatus'
-import { groupTurns, hasPendingSubmission, streamingReplyId } from '../lib/turnGroups'
-import { composerDraftKey, currentThreadApprovals, pendingSendKey, useCodex, type SendMode } from '../store/codex'
+import { threadKey } from '../lib/threads'
+import { groupTurns, hasPendingSubmission, needsTurnProgress, streamingReplyId } from '../lib/turnGroups'
+import { composerDraftKey, currentThreadApprovals, currentThreads, pendingSendKey, useCodex, type SendMode } from '../store/codex'
+import { useDock } from '../store/dock'
 import { useProjects } from '../store/projects'
+import { useRateLimits } from '../store/rateLimits'
 import { skillsKey, useSkills } from '../store/skills'
 import { useTargets } from '../store/targets'
+import { useThreadPrefs } from '../store/threadPrefs'
 import { useUi } from '../store/ui'
 import { AgentPicker } from './AgentPicker'
 import { AnnotationBar } from './AnnotationBar'
@@ -33,15 +47,18 @@ import { Composer } from './Composer'
 import { LoadingIcon } from './LoadingIcon'
 import { MessageItem, ToolGroup, TurnProgress, TurnStopped, WorkGroup } from './MessageItem'
 import { ContextRing, ModelPicker } from './ModelPicker'
+import { RateLimitDetails } from './RateLimitBadge'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
 import { StatusDot } from './StatusDot'
+import { TargetMetrics } from './TargetMetrics'
 import { MainHeader } from './shell/MainHeader'
 import { WelcomePane } from './shell/WelcomePane'
 import { SubagentLauncher } from './SubagentDetails'
 import { TurnErrorNote } from './TurnErrorNote'
 import { targetDisplayName } from './targetName'
-import { EmptyState, ErrorNote } from './ui'
+import { TurnNavigation } from './TurnNavigation'
+import { EmptyState, ErrorNote, Modal } from './ui'
 
 const HISTORY_BATCH_SIZE = 60
 
@@ -53,16 +70,52 @@ type Draft = {
 }
 const emptyDraft: Draft = { text: '', annotations: [], attachments: [], skills: {} }
 const emptySkills: SkillRef[] = []
+const noItems: ItemView[] = []
 
 function hasDraft(draft: Draft): boolean {
   return !!(draft.text || draft.annotations.length || draft.attachments.length ||
     Object.values(draft.skills).some((skills) => skills?.length))
 }
 
-export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) => void; onAddTarget: () => void }) {
+const ChatSubagents = memo(function ChatSubagents({ sessionId, threadId, items, rpc }: {
+  sessionId: string
+  threadId: string
+  items: readonly ItemView[]
+  rpc: CodexRpcLike | null
+}) {
+  const referenced = useMemo(() => {
+    const ids = new Set<string>()
+    for (const item of items) {
+      if (item.kind !== 'subagent') continue
+      for (const agent of item.agents ?? []) ids.add(agent.threadId)
+    }
+    return ids
+  }, [items])
+  // 子代理正文需要实时更新，但只影响入口和详情，主对话无需重绘。
+  const threads = useCodex(useShallow((s) => {
+    const all = s.sessions[sessionId]?.state.threads
+    if (!all) return undefined
+    const related: Record<string, ThreadView> = Object.create(null)
+    for (const id of Object.keys(all)) {
+      const thread = all[id]!
+      if (thread.subagent?.parentThreadId === threadId || referenced.has(id)) related[id] = thread
+    }
+    return related
+  }))
+  const entries = useMemo(() => collectSubagents(items, threadId, threads), [items, threadId, threads])
+  if (!entries.length) return null
+  return <SubagentLauncher entries={entries} threads={threads} rpc={rpc}
+    renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
+})
+
+export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
+  visible?: boolean
+  onConnect: (id: string) => void
+  onAddTarget: () => void
+}) {
   const targets = useTargets((s) => s.targets)
-  const targetState = useTargets((s) => s.states[s.selectedId]?.state ?? 'idle')
   const currentTargetId = useCodex((s) => s.currentTargetId)
+  const targetState = useTargets((s) => s.states[currentTargetId ?? '']?.state ?? 'idle')
   const currentThreadId = useCodex((s) => s.currentThreadId)
   const currentAgent = useCodex((s) => s.currentAgent)
   const openingThread = useCodex((s) => s.openingThread)
@@ -70,6 +123,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const error = useCodex((s) => s.error)
   const clearError = useCodex((s) => s.clearError)
   const send = useCodex((s) => s.send)
+  const sendRevision = useCodex((s) => s.sendRevision)
   const interrupt = useCodex((s) => s.interrupt)
   const respondApproval = useCodex((s) => s.respondApproval)
   const ensureOpen = useCodex((s) => s.ensureOpen)
@@ -85,12 +139,19 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const historyScroll = useRef<{ key: string | null; height: number; top: number } | null>(null)
+  const turnJump = useRef<{ key: string | null; id: string } | null>(null)
   const annotationCounter = useRef(0)
   const [pinned, setPinned] = useState(true)
   const [historyStart, setHistoryStart] = useState<{ key: string | null; index: number } | null>(null)
   const [historyLoad, setHistoryLoad] = useState<{ key: string | null; error?: string } | null>(null)
   const loadEarlierHistory = useCodex((s) => s.loadEarlierHistory)
   const draftKey = useCodex(composerDraftKey)
+  const [commandDialog, setCommandDialog] = useState<{ key: string; id: ChatCommandId } | null>(null)
+  const [commandFeedback, setCommandFeedback] = useState<{ key: string; message: string } | null>(null)
+  const [commandName, setCommandName] = useState('')
+  const [commandPending, setCommandPending] = useState(false)
+  const activeCommand = commandDialog?.key === draftKey ? commandDialog.id : null
+  const commandMessage = commandFeedback?.key === draftKey ? commandFeedback.message : null
   const sendingDraftKey = useRef<string | null>(null)
   const [startingPiDraft, setStartingPiDraft] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
@@ -116,7 +177,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const setAttachments = (change: (items: Attachment[]) => Attachment[]) =>
     updateDraft((item) => ({ ...item, attachments: change(item.attachments) }))
   const [readingImages, setReadingImages] = useState(0)
-  const attachmentReads = useRef(new Map<string, number>())
+  const attachmentReads = useRef(new Map<string, Set<string>>())
   const attachmentsUploading = attachments.some((item) =>
     item.kind === 'file' && (item.status === 'pending' || item.status === 'uploading'),
   )
@@ -126,29 +187,52 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const dragDepth = useRef(0)
   const imageSupport = useImageSupport(currentTargetId, currentAgent, !!currentTargetId, currentThreadId)
 
-  // 只订阅当前会话：订阅整个 sessions 时，后台会话的每个流式增量也会让对话区整体重渲染。
-  const session = useCodex((s) => s.currentTargetId ? s.sessions[sessionKey(s.currentTargetId, s.currentAgent)] : undefined)
+  // 只订阅当前会话里用到的字段：订阅整个 sessions 时，后台会话的每个流式增量也会让对话区整体重渲染。
+  const sessionId = currentTargetId ? sessionKey(currentTargetId, currentAgent) : null
+  const { opening, opened, openError, directory, rpc } = useCodex(useShallow((s) => {
+    const session = sessionId ? s.sessions[sessionId] : undefined
+    return {
+      opening: session?.opening, opened: session?.opened, openError: session?.openError,
+      directory: session?.openedConfig?.directory, rpc: session?.rpc,
+    }
+  }))
   // 草稿态没有 threadId，发送中的用户消息先放在草稿线程里，避免对话区空白。
   const visibleThreadId = currentThreadId ?? DRAFT_THREAD_ID
   const chatKey = currentTargetId ? pendingSendKey({ targetId: currentTargetId, agent: currentAgent, threadId: visibleThreadId }) : null
   const sendingMessage = useCodex((s) => s.sendingMessage?.key === chatKey ? s.sendingMessage : null)
   const sendingQueued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.[0]?.sending))
-  const view = session?.state.threads[visibleThreadId]
+  const queued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.length))
+  const compactionStarting = useCodex((s) => !!(chatKey && s.compacting[chatKey]))
+  const quota = useRateLimits((s) => {
+    if (currentAgent === 'claude') return sessionId ? s.byAgent[sessionId]?.snapshot : null
+    return currentAgent === 'codex' && currentTargetId ? s.byTarget[currentTargetId]?.snapshot : null
+  })
+  const view = useCodex((s) => sessionId ? s.sessions[sessionId]?.state.threads[visibleThreadId] : undefined)
   const preview = sendingMessage?.preview
-  const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? []), preview] : view?.items ?? [], [preview, view?.items])
-  const subagents = useMemo(() => collectSubagents(view?.items ?? [], currentThreadId ?? undefined, session?.state.threads),
-    [view?.items, currentThreadId, session?.state.threads])
+  const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? noItems), preview] : view?.items ?? noItems, [preview, view?.items])
+  const revisionTurnId = useThreadPrefs((s) => currentTargetId && currentThreadId
+    ? s.byTarget[currentTargetId]?.revisionTurns[threadKey(currentAgent, currentThreadId)]
+    : undefined)
+  const revisionTurn = revisionTurnId ? view?.turns?.find((turn) => turn.id === revisionTurnId) : undefined
+  const revisionItemId = revisionTurn && (items.find((item) => item.kind === 'user' && revisionTurn.itemIds.includes(item.id))?.id
+    ?? (view?.activeTurnId === revisionTurn.id ? view.items.find((item) => item.kind === 'user' && item.pending)?.id : undefined))
+  const revisionChat = currentAgent === 'codex' && currentTargetId && currentThreadId
+    ? { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId } as const : null
   const approvals = useCodex(currentThreadApprovals)
   const running = view?.status === 'running'
+  const activeItems = running ? view.turns?.find((turn) => turn.id === view.activeTurnId)?.itemIds : undefined
+  const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
+    item.type === 'contextCompaction' && item.status === 'inProgress' && activeItems?.includes(item.id))
   const streamingId = streamingReplyId(view)
   const interrupted = !running && view?.activity === 'interrupted'
-  const showProgress = approvals.length === 0 && !session?.openError
-    && (running || hasPendingSubmission(items, !!sendingMessage || sendingQueued))
   const flow = useMemo(() => groupTurns(items, view?.turns, running),
     [items, view?.turns, running])
-  const empty = items.length === 0 && flow.length === 0 && approvals.length === 0 && !running && !showProgress
   const defaultStart = Math.max(0, flow.length - HISTORY_BATCH_SIZE)
-  const firstVisible = historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart
+  const firstVisible = includeWorkSummary(flow, historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart)
+  const visibleFlow = flow.slice(firstVisible)
+  const showProgress = approvals.length === 0 && !openError
+    && (running ? needsTurnProgress(view, visibleFlow) : hasPendingSubmission(items, !!sendingMessage || sendingQueued))
+  const empty = items.length === 0 && flow.length === 0 && approvals.length === 0 && !running && !showProgress
   const historyLoading = historyLoad?.key === chatKey && historyLoad.error === undefined
   const historyError = historyLoad?.key === chatKey ? historyLoad.error : undefined
 
@@ -183,7 +267,24 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     historyScroll.current = null
     const scroll = scrollRef.current
     if (scroll && previous?.key === chatKey) scroll.scrollTop = previous.top + scroll.scrollHeight - previous.height
-  }, [chatKey, firstVisible, view?.historyCursor])
+
+    const jump = turnJump.current
+    turnJump.current = null
+    if (!scroll || !jump || jump.key !== chatKey) return
+    const anchor = [...scroll.querySelectorAll<HTMLElement>('[data-turn-anchor]')]
+      .find((node) => node.dataset.turnAnchor === jump.id)
+    if (anchor) {
+      // 只滚动消息区，保留外层工作区和其他面板的位置。
+      scroll.scrollTop += anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 12
+      setPinned(isAtBottom(scroll.scrollTop, scroll.scrollHeight, scroll.clientHeight, 1))
+    }
+  }, [chatKey, firstVisible, historyStart, view?.historyCursor])
+
+  const jumpToTurn = (id: string, index: number) => {
+    turnJump.current = { key: chatKey, id }
+    // 对应轮次可能在本地已读取，却还没渲染。挂载该轮次后再定位。
+    setHistoryStart({ key: chatKey, index: Math.min(firstVisible, index) })
+  }
 
   const showEarlier = async () => {
     if (historyLoading) return
@@ -239,7 +340,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   }
 
   const submit = async (text: string, mode: SendMode): Promise<boolean> => {
-    const message = buildAnnotatedMessage(annotations, text)
+    const message = buildAnnotatedMessage(annotations, stripImagePlaceholders(text, attachments))
     const input = buildUserInput(message, attachments, skills)
     const newDraft = currentThreadId === null
     if (input.length === 0 || (newDraft && sendingDraftKey.current)) return false
@@ -261,7 +362,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       const next = { ...previous }
       delete next[draftKey]
       const unsent = accepted ? {
-        text: source.text === text ? '' : source.text,
+        text: source.text === text ? '' : stripImagePlaceholders(source.text, attachments),
         annotations: source.annotations.filter((item) => !annotations.includes(item)),
         attachments: source.attachments.filter((item) => !attachments.includes(item)),
         skills: {
@@ -316,11 +417,12 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const patchAttachment = (id: string, patch: Partial<Attachment>) =>
     setAttachments((prev) => prev.map((item) => (item.id === id ? ({ ...item, ...patch } as Attachment) : item)))
 
-  /** 图片读成 data URL 随消息发送；其他文件本机目标直接引用路径，远端目标先上传到目标机。 */
-  const addFiles = (files: File[]) => {
-    if (!currentTargetId || sending || (!currentThreadId && sendingDraftKey.current)) return
+  /** 返回通过附件校验的图片名，供输入框插入占位。 */
+  const addFiles = (files: File[]): string[] => {
+    if (!currentTargetId || sending || (!currentThreadId && sendingDraftKey.current)) return []
     const targetId = currentTargetId
-    const reads = attachmentReads.current.get(draftKey) ?? 0
+    const pending = attachmentReads.current.get(draftKey) ?? new Set<string>()
+    const reads = pending.size
     const { accepted, rejected } = screenFiles(files, {
       existingImages: attachments.filter((item) => item.kind === 'image').length + reads,
       imagesAllowed: imageSupport.allowed,
@@ -332,40 +434,47 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         .join(t('；'))
       notify(t('未添加 {count} 张图片（{detail}）', { count: rejected.length, detail }))
     }
-    if (accepted.length === 0) return
+    if (accepted.length === 0) return []
     const room = MAX_ATTACHMENTS - attachments.length - reads
     if (room <= 0) {
       notify(t('最多添加 {max} 个附件', { max: MAX_ATTACHMENTS }))
-      return
+      return []
     }
     if (accepted.length > room) notify(
       t('最多添加 {max} 个附件，已忽略多出的 {count} 个', { max: MAX_ATTACHMENTS, count: accepted.length - room }),
     )
     // 只有本机目标能直接引用本机路径；SSH 与直连目标都要先上传。
     const isLocal = targets.find((item) => item.id === targetId)?.kind === 'local'
+    const taken = new Set([...pending, ...attachments.map((item) => item.name)])
+    for (const [, name] of draft.matchAll(/\[([^\]\n]+)\]/g)) if (name) taken.add(name)
+    const imageNames: string[] = []
     for (const file of accepted.slice(0, room)) {
       const id = 'att-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7)
       if (isImageFile(file)) {
-        const updateReads = (delta: number) => {
-          const count = (attachmentReads.current.get(draftKey) ?? 0) + delta
-          if (count) attachmentReads.current.set(draftKey, count)
-          else attachmentReads.current.delete(draftKey)
-          if (draftKey === composerDraftKey(useCodex.getState())) setReadingImages(count)
-        }
-        updateReads(1)
+        const name = uniqueImageName(file.name, taken)
+        taken.add(name)
+        imageNames.push(name)
+        pending.add(name)
+        attachmentReads.current.set(draftKey, pending)
+        setReadingImages(pending.size)
         void readImage(file)
           .then(({ dataUrl, size }) => {
-            setAttachments((prev) => [...prev, { id, kind: 'image', name: file.name || t('粘贴的图片'), size, dataUrl }])
+            setAttachments((prev) => [...prev, { id, kind: 'image', name, size, dataUrl }])
           })
           .catch((err: unknown) => {
+            updateDraft((item) => ({ ...item, text: removePlaceholder(item.text, name) }))
             if (draftKey === composerDraftKey(useCodex.getState())) {
               notify(t('{name}：{reason}', {
-                name: file.name || t('图片'),
+                name,
                 reason: err instanceof Error ? translateMessage(err.message) : t('读取失败'),
               }))
             }
           })
-          .finally(() => updateReads(-1))
+          .finally(() => {
+            pending.delete(name)
+            if (!pending.size) attachmentReads.current.delete(draftKey)
+            if (draftKey === composerDraftKey(useCodex.getState())) setReadingImages(pending.size)
+          })
         continue
       }
       if (file.size > MAX_FILE_BYTES) {
@@ -390,9 +499,17 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           patchAttachment(id, { status: 'error', error: err instanceof Error ? err.message : t('上传失败') }),
         )
     }
+    return imageNames
   }
 
-  const removeAttachment = (id: string) => setAttachments((prev) => prev.filter((item) => item.id !== id))
+  const removeAttachment = (id: string) => updateDraft((item) => {
+    const attachment = item.attachments.find((entry) => entry.id === id)
+    return {
+      ...item,
+      text: attachment?.kind === 'image' ? removePlaceholder(item.text, attachment.name) : item.text,
+      attachments: item.attachments.filter((entry) => entry.id !== id),
+    }
+  })
 
   // 拖入文件：dragenter/leave 在子元素间会成对触发，用计数判断是否真正离开主区。
   const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes('Files')
@@ -409,27 +526,25 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   }
   const onDrop = (event: DragEvent) => {
     if (!hasFiles(event)) return
-    event.preventDefault()
     dragDepth.current = 0
     setDragging(false)
-    addFiles([...event.dataTransfer.files])
+    if (event.defaultPrevented) return
+    event.preventDefault()
+    const names = addFiles([...event.dataTransfer.files])
+    if (names.length > 0) {
+      updateDraft((item) => ({
+        ...item,
+        text: insertImagePlaceholders(item.text, names).value,
+      }))
+    }
   }
 
-  // "从这里开始新会话"：回到草稿态并把引用填进输入框，用户补充后发送才真正建会话。
   const forkThread = useCodex((s) => s.forkThread)
-  // 分支到新聊天：Codex 用 thread/fork 截到这条回复所在的轮次，与侧栏"创建聊天分支"同一能力；
-  // 其他 Agent 没有分叉 RPC，退化为带引用的新草稿。
-  const forkFromMessage = (itemId: string, markdown: string) => {
-    const turnId = view?.turns?.find((turn) => turn.itemIds.includes(itemId))?.id
-    if (currentAgent === 'codex' && currentThreadId && turnId) {
-      void forkThread(currentThreadId, currentAgent, turnId)
-      return
-    }
-    startDraft(currentAgent)
-    updateDraft((item) => ({ ...item, text: quoteBlock(markdown) }), composerDraftKey(useCodex.getState()))
+  const forkFromMessage = (itemId: string) => {
+    const turn = view?.turns?.find((candidate) => candidate.itemIds.includes(itemId))
+    if (!currentThreadId || !turn || turn.id === view?.activeTurnId) return
+    return () => void forkThread(currentThreadId, currentAgent, turn.id)
   }
-  // 进行中的轮次不能分叉（Codex 会拒绝），运行期间先不提供入口。
-  const canFork = !(currentAgent === 'codex' && running)
 
   const target = targets.find((item) => item.id === currentTargetId)
   const project = projects.find((item) => item.id === selectedProjectId)
@@ -437,37 +552,114 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const isDraft = !currentThreadId
   const preparingPi = startingPiDraft === draftKey
 
-  const skillKey = currentTargetId ? skillsKey(currentTargetId, currentAgent, currentCwd, session?.openedConfig?.directory) : null
+  const skillKey = currentTargetId ? skillsKey(currentTargetId, currentAgent, currentCwd, directory) : null
   const skillList = useSkills((s) => skillKey ? s.lists[skillKey] : undefined)
   const loadSkills = useSkills((s) => s.load)
-  const skillRpc = session?.opened ? session.rpc : undefined
+  const skillRpc = opened ? rpc : undefined
   const refreshClaudeSkills = currentAgent === 'claude' && !running
   useEffect(() => {
     if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, refreshClaudeSkills)
   }, [skillKey, currentCwd, skillRpc, loadSkills, refreshClaudeSkills])
 
-  const slashItems = useMemo<SlashItem[]>(
-    () => [
-      { id: 'new', kind: 'command', name: 'new', description: t('开始新会话') },
-      ...(running ? [{ id: 'stop', kind: 'command' as const, name: 'stop', description: t('停止当前运行') }] : []),
-      { id: 'refresh', kind: 'command', name: 'refresh', description: t('刷新会话列表与技能') },
-      ...(skillList?.items ?? []),
-    ],
-    [running, skillList],
-  )
+  const threads = useCodex(currentThreads)
+  const localTitle = useThreadPrefs((s) => currentTargetId && currentThreadId
+    ? s.byTarget[currentTargetId]?.names[threadKey(currentAgent, currentThreadId)]
+    : undefined)
+  const usage = contextUsage(view?.tokenUsage)
+  const turnUsage = estimatedTurnUsage(view?.tokenUsage)
+  const latestReply = items.findLast((item) => item.kind === 'agent' && !item.streaming && item.text.trim())
+  const quotaBlocked = currentAgent === 'claude' ? claudeQuotaBlocked(quota) : !!(quota?.rateLimitReachedType || quota?.spendControlReached)
+  const compactBlocked = !currentThreadId || !opened || !view || openingThread ? t('请先打开会话')
+    : running || sending || compacting || approvals.length ? t('请先等待当前一轮结束')
+    : queued ? t('请先处理排队的消息') : quotaBlocked ? t('当前额度已用完') : null
+  const commandReason = (id: ChatCommandId) => {
+    if (id === 'model' && !opened) return t('请先连接当前 Agent')
+    if (id === 'diff' && !currentCwd) return t('请先选择项目')
+    return chatCommandUnavailable(id, {
+      agent: currentAgent, thread: !!currentThreadId, running,
+      busy: sending || compacting || !!openingThread || commandPending, compactBlocked, hasReply: !!latestReply,
+    })
+  }
+  const slashItems: SlashItem[] = [
+    ...chatCommands.map(({ id, name, description }) => ({
+      id: name, name, description: id === 'refresh' ? t('刷新会话列表与技能') : description,
+      kind: 'command' as const, reason: commandReason(id),
+    })),
+    ...(skillList?.items ?? []),
+  ]
+  const closeCommand = () => setCommandDialog(null)
+  const showCommandMessage = (message: string) => setCommandFeedback({ key: draftKey, message })
+  const showCommand = (id: ChatCommandId) => setCommandDialog({ key: draftKey, id })
 
-  const runCommand = (id: string) => {
-    if (id === 'new') startDraft(currentAgent)
-    else if (id === 'stop') void interrupt()
-    else if (id === 'refresh') {
-      void refreshThreads()
-      if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, true)
+  const runCommand = (name: string) => {
+    const command = chatCommands.find((entry) => entry.name === name)
+    if (!command) return
+    const { id } = command
+    const blocked = commandReason(id)
+    if (blocked) { showCommandMessage(blocked); return }
+    setCommandFeedback(null)
+    switch (id) {
+      case 'new': startDraft(currentAgent); return
+      case 'stop': void interrupt(); return
+      case 'refresh':
+        void refreshThreads()
+        if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, true)
+        return
+      case 'diff': useDock.getState().showTool('git'); return
+      case 'resume':
+        if (project && project.targetId === currentTargetId && project.path === currentCwd) {
+          useProjects.getState().setExpanded(project, true)
+          useUi.getState().revealThreadList({ targetId: project.targetId, projectId: project.id, threadKey: null })
+          return
+        }
+        break
+      case 'rename':
+        setCommandName(localTitle ?? threads.find((thread) => thread.agent === currentAgent && thread.id === currentThreadId)?.title ?? '')
+        break
+      case 'copy':
+        if (latestReply?.kind === 'agent') void copyText(latestReply.text).then((ok) => showCommandMessage(ok ? t('已复制最近一条回复') : t('复制失败')))
+        return
+    }
+    showCommand(id)
+  }
+
+  async function confirmCommand(id: 'rename' | 'archive' | 'fork' | 'compact') {
+    if (!currentTargetId || !currentThreadId || commandReason(id)) return
+    const name = commandName.trim()
+    if (id === 'rename' && !name) return
+    const state = useCodex.getState()
+    setCommandPending(true)
+    if (id === 'compact') closeCommand()
+    try {
+      if (id === 'compact') await state.compactConversation()
+      else {
+        let ok: boolean
+        if (id === 'archive') ok = await state.archiveThread(currentThreadId, currentAgent)
+        else if (id === 'fork') ok = await state.forkThread(currentThreadId, currentAgent)
+        else {
+          ok = currentAgent !== 'codex' || await state.renameThread(currentThreadId, currentAgent, name)
+          if (ok) useThreadPrefs.getState().setLocalName(currentTargetId, threadKey(currentAgent, currentThreadId), currentAgent === 'codex' ? null : name)
+        }
+        if (!ok) {
+          const reason = useCodex.getState().error
+          showCommandMessage(reason ? translateMessage(reason) : t('会话操作失败'))
+          return
+        }
+        setCommandDialog((current) => current?.key === draftKey && current.id === id ? null : current)
+      }
+    } finally {
+      setCommandPending(false)
     }
   }
 
+  const accessMode = useCodex((state) => currentTargetId ? getAccessMode(state.access,
+    { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId },
+    useSettings.getState().settings.general.globalAccessMode) : 'default')
+  const access = accessOptions[currentAgent].find((option) => option.mode === accessMode)
+
   // 切换草稿后只跟踪当前输入框的读图进度。
   useLayoutEffect(() => {
-    setReadingImages(attachmentReads.current.get(draftKey) ?? 0)
+    setReadingImages(attachmentReads.current.get(draftKey)?.size ?? 0)
     // 已开始发送的新草稿保留到 RPC 完成，以便把失败的输入留给刚创建的会话。
     const pendingKey = sendingDraftKey.current
     setDrafts((previous) => {
@@ -476,9 +668,9 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       return kept.length === entries.length ? previous : Object.fromEntries(kept)
     })
   }, [draftKey])
-  const agentStatus = session?.opening
+  const agentStatus = opening
     ? t('{agent} 启动中…', { agent: agentLabel(currentAgent) })
-    : session?.openError && !session.opened
+    : openError && !opened
       ? t('{agent} 不可用', { agent: agentLabel(currentAgent) })
       : null
 
@@ -493,9 +685,8 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <MainHeader subagents={currentThreadId && (subagents.length > 0 || supportsSubagentRequests(currentAgent)) && (
-        <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={session?.opened ? session.rpc : null}
-          renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
+      <MainHeader subagents={currentThreadId && sessionId && (
+        <ChatSubagents key={chatKey} sessionId={sessionId} threadId={currentThreadId} items={view?.items ?? noItems} rpc={skillRpc ?? null} />
       )} />
 
       {openingThread && (
@@ -516,10 +707,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           onSide={(text, itemId) => openSideChat(sideChatExcerpt(items, { text, itemId }))}
         >
           <div ref={contentRef} className={`mx-auto flex min-h-full flex-col ${contentWidthClassName}`}>
-            {session?.openError && (
+            {openError && (
               <div className="mb-3">
                 <ErrorNote
-                  message={session.openError}
+                  message={openError}
                   onRetry={() => {
                     if (currentTargetId) {
                       void ensureOpen(currentTargetId, currentAgent).then(() => void refreshThreads())
@@ -550,25 +741,32 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                   </button>
                 )}
                 {historyError && <div role="alert" className="text-center text-ui-md text-qn-danger">{translateMessage(historyError)}</div>}
-                {flow.slice(firstVisible).map((entry, index) => {
-                  const previous = index > 0 ? flow[firstVisible + index - 1] : undefined
-                  return entry.kind === 'tools' ? (
-                    <ToolGroup key={entry.key} items={entry.items} />
-                  ) : entry.kind === 'work' ? (
-                    <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries}
-                      replyCompletedAtMs={entry.reply?.completedAtMs} onFork={canFork ? forkFromMessage : undefined} />
-                  ) : entry.kind === 'stopped' ? (
-                    <TurnStopped key={entry.key} durationMs={entry.durationMs} />
-                  ) : (
+                {visibleFlow.map((entry, index) => {
+                  const previous = visibleFlow[index - 1]
+                  if (entry.kind === 'tools') return <ToolGroup key={entry.key} items={entry.items} />
+                  if (entry.kind === 'work') {
+                    return <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries}
+                      replyCompletedAtMs={entry.reply?.completedAtMs} onFork={forkFromMessage} />
+                  }
+                  if (entry.kind === 'stopped') return <TurnStopped key={entry.key} durationMs={entry.durationMs} />
+                  const key = `${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`
+                  const message = (
                     <MessageItem
-                      key={`${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`}
+                      key={key}
                       item={entry.item}
                       showStreamingDots={entry.item.id === streamingId}
                       replyTimeInSummary={previous?.kind === 'work' && previous.reply?.id === entry.item.id}
-                      onFork={canFork ? forkFromMessage : undefined}
-                      onEdit={(text, input) => sendAndFollow(text, { input })}
+                      onFork={forkFromMessage}
+                      showRevisionMarker={entry.item.id === revisionItemId}
+                      editRestartsConversation={!!revisionChat}
+                      onEdit={revisionChat
+                        ? (_text, input) => sendRevision(revisionChat, entry.item.id, input)
+                        : (text, input) => sendAndFollow(text, { input })}
                     />
                   )
+                  return entry.item.kind === 'user' ? (
+                    <div key={key} data-turn-anchor={entry.key}>{message}</div>
+                  ) : message
                 })}
                 {showProgress && <TurnProgress activity={running ? view.activity : undefined} />}
                 {currentTargetId && currentThreadId && approvals.map((approval) => (
@@ -585,6 +783,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
             )}
           </div>
         </SelectionLayer>
+        {currentThreadId && (
+          <TurnNavigation key={chatKey} flow={flow} firstVisible={firstVisible} scrollRef={scrollRef}
+            contentRef={contentRef} onJump={jumpToTurn} />
+        )}
         {!pinned && (
           <button
             type="button"
@@ -608,13 +810,19 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         />
         <AnnotationBar annotations={annotations} onRemove={removeAnnotation} contentWidthClassName={contentWidthClassName} />
       </div>
+      {commandMessage && !activeCommand && (
+        <div role="status" className="mx-auto w-full max-w-3xl px-4 py-1 text-ui text-qn-muted">{commandMessage}</div>
+      )}
       <Composer
         key={draftKey}
+        suggestionBoundaryRef={scrollRef}
         contentWidthClassName={contentWidthClassName}
         onSend={submit}
         onInterrupt={() => void interrupt()}
         running={running}
-        sending={sending || preparingPi}
+        canSteer={!!view?.activeTurnId}
+        compacting={compacting}
+        sending={sending || preparingPi || compactionStarting}
         disabled={!currentTargetId}
         error={error}
         onClearError={clearError}
@@ -640,11 +848,13 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         trailing={
           currentTargetId && (
             <>
-              <ContextRing tokenUsage={view?.tokenUsage} />
+              <ContextRing tokenUsage={view?.tokenUsage} onClick={currentThreadId ? () => showCommand('context') : undefined} />
               <ModelPicker
                 targetId={currentTargetId}
                 agent={currentAgent}
                 threadId={currentThreadId}
+                open={activeCommand === 'model'}
+                onOpenChange={(open) => open ? showCommand('model') : closeCommand()}
                 piDraft={currentAgent === 'pi' && isDraft ? {
                   start: () => void preparePiDraft(),
                   starting: preparingPi,
@@ -667,12 +877,67 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                 <span className="truncate font-mono text-ui-xs">{project.path}</span>
               </span>
             )}
+            {visible && currentTargetId && targetState === 'ready' && (
+              <TargetMetrics key={currentTargetId} targetId={currentTargetId} />
+            )}
             {agentStatus && <span className="shrink-0 text-qn-warn">{agentStatus}</span>}
           </>
         }
       />
+      {activeCommand === 'help' && <Modal title={t('对话命令')} onClose={closeCommand}>
+        <ul className="space-y-2">{chatCommands.map(({ id, name, description }) => (
+          <li key={name}><span className="font-medium">/{name}</span> <span className="text-qn-muted">{commandReason(id) ?? description}</span></li>
+        ))}</ul>
+      </Modal>}
+      {activeCommand === 'status' && currentTargetId && <Modal title={t('账号额度')} onClose={closeCommand}>
+        <RateLimitDetails targetId={currentTargetId} agent={currentAgent} threadId={currentThreadId} />
+      </Modal>}
+      {activeCommand === 'context' && <Modal title={t('会话用量')} onClose={closeCommand}>
+        <div className="space-y-2">
+          {usage && <p>{t('上下文已用 {percent}% · {used} / {window} tokens', {
+            percent: usage.percent, used: formatTokens(usage.used), window: formatTokens(usage.window),
+          })}</p>}
+          {turnUsage?.tokens != null && <p>{t('最近上报的单轮用量 {tokens} tokens', { tokens: formatTokens(turnUsage.tokens) })}</p>}
+          {turnUsage?.costUsd != null && <p>{t('费用估算 {cost}', { cost: formatCost(turnUsage.costUsd) })}</p>}
+          {!usage && !turnUsage && <p className="text-qn-muted">{t('暂无会话用量')}</p>}
+          {currentThreadId && <>
+            <button type="button" className="qn-button" disabled={!!compactBlocked} onClick={() => showCommand('compact')}>{t('压缩会话')}</button>
+            {compactBlocked && <p className="text-qn-muted">{compactBlocked}</p>}
+          </>}
+        </div>
+      </Modal>}
+      {activeCommand === 'permissions' && <Modal title={t('会话访问权限')} onClose={closeCommand}>
+        <p>{access?.label ?? t('pi 不经审批直接执行工具')}</p>
+        {access && <p className="text-qn-muted">{access.hint}</p>}
+      </Modal>}
+      {activeCommand === 'resume' && <Modal title={t('切换会话')} onClose={closeCommand}>
+        {threads.length === 0 && <EmptyState>{t('当前目标暂无会话')}</EmptyState>}
+        {threads.map((thread) => (
+          <button type="button" key={threadKey(thread.agent, thread.id)} className="qn-button-subtle block w-full truncate text-left"
+            onClick={() => { closeCommand(); void useCodex.getState().openThread(thread.id, thread.agent) }}>
+            {thread.title} · {agentLabel(thread.agent)}
+          </button>
+        ))}
+      </Modal>}
+      {(activeCommand === 'rename' || activeCommand === 'archive' || activeCommand === 'fork' || activeCommand === 'compact') && (
+        <Modal title={activeCommand === 'rename' ? t('重命名会话') : activeCommand === 'archive' ? t('归档会话')
+          : activeCommand === 'fork' ? t('创建会话分支') : t('压缩会话')} onClose={closeCommand}>
+          <form onSubmit={(event) => { event.preventDefault(); void confirmCommand(activeCommand) }}>
+            {activeCommand === 'rename'
+              ? <input className="qn-input w-full" aria-label={t('会话名称')} value={commandName} onChange={(event) => setCommandName(event.target.value)} />
+              : <p className="text-qn-muted">{activeCommand === 'archive' ? t('可在已归档会话中恢复。')
+                : activeCommand === 'fork' ? t('从当前会话复制上下文并打开新分支。')
+                : t('压缩会总结较早的对话，让后续回复使用更短的上下文。账号已用额度不会恢复。')}</p>}
+            {commandMessage && <p role="alert" className="mt-2 text-qn-danger">{commandMessage}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" className="qn-button-subtle" onClick={closeCommand}>{t('取消')}</button>
+              <button type="submit" className="qn-button" disabled={commandPending || (activeCommand === 'rename' && !commandName.trim())}>{t('确认')}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
       {dragging && (
-        <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-accent/60 bg-qn-bg/85 text-ui-md text-qn-text">
+        <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-outline bg-qn-bg/85 text-ui-md text-qn-text">
           <ImagePlus size={28} className="text-qn-accent" />
           {t('松开以添加图片或文件')}
           <span className="text-ui-sm text-qn-muted">

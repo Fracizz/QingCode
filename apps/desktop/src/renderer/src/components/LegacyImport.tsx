@@ -16,7 +16,7 @@ export function LegacyBanner() {
     detect.counts.connections + detect.counts.localProjects + detect.counts.sshProjects
   // 旧版是整宽横幅，挤占所有栏的高度；改成侧栏底部的小卡片，一次性提示不打断主流程。
   return (
-    <div className="qn-pop rounded-lg border border-qn-brand/25 bg-qn-brand/[0.06] p-2.5 text-ui-sm">
+    <div className="qn-pop rounded-lg border border-qn-border bg-qn-brand/[0.06] p-2.5 text-ui-sm">
       <div className="flex items-start gap-2">
         <Upload size={14} className="mt-0.5 shrink-0 text-qn-brand" />
         <span className="min-w-0 flex-1 leading-5 text-qn-text/90">
@@ -114,7 +114,7 @@ export function LegacyDialog() {
         <ErrorNote message={error} onRetry={() => void runImport()} />
 
         {result && (
-          <div className="space-y-2 rounded-lg border border-emerald-400/30 bg-emerald-400/5 p-3 text-ui-sm">
+          <div className="space-y-2 rounded-lg border border-qn-border bg-emerald-400/5 p-3 text-ui-sm">
             <div className="font-medium text-emerald-300">{t('导入完成')}</div>
             <div className="grid grid-cols-2 gap-1">
               <span>{t('连接：{count}', { count: result.imported.targets })}</span>

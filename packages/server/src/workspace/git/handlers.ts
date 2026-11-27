@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import type { GitBranch, GitCommit, GitStatusResult } from '@qn/protocol'
+import type { GitBranch, GitCommit, GitRemoteAddress, GitStatusResult } from '@qn/protocol'
 import { WorkspaceError } from '../registry'
 import { isEmptyRepoError, isMissingObjectError, mergeOutput } from './errors'
 import {
@@ -9,6 +9,7 @@ import {
   parseBranchRefs,
   parseLog,
   parseNameStatus,
+  parseRemoteAddresses,
   parseStatus,
   splitNul,
 } from './parse'
@@ -285,6 +286,16 @@ export async function gitSwitch(params: Params): Promise<Record<string, never>> 
   )
   await runGit(root, planSwitch(branch, create, parseBranchRefs(res.stdout)).args)
   return {}
+}
+
+export async function gitRemotes(params: Params): Promise<{ remotes: GitRemoteAddress[] }> {
+  const root = await gitRoot(requireCwd(params))
+  const res = await runGit(root, ['config', '--null', '--get-regexp', '^remote\\..+\\.url$'], {
+    readOnly: true,
+    okCodes: [0, 1],
+  })
+  if (res.truncated) throw new WorkspaceError('git_failed', 'Git 远端地址列表过长')
+  return { remotes: parseRemoteAddresses(res.stdout) }
 }
 
 async function remoteCommand(

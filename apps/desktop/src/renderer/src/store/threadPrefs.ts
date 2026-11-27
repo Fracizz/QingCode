@@ -11,6 +11,7 @@ type ThreadPrefsState = {
   setUnread: (targetId: string, key: string, unread: boolean) => void
   setLocalName: (targetId: string, key: string, name: string | null) => void
   setArchived: (targetId: string, agent: AgentKind, threadId: string, archived: boolean) => void
+  setRevisionTurn: (targetId: string, key: string, turnId: string) => void
   /** 会话被永久删除后清掉它的所有本地偏好。 */
   forget: (targetId: string, key: string) => void
 }
@@ -62,6 +63,8 @@ export const useThreadPrefs = create<ThreadPrefsState>((set, get) => {
         restoredAt: toggleKey(prefs.restoredAt, key, archived ? undefined : Date.now()),
       }))
     },
+    setRevisionTurn: (targetId, key, turnId) =>
+      patch(targetId, (prefs) => ({ ...prefs, revisionTurns: toggleKey(prefs.revisionTurns, key, turnId) })),
     forget: (targetId, key) =>
       patch(targetId, (prefs) => ({
         pinned: toggleKey(prefs.pinned, key, undefined),
@@ -69,6 +72,7 @@ export const useThreadPrefs = create<ThreadPrefsState>((set, get) => {
         names: toggleKey(prefs.names, key, undefined),
         hidden: toggleKey(prefs.hidden, key, undefined),
         restoredAt: toggleKey(prefs.restoredAt, key, undefined),
+        revisionTurns: toggleKey(prefs.revisionTurns, key, undefined),
       })),
   }
 })

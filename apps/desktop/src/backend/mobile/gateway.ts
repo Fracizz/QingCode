@@ -260,7 +260,7 @@ function mobileTurnParams(params: unknown, settings?: unknown): JsonRecord {
     }
   }
   const access = turnAccessOverride(params.agent, params.accessMode)
-  const { threadId, input, model, effort, serviceTier } = params.msg.params
+  const { threadId, input, model, effort, serviceTier, clientUserMessageId } = params.msg.params
   const useDefault = params.agent !== 'pi' && params.accessMode === 'default' && typeof params.inheritAccess === 'boolean'
   if ((!access && !useDefault) ||
       typeof threadId !== 'string' || !threadId || !Array.isArray(input)) {
@@ -274,6 +274,7 @@ function mobileTurnParams(params: unknown, settings?: unknown): JsonRecord {
       method: 'turn/start',
       params: {
         threadId, input, ...access,
+        ...(typeof clientUserMessageId === 'string' ? { clientUserMessageId } : {}),
         ...(typeof model === 'string' ? { model } : {}),
         ...(typeof effort === 'string' ? { effort } : {}),
         ...(typeof serviceTier === 'string' || serviceTier === null ? { serviceTier } : {}),

@@ -2,13 +2,13 @@ import { Children, isValidElement, memo, useMemo, useState, useSyncExternalStore
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Terminal, Wand2 } from 'lucide-react'
-import { getLocale, t, formatReplyTime, localReplyDay, splitMarkdownBlocks, subscribeToReplyDay, type ItemView, type ThreadActivity, type UserInput } from '@qn/codex-client'
-import { basename, editUserText, splitUserText } from '../lib/attachments'
+import { backgroundTaskLabel, formatReplyTime, getLocale, localReplyDay, splitMarkdownBlocks, subscribeToReplyDay, t, workSummaryLabel, type ItemView, type ThreadActivity, type UserInput } from '@qn/codex-client'
+import { basename, editUserText, embeddedImageLabel, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
 import { cn } from '../lib/cn'
 import { diffRows, lineCount, tailLines } from '../lib/diff'
 import { langFromClassName } from '../lib/highlight'
-import { formatDuration, formatStoppedDuration, isEmptyReasoning, isGroupRunning, summarizeTools, type FlowEntry } from '../lib/turnGroups'
+import { formatStoppedDuration, isEmptyReasoning, isGroupRunning, summarizeTools, type FlowEntry } from '../lib/turnGroups'
 import { createMarkdownLink, FileChangeActions, PathText, qnUrlTransform, type LinkContext } from '../features/files'
 import { useCodex } from '../store/codex'
 import { CodeBlock } from './CodeBlock'
@@ -306,25 +306,32 @@ function StreamingMarkdown({ text, components }: { text: string; components: Com
   return blocks.map((block, index) => <MarkdownBlock key={index} text={block} components={components} />)
 }
 
-function AgentMessage({ id, text, streaming, completedAtMs, showStreamingDots, onFork }: {
-  id: string; text: string; streaming: boolean; completedAtMs?: number; showStreamingDots?: boolean
-  onFork?: (itemId: string, markdown: string) => void
-}) {
+// 对话实时更新会重建消息操作回调，未变化的正文无需重新解析 Markdown。
+const ReplyMarkdown = memo(function ReplyMarkdown({ text, streaming }: { text: string; streaming: boolean }) {
   const context = useLinkContext()
   const components = useMemo(() => markdownComponents(streaming, context), [streaming, context])
+  return (
+    // 流式解析失败后继续显示原文，最后一帧再尝试格式化。
+    <RenderBoundary
+      key={streaming ? 'streaming' : 'complete'}
+      fallback={<div className="whitespace-pre-wrap wrap-anywhere">{text}</div>}
+    >
+      {streaming ? <StreamingMarkdown text={text} components={components} /> : <MarkdownBlock text={text} components={components} />}
+    </RenderBoundary>
+  )
+})
+
+function AgentMessage({ id, text, streaming, completedAtMs, showStreamingDots, onFork }: {
+  id: string; text: string; streaming: boolean; completedAtMs?: number; showStreamingDots?: boolean
+  onFork?: (itemId: string) => (() => void) | undefined
+}) {
   return (
     <div className="group/msg">
       {!streaming && completedAtMs !== undefined && <ReplyTime completedAtMs={completedAtMs} className="mb-1 block text-ui-sm tabular-nums text-qn-muted" />}
       <div className={cn('qn-markdown break-words text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-prose', streaming && showStreamingDots && 'qn-streaming')}>
-        {/* 流式解析失败后继续显示原文，最后一帧再尝试格式化。 */}
-        <RenderBoundary
-          key={streaming ? 'streaming' : 'complete'}
-          fallback={<div className="whitespace-pre-wrap wrap-anywhere">{text}</div>}
-        >
-          {streaming ? <StreamingMarkdown text={text} components={components} /> : <MarkdownBlock text={text} components={components} />}
-        </RenderBoundary>
+        <ReplyMarkdown text={text} streaming={streaming} />
       </div>
-      {!streaming && <MessageActions markdown={text} onFork={onFork ? () => onFork(id, text) : undefined} />}
+      {!streaming && <MessageActions markdown={text} onContinue={onFork?.(id)} />}
     </div>
   )
 }
@@ -349,8 +356,10 @@ type MessageItemProps = {
   item: ItemView
   showStreamingDots?: boolean
   replyTimeInSummary?: boolean
-  onFork?: (itemId: string, markdown: string) => void
+  onFork?: (itemId: string) => (() => void) | undefined
   onEdit?: (text: string, input: UserInput[]) => Promise<boolean>
+  editRestartsConversation?: boolean
+  showRevisionMarker?: boolean
 }
 
 export const MessageItem = memo(function MessageItem(props: MessageItemProps) {
@@ -358,10 +367,11 @@ export const MessageItem = memo(function MessageItem(props: MessageItemProps) {
   return <div data-chat-item={props.item.id} className="contents"><MessageContent {...props} /></div>
 })
 
-function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, onEdit }: MessageItemProps) {
+function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, onEdit, editRestartsConversation, showRevisionMarker }: MessageItemProps) {
   switch (item.kind) {
     case 'user':
-      return <UserMessage item={item} onEdit={item.pending ? undefined : onEdit} />
+      return <UserMessage item={item} onEdit={item.pending ? undefined : onEdit}
+        editRestartsConversation={editRestartsConversation} showRevisionMarker={showRevisionMarker} />
     case 'agent':
       return item.text.trim()
         ? <AgentMessage id={item.id} text={item.text} streaming={item.streaming === true}
@@ -384,9 +394,24 @@ function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, o
       return <CommandItem item={item} />
     case 'fileChange':
       return <FileChangeItem item={item} />
+    case 'backgroundTask': {
+      const label = backgroundTaskLabel(item.status)
+      return (
+        <ToolRow icon={<ListChecks size={14} aria-hidden />} summary={item.summary ? `${label} · ${item.summary}` : label}>
+          {item.result && (
+            <div className="qn-markdown min-w-0 wrap-anywhere border-l border-qn-border pl-3 text-qn-prose">
+              <ReplyMarkdown text={item.result} streaming={false} />
+            </div>
+          )}
+        </ToolRow>
+      )
+    }
     case 'subagent':
       return <SubagentDetails item={item} renderItem={(child, showDots) => <MessageItem key={child.id} item={child} showStreamingDots={showDots} />} />
     case 'other':
+      if (item.type === 'contextCompaction') {
+        return <p role="status" className="text-ui text-qn-muted">{item.summary}</p>
+      }
       return (
         <ToolRow icon={<FileText size={14} />} summary={item.type}>
           <div className="whitespace-pre-wrap break-words text-ui text-qn-muted">{item.summary}</div>
@@ -421,12 +446,12 @@ export const WorkGroup = memo(function WorkGroup({
   durationMs: number | null
   replyCompletedAtMs?: number
   entries: FlowEntry[]
-  onFork?: (itemId: string, markdown: string) => void
+  onFork?: (itemId: string) => (() => void) | undefined
 }) {
   return (
     <ActivityDetails
       inline
-      summary={<span>{durationMs ? t('工作了 {duration}', { duration: formatDuration(durationMs) }) : t('工作过程')}</span>}
+      summary={<span>{workSummaryLabel(durationMs)}</span>}
       afterChevron={replyCompletedAtMs !== undefined && <ReplyTime completedAtMs={replyCompletedAtMs} className="ml-2 whitespace-nowrap text-ui-sm tabular-nums text-qn-muted" />}
     >
       <ToolPages items={entries} className="mt-2 space-y-3" renderItem={(entry) => entry.kind === 'tools'
@@ -437,9 +462,11 @@ export const WorkGroup = memo(function WorkGroup({
 })
 
 /** 用户消息：右侧灰色气泡；图片缩略图与附件/技能标签放在气泡上方。 */
-function UserMessage({ item, onEdit }: {
+function UserMessage({ item, onEdit, editRestartsConversation, showRevisionMarker }: {
   item: Extract<ItemView, { kind: 'user' }>
   onEdit?: (text: string, input: UserInput[]) => Promise<boolean>
+  editRestartsConversation?: boolean
+  showRevisionMarker?: boolean
 }) {
   const [edit, setEdit] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -457,6 +484,7 @@ function UserMessage({ item, onEdit }: {
   const canSave = Boolean(onEdit) && edit !== null && (hasText || Boolean(item.inputExtras?.length))
   const sentAt = item.sentAt ? new Date(item.sentAt) : null
   const timestamp = sentAt && Number.isFinite(sentAt.getTime()) ? sentAt : null
+  const submitLabel = editRestartsConversation ? t('发送修订') : t('重新发送')
 
   const resend = async () => {
     if (!onEdit || edit === null || !canSave || saving) return
@@ -474,10 +502,20 @@ function UserMessage({ item, onEdit }: {
 
   return (
     <div className="flex flex-col items-end gap-1.5">
+      {showRevisionMarker && (
+        <div className="mb-2 flex w-full items-center gap-3 text-ui-sm text-qn-muted">
+          <span className="h-px flex-1 bg-qn-border" aria-hidden="true" />
+          <span>{t('从这里重新开始')}</span>
+          <span className="h-px flex-1 bg-qn-border" aria-hidden="true" />
+        </div>
+      )}
+      {item.steering && <span className="text-ui-sm text-qn-muted">
+        {item.steering === 'nextTurn' ? t('引导 · 下一轮') : t('引导 · 当前轮')}
+      </span>}
       {visible.length > 0 && (
         <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
           {visible.map((src, index) => (
-            <MessageImage key={index} src={src} label={`${t('图片')} ${index + 1}`} />
+            <MessageImage key={index} src={src} label={embeddedImageLabel(src, index)} />
           ))}
         </div>
       )}
@@ -511,7 +549,8 @@ function UserMessage({ item, onEdit }: {
           <textarea
             autoFocus
             aria-label={t('编辑已发送的消息')}
-            className="qn-scroll block min-h-20 w-full resize-y bg-transparent px-1 text-[length:var(--qn-composer-font-size,15px)] leading-[1.7] outline-none"
+            className="qn-scroll block min-h-20 w-full resize-y overflow-x-hidden wrap-anywhere bg-transparent px-1 text-[length:var(--qn-composer-font-size,15px)] leading-[1.7] outline-none"
+            wrap="soft"
             value={edit}
             disabled={saving}
             onChange={(event) => setEdit(event.target.value)}
@@ -526,11 +565,11 @@ function UserMessage({ item, onEdit }: {
           {editFailed && <div role="status" className="px-1 text-ui-sm text-qn-warn">{t('发送失败，修改已保留')}</div>}
           <div className="mt-2 flex flex-wrap justify-end gap-1.5 text-ui-sm">
             <button type="button" disabled={saving} className="rounded-md px-2 py-1 text-qn-muted hover:bg-qn-hover" onClick={() => setEdit(null)}>{t('取消')}</button>
-            <button type="submit" disabled={!canSave || saving} className="rounded-md bg-qn-text px-2 py-1 text-qn-bg disabled:opacity-40">{saving ? t('提交中…') : t('发送修订')}</button>
+            <button type="submit" disabled={!canSave || saving} className="rounded-md bg-qn-text px-2 py-1 text-qn-bg disabled:opacity-40">{saving ? t('提交中…') : submitLabel}</button>
           </div>
         </form>
       ) : parsed.text.trim() && (
-        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-qn-fg/[0.06] bg-qn-bubble px-4 py-2.5 text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-text">
+        <div className="max-w-[80%] whitespace-pre-wrap wrap-anywhere rounded-2xl rounded-br-md border border-qn-fg/[0.06] bg-qn-bubble px-4 py-2.5 text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-text">
           {parsed.text}
         </div>
       )}

@@ -42,7 +42,7 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
       <MenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-ui text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-ui text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover data-[state=open]:bg-qn-hover"
           aria-label={t('选择 Agent')}
         >
           <AgentIcon agent={agent} size={14} />

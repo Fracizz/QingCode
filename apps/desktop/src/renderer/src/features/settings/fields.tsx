@@ -57,9 +57,9 @@ export function Segmented<T extends string>({
             if (!option.disabled) onChange(option.value)
           }}
           className={cn(
-            'rounded-md px-2.5 py-1 text-ui-sm outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+            'rounded-md px-2.5 py-1 text-ui-sm outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
             value === option.value
-              ? 'bg-qn-brand/10 font-semibold text-qn-brand ring-1 ring-inset ring-qn-brand/40'
+              ? 'bg-qn-brand/10 font-semibold text-qn-brand ring-1 ring-inset ring-qn-border-strong'
               : 'text-qn-muted hover:text-qn-text',
             option.disabled && 'cursor-not-allowed text-qn-dim',
           )}

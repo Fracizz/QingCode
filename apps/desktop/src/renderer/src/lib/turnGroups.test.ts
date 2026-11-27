@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ItemView, ThreadView, TurnMeta } from '@qn/codex-client'
+import { includeWorkSummary, type ItemView, type ThreadView, type TurnMeta } from '@qn/codex-client'
 import { formatDuration, formatStoppedDuration, groupFlow, groupTurns, hasPendingSubmission, isGroupRunning, streamingReplyId, summarizeTools, turnTimeline } from './turnGroups'
 
 const user = (id: string) => ({ kind: 'user', id, text: 'hi' }) as unknown as ItemView
@@ -145,6 +145,13 @@ describe('groupTurns', () => {
     ]
     expect(groupTurns(items, undefined, false)[1]).toMatchObject({ kind: 'work', reply: { id: 'final', completedAtMs: 2000 } })
     expect(groupTurns(items, undefined, true).some((entry) => entry.kind === 'work')).toBe(false)
+  })
+
+  it('分页从最终回复开始时保留紧邻的用时摘要', () => {
+    const flow = groupTurns([user('u'), cmd('c'), agent('a'), user('next')],
+      [{ id: 'turn', startedAtMs: 1, durationMs: 544_000, itemIds: ['u', 'c', 'a'] }], false)
+    expect(includeWorkSummary(flow, 2)).toBe(1)
+    expect(includeWorkSummary(flow, 3)).toBe(3)
   })
 })
 

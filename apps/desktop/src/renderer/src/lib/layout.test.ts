@@ -34,7 +34,8 @@ describe('clampSidebarWidth', () => {
 
 describe('sideChatLayout', () => {
   it('并排时保留主对话最小宽度，工作区足够宽时限制侧聊最大宽度', () => {
-    expect(sideChatLayout(SIDE_CHAT_DEFAULT_WIDTH, 1000)).toEqual({ docked: true, min: 320, max: 520, width: 420 })
+    expect(sideChatLayout(SIDE_CHAT_DEFAULT_WIDTH, 1100)).toEqual({ docked: true, min: 320, max: 620, width: 540 })
+    expect(sideChatLayout(SIDE_CHAT_DEFAULT_WIDTH, 1000).width).toBe(1000 - MAIN_MIN_WIDTH)
     expect(sideChatLayout(650, 1000).width).toBe(1000 - MAIN_MIN_WIDTH)
     expect(sideChatLayout(999, 1600).width).toBe(720)
   })

@@ -40,7 +40,7 @@ export function AccessModePicker({
               aria-label={t('访问模式：{mode}', { mode: label })}
               disabled={disabled}
               className={cn(
-                'inline-flex size-8 shrink-0 items-center justify-center rounded-lg outline-none enabled:hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent',
+                'inline-flex size-8 shrink-0 items-center justify-center rounded-lg outline-none enabled:hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
                 current.warning ? 'bg-qn-danger/10 text-qn-danger' : effectiveMode !== 'default' ? 'bg-qn-warn/10 text-qn-warn' : 'text-qn-muted',
               )}
             >

@@ -1,12 +1,11 @@
-import { Check, ChevronRight, CircleX, Copy, Ellipsis, FileCode, FilePen, GitCompare, Image, ListChecks, Pencil, Quote, Terminal } from 'lucide-react'
-import { editUserText, formatReplyTime, localReplyDay, splitMarkdownBlocks, splitUserText, subscribeToReplyDay, type ItemView, type UserInput, getLocale, t, translateMessage } from '@qn/codex-client'
+import { Check, ChevronDown, ChevronRight, CircleX, Copy, Ellipsis, FileCode, FilePen, GitCompare, Image, ListChecks, Pencil, Quote, Terminal } from 'lucide-react'
+import { backgroundTaskLabel, editUserText, formatReplyTime, localReplyDay, splitMarkdownBlocks, splitUserText, subscribeToReplyDay, workSummaryLabel, type ItemView, type UserInput, getLocale, t, translateMessage } from '@qn/codex-client'
 import { createContext, memo, useContext, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { toolStatus, toolSummary, type ToolItem, type ToolStatus } from '../chatGroups'
+import { toolStatus, toolSummary, type ToolStatus, type WorkGroupEntry } from '../chatGroups'
 import { allowLocalUrl, isImagePath, parseFileHref, resolvePath, segmentPaths, type FileLocation } from '../fileLinks'
-import { callDevice } from '../client'
-import { getWindowNativePort } from '../native'
+import { copyText } from '../client'
 import { ImageThumbnail } from './ImageThumbnail'
 import { SubagentDetails } from './SubagentDetails'
 import { Badge, Button, Dialog, LoadingIcon, SheetAction } from './ui'
@@ -20,10 +19,11 @@ export type FileActions = {
 
 export const FileActionsContext = createContext<FileActions | null>(null)
 
-function ReplyTime({ completedAtMs }: { completedAtMs: number }) {
+function ReplyTime({ completedAtMs, inline = false }: { completedAtMs: number; inline?: boolean }) {
   const day = useSyncExternalStore(subscribeToReplyDay, localReplyDay, localReplyDay)
   const time = formatReplyTime(completedAtMs, day)
-  return time && <time className="mb-1 block text-xs tabular-nums text-qn-muted" dateTime={time.dateTime} title={time.full}>{time.label}</time>
+  return time && <time className={`${inline ? 'shrink-0 whitespace-nowrap' : 'mb-1 block'} text-xs tabular-nums text-qn-muted`}
+    dateTime={time.dateTime} title={time.full}>{time.label}</time>
 }
 
 const LinkedImageContext = createContext(false)
@@ -134,7 +134,7 @@ function markdownComponents(actions: FileActions | null, streaming: boolean): Co
     img: ({ src, alt }) => <MessageImage src={src ?? ''} alt={alt || t('图片')} />,
     pre: ({ children }) => <pre className="qn-pre">{children}</pre>,
     code: ({ className, children }) => (
-      <code className={`rounded bg-black/40 px-1 font-mono text-[12px] ${className ?? ''}`}>
+      <code className={`rounded border border-qn-border bg-qn-field px-1 font-mono text-[12px] ${className ?? ''}`}>
         {/* 流式输出时文本还在变，等完成后再识别路径，避免链接闪动。 */}
         {actions && !streaming && typeof children === 'string' ? <PathText text={children} actions={actions} /> : children}
       </code>
@@ -183,9 +183,9 @@ function DiffBlock({ text }: { text: string }) {
       <pre className="qn-pre qn-scroll qn-diff-preview text-[11px] leading-5" tabIndex={0}>
         {lines.map((line, index) => {
           const tone = line.startsWith('+')
-            ? 'text-emerald-300'
+            ? 'text-qn-diff-add'
             : line.startsWith('-')
-              ? 'text-red-300'
+              ? 'text-qn-diff-remove'
               : line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++')
                 ? 'text-qn-muted'
                 : ''
@@ -214,8 +214,7 @@ function MessageActions({ text, onQuote, getPlainText, onEdit, open: controlledO
 
   async function copy(value: string) {
     try {
-      if (getWindowNativePort()) await callDevice('clipboard.write', { text: value })
-      else await navigator.clipboard.writeText(value)
+      await copyText(value)
       setStatus(t('已复制'))
       window.setTimeout(() => setStatus((current) => current === t('已复制') ? '' : current), 1600)
     } catch {
@@ -296,7 +295,9 @@ function CommandDetails({ item, status, onQuote }: {
 }
 
 /** 连续工具步骤折叠后的摘要行，展开后逐条显示。 */
-export function ToolGroup({ items, onQuote, trail = false }: { items: ToolItem[]; onQuote: (text: string) => void; trail?: boolean }) {
+export function ToolGroup({ items, onQuote, trail = false }: {
+  items: ItemView[]; onQuote: (text: string) => void; trail?: boolean
+}) {
   const running = items.some((item) => toolStatus(item) === 'running')
   const failed = items.some((item) => toolStatus(item) === 'failed')
   return (
@@ -311,6 +312,23 @@ export function ToolGroup({ items, onQuote, trail = false }: { items: ToolItem[]
     }>
       <ToolPages items={items} className="qn-tool-group-body qn-scroll mt-1 space-y-1"
         renderItem={(item) => <MessageItem key={item.id} item={item} onQuote={onQuote} />} />
+    </LazyDetails>
+  )
+}
+
+export function WorkGroup({ work, onQuote }: { work: WorkGroupEntry; onQuote: (text: string) => void }) {
+  return (
+    <LazyDetails className="qn-tool-group qn-work-group" summary={
+      <summary className="qn-tool-row">
+        <span>{workSummaryLabel(work.durationMs)}</span>
+        <ChevronDown size={14} className="qn-tool-chevron shrink-0 text-qn-dim" aria-hidden />
+        {work.reply?.completedAtMs !== undefined && <ReplyTime completedAtMs={work.reply.completedAtMs} inline />}
+      </summary>
+    }>
+      <ToolPages items={work.entries} className="space-y-2"
+        renderItem={(entry) => entry.kind === 'tools'
+          ? <ToolGroup key={entry.key} items={entry.items} onQuote={onQuote} />
+          : <MessageItem key={entry.key} item={entry.item} onQuote={onQuote} showActions={false} />} />
     </LazyDetails>
   )
 }
@@ -453,6 +471,9 @@ function UserMessage({ item, onQuote, onResend }: {
 
   return (
     <div className="flex flex-col items-end">
+      {item.steering && <span className="mb-1 text-xs text-qn-muted">
+        {item.steering === 'nextTurn' ? t('引导 · 下一轮') : t('引导 · 当前轮')}
+      </span>}
       {/* 用户消息不常驻「⋯」：长按气泡（或右键）打开操作，减少消息流里的按钮噪音。 */}
       <div className="qn-user-bubble" onContextMenu={(event) => {
         event.preventDefault()
@@ -491,6 +512,7 @@ export function MessageItem({
   showStreamingDots,
   onResend,
   showActions = true,
+  replyTimeInSummary = false,
 }: {
   item: ItemView
   onQuote?: (text: string) => void
@@ -500,6 +522,7 @@ export function MessageItem({
   onResend?: Resend
   /** 只在每轮最后一条回复下常驻操作入口；中间的过程说明不再逐条挂「⋯」。 */
   showActions?: boolean
+  replyTimeInSummary?: boolean
 }) {
   const markdownRef = useRef<HTMLDivElement>(null)
   switch (item.kind) {
@@ -508,7 +531,7 @@ export function MessageItem({
     case 'agent':
       return (
         <div className="px-1 py-1" aria-label={agentName}>
-          {!item.streaming && item.completedAtMs !== undefined && item.text.trim() && <ReplyTime completedAtMs={item.completedAtMs} />}
+          {!replyTimeInSummary && !item.streaming && item.completedAtMs !== undefined && item.text.trim() && <ReplyTime completedAtMs={item.completedAtMs} />}
           <div ref={markdownRef} className={`qn-markdown break-words text-sm${item.streaming && showStreamingDots ? ' qn-streaming' : ''}`}>
             <Markdown text={item.text} streaming={item.streaming === true} />
           </div>
@@ -519,7 +542,7 @@ export function MessageItem({
       )
     case 'reasoning':
       return (
-        <LazyDetails className="rounded-xl border border-qn-border bg-black/10 px-3 py-2 text-xs" summary={
+        <LazyDetails className="rounded-xl border border-qn-border bg-qn-card px-3 py-2 text-xs" summary={
           <summary className="flex items-center gap-2 text-qn-muted">
             <span>{t('◌ 推理摘要')}</span>
             {item.streaming && <Badge tone="accent">{t('进行中')}</Badge>}
@@ -535,6 +558,28 @@ export function MessageItem({
       return <CommandItem item={item} onQuote={onQuote} />
     case 'fileChange':
       return <FileChangeItem item={item} onQuote={onQuote} />
+    case 'backgroundTask': {
+      const label = backgroundTaskLabel(item.status)
+      const header = <>
+        <ListChecks size={14} className="shrink-0" aria-hidden />
+        <span className="min-w-0 flex-1 wrap-anywhere">{item.summary ? `${label} · ${item.summary}` : label}</span>
+      </>
+      const row = 'flex min-h-11 items-center gap-2 px-3 py-1.5 text-qn-muted'
+      const surface = 'min-w-0 rounded-xl border border-qn-border bg-qn-card text-xs'
+      if (!item.result) return <div className={`${surface} ${row}`}>{header}</div>
+      return (
+        <LazyDetails className={surface} summary={
+          <summary className={`${row} list-none [&::-webkit-details-marker]:hidden`}>
+            {header}
+            <ChevronDown size={14} className="shrink-0" aria-hidden />
+          </summary>
+        }>
+          <div className="qn-markdown min-w-0 wrap-anywhere border-t border-qn-border px-3 py-2 text-sm">
+            <Markdown text={item.result} streaming={false} />
+          </div>
+        </LazyDetails>
+      )
+    }
     case 'subagent':
       return (
         <SubagentDetails item={item} renderItem={(child, showDots) => (
@@ -545,7 +590,8 @@ export function MessageItem({
       if (item.type === 'contextCompaction') {
         const busy = item.status === 'inProgress'
         if (busy && !active) return null
-        return <div className="qn-thinking" role="status">{busy ? <LoadingIcon /> : <Check size={14} aria-hidden />}{translateMessage(item.summary)}</div>
+        const Icon = item.status === 'failed' ? CircleX : item.status === 'interrupted' ? Terminal : Check
+        return <div className="qn-thinking" role="status">{busy ? <LoadingIcon /> : <Icon size={14} aria-hidden />}{translateMessage(item.summary)}</div>
       }
       return (
         <div className="qn-tool qn-tool-open text-xs">

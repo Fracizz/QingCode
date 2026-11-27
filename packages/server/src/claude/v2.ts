@@ -105,9 +105,9 @@ export function userMessageItem(id: string, value: string): V2Item {
   }
 }
 
-/** content 已是 v2 UserInput 形态（含 image 项）时用；纯文本仍走 userMessageItem。 */
-export function userMessageContentItem(id: string, content: Json[]): V2Item {
-  return { type: 'userMessage', id, clientId: null, content }
+/** 把一次提交的全部输入（含文本与图片）放在同一个条目中。 */
+export function userMessageContentItem(id: string, content: Json[], clientId: string | null = null): V2Item {
+  return { type: 'userMessage', id, clientId, content }
 }
 
 export function agentMessageItem(id: string, value: string): V2Item {
@@ -220,6 +220,7 @@ export function buildTurn(
   items: V2Item[],
   status: string,
   error?: string | null,
+  source: 'live' | 'history' = 'live',
 ): Json {
   return {
     id,
@@ -230,8 +231,9 @@ export function buildTurn(
     error: error
       ? { message: error, codexErrorInfo: null, additionalDetails: null, misalignment: null }
       : null,
-    startedAt: nowSeconds(),
-    completedAt: status === 'inProgress' ? null : nowSeconds(),
+    // 历史没有计时时不能用读取时间；实时结束对象也不能把结束时刻填为起点。
+    startedAt: source === 'live' && status === 'inProgress' ? nowSeconds() : null,
+    completedAt: source === 'live' && status !== 'inProgress' ? nowSeconds() : null,
     durationMs: null,
   }
 }

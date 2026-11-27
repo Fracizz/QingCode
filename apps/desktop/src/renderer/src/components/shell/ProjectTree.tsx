@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent } from 'react'
-import { Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, SquarePen, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, SquarePen, X } from 'lucide-react'
 import { t } from '@qn/codex-client'
+import { useShallow } from 'zustand/react/shallow'
 import { copyText } from '../../lib/clipboard'
-import type { Project } from '../../../../shared/backendApi'
+import type { Project, Target, TargetState } from '../../../../shared/backendApi'
 import { sessionKey } from '../../lib/agents'
+import { targetDotClass, targetStateLabel } from '../../lib/targetStatus'
 import { applyThreadPrefs } from '../../lib/threadPrefs'
-import { threadKey, type ThreadSummary } from '../../lib/threads'
+import { activeFirst, isThreadInProgress, threadKey, type ThreadSummary } from '../../lib/threads'
 import { threadListFor, useCodex } from '../../store/codex'
 import { projectListOf, useProjects, type ProjectPlacement } from '../../store/projects'
 import { useTargets } from '../../store/targets'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { useUi, type ThreadListReveal } from '../../store/ui'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../primitives'
+import { StatusDot } from '../StatusDot'
+import { targetDisplayName } from '../targetName'
 import { ErrorNote, IconButton, Spinner } from '../ui'
 import { ThreadRow } from './ThreadRow'
 
@@ -26,7 +30,14 @@ type SortProps = Pick<ComponentProps<'button'>, 'onDragStart' | 'onDragEnd' | 'o
  * 某个目标下的项目 → 会话两级树（参考 Codex 侧栏）：侧栏里每个铺开的目标各渲染一份。
  * 每个展开的项目按自己的 cwd 读会话列表，可同时展开多个。
  */
-export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; onSelectTarget: (id: string) => void }) {
+export function ProjectTree({ target, onSelectTarget, activeSessionPaths }: {
+  target: Target
+  onSelectTarget: (id: string) => void
+  activeSessionPaths?: ReadonlySet<string>
+}) {
+  const targetId = target.id
+  const targetName = targetDisplayName(target)
+  const targetState = useTargets((s) => s.states[targetId]?.state ?? 'idle')
   const { projects, loading, error: projectError } = useProjects((s) => projectListOf(s, targetId))
   const selectedId = useProjects((s) => (s.targetId === targetId ? s.selectedId : null))
   const load = useProjects((s) => s.load)
@@ -38,22 +49,16 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
   const openPicker = useUi((s) => s.openDirectoryPicker)
   const reveal = useUi((s) => s.threadListReveal)
   const activeTarget = useTargets((s) => s.selectedId)
+  const orderedProjects = activeSessionPaths ? activeFirst(projects, (project) => activeSessionPaths.has(project.path)) : projects
 
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<ProjectDrop | null>(null)
-  // 相对时间每分钟刷新一次即可。
-  const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
     setDraggedId(null)
     setDropTarget(null)
     void load(targetId)
   }, [targetId, load])
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 60_000)
-    return () => clearInterval(timer)
-  }, [])
 
   useEffect(() => {
     if (reveal && (reveal.targetId !== targetId || reveal.projectId !== selectedId || !expandedIds?.includes(reveal.projectId))) {
@@ -94,7 +99,7 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
   return (
     <div className="qn-project-tree pb-1">
       {loading && projects.length === 0 && (
-        <div className="space-y-1.5 py-1 pl-6 pr-2">
+        <div className="space-y-1.5 px-2 py-1">
           {[0, 1].map((key) => (
             <div key={key} className="h-7 animate-pulse rounded-lg bg-qn-panel" />
           ))}
@@ -104,14 +109,14 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
       {!loading && projects.length === 0 && !projectError && (
         <button
           type="button"
-          className="flex min-h-8 w-full items-center gap-2 rounded-lg pl-[30px] text-left text-[length:var(--qn-project-detail-font-size)] leading-tight text-qn-dim hover:bg-qn-hover hover:text-qn-text"
+          className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[length:var(--qn-project-detail-font-size)] leading-tight text-qn-muted hover:bg-qn-hover hover:text-qn-text"
           onClick={() => openPicker(targetId)}
         >
           <FolderPlus size={14} /> {t('添加项目')}
         </button>
       )}
 
-      {projects.map((project, index) => {
+      {orderedProjects.map((project, index) => {
         const active = project.id === selectedId
         const expanded = expandedIds?.includes(project.id) ?? false
         const isPinned = pinned.includes(project.id)
@@ -119,7 +124,7 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
         const next = projects[index + 1]
         const canMoveUp = previous && pinned.includes(previous.id) === isPinned
         const canMoveDown = next && pinned.includes(next.id) === isPinned
-        const sortProps: SortProps | undefined = canMoveUp || canMoveDown ? {
+        const sortProps: SortProps | undefined = !activeSessionPaths && (canMoveUp || canMoveDown) ? {
           onDragStart: (event) => {
             event.dataTransfer.effectAllowed = 'move'
             event.dataTransfer.setData(PROJECT_DRAG_TYPE, project.id)
@@ -141,8 +146,7 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
         return (
           <div
             key={project.id}
-            // 组间留白把"项目 + 它的会话"切成一块块，靠间距而非缩进区分项目与会话；保持紧凑只留 6px。
-            className={`relative pl-5${index > 0 ? ' mt-1.5' : ''}${draggedId === project.id ? ' opacity-50' : ''}`}
+            className={`relative${index > 0 ? ' mt-2' : ''}${draggedId === project.id ? ' opacity-50' : ''}`}
             onDragOver={(event) => {
               const target = locateDrop(event, project.id)
               if (target) {
@@ -165,12 +169,15 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
             }}
           >
             {indicator && (
-              <div aria-hidden className={`pointer-events-none absolute inset-x-0 left-5 z-10 h-0.5 rounded-full bg-qn-accent ${indicator === 'before' ? 'top-0' : 'bottom-0'}`} />
+              <div aria-hidden className={`pointer-events-none absolute inset-x-0 z-10 h-0.5 rounded-full bg-qn-accent ${indicator === 'before' ? 'top-0' : 'bottom-0'}`} />
             )}
             <ProjectRow
               project={project}
+              targetName={targetName}
+              targetState={targetState}
               active={active}
               expanded={expanded}
+              hasActiveSessions={!expanded && activeSessionPaths?.has(project.path)}
               onOpen={() => onProjectClick(project, expanded)}
               onNewDraft={() => newDraftIn(project)}
               sortProps={sortProps}
@@ -178,8 +185,8 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
             {expanded && (
               <ThreadList
                 project={project}
-                now={now}
                 active={active}
+                runningFirst={activeSessionPaths !== undefined}
                 reveal={reveal?.targetId === targetId && reveal.projectId === project.id ? reveal : null}
                 onActivate={() => activateProject(project)}
                 onNewDraft={() => newDraftIn(project)}
@@ -196,15 +203,21 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
 
 function ProjectRow({
   project,
+  targetName,
+  targetState,
   active,
   expanded,
+  hasActiveSessions,
   onOpen,
   onNewDraft,
   sortProps,
 }: {
   project: Project
+  targetName: string
+  targetState: TargetState
   active: boolean
   expanded: boolean
+  hasActiveSessions?: boolean
   onOpen: () => void
   onNewDraft: () => void
   sortProps?: SortProps
@@ -268,13 +281,13 @@ function ProjectRow({
 
   return (
     <div
-      className={`group/project flex min-h-8 items-center gap-1 rounded-lg pl-(--qn-tree-row-inset) pr-1 text-[length:var(--qn-project-font-size)] leading-tight ${
+      className={`group/project flex min-h-8 items-center gap-2 rounded-lg pl-(--qn-tree-row-inset) pr-2 text-[length:var(--qn-project-font-size)] leading-tight ${
         active ? 'text-qn-text' : 'text-qn-text/85 hover:bg-qn-hover'
       } ${(active && !expanded) || menuOpen ? 'bg-qn-hover' : ''}`}
     >
       <button
         type="button"
-        className={`group flex min-w-0 flex-1 items-center gap-(--qn-tree-row-inset) self-stretch rounded-md py-px text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent${sortProps ? ' qn-cursor-drag' : ''}`}
+        className={`group flex min-w-0 flex-1 items-center gap-(--qn-tree-row-inset) self-stretch rounded-md py-px text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover ${sortProps && !active ? 'qn-cursor-drag' : 'cursor-default'}`}
         aria-expanded={expanded}
         aria-keyshortcuts={sortProps ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
         draggable={Boolean(sortProps)}
@@ -282,27 +295,38 @@ function ProjectRow({
         {...sortProps}
       >
         <ProjectInitial name={project.name} />
-        <span className="min-w-0 flex-1 truncate">{project.name}</span>
+        <span className="min-w-0 flex-1 truncate" title={project.name}>{project.name}</span>
+        {hasActiveSessions && <StatusDot className="bg-qn-brand" title={t('有活动会话')} />}
         {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label={t('已置顶')} />}
         {sortProps && (
-          <span title={t('拖动排序，或按 Alt+↑ / Alt+↓ 移动')} className="flex h-7 w-5 shrink-0 items-center justify-center text-qn-muted opacity-0 group-focus-visible:opacity-100 group-hover:opacity-100">
+          <span title={t('拖动排序，或按 Alt+↑ / Alt+↓ 移动')} className="hidden h-7 w-5 shrink-0 items-center justify-center text-qn-muted group-focus-visible:flex group-hover:flex">
             <DragHandleIcon />
           </span>
         )}
       </button>
-      {/* 项目行不显示时间：右侧带时间的只有会话行，一眼可分层级。 */}
-      <span className={`shrink-0 items-center group-hover/project:flex ${menuOpen ? 'flex' : 'hidden'}`}>
+      <span
+        className={`max-w-[36%] min-w-0 shrink-0 items-center gap-1.5 text-[length:var(--qn-sidebar-list-detail-font-size)] text-qn-muted group-hover/project:hidden group-has-focus-visible/project:hidden ${menuOpen ? 'hidden' : 'flex'}`}
+        title={`${targetName} · ${targetStateLabel[targetState]}`}
+      >
+        <span className="truncate">{targetName}</span>
+        <StatusDot className={targetDotClass[targetState]} />
+        <span className="sr-only">{targetStateLabel[targetState]}</span>
+      </span>
+      <span className={`shrink-0 items-center group-hover/project:flex group-has-focus-visible/project:flex ${menuOpen ? 'flex' : 'hidden'}`}>
         <Menu open={menuOpen} onOpenChange={setMenuOpen}>
           <MenuTrigger asChild>
             <button
               type="button"
               aria-label={t('更多操作')}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text data-[state=open]:text-qn-text"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover data-[state=open]:text-qn-text"
             >
               <Ellipsis size={15} />
             </button>
           </MenuTrigger>
           <MenuContent align="start" className="min-w-52" onKeyDown={shortcut}>
+            <MenuItem icon={expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} onSelect={onOpen}>
+              {expanded ? t('收起') : t('展开')}
+            </MenuItem>
             <MenuItem icon={pinned ? <PinOff size={14} /> : <Pin size={14} />} hint="P" onSelect={() => togglePin(project.id)}>
               {pinned ? t('取消置顶') : t('置顶')}
             </MenuItem>
@@ -366,10 +390,10 @@ function ProjectInitial({ name }: { name: string }) {
   )
 }
 
-function ThreadList({ project, now, active, reveal, onActivate, onNewDraft }: {
+function ThreadList({ project, active, runningFirst, reveal, onActivate, onNewDraft }: {
   project: Project
-  now: number
   active: boolean
+  runningFirst: boolean
   reveal: ThreadListReveal | null
   onActivate: () => void
   onNewDraft: () => void
@@ -397,12 +421,22 @@ function ThreadList({ project, now, active, reveal, onActivate, onNewDraft }: {
 
   const rawThreads = list?.threads ?? noThreads
   // 本地偏好：置顶在前、隐藏本地归档、套用本地名称。
-  const threads = useMemo(() => applyThreadPrefs(rawThreads, prefs), [rawThreads, prefs])
+  const defaultThreads = useMemo(() => applyThreadPrefs(rawThreads, prefs), [rawThreads, prefs])
+  const activeThreads = useCodex(useShallow((s) => {
+    if (!runningFirst || !ready) return null
+    return new Set(defaultThreads.filter((thread) =>
+      isThreadInProgress(thread, s.sessions[sessionKey(targetId, thread.agent)]?.state.threads[thread.id]),
+    ))
+  }))
+  const threads = useMemo(() =>
+    activeThreads?.size ? activeFirst(defaultThreads, (thread) => activeThreads.has(thread)) : defaultThreads,
+  [activeThreads, defaultThreads])
 
   const currentIndex = currentKey ? threads.findIndex((thread) => threadKey(thread.agent, thread.id) === currentKey) : -1
-  const preview = threads.slice(0, THREAD_PREVIEW_LIMIT)
+  const limit = Math.max(THREAD_PREVIEW_LIMIT, activeThreads?.size ?? 0)
+  const preview = threads.slice(0, limit)
   // 当前会话较旧时单独保留这一行，避免定位时展开整个列表。
-  if (currentIndex >= THREAD_PREVIEW_LIMIT) preview.push(threads[currentIndex]!)
+  if (currentIndex >= limit) preview.push(threads[currentIndex]!)
   const shown = showAll ? threads : preview
   const remaining = threads.length - preview.length
 
@@ -449,7 +483,6 @@ function ThreadList({ project, now, active, reveal, onActivate, onNewDraft }: {
             key={key}
             thread={thread}
             targetId={targetId}
-            now={now}
             current={key === currentKey}
             onActivate={onActivate}
           />

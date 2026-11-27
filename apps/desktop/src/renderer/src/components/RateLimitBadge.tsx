@@ -3,8 +3,12 @@ import { ChevronDown } from 'lucide-react'
 import {
   t,
   translateMessage,
+  claudeQuotaReportedAt,
+  claudeQuotaResetAt,
+  claudeQuotaSource,
   compactText,
   formatReset,
+  isClaudeStatusLine,
   remainingQuotaPercent,
   severity,
   severityForPercent,
@@ -14,7 +18,6 @@ import {
 } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import {
-  CLAUDE_RATE_LIMIT_NOTE,
   claudeCompactText,
   claudeRateLimitStatus,
   formatCost,
@@ -26,7 +29,8 @@ import {
   updatedAtText,
 } from '../lib/rateLimitView'
 import { entryFor, type RateLimitEntry } from '../lib/rateLimitsEntry'
-import { agentLabel, DEFAULT_AGENT } from '../lib/agents'
+import { agentLabel, DEFAULT_AGENT, sessionKey } from '../lib/agents'
+import { useCodex } from '../store/codex'
 import { RATE_LIMIT_REFRESH_MINUTES, useRateLimits } from '../store/rateLimits'
 import { RefreshIcon } from './LoadingIcon'
 import { ProgressRing } from './ProgressRing'
@@ -86,6 +90,11 @@ function Body({
   now: number
 }) {
   const snapshot = entry?.snapshot ?? null
+  const liveClaude = isClaudeStatusLine(snapshot)
+  const singleReset = claudeQuotaResetAt(snapshot)
+  const reportedAt = claudeQuotaReportedAt(snapshot)
+  const source = claudeQuotaSource(snapshot)
+  const opened = useCodex((state) => state.sessions[sessionKey(targetId, agent)]?.opened === true)
   const refresh = useRateLimits((s) => s.refresh)
 
   return (
@@ -96,7 +105,7 @@ function Body({
           <button
             type="button"
             className="qn-button-subtle flex items-center gap-1 px-2 py-1 text-ui-sm"
-            disabled={entry?.loading === true}
+            disabled={entry?.loading === true || (agent === 'claude' && !opened)}
             onClick={() => void refresh(targetId, agent)}
           >
             <RefreshIcon size={12} loading={entry?.loading} /> {t('刷新')}
@@ -106,19 +115,27 @@ function Body({
 
       {agent === 'claude' ? (
         <div className="space-y-2">
-          <div className="rounded-lg border border-qn-border/70 p-2">
-            <div className="flex items-center justify-between">
-              <span>{t('最近限额事件')}</span>
-              <span className={percentClass(snapshot?.primary?.usedPercent ?? 0)}>
-                {claudeRateLimitStatus(snapshot)}
-              </span>
-            </div>
-            {snapshot?.primary?.resetsAt !== null && snapshot?.primary?.resetsAt !== undefined && (
-              <div className="mt-1.5 text-ui-sm text-qn-muted">
-                {formatReset(snapshot.primary.resetsAt, now)}
+          {liveClaude ? (
+            <>
+              {snapshot?.primary && <WindowRow label={t('5 小时')} value={snapshot.primary} now={now} />}
+              {snapshot?.secondary && <WindowRow label={t('每周')} value={snapshot.secondary} now={now} />}
+            </>
+          ) : (
+            <div className="rounded-lg border border-qn-border/70 p-2">
+              <div className="flex items-center justify-between">
+                <span>{t('额度状态')}</span>
+                <span className={percentClass(snapshot?.primary?.usedPercent ?? 0)}>
+                  {claudeRateLimitStatus(snapshot)}
+                </span>
               </div>
-            )}
-          </div>
+              {singleReset !== null && (
+                <div className="mt-1.5 text-ui-sm text-qn-muted">
+                  {formatReset(singleReset, now)}
+                </div>
+              )}
+            </div>
+          )}
+          {source && <p className="text-ui-sm text-qn-muted">{source}</p>}
           <div className="rounded-lg border border-qn-border/70 p-2">
             <div className="flex items-center justify-between">
               <span>{threadId ? t('本会话累计费用') : t('累计费用')}</span>
@@ -126,7 +143,6 @@ function Body({
                 {t('≈{cost}（估算）', { cost: formatCost(sumCost(entry?.costByThread, threadId)) })}
               </span>
             </div>
-            <div className="mt-1 text-ui-sm text-qn-muted">{CLAUDE_RATE_LIMIT_NOTE}</div>
           </div>
         </div>
       ) : (
@@ -183,11 +199,18 @@ function Body({
       {entry?.error && <div className="mt-2 text-ui-sm text-qn-danger">{translateMessage(entry.error)}</div>}
 
       <div className="mt-3 flex items-center justify-between border-t border-qn-border pt-2 text-ui-sm text-qn-muted">
-        <span>{updatedAtText(entry?.updatedAt, now)}</span>
-        <span>{t('窗口可见时每 {minutes} 分钟刷新', { minutes: RATE_LIMIT_REFRESH_MINUTES })}</span>
+        <span>{agent === 'claude' ? reportedAt ?? t('暂无上报时间') : updatedAtText(entry?.updatedAt, now)}</span>
+        {agent === 'codex' && <span>{t('窗口可见时每 {minutes} 分钟刷新', { minutes: RATE_LIMIT_REFRESH_MINUTES })}</span>}
       </div>
     </div>
   )
+}
+
+export function RateLimitDetails({ targetId, agent, threadId }: {
+  targetId: string; agent: AgentKind; threadId: string | null
+}) {
+  const entry = useRateLimits((s) => entryFor(s.byTarget, s.byAgent, targetId, agent))
+  return <Body targetId={targetId} agent={agent} threadId={threadId} entry={entry} now={Date.now()} />
 }
 
 export function RateLimitBadge({

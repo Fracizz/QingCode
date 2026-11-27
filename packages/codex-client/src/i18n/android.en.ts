@@ -12,6 +12,8 @@ export default {
   '缺少整数 {key} 参数': 'Missing integer {key} parameter',
   '缺少 stream 参数': 'Missing stream parameter',
   '后台连接设置无效': 'Invalid background connection setting',
+  '屏幕常亮设置无效': 'Invalid keep-screen-on setting',
+  '系统栏外观设置无效': 'Invalid system bar appearance setting',
   '存储键格式不正确': 'Invalid storage key format',
 
   // 本地存储与剪贴板

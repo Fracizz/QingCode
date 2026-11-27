@@ -9,6 +9,26 @@ const toggle = (summary: HTMLElement) => act(async () => {
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
 })
 
+it('后台任务卡片支持触摸展开 Markdown 结果，只有摘要时直接显示', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const task = { kind: 'backgroundTask' as const, id: 'task', status: 'failed' as const, summary: '手机后台提醒' }
+  try {
+    await act(() => root.render(<MessageItem item={{ ...task, result: '' }} />))
+    expect(host.textContent).toContain('后台任务失败 · 手机后台提醒')
+    expect(host.querySelector('summary')).toBeNull()
+    await act(() => root.render(<MessageItem item={{ ...task, result: '**类型检查失败**' }} />))
+    expect(host.textContent).not.toContain('类型检查失败')
+    await toggle(host.querySelector('summary')!)
+    expect(host.querySelector('strong')?.textContent).toBe('类型检查失败')
+    expect(host.querySelector('.qn-user-bubble')).toBeNull()
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
+
 it('在回复上方显示完成时间，跨午夜后补上本地日期', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.useFakeTimers()

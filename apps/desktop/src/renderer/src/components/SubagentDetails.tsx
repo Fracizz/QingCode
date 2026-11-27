@@ -209,7 +209,7 @@ export function SubagentLauncher({ entries, threads, rpc, renderItem }: {
             <div className="qn-scroll space-y-1 overflow-y-auto overscroll-contain border-r border-qn-border p-2" aria-label={t('子代理列表')}>
               {entries.map((item) => (
                 <button type="button" key={item.key} aria-pressed={item === entry} onClick={() => setSelected(item.key)}
-                  className="flex w-full items-center gap-2 rounded-lg p-2 text-left hover:bg-qn-hover focus-visible:outline-qn-accent aria-pressed:bg-qn-active">
+                  className="flex w-full items-center gap-2 rounded-lg p-2 text-left hover:bg-qn-hover focus-visible:outline-qn-outline-hover aria-pressed:bg-qn-active">
                   <AgentAvatar size={15} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-ui font-medium" title={item.name}>{item.name}</span>

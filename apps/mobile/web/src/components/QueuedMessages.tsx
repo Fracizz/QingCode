@@ -7,7 +7,7 @@ import { Badge, Button, Dialog, Note } from './ui'
 
 const newChatActions = [
   { mode: 'start', label: t('新会话开始'), Icon: MessageSquarePlus },
-  { mode: 'continue', label: t('新会话继续'), Icon: GitBranch },
+  { mode: 'continue', label: t('新对话继续'), Icon: GitBranch },
 ] as const
 
 export function QueuedMessages({ running, canSteer }: { running: boolean; canSteer: boolean }) {
@@ -89,7 +89,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
   const edited = queue.find((item) => item.id === edit?.id)
   const movingMessage = queue.find((item) => item.id === destination?.id)
   const continuing = destination?.mode === 'continue'
-  const destinationTitle = continuing ? t('新会话继续') : t('新会话开始')
+  const destinationTitle = continuing ? t('新对话继续') : t('新会话开始')
   const destinationError = moveError ?? (movingMessage?.error === UNCONFIRMED_QUEUED_SEND ? movingMessage.error : null)
   const accessLabel = (selection?: AccessSelection) => {
     const mode = resolveAccessMode(agent, globalAccessMode, selection)
@@ -129,6 +129,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
                   ))}
                   {running && canSteer && (
                     <Button variant="ghost" className="shrink-0 px-2 text-xs" disabled={!connected}
+                      title={agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
                       onClick={() => void steer(message.id)}>{t('引导')}</Button>
                   )}
                   <Button variant="ghost" className="qn-icon-button" aria-label={t('重新编辑')} title={t('重新编辑')} onClick={() => {

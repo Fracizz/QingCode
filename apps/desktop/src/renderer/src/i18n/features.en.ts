@@ -246,7 +246,6 @@ export default {
   '关闭左侧标签': 'Close tabs to the left',
   '关闭右侧标签': 'Close tabs to the right',
   '适应窗口': 'Fit to window',
-  '查看原始尺寸': 'View actual size',
   '这是二进制文件，无法按文本显示': 'Binary file. It cannot be shown as text',
   '下载并打开': 'Download and open',
   '正在下载…': 'Downloading…',
@@ -616,4 +615,12 @@ export default {
   '上一个匹配': 'Previous match',
   '下一个匹配': 'Next match',
   '关闭终端搜索': 'Close terminal search',
+
+  // 复制 Git 远端地址
+  '复制 Git 地址': 'Copy Git URL',
+  '已复制 Git 地址': 'Git URL copied',
+  '复制 Git 地址失败': 'Failed to copy the Git URL',
+  '当前 Git 仓库未配置远端地址': 'This Git repository has no remote URL',
+  '读取 Git 远端地址失败': 'Failed to read Git remote URLs',
+  '选择要复制的 Git 远端地址': 'Choose a Git remote URL to copy',
 } satisfies Record<string, string>

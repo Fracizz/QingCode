@@ -9,6 +9,7 @@ import { threadKey } from './threads'
  * - names：agent 不支持 thread/name/set 时（如 Claude）的本地重命名
  * - hidden：agent 不支持 thread/archive 时的本地归档
  * - restoredAt：恢复后重新计算自动归档的等待时间
+ * - revisionTurns：修订分支中开始新对话的轮次 ID
  * 键统一用 threadKey(agent, id)，并按目标隔离，避免不同主机的同 id 会话互相影响。
  */
 export type ThreadPrefs = {
@@ -17,9 +18,10 @@ export type ThreadPrefs = {
   names: Record<string, string>
   hidden: Record<string, true>
   restoredAt: Record<string, number>
+  revisionTurns: Record<string, string>
 }
 
-export const emptyThreadPrefs = (): ThreadPrefs => ({ pinned: {}, unread: {}, names: {}, hidden: {}, restoredAt: {} })
+export const emptyThreadPrefs = (): ThreadPrefs => ({ pinned: {}, unread: {}, names: {}, hidden: {}, restoredAt: {}, revisionTurns: {} })
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -55,6 +57,7 @@ export function parseThreadPrefs(raw: string | null): Record<string, ThreadPrefs
       names: pick(value.names, isName),
       hidden: pick(value.hidden, isTrue),
       restoredAt: pick(value.restoredAt, isNumber),
+      revisionTurns: pick(value.revisionTurns, isName),
     }
   }
   return result

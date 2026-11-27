@@ -144,7 +144,7 @@ export class PiRpcProcess {
   }
 
   /** 每条命令分配唯一 id，按响应里的 id 关联（命令处理是异步的，顺序不可依赖）。 */
-  command(type: string, payload: RpcRecord = {}): Promise<RpcRecord> {
+  command(type: string, payload: RpcRecord = {}, timeoutMs = this.options.commandTimeoutMs ?? 30_000): Promise<RpcRecord> {
     if (this.closed || !this.child || this.exited) {
       return Promise.reject(new Error('pi RPC 未运行'))
     }
@@ -153,7 +153,7 @@ export class PiRpcProcess {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new Error(`pi ${type} 超时`))
-      }, this.options.commandTimeoutMs ?? 30_000)
+      }, timeoutMs)
       timer.unref?.()
       this.pending.set(id, { resolve, reject, timer })
       this.write({ id, type, ...payload })

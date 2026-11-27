@@ -281,6 +281,7 @@ export class MockNativePort implements NativePort {
   private readonly projects: Project[] = [...MOCK_PROJECTS]
   private readonly terminals = new Map<string, MockTerminal>()
   private readonly turns = new Map<string, MockTurn[]>()
+  private readonly claudeRateLimits = new Map<string, JsonRecord>()
   private readonly threads = new Map<AgentKind, JsonRecord[]>([
     [
       'codex',
@@ -708,8 +709,8 @@ export class MockNativePort implements NativePort {
         return
       }
       case 'thread/compact/start': {
-        if (agent !== 'codex' || active) {
-          recv({ id, error: { code: agent !== 'codex' ? -32601 : -32602, message: '当前无法压缩会话' } })
+        if (active) {
+          recv({ id, error: { code: -32602, message: '当前无法压缩会话' } })
           return
         }
         const item = { type: 'contextCompaction', id: `compact-${++this.counter}` }
@@ -740,15 +741,17 @@ export class MockNativePort implements NativePort {
         this.simulateTurn(targetId, agent, threadId, id, inner, turns)
         return
       case 'turn/steer': {
-        if (agent !== 'codex') {
-          recv({ id, error: { code: -32601, message: '当前 Agent 不支持引导' } })
-          return
-        }
         if (!active || active.id !== inner.expectedTurnId) {
           recv({ id, error: { code: -32602, message: '当前轮次已变化，请重新发送' } })
           return
         }
-        const item = { type: 'userMessage', id: `steer-${++this.counter}`, content: Array.isArray(inner.input) ? inner.input : [] }
+        const item = {
+          type: 'userMessage',
+          id: `steer-${++this.counter}`,
+          clientId: str(inner.clientUserMessageId) || null,
+          content: Array.isArray(inner.input) ? inner.input : [],
+          ...(agent !== 'codex' ? { steering: 'currentTurn' } : {}),
+        }
         active.items.push(item)
         recv({ id, result: { turnId: active.id } })
         recv({ method: 'item/completed', params: { threadId, turnId: active.id, item } })
@@ -771,6 +774,14 @@ export class MockNativePort implements NativePort {
         recv({ id, result: { data: MOCK_MODELS[agent], nextCursor: null } })
         return
       case 'account/rateLimits/read':
+        if (agent === 'claude') {
+          recv({ id, result: { rateLimits: this.claudeRateLimits.get(targetId) ?? { primary: null, secondary: null } } })
+          return
+        }
+        if (agent === 'pi') {
+          recv({ id, error: { code: -32601, message: 'Method not found' } })
+          return
+        }
         recv({
           id,
           result: {
@@ -827,7 +838,7 @@ export class MockNativePort implements NativePort {
       changes: [{ path: 'apps/mobile/web/src/store.ts', kind: { type: 'update' }, diff: mockDiff('apps/mobile/web/src/store.ts') }],
     }
     const recv = (payload: unknown) => this.recv(targetId, agent, payload)
-    const user = { type: 'userMessage', id: `u-${turnId}`, content: input }
+    const user = { type: 'userMessage', id: `u-${turnId}`, clientId: str(params.clientUserMessageId) || null, content: input }
     const reply = { type: 'agentMessage', id: itemId, text: '', status: 'inProgress' }
     const turn: MockTurn = { id: turnId, status: 'inProgress', items: [user] }
     turns.push(turn)
@@ -882,7 +893,9 @@ export class MockNativePort implements NativePort {
         params: {
           threadId, turnId, tokenUsage: {
             total: { totalTokens: 128 },
-            ...(agent === 'claude' ? { estimatedCostUsd: 0.012 } : { last: { totalTokens: 128 }, modelContextWindow: 1024 }),
+            last: { totalTokens: 128 },
+            ...(agent === 'codex' ? { modelContextWindow: 1024 }
+              : { modelContextWindow: null, estimatedCostUsd: 0.012, estimated: true }),
           },
         },
       })
@@ -897,9 +910,11 @@ export class MockNativePort implements NativePort {
           },
         })
       } else if (agent === 'claude') {
+        const rateLimits = { observedAt: Date.now(), primary: { usedPercent: 81, windowDurationMins: 300, resetsAt: nowSec + 2700 } }
+        this.claudeRateLimits.set(targetId, rateLimits)
         recv({
           method: 'account/rateLimits/updated',
-          params: { rateLimits: { primary: { usedPercent: 81, windowDurationMins: 300, resetsAt: nowSec + 2700 } } },
+          params: { rateLimits },
         })
       }
     }, delay + 40)

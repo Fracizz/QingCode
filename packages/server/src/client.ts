@@ -41,8 +41,13 @@ export class IpcClient {
     if (!auth) throw new Error('daemon token 不存在')
     const socket = await openSocket(paths.endpoint, timeoutMs)
     const client = new IpcClient(socket)
-    await client.handshake(auth, timeoutMs)
-    return client
+    try {
+      await client.handshake(auth, timeoutMs)
+      return client
+    } catch (error) {
+      client.close()
+      throw error
+    }
   }
 
   get pid(): number {

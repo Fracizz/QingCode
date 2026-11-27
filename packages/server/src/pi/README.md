@@ -18,15 +18,18 @@
 | `initialize` | 支持（仅桥内部） | 返回 `pi-rpc/<version>`；`codex.open` 结果的 `initialize` 为 `null`，客户端不得再发 initialize |
 | `thread/list` | 支持 | 只读解析官方 `session-format.md` 的 `.jsonl` 会话头部（默认 `~/.pi/agent/sessions/`，尊重 `PI_CODING_AGENT_SESSION_DIR`），按 header 的 cwd 过滤 |
 | `thread/start` | 支持 | `new_session` + `get_state`；会话 id 用 pi 自己的 `sessionId` |
+| `thread/fork` | 支持 | 通过 [官方会话 RPC](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc-commands.md#fork) 创建新会话。历史轮次以后一条用户消息为边界；最新轮次使用 `clone` |
 | `thread/unsubscribe` | 支持临时会话 | 空闲时释放进程并通知 `thread/closed` |
 | `thread/resume` / `thread/read` | 支持 | 元数据请求直接返回会话信息。完整历史经 `switch_session {sessionPath}` + `get_messages` 读取 |
 | `thread/turns/list` / `thread/items/list` | 支持 | `get_messages` 历史按用户消息切分，按游标返回轮次或条目，连续分页短期复用同一快照 |
+| `thread/compact/start` | 支持 | 官方 RPC `compact`，通过轮次和 `contextCompaction` 条目播报结果，可用 `abort` 中断 |
 | `turn/start` | 支持**纯文本与 base64 图片** | `prompt {message, images?}`；`disposition=handled` 时不启动 run，桥自行收尾 |
+| `turn/steer` | 支持**纯文本与 base64 图片** | 校验 `expectedTurnId`，调用官方 `steer {message, images?}`，以原生 `message_start` 确认用户消息送达 |
 | `turn/interrupt` | 支持 | `abort`；以 `agent_settled {aborted:true}` 映射 `turn/completed {status:'interrupted'}`，另设 1.5s 兜底 |
 | `model/list` | 借用运行中的会话进程调用 `get_available_models` / `get_state` / `get_available_thinking_levels`，结果缓存；无运行中进程时返回缓存或空列表 | R9：不为列模型额外拉起 pi 进程；`turn/start` 的 `model`/`effort` 经 `set_model` / `set_thinking_level` 切换 |
 | `skills/list` | **不支持** → `-32601` | pi 的 `/skill:name`、提示模板仍可直接在文本里输入，QingCode 不枚举私有资源目录 |
 | `account/read`、`account/rateLimits/read` | **不支持** → `-32601` | pi 没有官方额度接口；`capabilities.rateLimits=false`，前端不显示额度徽标 |
-| `thread/name/set`、`thread/archive`、`thread/delete`、`thread/fork` | **不支持** → `-32601` | pi RPC 没有等价的官方命令 |
+| `thread/name/set`、`thread/archive`、`thread/delete` | **不支持** → `-32601` | 当前未接入 |
 | 审批（`item/*/requestApproval`） | **不实现、不伪造** | pi 没有审批机制；`capabilities.approvals=false`，输入框上方提示「pi 不经审批直接执行工具」 |
 | `extension_ui_request` | **忽略，不代答** | 扩展对话框必须由用户本人决定；pi 自带 timeout 会自行兜底 |
 | 其它未知 v2 方法 | **不支持** → `-32601` | 统一由 `handleRequest` 默认分支处理 |

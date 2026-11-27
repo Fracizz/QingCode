@@ -62,7 +62,12 @@ describe('parseThreadPrefs', () => {
     const parsed = parseThreadPrefs(
       JSON.stringify({ t1: { pinned: { a: 1, b: 'x' }, unread: { a: true, b: 1 }, names: { a: ' ' }, hidden: [], restoredAt: { a: 10, b: 'x' } } }),
     )
-    expect(parsed.t1).toEqual({ pinned: { a: 1 }, unread: { a: true }, names: {}, hidden: {}, restoredAt: { a: 10 } })
+    expect(parsed.t1).toEqual({ pinned: { a: 1 }, unread: { a: true }, names: {}, hidden: {}, restoredAt: { a: 10 }, revisionTurns: {} })
+  })
+
+  it('恢复已保存的修订轮次', () => {
+    const parsed = parseThreadPrefs('{"local":{"revisionTurns":{"codex:fork":"revised-turn","codex:invalid":false}}}')
+    expect(parsed.local?.revisionTurns).toEqual({ 'codex:fork': 'revised-turn' })
   })
 
   it('损坏的 JSON 返回空', () => {

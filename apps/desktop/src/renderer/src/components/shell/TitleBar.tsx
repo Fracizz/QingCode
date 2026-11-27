@@ -45,7 +45,7 @@ export function TitleBar({ showWorkspace = true }: { showWorkspace?: boolean }) 
       <div className="ml-1.5 flex items-center gap-2">
         <Logo size={16} />
         <span className="font-semibold tracking-wide text-qn-text">QingCode</span>
-        <span className="rounded-md border border-qn-brand/40 px-1 text-ui-xs leading-4 text-qn-brand">Next</span>
+        <span className="rounded-md border border-qn-border px-1 text-ui-xs leading-4 text-qn-brand">Next</span>
       </div>
 
       {showWorkspace && (

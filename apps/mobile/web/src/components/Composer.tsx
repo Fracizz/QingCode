@@ -1,9 +1,9 @@
-import { t, translateMessage } from '@qn/codex-client'
-import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, PanelLeft, Square, X } from 'lucide-react'
-import type { UserInput } from '@qn/codex-client'
+import { chatCommandQuery, exactChatCommand, matchingChatCommands, t, translateMessage, type ChatCommandId, type UserInput } from '@qn/codex-client'
+import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, Square, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
 import { attachmentBytes, IMAGE_BYTES, insertFileMention, isDraftImage, MAX_IMAGES, mentionAt, type DraftImage } from '../composerLogic'
+import { useMobilePreferences } from '../mobilePreferences'
 import { suggestFiles, type ProjectFile } from '../projectApi'
 import { friendlyError, type Annotation } from '../state'
 import type { SendMode } from '../store'
@@ -17,7 +17,6 @@ export type ComposerProps = {
   onChangeText: (text: string) => void
   onSend: (text: string, attachments: UserInput[], mode: SendMode) => Promise<boolean>
   onInterrupt: () => void
-  onSwitchSession: () => void
   interrupting?: boolean
   running: boolean
   sending: boolean
@@ -34,6 +33,8 @@ export type ComposerProps = {
   placeholder?: string
   toolbar?: ReactNode
   canSteer: boolean
+  steerHint?: string
+  commands?: { run: (id: ChatCommandId) => void; unavailable: (id: ChatCommandId) => string | null }
 }
 
 // 相册选择保留在当前应用进程中，避免将大段图片数据写进加密草稿。
@@ -47,16 +48,20 @@ function rememberImages(key: string, images: DraftImage[]) {
 }
 
 export function Composer({
-  draftKey, text, onChangeText, onSend, onInterrupt, onSwitchSession, interrupting, running, sending, compacting, disabled, imageUnavailable,
+  draftKey, text, onChangeText, onSend, onInterrupt, interrupting, running, sending, compacting, disabled, imageUnavailable,
   project, annotations, onUpdateAnnotation, onRemoveAnnotation, quoteDraft, onConfirmQuote,
-  onCancelQuote, placeholder = t('和 Codex 一起工作'), toolbar, canSteer,
+  onCancelQuote, placeholder = t('和 Codex 一起工作'), toolbar, canSteer, steerHint, commands,
 }: ComposerProps) {
+  const sendKey = useMobilePreferences((state) => state.sendKey)
   const [comment, setComment] = useState('')
   const [showAnnotations, setShowAnnotations] = useState(false)
   const [images, setImages] = useState(() => photoDrafts.get(draftKey) ?? NO_IMAGES)
   const [picking, setPicking] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [caret, setCaret] = useState<number | null>(null)
+  const [imeActive, setImeActive] = useState(false)
+  const [activeCommand, setActiveCommand] = useState(0)
+  const commandList = useRef<HTMLDivElement>(null)
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [fileStatus, setFileStatus] = useState('')
   const textarea = useRef<HTMLTextAreaElement>(null)
@@ -64,6 +69,13 @@ export function Composer({
   const mounted = useRef(true)
   const mention = project && caret !== null ? mentionAt(text, caret) : null
   const query = mention?.query
+  const commandQuery = commands && !disabled && !imeActive && caret === text.length ? chatCommandQuery(text) : undefined
+  const commandMatches = commandQuery === undefined ? [] : matchingChatCommands(commandQuery)
+
+  useEffect(() => setActiveCommand(0), [commandQuery])
+  useEffect(() => {
+    commandList.current?.children[activeCommand]?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeCommand])
 
   useEffect(() => {
     mounted.current = true
@@ -130,21 +142,52 @@ export function Composer({
     (!imageUnavailable || images.length === 0) && Boolean(text.trim() || images.length || annotations.length))
 
   async function submit(mode: SendMode = 'queue') {
+    const command = exactChatCommand(text)
+    if (commands && !disabled && !composing.current && command) {
+      chooseCommand(command.id)
+      return
+    }
     if (!canSend || composing.current) return
     setCaret(null)
     const attachments: UserInput[] = images.map((image) => ({ type: 'image', url: image.dataUrl }))
     if (await onSend(text, attachments, mode)) updateImages([])
   }
 
+  function chooseCommand(id: ChatCommandId) {
+    if (!commands || composing.current) return
+    onChangeText('')
+    setCaret(null)
+    commands.run(id)
+  }
+
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.nativeEvent.isComposing || composing.current) return
+    if (commandQuery !== undefined) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setCaret(null)
+        return
+      }
+      if (commandMatches.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+        event.preventDefault()
+        const delta = event.key === 'ArrowDown' ? 1 : -1
+        setActiveCommand((index) => (index + delta + commandMatches.length) % commandMatches.length)
+        return
+      }
+      if (commandMatches.length && !event.shiftKey && (event.key === 'Enter' || event.key === 'Tab')) {
+        event.preventDefault()
+        if (!event.repeat) chooseCommand((commandMatches[activeCommand] ?? commandMatches[0]!).id)
+        return
+      }
+    }
     if (event.key === 'Escape' && mention) {
       setCaret(null)
       return
     }
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
-      event.preventDefault()
-      void submit()
-    }
+    if (event.key !== 'Enter' || event.shiftKey || event.altKey) return
+    if (!event.ctrlKey && !event.metaKey && sendKey !== 'send') return
+    event.preventDefault()
+    if (!event.repeat) void submit()
   }
 
   function confirmQuote() {
@@ -217,6 +260,21 @@ export function Composer({
           ))}
         </div>
       )}
+      {commandMatches.length > 0 && (
+        <div ref={commandList} role="group" aria-label={t('对话命令')}
+          className="absolute inset-x-3 bottom-full z-10 mb-1 max-h-48 overflow-y-auto rounded-xl border border-qn-border bg-qn-panel shadow-lg">
+          {commandMatches.map((command, index) => (
+            <button key={command.name} type="button" aria-current={index === activeCommand ? true : undefined}
+              className={`qn-row min-h-11 border-b border-qn-border px-3 text-left text-sm last:border-0 ${index === activeCommand ? 'bg-qn-hover' : ''}`}
+              onMouseDown={(event) => event.preventDefault()} onClick={() => chooseCommand(command.id)}>
+              <span className="min-w-0">
+                <span className="block">/{command.name}</span>
+                <span className="block text-xs text-qn-muted">{commands?.unavailable(command.id) ?? command.description}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
       {images.length > 0 && (
         <ul className="mb-2 flex flex-wrap gap-2" aria-label={t('图片附件')}>
           {images.map((image, index) => (
@@ -236,19 +294,17 @@ export function Composer({
           value={text}
           disabled={disabled}
           aria-label={t('消息')}
+          enterKeyHint={sendKey === 'send' ? 'send' : 'enter'}
           placeholder={running ? t('输入下一条，发送后排队') : placeholder}
           onChange={(event) => { onChangeText(event.target.value); setCaret(event.target.selectionStart) }}
           onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
-          onBlur={() => setCaret(null)}
+          onBlur={(event) => { if (!commandList.current?.contains(event.relatedTarget)) setCaret(null) }}
           onKeyDown={onKeyDown}
-          onCompositionStart={() => { composing.current = true }}
-          onCompositionEnd={() => { composing.current = false }}
+          onCompositionStart={() => { composing.current = true; setImeActive(true) }}
+          onCompositionEnd={() => { composing.current = false; setImeActive(false) }}
         />
         <div className="qn-composer-toolbar">
           <div className="qn-composer-tools">
-            <Button variant="ghost" className="qn-icon-button" onClick={onSwitchSession} aria-label={t('切换会话')} aria-haspopup="dialog">
-              <PanelLeft size={19} strokeWidth={1.75} aria-hidden />
-            </Button>
             <Button variant="ghost" className="qn-icon-button" aria-label={t('添加图片')} title={imageUnavailable}
               onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
               <ImagePlus size={19} strokeWidth={1.75} aria-hidden />
@@ -265,7 +321,7 @@ export function Composer({
             {/* 运行中且没有内容时只留停止键；有内容后再出现发送键（排队），长按选其他发送方式。 */}
             {(!running || canSend || sending) && (
               <SendButton running={running && !compacting} sending={sending} disabled={!canSend} canSteer={canSteer}
-                onSend={(mode) => void submit(mode)} />
+                steerHint={steerHint} onSend={(mode) => void submit(mode)} />
             )}
           </div>
         </div>
@@ -278,11 +334,12 @@ export function Composer({
 const LONG_PRESS_MS = 450
 
 /** 发送键：空闲时直接发送；运行中点按排队，长按（或右键）打开发送方式。 */
-function SendButton({ running, sending, disabled, canSteer, onSend }: {
+function SendButton({ running, sending, disabled, canSteer, steerHint = t('补充到当前一轮'), onSend }: {
   running: boolean
   sending: boolean
   disabled: boolean
   canSteer: boolean
+  steerHint?: string
   onSend: (mode: SendMode) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -334,7 +391,7 @@ function SendButton({ running, sending, disabled, canSteer, onSend }: {
         {sending ? <LoadingIcon size={16} /> : <ArrowUp size={18} strokeWidth={2.25} aria-hidden />}
       </Button>
       {running && !disabled && (
-        <Button variant="ghost" className="qn-icon-button qn-send-options" aria-label={t('发送方式')} aria-haspopup="dialog" onClick={() => setOpen(true)}>
+        <Button variant="ghost" className="qn-icon-button" aria-label={t('发送方式')} aria-haspopup="dialog" onClick={() => setOpen(true)}>
           <ChevronDown size={15} aria-hidden />
         </Button>
       )}
@@ -345,7 +402,7 @@ function SendButton({ running, sending, disabled, canSteer, onSend }: {
               <span>{t('排队')}</span><span className="text-xs text-qn-muted">{t('本轮结束后发送')}</span>
             </Button>
             <Button className="justify-between!" disabled={!canSteer} onClick={() => select('steer')}>
-              <span>{t('引导')}</span><span className="text-xs text-qn-muted">{canSteer ? t('补充到当前一轮') : t('当前 Agent 暂不可用')}</span>
+              <span>{t('引导')}</span><span className="text-xs text-qn-muted">{canSteer ? steerHint : t('等待当前轮次就绪')}</span>
             </Button>
             <Button className="justify-between!" onClick={() => select('immediate')}>
               <span>{t('立即发送')}</span><span className="text-xs text-qn-muted">{t('停止本轮后发送')}</span>

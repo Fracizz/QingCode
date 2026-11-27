@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { t, translateMessage, accessOptions, resolveAccessMode } from '@qn/codex-client'
-import { ArrowUp, CircleAlert,FileText, ImageOff, Paperclip, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref, type RefObject } from 'react'
+import { accessOptions, exactChatCommand, resolveAccessMode, t, translateMessage } from '@qn/codex-client'
+import { ArrowUp, ChevronDown, CircleAlert, FileText, ImageOff, Paperclip, Shield, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
 import {
@@ -8,12 +8,8 @@ import {
   filterSlashItems,
   formatBytes,
   imagePlaceholder,
-  insertAtSelection,
-  isImageFile,
-  MAX_ATTACHMENTS,
-  removePlaceholder,
+  insertImagePlaceholders,
   slashToken,
-  uniqueImageName,
   type Attachment,
   type SkillRef,
   type SlashItem,
@@ -40,21 +36,30 @@ import { cn } from '../lib/cn'
 import type { SendMode } from '../store/codex'
 import { ListOption } from './ListOption'
 import { LoadingIcon } from './LoadingIcon'
-import { Tip } from './primitives'
+import { Menu, MenuContent, MenuItem, MenuTrigger, Tip } from './primitives'
 import { EmptyState, ErrorNote, IconButton } from './ui'
 
 /** 输入框最高占视口 40%，再长就内部滚动，不把消息区挤没。 */
 const MAX_HEIGHT_RATIO = 0.4
+const TEXT_LAYOUT = 'whitespace-pre-wrap wrap-anywhere px-4 pt-3.5 text-[length:var(--qn-composer-font-size,15px)] leading-[1.7]'
 
 function fitTextarea(area: HTMLTextAreaElement): void {
   area.style.height = 'auto'
   area.style.height = `${Math.min(area.scrollHeight, Math.round(window.innerHeight * MAX_HEIGHT_RATIO))}px`
 }
 
+function syncImageText(area: HTMLTextAreaElement, layer: HTMLDivElement | null): void {
+  if (!layer) return
+  // 文本框出现滚动条时，两层仍需在相同的宽度换行。
+  layer.style.insetInlineEnd = `${area.offsetWidth - area.clientWidth}px`
+  layer.scrollTop = area.scrollTop
+}
+
 type AttachmentProps = {
   attachments: Attachment[]
   imageSupport: ImageSupport
-  onAddFiles: (files: File[]) => void
+  /** 返回通过校验的图片名，按添加顺序插入输入框。 */
+  onAddFiles: (files: File[]) => string[]
   onRemoveAttachment: (id: string) => void
   /** 还不能发送的原因（如附件上传中）。 */
   blockedReason?: string | null
@@ -78,6 +83,7 @@ export function Composer({
   onSend,
   onInterrupt,
   running,
+  canSteer,
   sending,
   disabled,
   error,
@@ -89,6 +95,7 @@ export function Composer({
   toolsDisabled = false,
   annotationCount = 0,
   compact = false,
+  compacting = false,
   contentWidthClassName = 'max-w-3xl',
   context,
   placeholder,
@@ -98,11 +105,14 @@ export function Composer({
   footer,
   attach,
   slash,
+  suggestionBoundaryRef,
 }: {
   onSend: (text: string, mode: SendMode) => void | Promise<boolean>
   onInterrupt: () => void
   running: boolean
+  canSteer: boolean
   sending: boolean
+  compacting?: boolean
   disabled?: boolean
   error: string | null
   onClearError: () => void
@@ -123,17 +133,29 @@ export function Composer({
   footer?: ReactNode
   attach?: AttachmentProps
   slash?: SlashProps
+  suggestionBoundaryRef: RefObject<HTMLDivElement | null>
 }) {
   const sendKey = useSetting((settings) => settings.general.sendKey)
   const fontSize = useSetting((settings) => settings.general.composerFontSize)
   const composing = useRef(false)
   const areaRef = useRef<HTMLTextAreaElement>(null)
+  const imageTextRef = useRef<HTMLDivElement>(null)
+  const imagePreviewTriggers = useRef(new Map<string, HTMLButtonElement>())
   const fileRef = useRef<HTMLInputElement>(null)
+  const suggestionAnchorRef = useRef<HTMLDivElement>(null)
   const [caret, setCaret] = useState(0)
   const [dismissed, setDismissed] = useState(false)
   const [active, setActive] = useState(0)
   // composing 是 ref，组合期间要让菜单收起需要一个能触发重渲染的状态。
   const [imeActive, setImeActive] = useState(false)
+  const imageTextPattern = useMemo(() => {
+    const tokens = attach?.attachments.flatMap((item) => item.kind === 'image'
+      ? [imagePlaceholder(item.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')]
+      : [])
+    return tokens?.length ? new RegExp(`(${tokens.join('|')})`) : null
+  }, [attach?.attachments])
+  const imageTextParts = !imeActive && imageTextPattern ? value.split(imageTextPattern) : []
+  const highlightImages = imageTextParts.length > 1
   const pendingCaret = useRef<number | null>(null)
   // `@` 引用相对当前项目根；没有项目上下文时不启用。
   const targetId = useCodex((s) => s.currentTargetId)
@@ -171,14 +193,20 @@ export function Composer({
   }, [value, contentWidthClassName, fontSize])
 
   useLayoutEffect(() => {
+    if (areaRef.current) syncImageText(areaRef.current, imageTextRef.current)
+  }, [highlightImages, value, contentWidthClassName, fontSize])
+
+  useLayoutEffect(() => {
     const area = areaRef.current
     if (!area || typeof ResizeObserver === 'undefined') return
     let width = area.offsetWidth
     const observer = new ResizeObserver(() => {
       // 只因宽度变化重新量高，避免写入高度后触发观察循环。
-      if (width === area.offsetWidth) return
-      width = area.offsetWidth
-      fitTextarea(area)
+      if (width !== area.offsetWidth) {
+        width = area.offsetWidth
+        fitTextarea(area)
+      }
+      syncImageText(area, imageTextRef.current)
     })
     observer.observe(area)
     return () => observer.disconnect()
@@ -187,13 +215,36 @@ export function Composer({
   const token = slash && !imeActive ? slashToken(value, caret) : null
   const query = token?.query ?? null
   const menuOpen = query !== null && !dismissed && !disabled
-  const matches = menuOpen && slash ? filterSlashItems(slash.items, query) : []
+  const standaloneSlash = token && !value.slice(0, token.start).trim() && !value.slice(token.end).trim()
+  const matches = menuOpen && slash ? filterSlashItems(
+    slash.items.filter((item) => item.kind === 'skill' || standaloneSlash),
+    query,
+  ) : []
 
   const mention = !disabled && !imeActive && targetId && root ? mentionToken(value, caret) : null
   const mentionOpen = mention !== null && !dismissed && !menuOpen
   const mentionQuery = mentionOpen ? mention.query : null
   const mentionSearch = useMentionSearch(targetId, root, mentionQuery)
   const candidates = mentionSearch.items
+  const suggestionsOpen = menuOpen || mentionOpen
+
+  useLayoutEffect(() => {
+    const anchor = suggestionAnchorRef.current
+    const boundary = suggestionBoundaryRef.current
+    if (!suggestionsOpen || !anchor || !boundary) return
+
+    const updateHeight = () => {
+      // 用消息区的上沿限制浮层，给上下各留 8px，避免盖住会话标题或被窗体裁掉。
+      const availableHeight = anchor.getBoundingClientRect().top - boundary.getBoundingClientRect().top - 16
+      anchor.style.setProperty('--qn-suggestions-max-height', `${Math.max(0, availableHeight)}px`)
+    }
+    updateHeight()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(anchor)
+    observer.observe(boundary)
+    return () => observer.disconnect()
+  }, [suggestionsOpen, suggestionBoundaryRef])
 
   useEffect(() => setActive(0), [query, mentionQuery])
 
@@ -211,9 +262,15 @@ export function Composer({
   const sendHint = running
     ? t('排队（{shortcut}）· 本轮结束后发送', { shortcut })
     : t('发送（{shortcut}）· 换行（{newline}）', { shortcut, newline: newlineShortcut })
-  const canSend = !disabled && !sending && !blocked && (value.trim() !== '' || hasAttachmentsOrSkills || annotationCount > 0)
+  const canSend = !disabled && !sending && !compacting && !blocked && (value.trim() !== '' || hasAttachmentsOrSkills || annotationCount > 0)
 
   const submit = (mode: SendMode = 'queue') => {
+    const command = slash && exactChatCommand(value)
+    if (slash && command && !disabled && !composing.current) {
+      onChange('')
+      slash.onCommand(command.name)
+      return
+    }
     if (!canSend) return
     void onSend(value, mode)
   }
@@ -269,9 +326,9 @@ export function Composer({
         setActive((index) => (matches.length ? (index + delta + matches.length) % matches.length : 0))
         return
       }
-      if ((event.key === 'Enter' || event.key === 'Tab') && matches.length > 0) {
+      if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && matches.length > 0) {
         event.preventDefault()
-        choose(matches[active])
+        if (!event.repeat) choose(matches[active] ?? matches[0])
         return
       }
       if (event.key === 'Escape') {
@@ -295,60 +352,40 @@ export function Composer({
     }
   }
 
-  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!attach) return
-    const files = [...event.clipboardData.files]
-    if (files.length === 0) return
-    // 只有文件（截图、资源管理器里复制的文件）时拦下默认粘贴，避免把文件名当文字贴进来。
-    if (event.clipboardData.getData('text/plain')) {
-      attach.onAddFiles(files)
-      return
-    }
-    event.preventDefault()
-    // 图片在光标处留一个 `[名字]` 占位，说明它在正文中的位置；附件改成同名，卡片与占位能对上。
-    // 当前不能加图片或附件已满时不插占位，避免留下指向不存在附件的文字。
-    const room = MAX_ATTACHMENTS - attachments.length
-    if (!imageSupport.allowed || room <= 0) {
-      attach.onAddFiles(files)
-      return
-    }
-    const taken = new Set([
-      ...attachments.map((item) => item.name),
-      ...[...value.matchAll(/\[([^\]\n]+)\]/g)].map((match) => match[1] ?? ''),
-    ])
-    const placeholders: string[] = []
-    const renamed = files.map((file) => {
-      if (!isImageFile(file) || placeholders.length >= room) return file
-      const name = uniqueImageName(file.name, taken)
-      taken.add(name)
-      placeholders.push(imagePlaceholder(name))
-      return name === file.name ? file : new File([file], name, { type: file.type, lastModified: file.lastModified })
-    })
-    const area = event.currentTarget
-    if (placeholders.length > 0) {
-      const next = insertAtSelection(value, area.selectionStart, area.selectionEnd, placeholders.join(' '))
+  const addFilesAtCaret = (files: File[], pastedText = '') => {
+    const names = attach?.onAddFiles(files) ?? []
+    const area = areaRef.current
+    if (!area || (!pastedText && names.length === 0)) return
+    const next = insertImagePlaceholders(value, names, { start: area.selectionStart, end: area.selectionEnd }, pastedText)
+    if (next.value === value) area.setSelectionRange(next.caret, next.caret)
+    else {
       pendingCaret.current = next.caret
-      setCaret(next.caret)
       onChange(next.value)
     }
-    attach.onAddFiles(renamed)
+    setCaret(next.caret)
   }
 
-  const removeAttachment = (item: Attachment) => {
-    attach?.onRemoveAttachment(item.id)
-    if (item.kind === 'image') {
-      const next = removePlaceholder(value, item.name)
-      if (next !== value) onChange(next)
-    }
+  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!attach || event.clipboardData.files.length === 0) return
+    event.preventDefault()
+    addFilesAtCaret([...event.clipboardData.files], event.clipboardData.getData('text/plain'))
+  }
+
+  const onDrop = (event: DragEvent<HTMLTextAreaElement>) => {
+    if (!attach || disabled || event.dataTransfer.files.length === 0) return
+    // 拖进正文时沿用粘贴的选区，外层只收起拖放提示。
+    event.preventDefault()
+    addFilesAtCaret([...event.dataTransfer.files])
   }
 
   const syncCaret = () => setCaret(areaRef.current?.selectionStart ?? 0)
   // pi 原生没有审批机制，必须如实提示，不能伪造审批卡片。
   const noApprovals = agent === 'pi' || capabilities?.approvals === false
+  const inheritedLabel = compact ? accessOptions[agent].find((option) => option.mode === inheritedMode)?.label : undefined
 
   return (
-    <div className={cn('shrink-0', compact ? 'px-3 pb-3 pt-1' : 'px-6 pb-3 pt-1')}>
-      <div className={cn('relative mx-auto', !compact && contentWidthClassName)}>
+    <div className={cn('shrink-0 pb-3 pt-1', compact ? 'px-4' : 'px-6')}>
+      <div ref={suggestionAnchorRef} className={cn('relative mx-auto', !compact && contentWidthClassName)}>
         <ErrorNote message={error} className="qn-scroll mb-2 max-h-[min(5rem,10cqh)] overflow-y-auto" onClose={onClearError} />
 
         {menuOpen && slash && (
@@ -366,12 +403,12 @@ export function Composer({
           />
         )}
 
-        {(noApprovals || (attach && !imageSupport.allowed) || imageBlock) && (
+        {((noApprovals && !compact) || (attach && !imageSupport.allowed) || imageBlock) && (
           <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 text-ui-sm leading-4">
-            {noApprovals && (
+            {noApprovals && !compact && (
               <span className={cn(
                 'inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-0.5',
-                toolsDisabled ? 'border-qn-border-strong bg-qn-panel text-qn-muted' : 'border-qn-warn/30 bg-qn-warn/10 text-qn-warn',
+                toolsDisabled ? 'border-qn-border-strong bg-qn-panel text-qn-muted' : 'border-qn-border bg-qn-warn/10 text-qn-warn',
               )}>
                 {toolsDisabled ? (
                   <>
@@ -398,7 +435,7 @@ export function Composer({
         )}
         <div
           className={cn(
-            'rounded-[20px] border border-qn-outline bg-qn-composer shadow-[var(--qn-composer-shadow)] transition-colors focus-within:border-qn-outline-hover',
+            'rounded-xl border border-qn-outline bg-qn-composer shadow-[var(--qn-composer-shadow)] transition-colors focus-within:border-qn-outline-hover',
             disabled && 'opacity-70',
           )}
         >
@@ -409,7 +446,12 @@ export function Composer({
                   key={item.id}
                   item={item}
                   problem={item.kind === 'image' && !imageSupport.allowed ? imageSupport.reason : null}
-                  onRemove={() => removeAttachment(item)}
+                  onRemove={() => attach.onRemoveAttachment(item.id)}
+                  previewButtonRef={item.kind === 'image' ? (button) => {
+                    const token = imagePlaceholder(item.name)
+                    if (button) imagePreviewTriggers.current.set(token, button)
+                    else imagePreviewTriggers.current.delete(token)
+                  } : undefined}
                 />
               ))}
               {slash?.skills.map((skill) => (
@@ -429,51 +471,89 @@ export function Composer({
             </div>
           )}
           {context}
-          <textarea
-            ref={areaRef}
-            className={cn(
-              'qn-scroll block w-full resize-none bg-transparent px-4 pt-3.5 text-[length:var(--qn-composer-font-size,15px)] leading-[1.7] text-qn-text outline-none placeholder:text-qn-dim',
-              compact ? 'min-h-[48px]' : 'min-h-[56px] max-h-[max(56px,25cqh)]',
+          <div className="relative">
+            {/* 只有图片标签接收点击，普通文字仍由 textarea 处理选区和编辑。 */}
+            {highlightImages && (
+              <div
+                ref={imageTextRef}
+                className={cn(TEXT_LAYOUT, 'pointer-events-none absolute inset-0 overflow-hidden text-qn-text forced-colors:hidden')}
+              >
+                {imageTextParts.map((part, index) => index % 2 === 0 ? (
+                  <span key={index} aria-hidden="true">{part}</span>
+                ) : (
+                  <span
+                    key={index}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={t('预览 {name}', { name: part })}
+                    aria-haspopup="dialog"
+                    className="pointer-events-auto relative z-10 cursor-zoom-in text-qn-composer-attachment hover:underline focus-visible:outline-2 focus-visible:outline-qn-outline-hover"
+                    onClick={() => imagePreviewTriggers.current.get(part)?.click()}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
+                      imagePreviewTriggers.current.get(part)?.click()
+                    }}
+                  >{part}</span>
+                ))}
+                {value.endsWith('\n') && <span aria-hidden="true">{'\u200b'}</span>}
+              </div>
             )}
-            rows={1}
-            value={value}
-            disabled={disabled}
-            autoFocus={autoFocus}
-            aria-label={placeholder ?? agentPlaceholder(agent)}
-            placeholder={
-              placeholder ?? (disabled
-                ? t('请先连接目标')
-                : slash
-                  ? targetId && root
-                    ? t('{placeholder}，输入 / 使用命令和技能，@ 引用文件', { placeholder: agentPlaceholder(agent) })
-                    : t('{placeholder}，输入 / 使用命令和技能', { placeholder: agentPlaceholder(agent) })
-                  : agentPlaceholder(agent))
-            }
-            onChange={(event) => {
-              onChange(event.target.value)
-              setCaret(event.target.selectionStart ?? 0)
-              setDismissed(false)
-            }}
-            onSelect={syncCaret}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            onCompositionStart={() => {
-              composing.current = true
-              setImeActive(true)
-            }}
-            onCompositionEnd={() => {
-              composing.current = false
-              setImeActive(false)
-              syncCaret()
-            }}
-          />
+            <textarea
+              ref={areaRef}
+              className={cn(
+                TEXT_LAYOUT,
+                'qn-scroll relative block w-full resize-none overflow-x-hidden bg-transparent outline-none placeholder:text-qn-dim',
+                'min-h-[56px] max-h-[max(56px,25cqh)]',
+                highlightImages
+                  ? 'text-transparent caret-qn-text selection:bg-[var(--qn-selection)] selection:text-qn-text forced-colors:text-qn-text'
+                  : 'text-qn-text',
+              )}
+              rows={1}
+              wrap="soft"
+              value={value}
+              disabled={disabled}
+              autoFocus={autoFocus}
+              aria-label={placeholder ?? agentPlaceholder(agent)}
+              placeholder={
+                placeholder ?? (disabled
+                  ? t('请先连接目标')
+                  : slash
+                    ? targetId && root
+                      ? t('{placeholder}，输入 / 使用命令和技能，@ 引用文件', { placeholder: agentPlaceholder(agent) })
+                      : t('{placeholder}，输入 / 使用命令和技能', { placeholder: agentPlaceholder(agent) })
+                    : agentPlaceholder(agent))
+              }
+              onChange={(event) => {
+                onChange(event.target.value)
+                setCaret(event.target.selectionStart ?? 0)
+                setDismissed(false)
+              }}
+              onSelect={syncCaret}
+              onScroll={(event) => {
+                if (imageTextRef.current) imageTextRef.current.scrollTop = event.currentTarget.scrollTop
+              }}
+              onKeyDown={onKeyDown}
+              onPaste={onPaste}
+              onDrop={onDrop}
+              onCompositionStart={() => {
+                composing.current = true
+                setImeActive(true)
+              }}
+              onCompositionEnd={() => {
+                composing.current = false
+                setImeActive(false)
+                syncCaret()
+              }}
+            />
+          </div>
           <div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1 whitespace-nowrap">
             {attach && (
               <>
                 <Tip label={imageSupport.allowed ? t('添加图片或文件（也可粘贴、拖入）') : t('{reason}，只能添加文件', { reason: translateMessage(imageSupport.reason ?? '') })}>
                   <button
                     type="button"
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover"
                     aria-label={t('添加附件')}
                     disabled={disabled}
                     onClick={() => fileRef.current?.click()}
@@ -489,7 +569,7 @@ export function Composer({
                   onChange={(event) => {
                     const files = [...(event.target.files ?? [])]
                     event.target.value = ''
-                    if (files.length) attach.onAddFiles(files)
+                    if (files.length) addFilesAtCaret(files)
                   }}
                 />
               </>
@@ -506,9 +586,6 @@ export function Composer({
                 disabled={Boolean(disabled || sending || running || sendingPending)}
                 onChange={(mode) => setAccessMode(accessAddress, draftRevision, mode)}
               />
-            )}
-            {compact && inheritedMode !== 'default' && (
-              <span className="text-ui-sm text-qn-warn">{t('总控 · {mode}', { mode: accessOptions[agent].find((option) => option.mode === inheritedMode)?.label ?? '' })}</span>
             )}
             {trailing}
             <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-1">
@@ -528,7 +605,7 @@ export function Composer({
                   <button
                     type="button"
                     className={cn(
-                      'inline-flex h-8 items-center justify-center gap-1 overflow-hidden rounded-full text-ui-sm font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-accent',
+                      'inline-flex h-8 items-center justify-center gap-1 overflow-hidden rounded-full text-ui-sm font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover',
                       running ? 'pl-2.5 pr-3' : 'w-8',
                       canSend ? 'bg-qn-text text-qn-bg hover:bg-qn-text/90' : 'bg-qn-fg/12 text-qn-dim',
                     )}
@@ -541,10 +618,42 @@ export function Composer({
                   </button>
                 </span>
               </Tip>
+              {running && (
+                <Menu>
+                  <MenuTrigger asChild>
+                    <IconButton label={t('发送方式')} size="sm" disabled={!canSend}>
+                      <ChevronDown size={14} />
+                    </IconButton>
+                  </MenuTrigger>
+                  <MenuContent side="top" align="end">
+                    <MenuItem hint={t('默认 · 本轮结束后发送')} onSelect={() => submit('queue')}>{t('排队')}</MenuItem>
+                    <MenuItem
+                      disabled={!canSteer}
+                      hint={!canSteer ? t('等待当前轮次就绪') : agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
+                      onSelect={() => submit('steer')}
+                    >{t('引导')}</MenuItem>
+                    <MenuItem hint={t('中断当前一轮后发送')} onSelect={() => submit('immediate')}>{t('立即发送')}</MenuItem>
+                  </MenuContent>
+                </Menu>
+              )}
             </div>
           </div>
         </div>
-        {footer && <div className="mt-1.5 flex min-h-6 items-center gap-3 px-3 text-ui-sm text-qn-dim">{footer}</div>}
+        {(compact || footer) && (
+          <div className={cn('mt-1.5 flex min-h-6 items-center gap-3 px-3 text-ui-sm', compact ? 'text-qn-muted' : 'text-qn-dim')}>
+            {compact && (
+              <span className={cn('flex min-w-0 items-center gap-1.5', !noApprovals && inheritedMode !== 'default' && 'text-qn-warn')}>
+                {toolsDisabled ? <ShieldOff size={13} className="shrink-0" aria-hidden />
+                  : <Shield size={13} className="shrink-0" aria-hidden />}
+                <span className="truncate">
+                  {toolsDisabled ? t('此侧聊已禁用工具')
+                    : noApprovals ? t('此 Agent 不支持审批') : t('总控 · {mode}', { mode: inheritedLabel ?? t('Agent 默认权限') })}
+                </span>
+              </span>
+            )}
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -554,14 +663,16 @@ function AttachmentChip({
   item,
   problem,
   onRemove,
+  previewButtonRef,
 }: {
   item: Attachment
   /** 不能随消息发送的原因（如当前模型不支持图片），有值时标红提示。 */
   problem?: string | null
   onRemove: () => void
+  previewButtonRef?: Ref<HTMLButtonElement>
 }) {
   if (item.kind === 'image') {
-    return <ImageAttachmentChip item={item} problem={problem} onRemove={onRemove} />
+    return <ImageAttachmentChip item={item} problem={problem} onRemove={onRemove} previewButtonRef={previewButtonRef} />
   }
 
   const remove = (
@@ -588,10 +699,7 @@ function AttachmentChip({
     )
   return (
     <div
-      className={cn(
-        'group/att relative flex h-14 max-w-[15rem] items-center gap-2.5 rounded-lg border bg-qn-fg/[0.03] pl-2.5 pr-3',
-        item.status === 'error' ? 'border-qn-danger/40' : 'border-qn-border',
-      )}
+      className="group/att relative flex h-14 min-w-0 max-w-[min(100%,15rem)] items-center gap-2.5 rounded-lg border border-qn-border bg-qn-fg/[0.03] pl-2.5 pr-3"
       title={item.targetPath ?? item.localPath ?? item.name}
     >
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-qn-accent/12 text-qn-accent">
@@ -631,7 +739,7 @@ function SlashMenu({
           key={item.id}
           data-index={index}
           selected={index === active}
-          className="gap-2 py-1.5"
+          className="group gap-2 py-1.5"
           onMouseEnter={() => onHover(index)}
           // 阻止输入框失焦，避免菜单在选择前关闭。
           onMouseDown={(event) => event.preventDefault()}
@@ -645,9 +753,13 @@ function SlashMenu({
           >
             {item.kind === 'skill' ? <Wand2 size={14} /> : <Slash size={14} />}
           </span>
-          <span className="min-w-0 flex-1 leading-4">
-            <span className="block truncate text-ui text-qn-text">/{item.name}</span>
-            {item.description && <span className="block truncate text-ui-sm text-qn-dim">{item.description}</span>}
+          <span className="min-w-0 flex-1">
+            <span className="block wrap-anywhere text-ui leading-5 text-qn-text">/{item.name}</span>
+            {item.description && (
+              <span className="block truncate text-ui-sm leading-4 text-qn-muted group-aria-selected:text-qn-text/85">
+                {item.reason ?? item.description}
+              </span>
+            )}
           </span>
           {item.scope && <span className="shrink-0 text-ui-xs text-qn-dim">{item.scope}</span>}
         </ListOption>

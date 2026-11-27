@@ -9,10 +9,10 @@ import { IconButton } from './ui'
 /** 回复下方的操作条：平时半隐，悬停消息时显出（参考 Codex），避免每条回复都挂一排按钮。 */
 export function MessageActions({
   markdown,
-  onFork,
+  onContinue,
 }: {
   markdown: string
-  onFork?: () => void
+  onContinue?: () => void
 }) {
   const [copied, setCopied] = useState<string | null>(null)
 
@@ -37,9 +37,9 @@ export function MessageActions({
           <MenuItem icon={<Copy size={14} />} onSelect={() => void copy(markdownToPlainText(markdown), t('已复制纯文本'))}>
             {t('复制为纯文本')}
           </MenuItem>
-          {onFork && (
-            <MenuItem icon={<Split size={14} />} onSelect={onFork}>
-              {t('分支到新聊天')}
+          {onContinue && (
+            <MenuItem icon={<Split size={14} />} onSelect={onContinue}>
+              {t('新建对话继续')}
             </MenuItem>
           )}
         </MenuContent>

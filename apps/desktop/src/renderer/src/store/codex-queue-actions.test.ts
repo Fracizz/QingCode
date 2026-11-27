@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { UserInput } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
-import { pendingSendKey, useCodex } from './codex'
+import { currentSideChat, pendingSendKey, useCodex } from './codex'
 
 type RpcRequest = { id: string; method: string; params: Record<string, unknown> }
 
@@ -52,7 +53,7 @@ describe('排队消息操作', () => {
       receive(agent, { id, result })
     })
     useCodex.setState({
-      sessions: {}, pendingSends: {}, sending: false,
+      sessions: {}, pendingSends: {}, sideChats: {}, sending: false,
       currentTargetId: targetId, currentThreadId: threadId, currentAgent: 'codex', error: null, notice: null,
     })
     await useCodex.getState().ensureOpen(targetId, 'codex')
@@ -95,23 +96,80 @@ describe('排队消息操作', () => {
     expect(useCodex.getState().currentThreadId).toBe('new-thread')
   })
 
-  it('新会话继续：分叉到最后一个已结束的轮次；没有已结束轮次时不发请求', async () => {
+  it('新对话继续：在侧栏分叉到最后一个已结束的轮次，主会话不切换', async () => {
     await useCodex.getState().send('接着做', chat)
     const id = pending()[0]!.id
     expect(await useCodex.getState().sendPendingInNewThread(chat, id, 'continue')).toBe(false)
     expect(methods()).toEqual([])
     expect(pending()[0]?.error).toContain('还没有已结束的一轮')
+    expect(currentSideChat(useCodex.getState())).toBeUndefined()
 
     useCodex.getState().removePendingSend(chat, id)
     await useCodex.getState().send('接着做', chat)
     notifyTurn('turn/completed', 'active', 'completed')
     await vi.waitFor(() => expect(methods()).toEqual(['turn/start']))
     notifyTurn('turn/started', 'second', 'inProgress')
-    await useCodex.getState().send('分支里做', chat)
+    const input: UserInput[] = [
+      { type: 'text', text: '分支里做', text_elements: [] },
+      { type: 'image', url: 'data:image/png;base64,AA==' },
+    ]
+    await useCodex.getState().send('分支里做', { ...chat, input })
     expect(await useCodex.getState().sendPendingInNewThread(chat, pending()[0]!.id, 'continue')).toBe(true)
     const fork = calls().find((msg) => msg.method === 'thread/fork')
-    expect(fork?.params).toMatchObject({ threadId, lastTurnId: 'active' })
-    expect(calls().at(-1)).toMatchObject({ method: 'turn/start', params: { threadId: 'forked-thread' } })
-    expect(useCodex.getState().currentThreadId).toBe('forked-thread')
+    expect(fork?.params).toEqual({ threadId, lastTurnId: 'active' })
+    expect(calls().at(-1)).toMatchObject({ method: 'turn/start', params: { threadId: 'forked-thread', input } })
+    expect(pending()).toEqual([])
+    expect(useCodex.getState().currentThreadId).toBe(threadId)
+    expect(currentSideChat(useCodex.getState())).toMatchObject({
+      threadId: 'forked-thread', parentThreadId: threadId, forked: true, open: true, busy: false,
+    })
+
+    useCodex.getState().closeSideChat()
+    expect(currentSideChat(useCodex.getState())?.open).toBe(false)
+    useCodex.getState().openSideChat()
+    expect(currentSideChat(useCodex.getState())).toMatchObject({ threadId: 'forked-thread', open: true })
+
+    receive('codex', { method: 'thread/closed', params: { threadId: 'forked-thread' } })
+    expect(currentSideChat(useCodex.getState())?.expired).toBe(true)
+    const reply = backend.send.getMockImplementation()
+    backend.send.mockImplementation((agent, request) => {
+      if (request.method === 'thread/resume') {
+        receive(agent, { id: request.id, result: { thread: {
+          id: 'forked-thread', status: { type: 'idle' }, turns: [{ id: 'active', status: 'completed', items: [] }],
+        } } })
+      } else reply?.(agent, request)
+    })
+    await useCodex.getState().restartSideChat()
+    expect(calls().find((msg) => msg.method === 'thread/resume')?.params.threadId).toBe('forked-thread')
+    expect(currentSideChat(useCodex.getState())).toMatchObject({ threadId: 'forked-thread', expired: false })
+    expect(useCodex.getState().currentThreadId).toBe(threadId)
+  })
+
+  it('已有侧聊草稿时保留侧聊与排队消息', async () => {
+    useCodex.getState().openSideChat()
+    useCodex.getState().setSideDraft('侧聊草稿')
+    await useCodex.getState().send('分支里做', chat)
+    expect(await useCodex.getState().sendPendingInNewThread(chat, pending()[0]!.id, 'continue')).toBe(false)
+    expect(methods()).toEqual([])
+    expect(pending()[0]).toMatchObject({ text: '分支里做', error: '请先处理已有的侧边对话，再创建分支' })
+    expect(currentSideChat(useCodex.getState())).toMatchObject({ draft: '侧聊草稿', open: true })
+  })
+
+  it('分支发送失败时在侧栏显示错误并保留原队列', async () => {
+    notifyTurn('turn/completed', 'active', 'completed')
+    notifyTurn('turn/started', 'second', 'inProgress')
+    const reply = backend.send.getMockImplementation()
+    backend.send.mockImplementation((agent, request) => {
+      if (request.method === 'turn/start' && request.params.threadId === 'forked-thread') {
+        receive(agent, { id: request.id, error: { code: -32603, message: '启动轮次失败' } })
+      } else reply?.(agent, request)
+    })
+    await useCodex.getState().send('分支里做', chat)
+    expect(await useCodex.getState().sendPendingInNewThread(chat, pending()[0]!.id, 'continue')).toBe(false)
+    expect(pending()[0]).toMatchObject({ text: '分支里做', sending: false, error: expect.stringContaining('启动轮次失败') })
+    expect(currentSideChat(useCodex.getState())).toMatchObject({
+      threadId: 'forked-thread', open: true, busy: false, error: expect.stringContaining('启动轮次失败'),
+    })
+    expect(useCodex.getState().currentThreadId).toBe(threadId)
   })
 })

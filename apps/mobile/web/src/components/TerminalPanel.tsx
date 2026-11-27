@@ -6,7 +6,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Terminal } from '@xterm/xterm'
 import type { TermAttachResult, TermExitInfo, TermInfo, TermOpenResult, TermOutputChunk } from '@qn/protocol'
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { callDevice, getGateway } from '../client'
 import { getWindowNativePort } from '../native'
 import { projectRpc } from '../projectApi'
@@ -422,6 +422,24 @@ export function TerminalPanel({ project }: { project: Project }) {
   const [refresh, setRefresh] = useState(0)
   const [closing, setClosing] = useState(false)
   const [menu, setMenu] = useState(false)
+  const openOnEntry = useRef(true)
+
+  const open = useCallback(async () => {
+    setError(null)
+    setBusy(true)
+    try {
+      const terminal = await projectRpc<TermOpenResult>(project, 'mobile.term.open', { cols: 80, rows: 20 }, desktopId)
+      if (!terminal.termId) throw new Error(t('电脑返回了无效的终端信息'))
+      setList((items) => [...(items ?? []).filter((item) => item.termId !== terminal.termId), terminal])
+      setTermId(terminal.termId)
+      return true
+    } catch (error) {
+      setError(friendlyError(error, t('新建项目终端失败')))
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }, [desktopId, project])
 
   useEffect(() => {
     if (!desktopId || !connected) return
@@ -433,8 +451,16 @@ export function TerminalPanel({ project }: { project: Project }) {
       setNeedsTarget(false)
       const terminals = [...result.terminals].sort((a, b) => a.startedAt - b.startedAt)
       setList(terminals)
+      const defaultId = terminals.find((item) => item.alive)?.termId ?? terminals[0]?.termId ?? null
+      if (openOnEntry.current) {
+        openOnEntry.current = false
+        void open().then((created) => {
+          if (!created && current) setTermId((id) => id ?? defaultId)
+        })
+        return
+      }
       setTermId((id) => terminals.find((item) => item.termId === id)?.termId
-        ?? terminals.find((item) => item.alive)?.termId ?? terminals[0]?.termId ?? null)
+        ?? defaultId)
     }).catch((error: unknown) => {
       if (!current) return
       setError(friendlyError(error, t('读取终端失败')))
@@ -442,25 +468,9 @@ export function TerminalPanel({ project }: { project: Project }) {
       setList((existing) => existing ?? [])
     })
     return () => { current = false }
-  }, [desktopId, project, connected, targetState, refresh])
+  }, [desktopId, project, connected, targetState, refresh, open])
 
   const selected = list?.find((item) => item.termId === termId)
-
-  const open = async () => {
-    if (busy) return
-    setError(null)
-    setBusy(true)
-    try {
-      const terminal = await projectRpc<TermOpenResult>(project, 'mobile.term.open', { cols: 80, rows: 20 }, desktopId)
-      if (!terminal.termId) throw new Error(t('电脑返回了无效的终端信息'))
-      setList((items) => [...(items ?? []).filter((item) => item.termId !== terminal.termId), terminal])
-      setTermId(terminal.termId)
-    } catch (error) {
-      setError(friendlyError(error, t('新建项目终端失败')))
-    } finally {
-      setBusy(false)
-    }
-  }
 
   const terminate = async () => {
     if (!selected || busy) return
@@ -500,8 +510,9 @@ export function TerminalPanel({ project }: { project: Project }) {
       {error && <Note message={error} tone="error" actionLabel={needsTarget ? t('连接目标') : t('重试')}
         onAction={() => needsTarget ? requestConnect(project.targetId) : setRefresh((attempt) => attempt + 1)} />}
       {list === null && connected && <Loading text={t('正在读取可接回的项目终端…')} />}
+      {list !== null && !selected && busy && <Loading text={t('正在新建终端…')} />}
       {!connected && connectionWarning && <Note message={connectionWarning} tone="warn" />}
-      {list?.length === 0 && !error && <p className="py-5 text-center text-sm text-qn-muted">{t('该项目还没有手机终端。')}</p>}
+      {list?.length === 0 && !error && !busy && <p className="py-5 text-center text-sm text-qn-muted">{t('该项目还没有手机终端。')}</p>}
       {desktopId && selected && <TerminalScreen key={`${desktopId}:${selected.termId}`} desktopId={desktopId} project={project} info={selected}
         menu={menu} busy={busy} onCloseMenu={() => setMenu(false)} onCloseTerminal={() => { setMenu(false); setClosing(true) }} />}
     </section>

@@ -43,7 +43,7 @@ export function WelcomePane({ onConnect, onAddTarget }: { onConnect: (id: string
           <MenuTrigger asChild>
             <button
               type="button"
-              className="mt-2 inline-flex h-9 max-w-md items-center gap-2 rounded-lg px-3 text-ui-lg text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover"
+              className="mt-2 inline-flex h-9 max-w-md items-center gap-2 rounded-lg px-3 text-ui-lg text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover data-[state=open]:bg-qn-hover"
             >
               <Folder size={16} className="shrink-0" />
               <span className="truncate">{project?.name ?? t('选择项目')}</span>

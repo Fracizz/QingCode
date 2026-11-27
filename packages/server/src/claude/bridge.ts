@@ -16,10 +16,11 @@ import {
   type AgentOpenOptions,
 } from '../codexHost'
 import { redact } from '../log'
+import { SteerHistoryStore } from '../steerHistory'
 import { VERSION } from '../version'
 import { nativeAgentCwd } from '../workspace/paths'
 import { buildApprovalRequest, permissionResult } from './approval'
-import { lastReplyModel, sessionInfoToMeta, sessionMessagesToThread, threadListResponse } from './history'
+import { lastReplyModel, parseClaudeSteer, sessionInfoToMeta, sessionMessagesToThread, threadListResponse, type ClaudeSteerHistory } from './history'
 import { HistoryPageCache, listHistoryItems, listHistoryTurns } from './historyPages'
 import { BridgeRpcError } from './errors'
 import { emptyMapState, mapSdkMessage, type MapState } from './items'
@@ -36,6 +37,7 @@ import {
 } from './models'
 import { commandMetadata, SkillsCatalog } from './skills'
 import { isolatedClaudeSessionReader, type ClaudeSessionReader } from './sessionReader'
+import { ClaudeStatusLine, statusLineProfile } from './statusLine'
 import { resolveTurnInput, type ContentBlock, type TurnContent } from './userInput'
 import { resolveClaudeExecutable, type ClaudeExecutable } from './resolve'
 import {
@@ -43,12 +45,15 @@ import {
   buildThread,
   buildTurn,
   emptyRateLimitsResponse,
+  finite,
   isRecord,
+  itemCompleted,
   rateLimitSnapshot,
   scalarText,
   userMessageContentItem,
   type Json,
   type SessionMeta,
+  type V2Item,
   type V2Notification,
 } from './v2'
 
@@ -73,6 +78,7 @@ export interface ClaudeBridgeOptions {
   sessionReader?: (directory: string) => ClaudeSessionReader
   resolve?: (claudePath?: string) => ClaudeExecutable
   idleTimeoutMs?: number
+  stateDir?: string
 }
 
 interface BridgeSession {
@@ -81,6 +87,10 @@ interface BridgeSession {
   query: QueryLike | null
   input: AsyncQueue<SDKUserMessage> | null
   turnId: string | null
+  turnMessageIds: Map<string, string>
+  pendingSteers: Map<string, { item: V2Item; turnId: string }>
+  steerHistory: Map<string, ClaudeSteerHistory>
+  compaction: boolean
   preparingTurn: boolean
   state: MapState
   queryCreated: boolean
@@ -98,7 +108,11 @@ interface ClaudeScope {
   sessions: Map<string, BridgeSession>
   metas: Map<string, SessionMeta>
   historyPages: HistoryPageCache
-  rateLimits: Json
+  sdkRateLimits: Json
+  sdkObservedAt: number | null
+  sdkResetsAt: number | null
+  sdkResetTimer?: ReturnType<typeof setTimeout>
+  statusLine: ClaudeStatusLine
   realModels: Json | null
   modelListRequest: Promise<Json> | null
 }
@@ -125,6 +139,7 @@ async function loadSdk(): Promise<ClaudeDeps> {
       listSessions: (options) => sdk.listSessions(options),
       getSessionInfo: (sessionId) => sdk.getSessionInfo(sessionId),
       getSessionMessages: (sessionId, options) => sdk.getSessionMessages(sessionId, options),
+      forkSession: (sessionId, options) => sdk.forkSession(sessionId, options),
     }
   })()
   return sdkPromise
@@ -180,8 +195,10 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private deps: ClaudeDeps | null = null
   private configDir: string | undefined
   private readonly scopes = new Map<string | undefined, ClaudeScope>()
+  private readonly statusLines = new Map<string, ClaudeStatusLine>()
   private readonly approvals = new Map<JsonRpcId, PendingApproval>()
   private readonly idleTimeoutMs: number
+  private readonly steerHistory: SteerHistoryStore<ClaudeSteerHistory>
   private requestCounter = 0
   private readonly skills = new SkillsCatalog()
 
@@ -192,6 +209,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   ) {
     super(hub, version, 'claude-bridge', 'claude')
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
+    this.steerHistory = new SteerHistoryStore(options.stateDir, 'claude', parseClaudeSteer, (msg) => this.hub.log(msg))
   }
 
   protected async openAgent(options: AgentOpenOptions): Promise<{
@@ -202,10 +220,12 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const previous = this.opened ? this.currentScope() : undefined
     this.configDir = directory
     if (this.opened) {
-      if (previous && previous !== this.currentScope()) {
+      const current = this.currentScope()
+      if (previous && previous !== current) {
         for (const session of previous.sessions.values()) {
           if (session.meta.ephemeral) this.touch(session)
         }
+        this.notifyRateLimits(current)
       }
       return { initialize: this.initializeResult, agentVersion: this.claude?.version }
     }
@@ -242,7 +262,10 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 
   protected closeAgent(): void {
     this.opened = false
+    for (const feed of this.statusLines.values()) feed.close()
+    this.statusLines.clear()
     for (const scope of this.scopes.values()) {
+      clearTimeout(scope.sdkResetTimer)
       scope.historyPages.clear()
       for (const session of scope.sessions.values()) {
         if (session.idleTimer) clearTimeout(session.idleTimer)
@@ -258,13 +281,87 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 
   private currentScope(): ClaudeScope {
     const directory = (this.configDir ?? process.env.CLAUDE_CONFIG_DIR) || undefined
+    return this.scopeFor(directory)
+  }
+
+  private scopeFor(directory: string | undefined): ClaudeScope {
     let scope = this.scopes.get(directory)
     if (!scope) {
-      scope = { directory, sessions: new Map(), metas: new Map(), historyPages: new HistoryPageCache(),
-        rateLimits: emptyRateLimitsResponse(), realModels: null, modelListRequest: null }
-      this.scopes.set(directory, scope)
+      const created: ClaudeScope = {
+        directory,
+        sessions: new Map(),
+        metas: new Map(),
+        historyPages: new HistoryPageCache(),
+        sdkRateLimits: rateLimitSnapshot(),
+        sdkObservedAt: null,
+        sdkResetsAt: null,
+        statusLine: this.statusLineFor(statusLineProfile(directory)),
+        realModels: null,
+        modelListRequest: null,
+      }
+      this.scopes.set(directory, created)
+      scope = created
     }
     return scope
+  }
+
+  ingestStatusLine(directory: string, windows: unknown): void {
+    this.statusLineFor(statusLineProfile(directory)).ingest(windows)
+  }
+
+  private statusLineFor(profile: string): ClaudeStatusLine {
+    const existing = this.statusLines.get(profile)
+    if (existing) return existing
+    const feed = new ClaudeStatusLine(() => {
+      if (!this.opened) return
+      const scope = this.currentScope()
+      if (scope.statusLine === feed) this.notifyRateLimits(scope)
+    })
+    this.statusLines.set(profile, feed)
+    return feed
+  }
+
+  private quotaSnapshot(scope: ClaudeScope): Json {
+    const rejected = scope.sdkRateLimits.rateLimitReachedType
+    const active = scope.sdkResetsAt === null || scope.sdkResetsAt * 1000 > Date.now()
+    if (rejected && active) {
+      return { ...scope.sdkRateLimits, observedAt: scope.sdkObservedAt, rejectionResetsAt: scope.sdkResetsAt }
+    }
+    const { primary, secondary, observedAt } = scope.statusLine.snapshot()
+    if (primary || secondary) {
+      return {
+        ...rateLimitSnapshot(),
+        limitId: 'claude-statusline',
+        limitName: 'Claude CLI 状态栏',
+        primary,
+        secondary,
+        observedAt,
+      }
+    }
+    return active && scope.sdkRateLimits.primary
+      ? { ...scope.sdkRateLimits, observedAt: scope.sdkObservedAt }
+      : rateLimitSnapshot()
+  }
+
+  private notifyRateLimits(scope: ClaudeScope): void {
+    if (!this.opened || scope !== this.currentScope()) return
+    this.notify({ method: 'account/rateLimits/updated', params: { rateLimits: this.quotaSnapshot(scope) } })
+  }
+
+  private onRateLimitEvent(scope: ClaudeScope, info: unknown): void {
+    clearTimeout(scope.sdkResetTimer)
+    const reset = finite(asRecord(info)?.resetsAt)
+    scope.sdkRateLimits = rateLimitSnapshot(info)
+    scope.sdkObservedAt = Date.now()
+    scope.sdkResetsAt = reset === null ? null : Math.abs(reset) > 1e11 ? reset / 1000 : reset
+    if (scope.sdkResetsAt !== null && (scope.sdkRateLimits.rateLimitReachedType || scope.sdkRateLimits.primary)) {
+      const delay = scope.sdkResetsAt * 1000 - Date.now()
+      if (delay > 0 && delay <= 2_147_483_647) {
+        scope.sdkResetTimer = setTimeout(() => this.notifyRateLimits(scope), Math.ceil(delay))
+        scope.sdkResetTimer.unref()
+      }
+    }
+    this.notifyRateLimits(scope)
   }
 
   private sessionReader(scope: ClaudeScope): ClaudeSessionReader {
@@ -304,8 +401,10 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         return this.initializeResult
       case 'account/read':
         return { account: null }
-      case 'account/rateLimits/read':
-        return scope.rateLimits
+      case 'account/rateLimits/read': {
+        const snapshot = this.quotaSnapshot(scope)
+        return { ...emptyRateLimitsResponse(), rateLimits: snapshot, rateLimitsByLimitId: { claude: snapshot } }
+      }
       case 'thread/unsubscribe': {
         const threadId = scalarText(params.threadId)
         const session = scope.sessions.get(threadId)
@@ -347,6 +446,8 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         this.notify({ method: 'thread/started', params: { thread } })
         return threadStartResult(meta, settings, thread)
       }
+      case 'thread/fork':
+        return this.forkThread(scope, params)
       case 'thread/resume':
       case 'thread/read':
       case 'thread/turns/list':
@@ -360,7 +461,9 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         const load = async () => {
           const messages = await this.sessionReader(scope).getSessionMessages(threadId, { dir: session.meta.cwd })
           session.historyModel = lastReplyModel(messages)
-          return sessionMessagesToThread(session.meta, messages).turns
+          return sessionMessagesToThread(session.meta,
+            messages.filter((message) => !session.pendingSteers.has(scalarText(asRecord(message)?.uuid))),
+            {}, session.state.taskNotifications.deliveryIds, session.steerHistory).turns
         }
         // 没有本进程的显式覆盖时，回报历史里最近一次回复的模型，客户端据此恢复该会话的选择。
         const configOf = () => {
@@ -383,13 +486,42 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         if (method === 'thread/items/list') return listHistoryItems(threadId, turns, params)
         return { thread: { ...buildThread(session.meta, turns, configOf()), status: this.threadStatus(scope, threadId) } }
       }
+      case 'thread/compact/start': {
+        const threadId = scalarText(params.threadId)
+        if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
+        const session = await this.sessionFor(scope, threadId, cwd)
+        // Agent SDK 通过普通输入接收原生 /compact。沿用会话已有设置与权限。
+        await this.startTurn(session, { blocks: [{ type: 'text', text: '/compact' }], echo: [], text: '/compact' },
+          session.settings, session.permissionMode, null, true)
+        return {}
+      }
       case 'turn/start': {
         const threadId = scalarText(params.threadId)
         if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
         const permissionMode = parsePermissionMode(params.claudePermissionMode)
         const content = await resolveTurnInput(params.input)
         const session = await this.sessionFor(scope, threadId, cwd)
-        return this.startTurn(session, content, parseOverrides(params, session.settings), permissionMode)
+        // SDK 将输入 UUID 持久化到 SessionMessage.uuid，历史与实时回显因此可以共用同一个条目 ID。
+        return this.startTurn(session, content, parseOverrides(params, session.settings), permissionMode,
+          clientMessageId(params.clientUserMessageId))
+      }
+      case 'turn/steer': {
+        const session = scope.sessions.get(scalarText(params.threadId))
+        const turnId = scalarText(params.expectedTurnId)
+        if (!session?.turnId || session.turnId !== turnId || session.compaction) {
+          throw new BridgeRpcError(-32602, '当前轮次已结束或切换，请重新发送')
+        }
+        const content = await resolveTurnInput(params.input)
+        if (session.turnId !== turnId || !session.input) {
+          throw new BridgeRpcError(-32602, '当前轮次已结束或切换，请重新发送')
+        }
+        const clientId = clientMessageId(params.clientUserMessageId)
+        const messageId = clientId ?? randomUUID()
+        if (!session.pendingSteers.has(messageId) && !session.state.items[messageId]) {
+          this.pushInput(session, content.blocks, messageId, true)
+          session.pendingSteers.set(messageId, { item: userMessageContentItem(messageId, content.echo, clientId), turnId })
+        }
+        return { turnId }
       }
       case 'skills/list': {
         const requested = Array.isArray(params.cwds)
@@ -519,21 +651,63 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     session.permissionMode = mode
   }
 
+  private async forkThread(scope: ClaudeScope, params: Json): Promise<Json> {
+    const threadId = scalarText(params.threadId)
+    if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
+    const source = await this.sessionFor(scope, threadId)
+    const lastTurnId = scalarText(params.lastTurnId)
+    if (source.meta.ephemeral || (source.turnId && (!lastTurnId || source.turnId === lastTurnId))) {
+      throw new BridgeRpcError(-32602, '请选择已结束的会话轮次')
+    }
+    const reader = this.sessionReader(scope)
+    if (!reader.forkSession) throw new BridgeRpcError(-32601, 'Claude 不支持创建会话分支')
+    const dir = source.meta.cwd
+    let boundary: string | undefined
+    if (lastTurnId) {
+      const history = sessionMessagesToThread(source.meta, await reader.getSessionMessages(threadId, { dir }),
+        {}, source.state.taskNotifications.deliveryIds, source.steerHistory)
+      const messageId = source.turnMessageIds.get(lastTurnId)
+      boundary = history.forkPoints.find((point) =>
+        point.turnId === lastTurnId || (messageId && point.firstMessageId === messageId))?.lastMessageId
+      if (!boundary) throw new BridgeRpcError(-32602, '在 Claude 历史中找不到所选轮次')
+    }
+    const { sessionId } = await reader.forkSession(threadId, { dir, upToMessageId: boundary })
+    const meta: SessionMeta = { id: sessionId, cwd: dir, preview: source.meta.preview }
+    const settings = source.settings
+    const branch = makeSession(scope, meta, true, settings)
+    branch.steerHistory = new Map(source.steerHistory)
+    if (branch.steerHistory.size > 0) this.steerHistory.write(sessionId, branch.steerHistory, scope.directory)
+    scope.sessions.set(sessionId, branch)
+    scope.metas.set(sessionId, meta)
+    const messages = params.excludeTurns === true ? [] : await reader.getSessionMessages(sessionId, { dir })
+    const thread = sessionMessagesToThread(meta, messages, threadModelConfig(settings), undefined, branch.steerHistory).thread
+    this.notify({ method: 'thread/started', params: { thread } })
+    return threadStartResult(meta, settings, thread)
+  }
+
   private async startTurn(
     session: BridgeSession,
     content: TurnContent,
     next: ClaudeSettings,
     permissionMode: PermissionMode,
+    clientId: string | null,
+    compact = false,
   ): Promise<Json> {
     if (session.preparingTurn) throw new BridgeRpcError(-32602, '正在准备一轮对话，请稍后重试')
+    const messageId = clientId ?? randomUUID()
+    const userItem = userMessageContentItem(messageId, content.echo, clientId)
     if (session.turnId) {
+      if (compact || session.compaction) throw new BridgeRpcError(-32602, '请先等待当前一轮结束')
       // v2 规定追加输入到进行中的 turn 时忽略覆盖项，输入直接推入同一 query 的队列。
-      this.pushInput(session, content.blocks)
+      this.pushInput(session, content.blocks, messageId)
+      session.state.items[messageId] = userItem
+      session.state.order.push(messageId)
+      this.notify(itemCompleted({ threadId: session.meta.id, turnId: session.turnId, cwd: session.meta.cwd }, userItem))
       return { turn: buildTurn(session.turnId, [], 'inProgress') }
     }
     const turnId = randomUUID()
-    const userItem = userMessageContentItem(`${turnId}-user`, content.echo)
-    const turn = buildTurn(turnId, [userItem], 'inProgress')
+    const items = compact ? [] : [userItem]
+    const turn = buildTurn(turnId, items, 'inProgress')
     if (!this.claude) throw new AgentHostError('agent_unavailable', 'claude 尚未就绪')
     session.preparingTurn = true
     let started = false
@@ -541,17 +715,28 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       await this.setPermissionMode(session, permissionMode)
       if (session.query && session.input) await this.applySettings(session, next)
       session.turnId = turnId
-      session.state = emptyMapState()
-      session.state.items[scalarText(userItem.id)] = userItem
-      session.state.order.push(scalarText(userItem.id))
+      if (!compact) session.turnMessageIds.set(turnId, messageId)
+      session.compaction = compact
+      session.state = emptyMapState(session.state.taskNotifications)
+      for (const item of items) {
+        session.state.items[scalarText(item.id)] = item
+        session.state.order.push(scalarText(item.id))
+      }
       this.ensureQuery(session, next, permissionMode)
+      if (compact) {
+        const query = session.query
+        const commands = await query?.supportedCommands?.()
+        if (session.query !== query || !commands?.some((command) => asRecord(command)?.name === 'compact')) {
+          throw new BridgeRpcError(-32601, '当前 Claude 会话未提供 /compact')
+        }
+      }
       // 通知里带上本轮真正生效的配置；客户端会忽略 v2 形状之外的字段。
       this.notify({
         method: 'turn/started',
         params: { threadId: session.meta.id, turn, ...threadModelConfig(session.settings) },
       })
       started = true
-      this.pushInput(session, content.blocks)
+      this.pushInput(session, content.blocks, messageId)
     } catch (err) {
       session.turnId = null
       // 没有发出开始通知时，完成通知会影响其他并行轮次的计数。
@@ -560,7 +745,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
           method: 'turn/completed',
           params: {
             threadId: session.meta.id,
-            turn: buildTurn(turnId, [userItem], 'failed', describe(err)),
+            turn: buildTurn(turnId, items, 'failed', describe(err)),
           },
         })
       }
@@ -572,14 +757,15 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     return { turn }
   }
 
-  private pushInput(session: BridgeSession, content: ContentBlock[]): void {
+  private pushInput(session: BridgeSession, content: ContentBlock[], uuid: string, steer = false): void {
     if (!session.input) throw new BridgeRpcError(-32603, 'claude 输入队列不可用')
     const message = {
       type: 'user',
       message: { role: 'user', content },
       parent_tool_use_id: null,
       session_id: session.meta.id,
-      uuid: randomUUID(),
+      uuid,
+      ...(steer ? { priority: 'next', origin: { kind: 'human' } } : {}),
     } as unknown as SDKUserMessage
     session.input.push(message)
   }
@@ -637,6 +823,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         session.input?.close()
         session.query = null
         session.input = null
+        session.pendingSteers.clear()
         // CLI 提前退出且没有 result 消息时兜底结束 turn，避免 activeTurns 永远不归零。
         if (session.turnId) this.finishTurn(session, 'failed', 'claude 进程提前结束')
         if (session.meta.ephemeral) this.forgetTemporary(session)
@@ -648,27 +835,80 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const record = asRecord(message)
     // 新 SDK 是顶层 rate_limit_event；旧 CLI 也可能把它塞进 system 消息。
     if (record?.type === 'rate_limit_event' || record?.subtype === 'rate_limit_event') {
-      const snapshot = rateLimitSnapshot(record.rate_limit_info)
-      session.scope.rateLimits = {
-        ...emptyRateLimitsResponse(),
-        rateLimits: snapshot,
-        rateLimitsByLimitId: { claude: snapshot },
-      }
+      this.onRateLimitEvent(session.scope, record.rate_limit_info)
     }
+    if (session.pendingSteers.size > 0 && record && !record.parent_tool_use_id &&
+      (record.type === 'assistant' || record.type === 'stream_event' || record.type === 'result')) {
+      this.confirmSteers(session, record)
+    }
+    if (record?.type === 'result' && !session.turnId) return
     const ctx = {
       threadId: session.meta.id,
       turnId: session.turnId ?? '',
       cwd: session.meta.cwd,
     }
-    const mapped = mapSdkMessage(message, ctx, session.state)
+    const missingCompaction = session.compaction && record?.type === 'result' && record.subtype === 'success'
+      && record.is_error !== true && !session.state.order.some((id) =>
+        session.state.items[id]?.type === 'contextCompaction' && session.state.items[id]?.status === 'completed')
+    const mapped = mapSdkMessage(missingCompaction ? {
+      ...record, is_error: true, errors: [scalarText(record.result) || 'Claude 未返回压缩结果'],
+    } : message, ctx, session.state)
     session.state = mapped.state
     for (const note of mapped.notifications) {
-      if (note.method !== 'account/rateLimits/updated' || session.scope === this.currentScope()) this.notify(note)
+      if (note.method !== 'account/rateLimits/updated') this.notify(note)
     }
     if (record?.type === 'result') {
+      const userMessageIds = record.user_message_uuids
+      if (session.turnId && Array.isArray(userMessageIds)) {
+        const answered = userMessageIds.at(-1)
+        if (typeof answered === 'string' && session.turnMessageIds.has(session.turnId) &&
+          (session.steerHistory.get(answered)?.startsTurn ?? true)) {
+          session.turnMessageIds.set(session.turnId, answered)
+        }
+      }
       session.turnId = null
       session.scope.historyPages.clear(session.meta.id)
+      // Claude 已排好的下一轮优先于客户端自己的发送队列。
+      if (session.pendingSteers.size > 0 && (finite(record.queued_turn_count) ?? 0) > 0) {
+        this.startSteeredTurn(session)
+      }
       this.touch(session)
+    }
+  }
+
+  private startSteeredTurn(session: BridgeSession): string {
+    const turnId = randomUUID()
+    session.turnId = turnId
+    session.compaction = false
+    session.state = emptyMapState(session.state.taskNotifications)
+    this.notify({ method: 'turn/started', params: {
+      threadId: session.meta.id,
+      turn: buildTurn(turnId, [], 'inProgress'),
+      ...threadModelConfig(session.settings),
+    } })
+    return turnId
+  }
+
+  private confirmSteers(session: BridgeSession, record: Json): void {
+    // SDK 用 UUID 确认实际处理了哪些输入，顺序沿用提交顺序。
+    const ids = Array.isArray(record.user_message_uuids)
+      ? new Set(record.user_message_uuids) : new Set([record.user_message_uuid])
+    const pendingCount = session.pendingSteers.size
+    for (const [id, pending] of session.pendingSteers) {
+      if (!ids.has(id)) continue
+      const turnId = session.turnId ?? this.startSteeredTurn(session)
+      const startsTurn = !session.turnMessageIds.has(turnId)
+      if (startsTurn) session.turnMessageIds.set(turnId, id)
+      const placement = turnId === pending.turnId ? 'currentTurn' : 'nextTurn'
+      session.steerHistory.set(id, { placement, startsTurn })
+      const item = { ...pending.item, steering: placement }
+      session.pendingSteers.delete(id)
+      session.state.items[id] = item
+      session.state.order.push(id)
+      this.notify(itemCompleted({ threadId: session.meta.id, turnId, cwd: session.meta.cwd }, item))
+    }
+    if (!session.meta.ephemeral && session.pendingSteers.size < pendingCount) {
+      this.steerHistory.write(session.meta.id, session.steerHistory, session.scope.directory)
     }
   }
 
@@ -771,6 +1011,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       scope.metas.set(threadId, meta)
     }
     const session = makeSession(scope, meta, true)
+    session.steerHistory = this.steerHistory.read(threadId, scope.directory)
     scope.sessions.set(threadId, session)
     return session
   }
@@ -823,6 +1064,10 @@ function makeSession(
     query: null,
     input: null,
     turnId: null,
+    turnMessageIds: new Map(),
+    pendingSteers: new Map(),
+    steerHistory: new Map(),
+    compaction: false,
     preparingTurn: false,
     state: emptyMapState(),
     queryCreated,
@@ -838,11 +1083,17 @@ function closeQuery(session: BridgeSession): void {
   session.query = null
   session.input?.close()
   session.input = null
+  session.pendingSteers.clear()
   try {
     query?.close()
   } catch {
     // 查询可能已结束。
   }
+}
+
+function clientMessageId(value: unknown): string | null {
+  const id = scalarText(value)
+  return /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id) ? id : null
 }
 
 function parsePermissionMode(value: unknown): PermissionMode {

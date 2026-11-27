@@ -1,4 +1,4 @@
-import { getLocale, t, threadActivityFromStatus, type ThreadActivity } from '@qn/codex-client'
+import { getLocale, isActiveThread, sessionStatus, t, threadActivityFromStatus, type ThreadActivity, type ThreadView } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { DEFAULT_AGENT } from './agents'
 
@@ -66,6 +66,20 @@ export function threadPreviewText({ title, preview }: Pick<ThreadSummary, 'title
 /** 两个 agent 的 id 各自独立，列表 key 必须带上 agent，避免 UUID 碰撞时错行。 */
 export function threadKey(agent: AgentKind, id: string): string {
   return `${agent}:${id}`
+}
+
+export function isThreadInProgress(thread: ThreadSummary, view?: ThreadView): boolean {
+  return isActiveThread(sessionStatus(view, thread.activity))
+}
+
+/** 临时将活动项提到前面，两组内部沿用当前顺序。 */
+export function activeFirst<T>(items: readonly T[], isActive: (item: T) => boolean): T[] {
+  const active: T[] = []
+  const rest: T[] = []
+  for (const item of items) {
+    (isActive(item) ? active : rest).push(item)
+  }
+  return [...active, ...rest]
 }
 
 /** 合并 Codex / Claude 的会话，按更新时间降序；同时间时 Codex 在前保证顺序稳定。 */

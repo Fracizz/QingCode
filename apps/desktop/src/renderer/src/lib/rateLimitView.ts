@@ -15,8 +15,8 @@ export function notificationKind(msg: unknown): RateLimitNotificationKind {
 }
 
 export function severityTextClass(level: RateLimitSeverity): string {
-  if (level === 'danger') return 'border-qn-danger/50 text-qn-danger'
-  if (level === 'warn') return 'border-amber-400/50 text-amber-300'
+  if (level === 'danger') return 'border-qn-border-strong text-qn-danger'
+  if (level === 'warn') return 'border-qn-border-strong text-amber-300'
   return 'border-qn-border text-qn-muted'
 }
 

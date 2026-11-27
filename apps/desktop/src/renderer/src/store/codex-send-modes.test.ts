@@ -74,18 +74,32 @@ describe('聊天发送方式', () => {
     ])
   })
 
-  it('引导附带当前 turn ID，不抢占已有队列，同时 Claude 不发送引导请求', async () => {
-    const { send, ensureOpen } = useCodex.getState()
+  it('Codex 引导附带当前 turn ID，不抢占已有队列', async () => {
+    const { send } = useCodex.getState()
     await send('等候', chat)
     expect(await send('补充要求', { ...chat, mode: 'steer' })).toBe(true)
     expect(methods()).toEqual(['turn/steer'])
     expect(backend.send.mock.calls[0]?.[1].params.expectedTurnId).toBe('active')
     expect(pending().map((item) => item.text)).toEqual(['等候'])
+  })
 
-    await ensureOpen(targetId, 'claude')
-    notifyTurn('turn/started', 'claude-active', 'inProgress', 'claude')
-    expect(await send('补充要求', { ...chat, agent: 'claude', mode: 'steer' })).toBe(false)
-    expect(methods()).toEqual(['turn/steer'])
+  it.each(['claude', 'pi'] as const)('%s 的输入框和排队消息都能引导', async (agent) => {
+    const { send, ensureOpen, steerPendingSend } = useCodex.getState()
+    const address = { ...chat, agent }
+    await ensureOpen(targetId, agent)
+    expect(await send('已结束的引导', { ...address, mode: 'steer' })).toBe(false)
+    notifyTurn('turn/started', 'other-active', 'inProgress', agent)
+    expect(await send('补充要求', { ...address, mode: 'steer' })).toBe(true)
+    expect(await send('排队后引导', address)).toBe(true)
+    const queue = () => useCodex.getState().pendingSends[pendingSendKey(address)] ?? []
+    expect(await steerPendingSend(address, queue()[0]!.id)).toBe(true)
+    expect(queue()).toEqual([])
+    expect(backend.send.mock.calls).toEqual(['补充要求', '排队后引导'].map((text) => [agent, expect.objectContaining({
+      method: 'turn/steer', params: expect.objectContaining({
+        expectedTurnId: 'other-active', clientUserMessageId: expect.any(String),
+        input: [{ type: 'text', text, text_elements: [] }],
+      }),
+    })]))
   })
 
   it('立即发送等待当前一轮结束，优先送出修正，原队列保留', async () => {

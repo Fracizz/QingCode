@@ -22,6 +22,15 @@ const fakeCodex = JSON.stringify([process.execPath, '-e', `
       thread: { id: 'thread' }, approvalPolicy: 'on-request', approvalsReviewer: 'user',
       sandbox: { type: 'workspaceWrite', writableRoots: ['/work'], networkAccess: false },
     } });
+    if (method === 'turn/start' && params.measure) {
+      const turn = { id: 'timed', status: 'inProgress', durationMs: null };
+      send({ method: 'turn/started', params: { threadId: 'thread', turn } });
+      return send({ id, result: { turn } });
+    }
+    if (params?.measure && (method === 'thread/read' || method === 'thread/turns/list')) {
+      const turn = { id: 'timed', status: 'completed', durationMs: params.durationMs ?? null };
+      return send({ id, result: method === 'thread/read' ? { thread: { id: params.threadId, turns: [turn] } } : { data: [turn] } });
+    }
     if (method === 'turn/start' && params.hold) send({ method: 'turn/started', params: { threadId: 'thread' } });
     if (method === 'turn/start' && params.replyFirst) return send({ id, result: { turn: { id: 'reply-first', status: 'inProgress' } } });
     if (method === 'turn/interrupt') send({ method: 'turn/completed', params: { threadId: 'thread', turn: { id: params.turnId } } });
@@ -31,12 +40,13 @@ const fakeCodex = JSON.stringify([process.execPath, '-e', `
 
 function harness() {
   const messages: ServerMessage[] = []
+  const broadcasts: Record<string, unknown>[] = []
   const host = new CodexHost({
     send: (_clientId, message) => {
       encodeFrame(message)
       messages.push(message)
     },
-    broadcastRecv: () => {},
+    broadcastRecv: (_seq, message) => { broadcasts.push(message) },
     broadcastEvt: () => {},
     log: () => {},
   })
@@ -48,7 +58,7 @@ function harness() {
       return (message as { msg: unknown }).msg
     })
   }
-  return { host, request, messages }
+  return { host, request, messages, broadcasts }
 }
 
 describe('codex 退出原因', () => {
@@ -63,6 +73,30 @@ describe('codex 退出原因', () => {
 })
 
 describe('Codex 历史回包', () => {
+  it('客户端实时、回放和重新打开收到同一个轮次用时，官方历史用时优先', async () => {
+    const { host, request, messages, broadcasts } = harness()
+    try {
+      await host.open({ codexPath: fakeCodex })
+      await request('start-timed', 'turn/start', { threadId: 'thread', measure: true })
+      await request('finish-timed', 'turn/interrupt', { threadId: 'thread', turnId: 'timed' })
+      const completed = broadcasts.find((message) => message.method === 'turn/completed')
+      expect(completed).toMatchObject({ params: { turn: { id: 'timed', durationMs: expect.any(Number) } } })
+      const { durationMs } = (completed?.params as { turn: { durationMs: number } }).turn
+
+      host.attach(2, 0)
+      expect(messages).toContainEqual(expect.objectContaining({ t: 'codex.recv', msg: completed }))
+      const params = { threadId: 'thread', measure: true }
+      await expect(request('reload', 'thread/read', params)).resolves.toMatchObject({ result: { thread: { turns: [{ durationMs }] } } })
+      await expect(request('paged', 'thread/turns/list', params)).resolves.toMatchObject({ result: { data: [{ durationMs }] } })
+      await expect(request('other-thread', 'thread/turns/list', { ...params, threadId: 'other' })).resolves
+        .toMatchObject({ result: { data: [{ durationMs: null }] } })
+      await expect(request('official', 'thread/turns/list', { ...params, durationMs: 4200 })).resolves
+        .toMatchObject({ result: { data: [{ durationMs: 4200 }] } })
+    } finally {
+      host.shutdown()
+    }
+  })
+
   it('接收大于 1 MiB 的历史并保留跨 stdout 分块的 UTF-8 字符', async () => {
     const { host, request } = harness()
     try {

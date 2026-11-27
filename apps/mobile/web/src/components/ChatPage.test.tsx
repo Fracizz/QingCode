@@ -8,6 +8,99 @@ import { MobileCodexTransport } from '../transport'
 import { closeTopSheet } from '../workspace'
 import { ChatPage } from './ChatPage'
 
+it('输入斜杠后可触摸执行命令，命令文本不会作为消息发送', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const initial = useApp.getState()
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const newThread = vi.fn().mockResolvedValue(true)
+  const send = vi.fn()
+  try {
+    await act(() => {
+      useApp.setState({ selectedTargetId: 'local', selectedAgent: 'pi', draftText: '', newThread, send,
+        setDraftText: (draftText) => useApp.setState({ draftText }) })
+      root.render(<ChatPage />)
+    })
+    const input = host.querySelector('textarea')!
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '/ne')
+      input.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    const option = host.querySelector<HTMLButtonElement>('[aria-label="对话命令"] button')
+    expect(option?.textContent).toContain('/new')
+    await act(() => option?.click())
+    expect(newThread).toHaveBeenCalledExactlyOnceWith('pi')
+    expect(send).not.toHaveBeenCalled()
+    expect(input.value).toBe('')
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    useApp.setState(initial)
+    vi.unstubAllGlobals()
+  }
+})
+
+it('最终回复所在分页保留工作用时和回复时间，展开后显示完整工作步骤', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const initial = useApp.getState()
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const transport = new MobileCodexTransport('local', async () => undefined)
+  const rpc = new CodexRpc(transport)
+  const completedAtMs = new Date(2026, 10, 27, 15, 52).getTime()
+  const thread: ThreadView = {
+    id: 'timed', status: 'idle', activeTurnId: null, pendingApprovals: [],
+    turns: [{ id: 'turn', outcome: 'completed', startedAtMs: completedAtMs - 544_000, durationMs: 544_000,
+      itemIds: ['user', 'interim', 'thinking', 'command', 'file', 'reply'] }],
+    items: [
+      { kind: 'user', id: 'user', text: '开始' },
+      { kind: 'agent', id: 'interim', text: '先梳理引用点', streaming: false },
+      { kind: 'reasoning', id: 'thinking', summary: '检查文件', streaming: false },
+      { kind: 'command', id: 'command', command: 'git status --short', output: '', status: 'completed', exitCode: 0 },
+      { kind: 'fileChange', id: 'file', changes: [{ path: 'app.ts', kind: 'update' }], status: 'completed' },
+      { kind: 'agent', id: 'reply', text: '检查完成', completedAtMs, streaming: false },
+      // 让默认分页起点正好落在最终回复，验证用时摘要一起显示。
+      ...Array.from({ length: 30 }, (_, index) => [
+        { kind: 'user', id: `next-${index}`, text: `问题 ${index}` } as const,
+        ...(index < 29 ? [{ kind: 'agent', id: `next-reply-${index}`, text: `后续记录 ${index}`, streaming: false } as const] : []),
+      ]).flat(),
+    ],
+  }
+  const session: AgentSession = {
+    key: 'codex:local', agent: 'codex', targetId: 'local', rpc, transport,
+    opened: true, opening: false, openError: null, lastSeq: null,
+    resumedCodexThreads: new Set(), loadedThreads: new Set(), state: { threads: { timed: thread } },
+  }
+  try {
+    await act(() => {
+      useApp.setState({ selectedTargetId: 'local', selectedThreadId: thread.id, sessions: { [session.key]: session } })
+      root.render(<ChatPage />)
+    })
+    const summary = host.querySelector('summary')!
+    expect(summary.textContent).toContain('工作了 9m 4s')
+    expect(summary.querySelector('time')?.dateTime).toBe(new Date(completedAtMs).toISOString())
+    expect(host.querySelectorAll('time')).toHaveLength(1)
+    expect(host.textContent!.indexOf('工作了 9m 4s')).toBeLessThan(host.textContent!.indexOf('检查完成'))
+    expect(host.textContent).not.toContain('先梳理引用点')
+    expect(host.textContent).not.toContain('已运行 1 条命令')
+    await act(() => {
+      const details = summary.closest('details')!
+      details.open = true
+      details.dispatchEvent(new Event('toggle'))
+    })
+    expect(host.textContent).toContain('先梳理引用点')
+    expect(host.textContent).toContain('已运行 1 条命令')
+    expect(host.textContent).toContain('改动 1 个文件')
+  } finally {
+    await act(() => root.unmount())
+    useApp.setState(initial)
+    rpc.dispose()
+    vi.unstubAllGlobals()
+  }
+})
+
 it('长会话先显示最新消息，可以逐批查看完整历史', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
@@ -129,7 +222,7 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
   }
 })
 
-it('无子代理时隐藏顶栏，出现子代理时可从顶栏查看记录和实时结果', async () => {
+it('会话切换常驻顶栏，出现子代理时也可从顶栏查看记录和实时结果', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   const methods = {
@@ -208,12 +301,17 @@ it('无子代理时隐藏顶栏，出现子代理时可从顶栏查看记录和�
       })
       root.render(<ChatPage />)
     })
-    expect(host.querySelector('header.qn-header')).toBeNull()
-    expect(host.querySelector('.qn-composer-tools > button:first-child')?.getAttribute('aria-label')).toBe('切换会话')
+    const switcher = host.querySelector('header button[aria-label="切换会话"]')
+    expect(switcher).not.toBeNull()
+    expect(switcher?.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('header button[aria-label="子代理"]')).toBeNull()
+    expect(host.querySelector('.qn-composer button[aria-label="切换会话"]')).toBeNull()
     await clickButton('切换会话')
     expect(dialog()?.getAttribute('data-placement')).toBe('left')
+    expect(switcher?.getAttribute('aria-expanded')).toBe('true')
     await act(() => { expect(closeTopSheet()).toBe(true) })
     expect(dialog()).toBeNull()
+    expect(switcher?.getAttribute('aria-expanded')).toBe('false')
 
     await act(() => useApp.setState({ sessions: { [session.key]: session } }))
     expect(host.querySelector('header button[aria-label="子代理"] svg.lucide-bot')).toBeTruthy()
@@ -265,7 +363,8 @@ it('无子代理时隐藏顶栏，出现子代理时可从顶栏查看记录和�
     expect(dialog()?.textContent).toContain('已完成')
     await act(() => useApp.setState({ selectedThreadId: 'other' }))
     expect(dialog()).toBeNull()
-    expect(host.querySelector('header.qn-header')).toBeNull()
+    expect(host.querySelector('header button[aria-label="子代理"]')).toBeNull()
+    expect(host.querySelector('header button[aria-label="切换会话"]')).toBe(switcher)
   } finally {
     await act(() => root.unmount())
     useApp.setState(initial)

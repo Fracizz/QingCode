@@ -164,7 +164,7 @@ export function MobileSettings() {
         <ErrorNote message={formError} onClose={() => setFormError(null)} />
         <FeedbackRow
           message={notice}
-          className="rounded-lg border border-qn-warn/40 bg-qn-warn/10 px-3 py-2 text-ui leading-5 text-qn-warn"
+          className="rounded-lg border border-qn-border bg-qn-warn/10 px-3 py-2 text-ui leading-5 text-qn-warn"
           onClose={dismissNotice}
         />
       </div>
@@ -405,7 +405,7 @@ export function MobileSettings() {
               </div>
               <p className="text-ui-sm text-qn-dim">{t('手机首次连接时会核对该指纹，防止中间人冒充这台电脑。')}</p>
               {confirmRegen && (
-                <div className="space-y-2 rounded-lg border border-qn-danger/40 bg-qn-danger/10 p-3 text-ui">
+                <div className="space-y-2 rounded-lg border border-qn-border bg-qn-danger/10 p-3 text-ui">
                   <p>{t('重新生成会更换证书指纹并解除所有已配对设备，已保存的手机连接将失效，须从电脑重新复制连接信息。')}</p>
                   <div className="flex gap-2">
                     <button

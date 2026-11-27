@@ -134,6 +134,8 @@ export type GitStatusResult = {
 
 export type GitBranch = { name: string; upstream?: string; head: string }
 
+export type GitRemoteAddress = { name: string; url: string }
+
 export type GitCommit = {
   hash: string
   parents: string[]
@@ -148,7 +150,7 @@ export interface WorkspaceMethods {
   'fs.stat': { params: { path: string }; result: FsStat }
   'fs.read': { params: FsReadParams; result: FsReadResult }
   'fs.write': { params: FsWriteParams; result: { mtimeMs: number } }
-  'fs.mkdir': { params: { path: string }; result: Record<string, never> }
+  'fs.mkdir': { params: { path: string; recursive?: boolean }; result: Record<string, never> }
   'fs.createFile': { params: { path: string }; result: Record<string, never> }
   'fs.rename': { params: { from: string; to: string }; result: Record<string, never> }
   'fs.delete': { params: { path: string; recursive?: boolean }; result: Record<string, never> }
@@ -187,6 +189,7 @@ export interface WorkspaceMethods {
     params: { cwd: string; branch: string; create?: boolean }
     result: Record<string, never>
   }
+  'git.remotes': { params: { cwd: string }; result: { remotes: GitRemoteAddress[] } }
   'git.fetch': { params: { cwd: string; remote?: string }; result: { output: string } }
   'git.pull': { params: { cwd: string; remote?: string; branch?: string }; result: { output: string } }
   'git.push': {

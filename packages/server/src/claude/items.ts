@@ -20,7 +20,6 @@ import {
   scalarText,
   summarizeInput,
   tokenUsage,
-  userMessageItem,
   userMessageContentItem,
   buildTurn,
   type Json,
@@ -29,6 +28,19 @@ import {
   type V2Notification,
 } from './v2'
 import { imageBlockToEcho } from './userInput'
+import { sdkTaskNotification, userTaskNotification, type TaskNotification } from './taskNotification'
+
+interface PendingTaskNotification {
+  item: V2Item
+  turnId: string
+  runId: string
+  system: boolean
+}
+
+interface TaskNotificationState {
+  pending: Map<string, PendingTaskNotification[]>
+  deliveryIds: Map<string, string>
+}
 
 export interface MapState {
   nextItem: number
@@ -40,6 +52,7 @@ export interface MapState {
   toolItems: Record<string, V2Item>
   items: Record<string, V2Item>
   order: string[]
+  taskNotifications: TaskNotificationState
   /**
    * 文本/思考块已发出的通知阶段。流式 content_block_* 与完整 assistant 消息会描述同一个块，
    * 且二者先后不定（SDK 常先给完整消息再给 content_block_stop），据此保证 started/completed 各一次。
@@ -55,12 +68,13 @@ export interface MapResult {
 export interface MapOptions {
   /** 历史回放需要把用户文本转 userMessage；实时流由 bridge 在 turn/start 时自行生成。 */
   includeUserText?: boolean
+  taskDeliveryIds?: ReadonlyMap<string, string>
 }
 
 const FILE_EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 const BASH_TOOLS = new Set(['Bash', 'PowerShell'])
 
-export function emptyMapState(): MapState {
+export function emptyMapState(taskNotifications?: TaskNotificationState): MapState {
   return {
     nextItem: 0,
     messageId: null,
@@ -70,6 +84,7 @@ export function emptyMapState(): MapState {
     toolItems: {},
     items: {},
     order: [],
+    taskNotifications: taskNotifications ?? { pending: new Map(), deliveryIds: new Map() },
   }
 }
 
@@ -83,6 +98,7 @@ function cloneState(state: MapState): MapState {
     toolItems: { ...state.toolItems },
     items: { ...state.items },
     order: [...state.order],
+    taskNotifications: state.taskNotifications,
     ...(state.blockPhase ? { blockPhase: { ...state.blockPhase } } : {}),
   }
 }
@@ -208,6 +224,42 @@ function recordItem(state: MapState, item: V2Item): void {
   if (!id) return
   if (!Object.hasOwn(state.items, id)) state.order.push(id)
   state.items[id] = item
+}
+
+function mapTaskNotification(
+  note: TaskNotification, message: Json, ctx: MapContext, state: MapState, out: V2Notification[], options: MapOptions,
+): void {
+  const system = message.type === 'system'
+  const uuid = scalarText(message.uuid)
+  const key = JSON.stringify([note.taskId, note.status])
+  const { pending, deliveryIds } = state.taskNotifications
+  const waiting = pending.get(key) ?? []
+  const paired = waiting.find((entry) => entry.system !== system && entry.runId === note.runId)
+    ?? waiting.find((entry) => entry.system !== system && (!note.runId || !entry.runId))
+  const identity = note.runId || uuid
+  const id = scalarText(paired?.item.id) || options.taskDeliveryIds?.get(uuid) || deliveryIds.get(uuid)
+    || (identity ? `claude-task:${JSON.stringify([note.taskId, identity])}` : newItemId(ctx, state, 'task'))
+  const previous = state.items[id] ?? paired?.item
+  const item: V2Item = {
+    type: 'backgroundTaskNotification', id, status: note.status,
+    summary: note.summary || previous?.summary || '',
+    result: note.result || previous?.result || '',
+  }
+  const turnId = paired?.turnId ?? ctx.turnId
+  if (!options.includeUserText) {
+    // 同一次结束会先后收到 SDK 摘要和正文，两种投递可能跨轮次到达。
+    state.taskNotifications = {
+      pending: new Map(pending),
+      deliveryIds: uuid && !system ? new Map(deliveryIds).set(uuid, id) : deliveryIds,
+    }
+    const next = paired ? waiting.filter((entry) => entry !== paired) : [
+      ...waiting.filter((entry) => entry.item.id !== id), { item, turnId, runId: note.runId, system },
+    ]
+    if (next.length) state.taskNotifications.pending.set(key, next)
+    else state.taskNotifications.pending.delete(key)
+  }
+  if (turnId === ctx.turnId || Object.hasOwn(state.items, id)) recordItem(state, item)
+  out.push(itemCompleted({ ...ctx, turnId }, item))
 }
 
 /** 仍在 inProgress 的 item 在轮次结束时补 completed，避免界面一直显示运行中。 */
@@ -376,8 +428,8 @@ function mapUser(
   const payload = asRecord(message.message)
   const content = payload?.content ?? message.content
   const blocks: unknown[] = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : []
-  // 带图片的用户消息合并成一个 userMessage（图片在前），否则界面会把文字与缩略图拆成两条气泡。
-  if (options.includeUserText && blocks.some((raw) => asRecord(raw)?.type === 'image')) {
+  // SDK 历史中的一条用户消息可能包含多个文本块和图片，沿用该消息的 UUID。
+  if (options.includeUserText) {
     const echo: Json[] = []
     for (const raw of blocks) {
       const block = asRecord(raw)
@@ -389,23 +441,15 @@ function mapUser(
       }
     }
     if (echo.length > 0) {
-      const item = userMessageContentItem(newItemId(ctx, state, 'user'), echo)
+      const item = userMessageContentItem(scalarText(message.uuid) || newItemId(ctx, state, 'user'), echo)
       recordItem(state, item)
       out.push(itemStarted(ctx, item), itemCompleted(ctx, item))
     }
   }
-  const hasImage = options.includeUserText && blocks.some((raw) => asRecord(raw)?.type === 'image')
   for (const raw of blocks) {
     const block = asRecord(raw)
     if (!block) continue
     const type = scalarText(block.type)
-    if (type === 'text' && options.includeUserText && !hasImage) {
-      const id = newItemId(ctx, state, 'user')
-      const item = userMessageItem(id, scalarText(block.text))
-      recordItem(state, item)
-      out.push(itemStarted(ctx, item), itemCompleted(ctx, item))
-      continue
-    }
     if (type !== 'tool_result') continue
     const toolId = scalarText(block.tool_use_id)
     const errored = block.is_error === true
@@ -459,10 +503,13 @@ export function mapSdkMessage(
 }
 
 /** 历史读取独占状态，逐条复用，避免每条历史消息都复制已经解析的前缀。 */
-export function mapHistoryMessage(message: unknown, ctx: MapContext, state: MapState): void {
+export function mapHistoryMessage(
+  message: unknown, ctx: MapContext, state: MapState,
+  taskDeliveryIds?: ReadonlyMap<string, string>,
+): void {
   // 已持久化的完整消息没有实时分块索引，只需在相同消息 ID 的块间匹配。
   state.historyBlockKeys ??= new Map()
-  mapMessage(message, ctx, state, { includeUserText: true })
+  mapMessage(message, ctx, state, { includeUserText: true, taskDeliveryIds })
 }
 
 function mapMessage(
@@ -482,14 +529,45 @@ function mapMessage(
     case 'assistant':
       mapAssistant(msg, ctx, state, out)
       break
-    case 'user':
-      mapUser(msg, ctx, state, out, options)
+    case 'user': {
+      const isOwnPrompt = state.items[scalarText(msg.uuid)]?.type === 'userMessage'
+      const task = isOwnPrompt ? undefined : userTaskNotification(msg)
+      if (task) mapTaskNotification(task, msg, ctx, state, out, options)
+      else mapUser(msg, ctx, state, out, options)
       break
+    }
+    case 'system': {
+      if (msg.subtype === 'task_notification') {
+        const task = sdkTaskNotification(msg)
+        if (task) mapTaskNotification(task, msg, ctx, state, out, options)
+        break
+      }
+      if (!ctx.turnId) break
+      const id = `${ctx.turnId}-compact`
+      if (msg.subtype === 'status' && msg.status === 'compacting' && !state.items[id]) {
+        const item = { type: 'contextCompaction', id, status: 'inProgress' }
+        recordItem(state, item)
+        out.push(itemStarted(ctx, item))
+      } else if (msg.subtype === 'compact_boundary') {
+        const item = { type: 'contextCompaction', id, status: 'completed' }
+        recordItem(state, item)
+        out.push(itemCompleted(ctx, item))
+      }
+      break
+    }
     case 'result': {
       const { status, error } = turnOutcome(msg)
+      const compaction = state.items[`${ctx.turnId}-compact`]
+      if (status === 'interrupted' && compaction?.status === 'inProgress') {
+        const interrupted = { ...compaction, status }
+        recordItem(state, interrupted)
+        out.push(itemCompleted(ctx, interrupted))
+      }
       out.push(...finishPendingItems(ctx, state, status === 'failed'))
       const items = state.order.map((id) => state.items[id]).filter(isRecord)
       const turn = buildTurn(ctx.turnId, items, status, error)
+      const durationMs = finite(msg.duration_ms)
+      if (durationMs !== null && durationMs >= 0) turn.durationMs = durationMs
       out.push(notification('turn/completed', { threadId: ctx.threadId, turn }))
       out.push(
         notification('thread/tokenUsage/updated', {

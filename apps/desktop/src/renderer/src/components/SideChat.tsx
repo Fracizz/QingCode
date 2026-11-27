@@ -1,12 +1,13 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, MessagesSquare, PanelRightClose, Quote, X } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import type { ItemView } from '@qn/codex-client'
 import { t } from '@qn/codex-client'
 import { agentLabel, DEFAULT_AGENT, sessionKey } from '../lib/agents'
 import { annotationExcerpt, type Annotation } from '../lib/annotations'
 import { isAtBottom } from '../lib/diff'
 import { SIDE_CHAT_DEFAULT_WIDTH, sideChatLayout } from '../lib/layout'
-import { hasPendingSubmission, streamingReplyId, turnTimeline } from '../lib/turnGroups'
+import { hasPendingSubmission, needsTurnProgress, streamingReplyId, turnTimeline } from '../lib/turnGroups'
 import { currentSideApprovals, currentSideChat, pendingSendKey, currentChatKey, useCodex } from '../store/codex'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
@@ -16,7 +17,7 @@ import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
 import { SubagentRpcContext } from './SubagentDetails'
 import { TurnErrorNote } from './TurnErrorNote'
-import { ErrorNote, IconButton } from './ui'
+import { ErrorNote, IconButton, Modal } from './ui'
 
 export function SideChat() {
   const ownerKey = useCodex(currentChatKey)
@@ -44,15 +45,19 @@ export function SideChat() {
   const pinned = useRef(true)
   const [preferredWidth, setPreferredWidth] = useState(SIDE_CHAT_DEFAULT_WIDTH)
   const [availableWidth, setAvailableWidth] = useState(SIDE_CHAT_DEFAULT_WIDTH + 48)
+  const [confirmEnd, setConfirmEnd] = useState(false)
   const { docked, min, max, width } = sideChatLayout(preferredWidth, availableWidth)
 
-  // 只订阅侧聊所在会话，其他会话的流式增量不触发重渲染。
-  const session = useCodex((s) => sideTargetId && sideAgent ? s.sessions[sessionKey(sideTargetId, sideAgent)] : undefined)
+  // 只订阅侧聊所在会话里用到的字段，其他会话和无关字段的流式增量不触发重渲染。
+  const sessionId = sideOpen && sideTargetId && sideAgent ? sessionKey(sideTargetId, sideAgent) : null
+  const { openError, rpc, view } = useCodex(useShallow((s) => {
+    const session = sessionId ? s.sessions[sessionId] : undefined
+    return { openError: session?.openError, rpc: session?.rpc, view: sideThreadId ? session?.state.threads[sideThreadId] : undefined }
+  }))
   const chatKey = sideTargetId && sideAgent && sideThreadId && pendingSendKey({ targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId })
   const sendingMessage = useCodex((s) => s.sendingMessage?.key === chatKey ? s.sendingMessage : null)
   const queueLength = useCodex((s) => chatKey ? s.pendingSends[chatKey]?.length : 0)
   const sendingQueued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.[0]?.sending))
-  const view = sideThreadId ? session?.state.threads[sideThreadId] : undefined
   const preview = sendingMessage?.preview
   const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? []), preview] : view?.items ?? [], [preview, view?.items])
   const timeline = useMemo(() => turnTimeline(items, view?.turns), [items, view?.turns])
@@ -60,8 +65,8 @@ export function SideChat() {
   const running = !side?.expired && view?.status === 'running'
   const streamingId = running ? streamingReplyId(view) : undefined
   const interrupted = !running && view?.activity === 'interrupted'
-  const showProgress = approvals.length === 0 && !session?.openError
-    && (running || hasPendingSubmission(items, !!sendingMessage || sendingQueued))
+  const showProgress = approvals.length === 0 && !openError
+    && (running ? needsTurnProgress(view, timeline) : hasPendingSubmission(items, !!sendingMessage || sendingQueued))
   const agent = sideAgent ?? DEFAULT_AGENT
 
   useLayoutEffect(() => {
@@ -74,7 +79,10 @@ export function SideChat() {
     return () => observer.disconnect()
   }, [sideOpen])
 
-  useLayoutEffect(() => { pinned.current = true }, [ownerKey, sideOpen, sideThreadId])
+  useLayoutEffect(() => {
+    pinned.current = true
+    setConfirmEnd(false)
+  }, [ownerKey, sideOpen, sideThreadId])
   useLayoutEffect(() => {
     const scroll = scrollRef.current
     if (scroll && pinned.current) scroll.scrollTop = scroll.scrollHeight
@@ -82,15 +90,17 @@ export function SideChat() {
 
   if (!sideOpen || !sideTargetId || !sideAgent) return null
 
-  const status = side.expired ? t('会话已结束') : approvals.length ? t('等待审批') : running ? t('正在运行') : side.busy ? t('正在发送') : null
-  const showWelcome = timeline.length === 0 && approvals.length === 0 && !showProgress && !side.expired && !side.busy && !session?.openError
+  const status = side.ending ? t('正在结束') : side.expired ? (side.forked ? t('分支已断开') : t('会话已结束'))
+    : approvals.length ? t('等待审批') : running ? t('正在运行') : side.busy ? t('正在处理') : null
+  const showWelcome = timeline.length === 0 && approvals.length === 0 && !showProgress && !side.expired && !side.busy && !openError
   const annotationCount = side.annotations.filter((annotation) => annotation.quote.trim()).length
+  const endDisabled = side.busy || sendingQueued || !!sendingMessage
 
   return (
     <aside
       ref={panelRef}
       aria-label={t('侧边对话')}
-      className={`${docked ? 'relative' : 'absolute inset-y-0 right-0 shadow-2xl'} qn-side-chat z-20 flex min-h-0 max-w-full shrink-0 flex-col border-l border-qn-border-strong bg-qn-panel [container-type:size]`}
+      className={`${docked ? 'relative' : 'absolute inset-y-0 right-0 shadow-[var(--qn-shadow-dialog)]'} qn-side-chat z-20 flex min-h-0 max-w-full shrink-0 flex-col border-l border-qn-border-strong bg-qn-panel [container-type:size]`}
       style={{ width }}
     >
       {max > min && (
@@ -106,28 +116,39 @@ export function SideChat() {
           className="absolute inset-y-0 -left-[5px]"
         />
       )}
-      <header className="flex shrink-0 items-center gap-2.5 border-b border-qn-border px-3.5 py-2.5">
-        <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-qn-border-strong bg-qn-elevated text-qn-text">
-          <MessagesSquare size={16} aria-hidden />
+      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-qn-border px-4">
+        <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-qn-elevated text-qn-muted">
+          <MessagesSquare size={15} aria-hidden />
         </span>
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-ui-md font-medium text-qn-text">{t('侧边对话')}</h2>
-          <p className="truncate text-ui-sm text-qn-muted" role="status" title={status ?? undefined}>
-            {agentLabel(agent)} · {status ?? t('临时会话')}
-          </p>
+        <div className="min-w-0 flex-1 leading-4">
+          <h2 className="truncate text-ui font-medium text-qn-text">{side.forked ? t('分支对话') : t('侧边对话')}</h2>
+          <div className="flex min-w-0 items-center gap-1.5 text-ui-xs text-qn-muted">
+            <span className="shrink-0">{agentLabel(agent)}</span>
+            <span aria-hidden>·</span>
+            <span className={status === t('等待审批') ? 'truncate text-qn-warn' : 'truncate'} role="status">
+              {status ?? (side.forked ? t('新对话继续') : t('临时会话'))}
+            </span>
+          </div>
         </div>
-        <IconButton label={t('收起侧边对话')} tooltipSide="bottom" onClick={closeSideChat}>
-          <PanelRightClose size={16} />
-        </IconButton>
-        <IconButton label={t('结束侧边对话')} tooltipSide="bottom" disabled={side.busy || running || !!queueLength || approvals.length > 0} onClick={() => void endSideChat()}>
-          <X size={16} />
-        </IconButton>
+        <div className="flex shrink-0 items-center gap-1">
+          <IconButton label={t('收起侧边对话')} tooltipSide="bottom" onClick={closeSideChat}>
+            <PanelRightClose size={16} />
+          </IconButton>
+          {!side.forked && (
+            <IconButton label={t('结束侧边对话')} tooltipSide="bottom" danger disabled={endDisabled} onClick={() => {
+              if (sideDraft.trim() || side.annotations.length || queueLength) setConfirmEnd(true)
+              else void endSideChat()
+            }}>
+              <X size={16} />
+            </IconButton>
+          )}
+        </div>
       </header>
-      {session?.openError && (
-        <div className="px-3 pt-2"><ErrorNote message={session.openError} /></div>
+      {openError && (
+        <div className="px-4 pt-2"><ErrorNote message={openError} /></div>
       )}
       {!running && !interrupted && view?.error && (
-        <div className="px-3 pt-2"><TurnErrorNote error={view.error} compact /></div>
+        <div className="px-4 pt-2"><TurnErrorNote error={view.error} compact /></div>
       )}
       <SelectionLayer
         layoutKey={JSON.stringify([ownerKey, sideThreadId, width])}
@@ -146,15 +167,14 @@ export function SideChat() {
               <span className="mx-auto mb-3 grid size-10 place-items-center rounded-xl border border-qn-border-strong bg-qn-elevated text-qn-muted">
                 <Quote size={19} aria-hidden />
               </span>
-              <p className="text-ui-md font-medium text-qn-text">{t('接着聊一个细节')}</p>
-              <p className="mt-1.5 text-ui leading-5 text-qn-muted">
-                {annotationCount ? t('下方的引用会随问题发送。') : t('也可以在主对话选中文字，引用到这里。')}
+              <p className="text-ui leading-5 text-qn-muted">
+                {annotationCount ? t('引用会随追问发送。') : t('可以在主对话选中文字，引用到这里。')}
               </p>
             </div>
           </div>
         )}
-        <div className="space-y-3">
-          <SubagentRpcContext.Provider key={chatKey || undefined} value={session?.rpc ?? null}>
+        <div className="space-y-4">
+          <SubagentRpcContext.Provider key={chatKey || undefined} value={rpc ?? null}>
             {timeline.map((entry) => entry.kind === 'stopped' ? (
               <TurnStopped key={entry.key} durationMs={entry.durationMs} />
             ) : (
@@ -183,21 +203,24 @@ export function SideChat() {
         </div>
       </SelectionLayer>
       <div className="shrink-0 border-t border-qn-border pt-2">
-        <SendQueue targetId={sideTargetId} agent={agent} threadId={sideThreadId} running={running} resumeDisabled={side.expired} compact />
-        {side.expired && (
-          <button type="button" className="qn-button-subtle mx-3 mb-2 text-ui-md" disabled={side.busy || sendingQueued}
-            onClick={() => void useCodex.getState().restartSideChat()}>
-            {t('重新开始侧聊')}
-          </button>
-        )}
+        <div className="qn-scroll max-h-[25cqh] space-y-2 overflow-y-auto pb-1 empty:hidden">
+          <SendQueue targetId={sideTargetId} agent={agent} threadId={sideThreadId} running={running} resumeDisabled={side.expired || side.ending} compact />
+          {side.expired && (
+            <button type="button" className="qn-button-subtle mx-4 mb-2 text-ui-md" disabled={side.busy || sendingQueued}
+              onClick={() => void useCodex.getState().restartSideChat()}>
+              {side.forked ? t('重新打开分支') : t('重新开始侧聊')}
+            </button>
+          )}
+        </div>
         <Composer
           key={ownerKey}
+          suggestionBoundaryRef={scrollRef}
           compact
           autoFocus
           placeholder={t('继续追问…')}
           annotationCount={annotationCount}
           context={side.annotations.length > 0 && (
-            <ul aria-label={t('引用上下文')} className="qn-scroll max-h-[min(8rem,22cqh)] space-y-1.5 overflow-y-auto px-2.5 pt-2.5">
+            <ul aria-label={t('引用上下文')} className="qn-scroll max-h-[min(8rem,22cqh)] space-y-1.5 overflow-y-auto px-3 pt-3">
               {side.annotations.map((annotation) => (
                 <SideQuote
                   key={annotation.id}
@@ -216,6 +239,7 @@ export function SideChat() {
           }}
           onInterrupt={() => void interruptSide()}
           running={running}
+          canSteer={!!view?.activeTurnId}
           sending={sending || side.busy}
           disabled={side.expired || side.busy}
           error={sideError ?? null}
@@ -225,6 +249,22 @@ export function SideChat() {
           agent={agent}
         />
       </div>
+      {confirmEnd && !side.forked && (
+        <Modal title={t('结束侧边对话？')} onClose={() => setConfirmEnd(false)}
+          description={running ? t('当前回复会停止，未发送的内容会被丢弃。') : t('未发送的内容会被丢弃。')}
+          width="max-w-md"
+          bodyClassName="hidden" children={null}
+          footer={(
+            <div className="flex justify-end gap-2">
+              <button type="button" className="qn-button-subtle" onClick={() => setConfirmEnd(false)}>{t('取消')}</button>
+              <button type="button" className="qn-button bg-qn-danger hover:bg-qn-danger" disabled={endDisabled}
+                onClick={() => {
+                  setConfirmEnd(false)
+                  void endSideChat(true)
+                }}>{t('结束对话')}</button>
+            </div>
+          )} />
+      )}
     </aside>
   )
 }
@@ -239,7 +279,7 @@ function SideQuote({ annotation, disabled, onEdit, onRemove }: {
   return (
     <li className="relative rounded-lg border border-qn-border-strong bg-qn-panel">
       <details className="group">
-        <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg py-2 pl-2.5 pr-9 text-ui-sm text-qn-muted hover:text-qn-text focus-visible:outline-2 focus-visible:outline-qn-accent [&::-webkit-details-marker]:hidden">
+        <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg py-2 pl-2.5 pr-9 text-ui-sm text-qn-muted hover:text-qn-text focus-visible:outline-2 focus-visible:outline-qn-outline-hover [&::-webkit-details-marker]:hidden">
           <Quote size={13} className="shrink-0" aria-hidden />
           <span className="shrink-0 font-medium text-qn-text">{t('引用')}</span>
           <span className="flex-1 truncate">{excerpt}</span>

@@ -1,9 +1,10 @@
 import { t } from '@qn/codex-client'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { basename, imageDataUrl, isImagePath } from '../fileLinks'
 import { useApp } from '../store'
 import { diffRows, formatBytes, numberLines, viewKind, type DiffRow } from '../viewer'
 import { Badge, BottomClose, Button, Header, Loading, Note } from './ui'
+import { ZoomableImage } from './ZoomableImage'
 
 const DIFF_CLASS: Record<DiffRow['kind'], string> = {
   add: 'qn-diff-add',
@@ -11,16 +12,6 @@ const DIFF_CLASS: Record<DiffRow['kind'], string> = {
   hunk: 'qn-diff-hunk',
   meta: 'qn-diff-meta',
   context: '',
-}
-
-function FileImage({ src, title }: { src: string; title: string }) {
-  const [failed, setFailed] = useState(false)
-  if (failed) return <Note message={t('无法显示这张图片，文件内容可能不完整')} tone="warn" />
-  return (
-    <div className="flex justify-center rounded-lg border border-qn-border bg-black/30 p-2">
-      <img src={src} alt={title} decoding="async" onError={() => setFailed(true)} className="max-h-[70dvh] max-w-full object-contain" />
-    </div>
-  )
 }
 
 function TextView({ content, line }: { content: string; line: number | null }) {
@@ -46,7 +37,7 @@ function TextView({ content, line }: { content: string; line: number | null }) {
   )
 }
 
-function DiffView({ text }: { text: string }) {
+export function DiffView({ text }: { text: string }) {
   const { rows, truncated } = useMemo(() => diffRows(text), [text])
   if (rows.length === 0) return <div className="py-6 text-center text-sm text-qn-muted">{t('没有差异')}</div>
   return (
@@ -87,7 +78,7 @@ export function FileViewer() {
         onBack={close}
         right={<Badge>{t('只读')}</Badge>}
       />
-      <div className="qn-body qn-scroll">
+      <div className={`qn-body qn-scroll${kind === 'image' ? ' flex flex-col' : ''}`}>
         {viewer.notice && <Note message={viewer.notice} tone="warn" />}
         {viewer.error && (
           <Note
@@ -131,7 +122,11 @@ export function FileViewer() {
               {viewer.line && <span>{t('· 第 {line} 行', { line: viewer.line })}</span>}
               {file.truncated && <Badge tone="warn">{t('已截断')}</Badge>}
             </div>
-            {kind === 'image' && <FileImage key={file.path} src={imageDataUrl(file.content, file.path)} title={title} />}
+            {kind === 'image' && (
+              <ZoomableImage key={file.path} src={imageDataUrl(file.content, file.path)} alt={title}
+                className="rounded-lg border border-qn-border bg-qn-field p-2"
+                error={<Note message={t('无法显示这张图片，文件内容可能不完整')} tone="warn" />} />
+            )}
             {kind === 'binary' && (
               <Note message={t('这是二进制文件，无法以文本显示。')} />
             )}

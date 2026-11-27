@@ -1,6 +1,6 @@
 import type { TermInfo } from '@qn/protocol'
 import { Plus, Terminal, X } from 'lucide-react'
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { t, translateMessage } from '@qn/codex-client'
 import { ResizeHandle } from '../../components/ResizeHandle'
 import { EmptyState, ErrorNote, IconButton, Spinner } from '../../components/ui'
@@ -30,12 +30,14 @@ function TerminalTab({ visible, ...props }: { visible: boolean; ready: boolean; 
 
 function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string; open: boolean }) {
   const ready = useTargets((state) => state.states[targetId]?.state === 'ready')
+  const newRequest = useTerminalDock((state) => state.newRequest)
   const [state, setState] = useState<{ tabs: TermInfo[]; activeId: string | null }>({ tabs: [], activeId: null })
   const [loading, setLoading] = useState(ready)
   const [busy, setBusy] = useState(false)
   const [warning, setWarning] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
   const mounted = useRef(false)
+  const listing = useRef(false)
 
   useEffect(() => {
     mounted.current = true
@@ -45,6 +47,7 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
   useEffect(() => {
     if (!ready) return
     let current = true
+    listing.current = true
     setLoading(true)
     setWarning(null)
     void serverCall(targetId, 'term.list', {}).then(({ terminals }) => {
@@ -52,12 +55,18 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
     }).catch((err: unknown) => {
       if (current) setWarning(translateMessage(friendlyError(err, t('读取终端列表失败'))))
     }).finally(() => {
-      if (current) setLoading(false)
+      if (current) {
+        listing.current = false
+        setLoading(false)
+      }
     })
-    return () => { current = false }
+    return () => {
+      current = false
+      listing.current = false
+    }
   }, [targetId, cwd, ready, reload])
 
-  const create = async () => {
+  const create = useCallback(async () => {
     setBusy(true)
     setWarning(null)
     try {
@@ -75,7 +84,16 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
     } finally {
       if (mounted.current) setBusy(false)
     }
-  }
+  }, [targetId, cwd])
+
+  useEffect(() => {
+    if (!open || !newRequest || newRequest.targetId !== targetId || newRequest.cwd !== cwd) return
+    if (ready && (listing.current || loading || busy)) return
+    // 先消费请求，避免同一次点击在重新运行 effect 时重复建终端。
+    if (useTerminalDock.getState().newRequest !== newRequest) return
+    useTerminalDock.setState({ newRequest: null })
+    if (ready) void create()
+  }, [open, newRequest, targetId, cwd, ready, loading, busy, create])
 
   const close = async (termId: string) => {
     setBusy(true)
@@ -110,7 +128,7 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
               <div key={info.termId} className={cn('flex shrink-0 items-center rounded-md px-0.5', active ? 'bg-qn-active text-qn-text' : 'text-qn-muted')}>
                 <button
                   type="button"
-                  className="max-w-32 truncate rounded px-1.5 py-1 text-ui-sm hover:text-qn-text focus-visible:outline-qn-accent"
+                  className="max-w-32 truncate rounded px-1.5 py-1 text-ui-sm hover:text-qn-text focus-visible:outline-qn-outline-hover"
                   aria-pressed={active}
                   title={label}
                   onClick={() => setState((previous) => ({ ...previous, activeId: info.termId }))}
@@ -161,6 +179,13 @@ export function TerminalDock() {
   const scope = JSON.stringify([targetId, cwd])
   const [visitedScope, setVisitedScope] = useState<string | null>(null)
   const [height, setHeight] = useState(DEFAULT_HEIGHT)
+
+  useEffect(() => {
+    const { newRequest } = useTerminalDock.getState()
+    if (newRequest && (newRequest.targetId !== targetId || newRequest.cwd !== cwd)) {
+      useTerminalDock.setState({ newRequest: null })
+    }
+  }, [targetId, cwd])
 
   useEffect(() => {
     if (open) setVisitedScope(scope)

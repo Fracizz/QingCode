@@ -20,7 +20,7 @@ export function TurnErrorNote({ error, compact = false }: { error: string; compa
   }
 
   return (
-    <div className="rounded-lg border border-qn-danger/30 bg-qn-danger/10 px-3 py-2.5 text-ui leading-5">
+    <div className="rounded-lg border border-qn-border bg-qn-danger/10 px-3 py-2.5 text-ui leading-5">
       <div className="flex items-start gap-2">
         <CircleAlert size={15} className="mt-0.5 shrink-0 text-qn-danger" />
         <div className="min-w-0 flex-1">

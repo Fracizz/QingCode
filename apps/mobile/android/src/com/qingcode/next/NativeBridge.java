@@ -5,6 +5,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.os.Build;
 import android.os.PersistableBundle;
 import android.webkit.JavascriptInterface;
@@ -43,6 +44,9 @@ public final class NativeBridge {
     void setBackgroundConnectionEnabled(boolean enabled);
     void setDesktopConnectionActive(boolean active);
     void refreshLanguage();
+    boolean keepScreenOn();
+    void setKeepScreenOn(boolean enabled);
+    void setLightSystemBars(boolean light);
   }
 
   private static final ThreadFactory THREAD_FACTORY = new ThreadFactory() {
@@ -204,6 +208,23 @@ public final class NativeBridge {
       if (setting) callback.setBackgroundConnectionEnabled((Boolean) value);
       else callback.setDesktopConnectionActive((Boolean) value);
       return value;
+    }
+    if ("screen.get".equals(method)) return callback.keepScreenOn();
+    if ("screen.set".equals(method)) {
+      Object enabled = params.opt("enabled");
+      if (!(enabled instanceof Boolean)) throw new BridgeException("bad_request", "屏幕常亮设置无效");
+      callback.setKeepScreenOn((Boolean) enabled);
+      return enabled;
+    }
+    if ("appearance.systemTheme".equals(method)) {
+      return (appContext.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+        != Configuration.UI_MODE_NIGHT_YES;
+    }
+    if ("appearance.systemBars".equals(method)) {
+      Object light = params.opt("light");
+      if (!(light instanceof Boolean)) throw new BridgeException("bad_request", "系统栏外观设置无效");
+      callback.setLightSystemBars((Boolean) light);
+      return light;
     }
     if ("clipboard.read".equals(method)) return readClipboard();
     if ("clipboard.write".equals(method)) return writeClipboard(params);

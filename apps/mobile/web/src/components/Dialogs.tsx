@@ -62,7 +62,7 @@ export function DirectoryDialog() {
 
   return (
     <Dialog title={t('添加项目')} onClose={close}>
-      <div className="qn-mono mb-2 break-all rounded-lg border border-qn-border bg-black/20 p-2 text-[11px]">
+      <div className="qn-mono mb-2 break-all rounded-lg border border-qn-border bg-qn-field p-2 text-[11px]">
         {directory.path || t('（正在读取主目录…）')}
       </div>
       {directory.error && <Note message={directory.error} tone="error" />}

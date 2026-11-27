@@ -11,7 +11,7 @@ export function ApprovalCard({
   onDecide: (decision: ApprovalDecision) => void
 }) {
   return (
-    <div className="rounded-lg border border-amber-400/50 bg-amber-400/5 p-3">
+    <div className="rounded-lg border border-qn-border-strong bg-amber-400/5 p-3">
       <div className="mb-2 flex items-center gap-2">
         <ShieldAlert size={15} className="text-amber-300" />
         <span className="text-ui-md font-medium">{approval.title}</span>
@@ -27,7 +27,7 @@ export function ApprovalCard({
         <button className="qn-button-subtle" onClick={() => onDecide('acceptForSession')}>
           {t('本会话允许')}
         </button>
-        <button className="qn-button-subtle border-qn-danger/50 text-qn-danger" onClick={() => onDecide('decline')}>
+        <button className="qn-button-subtle text-qn-danger" onClick={() => onDecide('decline')}>
           {t('拒绝')}
         </button>
       </div>

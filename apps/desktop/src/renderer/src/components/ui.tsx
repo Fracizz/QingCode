@@ -33,7 +33,7 @@ export function IconButton({
       type="button"
       aria-label={label}
       className={cn(
-        'inline-flex shrink-0 items-center justify-center text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent disabled:opacity-40',
+        'inline-flex shrink-0 items-center justify-center text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover disabled:opacity-40',
         size === 'sm' ? 'h-6 w-6 rounded-md' : 'h-8 w-8 rounded-lg',
         danger && 'hover:text-qn-danger',
         className,
@@ -153,7 +153,7 @@ export function Checkbox({
         checked={checked}
         disabled={disabled}
         onCheckedChange={(value) => onChange(value === true)}
-        className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border border-qn-outline bg-qn-field text-white outline-none focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=checked]:border-qn-accent data-[state=checked]:bg-qn-accent"
+        className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border border-qn-outline bg-qn-field text-white outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover data-[state=checked]:border-qn-outline-hover data-[state=checked]:bg-qn-accent"
       >
         <RadixCheckbox.Indicator>
           <Check size={12} strokeWidth={3} />

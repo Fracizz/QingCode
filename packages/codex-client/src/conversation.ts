@@ -50,6 +50,8 @@ export type ItemView =
   | {
       kind: 'user'
       id: string
+      clientId?: string
+      steering?: 'currentTurn' | 'nextTurn'
       text: string
       /** 图片：data URL / http URL（可直接显示），或目标机上的本地图片路径（只显示文件名）。 */
       images?: string[]
@@ -59,7 +61,7 @@ export type ItemView =
       skills?: string[]
       inputExtras?: Exclude<UserInput, { type: 'text' }>[]
       sentAt?: number
-      /** 本地先渲染的占位消息；服务端回显到达后按位置替换，避免重复气泡。 */
+      /** 本地先渲染的占位消息，收到服务端回显后替换。 */
       pending?: boolean
     }
   | { kind: 'agent'; id: string; text: string; streaming: boolean; completedAtMs?: number }
@@ -67,7 +69,14 @@ export type ItemView =
   | { kind: 'command'; id: string; command: string; cwd?: string; output: string; exitCode?: number | null; status: string }
   | { kind: 'fileChange'; id: string; changes: { path: string; kind: string; diff?: string }[]; status: string }
   | SubagentItemView
+  | { kind: 'backgroundTask'; id: string; status: 'completed' | 'failed' | 'stopped'; summary: string; result: string }
   | { kind: 'other'; id: string; type: string; summary: string; status?: string }
+
+export function backgroundTaskLabel(status: Extract<ItemView, { kind: 'backgroundTask' }>['status']): string {
+  if (status === 'failed') return t('后台任务失败')
+  if (status === 'stopped') return t('后台任务已停止')
+  return t('后台任务已完成')
+}
 
 export type ApprovalView = {
   requestId: RequestId
@@ -209,7 +218,8 @@ export function addOptimisticUser(
   item: Extract<ItemView, { kind: 'user' }>,
 ): ConversationState {
   if (!threadId) return s
-  return withThread(s, threadId, (thread) => ({ ...thread, items: [...thread.items, item] }))
+  return withThread(s, threadId, (thread) => thread.items.some((entry) => entry.id === item.id)
+    ? thread : { ...thread, items: [...thread.items, item] })
 }
 
 /** 新会话建好后把草稿里的占位搬进真实 thread，气泡位置不跳动。 */
@@ -227,7 +237,8 @@ export function moveOptimisticUsers(
   if (rest.length === 0) delete threads[fromThreadId]
   else threads[fromThreadId] = { ...from, items: rest }
   const target = threads[toThreadId] ?? emptyThread(toThreadId)
-  threads[toThreadId] = { ...target, items: [...target.items, ...pending] }
+  const existing = new Set(target.items.map((item) => item.id))
+  threads[toThreadId] = { ...target, items: [...target.items, ...pending.filter((item) => !existing.has(item.id))] }
   return { threads }
 }
 
@@ -310,9 +321,15 @@ function turnIdFrom(params: JsonRecord): string {
   return idValue(params.turnId) || idValue(nested?.id)
 }
 
+// clientId 标识同一次用户提交，实时事件和历史条目的原始 id 可能不同。
+function userMessageClientId(item: JsonRecord | null): string {
+  return item?.type === 'userMessage' && typeof item.clientId === 'string' ? item.clientId : ''
+}
+
 function itemIdFrom(params: JsonRecord): string {
   const item = asRecord(params.item)
   return (
+    userMessageClientId(item) ||
     idValue(params.itemId) ||
     idValue(item?.id) ||
     idValue(params.callId) ||
@@ -342,15 +359,12 @@ function replaceItem(
   const index = items.findIndex((item) => item.id === id)
   const existing = index >= 0 ? items[index] : undefined
   const candidate = existing ? update(existing) : create()
-  // 服务端回显的 userMessage 用自己的 id，文本也可能被改写（技能前缀、附件说明）；
-  // 用最早一条本地占位承接它，既保持消息顺序也不会出现两条重复气泡。
-  if (candidate.kind === 'user' && !candidate.pending) {
+  // 旧版回显没有 clientId，只为首次出现的条目匹配本地占位。
+  if (index < 0 && candidate.kind === 'user' && !candidate.clientId && !candidate.pending) {
     const pendingIndex = pendingUserIndex(items, candidate.text)
-    if (pendingIndex >= 0 && pendingIndex !== index) {
-      const next = items.filter((_, position) => position !== pendingIndex)
-      const target = index < 0 ? pendingIndex : pendingIndex < index ? index - 1 : index
-      if (index < 0) next.splice(target, 0, candidate)
-      else next[target] = candidate
+    if (pendingIndex >= 0) {
+      const next = items.slice()
+      next[pendingIndex] = candidate
       return next
     }
   }
@@ -367,6 +381,7 @@ function withItem(
   create: (id: string) => ItemView,
   update: (item: ItemView) => ItemView,
   markRunning: boolean,
+  backgroundTask = false,
 ): ConversationState {
   const threadId = threadIdFrom(params)
   const itemId = itemIdFrom(params)
@@ -378,7 +393,7 @@ function withItem(
     const isRunning = markRunning && !otherTurn
     // 新条目出现说明之前的文本/推理已经输出完：有的 Agent 不会为每条消息发 item/completed，
     // 不收尾的话上一条消息的流式光标会一直挂着。
-    const base = otherTurn || thread.items.some((item) => item.id === itemId) ? thread : finalizeItems(thread)
+    const base = backgroundTask || otherTurn || thread.items.some((item) => item.id === itemId) ? thread : finalizeItems(thread)
     let next: ThreadView = {
       ...thread,
       items: replaceItem(base.items, itemId, () => create(itemId), update),
@@ -389,7 +404,7 @@ function withItem(
       if (next.activity !== 'pending' && next.activity !== 'input') next.activity = 'running'
       delete next.error
     }
-    const owner = turnId || thread.activeTurnId
+    const owner = turnId || (!backgroundTask && thread.activeTurnId)
     if (owner) next = upsertTurnMeta(next, owner, { itemIds: [itemId] })
     return next
   })
@@ -483,13 +498,17 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
 
   switch (type) {
     case 'userMessage': {
+      const clientId = userMessageClientId(item)
       const inputExtras = arrayOf(item.content).filter((value) => {
         const type = asRecord(value)?.type
         return type === 'image' || type === 'localImage' || type === 'audio' || type === 'localAudio' || type === 'mention' || type === 'skill'
       }) as Exclude<UserInput, { type: 'text' }>[]
       const sentAt = optionalNumber(item.startedAtMs) ?? optionalNumber(item.completedAtMs) ?? timestamp
+      const steering = item.steering === 'currentTurn' || item.steering === 'nextTurn' ? item.steering : undefined
       return {
-        kind: 'user', id, text: userText(item.content) || scalarText(item.text), ...userExtras(item.content),
+        kind: 'user', id: clientId || id, text: userText(item.content) || scalarText(item.text), ...userExtras(item.content),
+        ...(clientId ? { clientId } : {}),
+        ...(steering ? { steering } : {}),
         ...(inputExtras.length ? { inputExtras } : {}),
         ...(sentAt != null && sentAt > 0 ? { sentAt } : {}),
       }
@@ -521,8 +540,17 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
     }
     case 'fileChange':
       return { kind: 'fileChange', id, changes: fileChanges(item.changes), status }
+    case 'backgroundTaskNotification':
+      return {
+        kind: 'backgroundTask', id, status: status === 'failed' || status === 'stopped' ? status : 'completed',
+        summary: scalarText(item.summary), result: scalarText(item.result),
+      }
     case 'contextCompaction':
-      return { kind: 'other', id, type, status, summary: streaming ? t('正在压缩会话…') : t('已压缩会话上下文') }
+      return {
+        kind: 'other', id, type, status,
+        summary: status === 'failed' ? t('会话压缩失败') : status === 'interrupted' ? t('会话压缩已中断')
+          : streaming ? t('正在压缩会话…') : t('已压缩会话上下文'),
+      }
     default: {
       const subagent = describeSubagentItem(item, id)
       if (subagent) return subagent
@@ -568,6 +596,9 @@ function mergeItemView(existing: ItemView, candidate: ItemView): ItemView {
       streaming: (candidate.completedAtMs ?? existing.completedAtMs) ? false : candidate.streaming,
     }
   }
+  if (existing.kind === 'backgroundTask' && candidate.kind === 'backgroundTask') {
+    return { ...candidate, summary: candidate.summary || existing.summary, result: candidate.result || existing.result }
+  }
   if (existing.kind === 'reasoning' && candidate.kind === 'reasoning') {
     return { ...candidate, summary: longer(existing.summary, candidate.summary) }
   }
@@ -591,10 +622,11 @@ function mergeItemView(existing: ItemView, candidate: ItemView): ItemView {
     }
   }
   if (existing.kind === 'user' && candidate.kind === 'user') {
+    if (candidate.pending) return existing
+    if (existing.pending) return candidate
     return {
       ...existing,
       ...candidate,
-      pending: candidate.pending,
       text: longer(existing.text, candidate.text),
     }
   }
@@ -619,24 +651,20 @@ export function mergeSubagentHistory(
   return [...items.values()]
 }
 
-type TurnPhase = 'started' | 'completed' | 'loaded'
-
 function positive(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
 }
 
-/** 部分适配器在结束时才填 startedAt，优先沿用 turn/started 时记下的起点。 */
 function turnMeta(
   existing: TurnMeta | undefined,
   turnId: string,
-  patch: { record?: JsonRecord | null; phase?: TurnPhase; itemIds?: string[] },
+  patch: { record?: JsonRecord | null; itemIds?: string[] },
 ): TurnMeta {
   const record = patch.record ?? null
   const outcome = isThreadOutcome(record?.status) ? record.status : existing?.outcome
   const startedSec = positive(record?.startedAt)
   const completedSec = positive(record?.completedAt)
-  const startedAtMs =
-    existing?.startedAtMs ?? (startedSec ? startedSec * 1000 : patch.phase === 'started' ? Date.now() : null)
+  const startedAtMs = startedSec === null ? existing?.startedAtMs ?? null : startedSec * 1000
 
   let durationMs = existing?.durationMs ?? null
   const explicit = record?.durationMs
@@ -644,9 +672,6 @@ function turnMeta(
   else if (durationMs === null && startedAtMs !== null) {
     const completedAtMs = completedSec === null ? null : completedSec * 1000
     if (completedAtMs !== null && completedAtMs >= startedAtMs) durationMs = completedAtMs - startedAtMs
-    else if (patch.phase === 'completed' && existing?.startedAtMs != null) {
-      durationMs = Math.max(0, Date.now() - startedAtMs)
-    }
   }
 
   const itemIds = new Set(existing?.itemIds)
@@ -680,7 +705,7 @@ function upsertTurnMeta(
   return { ...thread, turns: next }
 }
 
-function mergeTurnItems(thread: ThreadView, turn: unknown, streaming: boolean, phase?: TurnPhase): ThreadView {
+function mergeTurnItems(thread: ThreadView, turn: unknown, streaming: boolean): ThreadView {
   const record = asRecord(turn)
   if (!record) return thread
   const ids: string[] = []
@@ -695,7 +720,7 @@ function mergeTurnItems(thread: ThreadView, turn: unknown, streaming: boolean, p
     items = replaceItem(items, candidate.id, () => candidate, (existing) => mergeItemView(existing, candidate))
   }
   const next = items === thread.items ? thread : { ...thread, items }
-  return phase ? upsertTurnMeta(next, idValue(record.id), { record, phase, itemIds: ids }) : next
+  return upsertTurnMeta(next, idValue(record.id), { record, itemIds: ids })
 }
 
 function finalizeItems(thread: ThreadView): ThreadView {
@@ -809,7 +834,7 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
     const itemIds = appendItems(arrayOf(turn.items), turnStreaming, optionalNumber(turn.startedAt))
     if (turnId) {
       turns.set(turnId, turnMeta(turns.get(turnId), turnId, {
-        record: turn, phase: turnStreaming ? 'started' : 'loaded', itemIds,
+        record: turn, itemIds,
       }))
     }
   }
@@ -858,7 +883,7 @@ export function loadRecentThreadHistory(
       ? new Set(live.turns?.find((turn) => turn.id === live.activeTurnId)?.itemIds) : undefined
     const oldItems = new Map(before?.items.map((item) => [item.id, item]))
     const available = new Set(recent.items.map((item) => item.id))
-    const changed = live.items.filter((item) => oldItems.get(item.id) !== item ||
+    const changed = live.items.filter((item) => (item.kind === 'user' && item.pending) || oldItems.get(item.id) !== item ||
       (activeItems?.has(item.id) && !available.has(item.id)))
     if (changed.length) next.items = mergeSubagentHistory(recent.items, changed, before?.items ?? [])
     if (live !== before && (live.status !== before?.status || live.activeTurnId !== before?.activeTurnId ||
@@ -918,7 +943,7 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         if (subagent) next.subagent = subagent
         if (status !== 'error') next = clearError(next)
         if (thread && Array.isArray(thread.turns)) {
-          for (const turn of thread.turns) next = mergeTurnItems(next, turn, false, 'loaded')
+          for (const turn of thread.turns) next = mergeTurnItems(next, turn, false)
         }
         return next
       })
@@ -939,10 +964,7 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
           activity: current.activity === 'pending' || current.activity === 'input' ? current.activity : 'running',
           activeTurnId: turnId || current.activeTurnId,
         }
-        next = mergeTurnItems(next, params.turn, true, 'started')
-        // turn/started 可能不带 turn 对象，计时起点仍要记下。
-        if (turnId) next = upsertTurnMeta(next, turnId, { phase: 'started' })
-        return next
+        return mergeTurnItems(next, params.turn, true)
       })
     }
     case 'turn/completed': {
@@ -955,9 +977,9 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         errorText(turn?.error) ??
         (turnStatus === 'interrupted' ? 'Turn interrupted' : turnStatus === 'failed' ? 'Turn failed' : undefined)
       return withThread(s, id, (current) => {
-        let next = mergeTurnItems(current, params.turn, false, 'completed')
+        let next = mergeTurnItems(current, params.turn, false)
         const completedId = idValue(turn?.id) || idValue(params.turnId) || current.activeTurnId || ''
-        if (completedId && !turn) next = upsertTurnMeta(next, completedId, { phase: 'completed' })
+        if (completedId && !turn) next = upsertTurnMeta(next, completedId, { record: { status: turnStatus } })
         // 旧轮次的中断结果可能迟到，此时只合并历史，保留当前轮的运行状态和审批。
         if (current.status === 'running' && current.activeTurnId && completedId !== current.activeTurnId) return next
         next = finalizeItems(next)
@@ -995,6 +1017,7 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         () => completed,
         (existing) => mergeItemView(existing, completed),
         false,
+        completed.kind === 'backgroundTask',
       )
     }
     case 'item/agentMessage/delta': {

@@ -6,6 +6,7 @@ import { ensure } from './ensure'
 import { runDirect, runServe } from './serve'
 import { VERSION } from './version'
 import { runClaudeHistoryWorker } from './claude/sessionReader'
+import { publishClaudeStatusLine } from './claude/statusLineCli'
 
 const USAGE = [
   // i18n-ignore: 命令行用法说明，只在终端打印
@@ -13,6 +14,8 @@ const USAGE = [
   '  | ensure [--state-dir D] [--replace | --force-replace]',
   '  | daemon [--state-dir D]',
   '  | connect --stdio [--state-dir D]',
+  // i18n-ignore: 命令行用法说明，只在终端打印
+  '  | claude-statusline [--state-dir D]（从 stdin 接收 Claude CLI 状态栏数据）',
   '  | direct enable --listen [host:]port [--allow-public] | direct disable',
   '  | direct grant [--name N] [--host H]... | direct revoke --id ID | direct status',
   '  | serve --listen [host:]port [--allow-public] [--name N] [--host H]...（= enable + grant）',
@@ -37,6 +40,9 @@ async function main(): Promise<void> {
       return
     case 'connect':
       await runConnect({ stateDir: args.stateDir })
+      return
+    case 'claude-statusline':
+      await publishClaudeStatusLine(args.stateDir)
       return
     case 'direct':
       print(await runDirect(args))

@@ -22,31 +22,29 @@ import { agentLabel, DEFAULT_AGENT, sessionKey } from '../../lib/agents'
 import { copyText } from '../../lib/clipboard'
 import { cn } from '../../lib/cn'
 import { formatTime, threadKey, threadPreviewText, type ThreadSummary } from '../../lib/threads'
-import { formatRelative } from '../../lib/time'
 import { useCodex } from '../../store/codex'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { AgentIcon } from '../AgentIcon'
 import { LoadingIcon } from '../LoadingIcon'
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, floatSurface, menuItemClass, MenuItemContent, Tip } from '../primitives'
-import { StatusDot } from '../StatusDot'
 import { IconButton, Modal } from '../ui'
 
-type ThreadRowStatus = SessionStatus | 'opening'
+type ThreadRowStatus = Exclude<SessionStatus, 'idle' | 'completed'> | 'opening'
 
 const statusIcons: Record<ThreadRowStatus, ReactNode> = {
-  idle: <StatusDot className="size-2 bg-qn-muted/60" />,
   running: <LoadingIcon />,
-  pending: <ShieldAlert size={13} className="text-amber-300" aria-hidden />,
-  input: <MessageSquare size={13} className="text-amber-300" aria-hidden />,
-  // 绿勾只提示「有新结果未查看」（unread）；已查看过的完成会话回到空闲样式，勾消失。
-  completed: <StatusDot className="size-2 bg-qn-muted/60" />,
+  pending: <ShieldAlert size={13} className="text-qn-warn" aria-hidden />,
+  input: <MessageSquare size={13} className="text-qn-warn" aria-hidden />,
   failed: <CircleAlert size={13} className="text-qn-danger" aria-hidden />,
   interrupted: <CirclePause size={13} className="text-qn-muted" aria-hidden />,
-  unread: <Check size={14} strokeWidth={2.5} className="text-emerald-400" aria-hidden />,
+  unread: <Check size={14} strokeWidth={2.5} className="text-qn-ok" aria-hidden />,
   opening: <LoadingIcon />,
 }
 
-function ThreadStatusIcon({ status, label }: { status: ThreadRowStatus; label: string }) {
+function ThreadStatusIcon({ status, label }: { status: ThreadRowStatus | 'idle'; label: string }) {
+  // 空闲时保留图标位置，让会话标题与项目名对齐。
+  if (status === 'idle') return <span className="size-(--qn-tree-icon-size) shrink-0" aria-hidden />
+
   return (
     <Tip label={label}>
       <span
@@ -102,13 +100,11 @@ function onMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
 export const ThreadRow = memo(function ThreadRow({
   thread,
   targetId,
-  now,
   current,
   onActivate,
 }: {
   thread: ThreadSummary
   targetId: string
-  now: number
   current: boolean
   onActivate: () => void
 }) {
@@ -128,8 +124,12 @@ export const ThreadRow = memo(function ThreadRow({
 
   const pinned = prefs?.pinned[key] !== undefined
   const unread = prefs?.unread[key] === true && !current
-  const status = useCodex((s) =>
-    sessionStatus(s.sessions[sessionKey(targetId, thread.agent)]?.state.threads[thread.id], thread.activity, unread))
+  // 会话行只显示状态，正文增量无需重绘这一行。
+  const activity = useCodex((s) => sessionStatus(
+    s.sessions[sessionKey(targetId, thread.agent)]?.state.threads[thread.id], thread.activity, unread,
+  ))
+  // 查看结果后，侧栏用空闲状态表示会话正在等待下一条消息。
+  const status = activity === 'completed' ? 'idle' : activity
   const statusLabel = opening ? t('正在打开会话') : sessionStatusLabels[status]
   const running = isActiveThread(status)
   const showActions = status !== 'pending' && status !== 'input'
@@ -209,7 +209,7 @@ export const ThreadRow = memo(function ThreadRow({
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <div
-            className={`group relative flex min-h-8 w-full cursor-default items-center gap-(--qn-tree-row-inset) rounded-lg pl-(--qn-tree-row-inset) text-[length:var(--qn-session-font-size)] leading-tight data-[state=open]:bg-qn-hover ${
+            className={`group flex min-h-8 w-full cursor-default items-center gap-(--qn-tree-row-inset) rounded-lg pl-(--qn-tree-row-inset) pr-2 text-[length:var(--qn-session-font-size)] leading-tight data-[state=open]:bg-qn-hover ${
               current ? 'bg-qn-active text-qn-text' : 'text-qn-text/80 hover:bg-qn-hover hover:text-qn-text'
             }`}
             onClick={(event) => {
@@ -227,26 +227,17 @@ export const ThreadRow = memo(function ThreadRow({
                 type="button"
                 aria-busy={opening}
                 aria-current={current ? 'true' : undefined}
-                className={cn(
-                  'flex min-w-0 flex-1 cursor-default items-center gap-2 self-stretch rounded-lg py-px pr-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-accent',
-                  showActions && (running ? 'group-hover:pr-9' : 'group-hover:pr-15'),
-                )}
+                className="flex min-w-0 flex-1 cursor-default items-center gap-2 self-stretch rounded-lg py-px text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover"
                 onKeyDown={(event) => {
                   if (event.key === 'F2') beginRename()
                 }}
               >
                 <span className={cn('min-w-0 flex-1 truncate', unread && 'text-qn-text')}>{thread.title}</span>
                 {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label={t('已置顶')} />}
-                {thread.agent !== DEFAULT_AGENT && <AgentIcon agent={thread.agent} size={12} className="pointer-events-none" />}
-                {showActions && (
-                  <span className="shrink-0 text-[length:var(--qn-session-detail-font-size)] text-qn-muted group-hover:hidden" aria-hidden="true">
-                    {formatRelative(thread.updatedAt, now)}
-                  </span>
-                )}
               </button>
             </Tip>
             {showActions && (
-              <span className="absolute inset-y-0 right-1 hidden items-center group-hover:flex" onClick={(e) => e.stopPropagation()}>
+              <span className="hidden shrink-0 items-center group-hover:flex group-has-focus-visible:flex" onClick={(e) => e.stopPropagation()}>
                 <IconButton
                   label={pinned ? t('取消置顶') : t('置顶')}
                   className="h-6 w-6"
@@ -261,6 +252,7 @@ export const ThreadRow = memo(function ThreadRow({
                 )}
               </span>
             )}
+            <AgentIcon agent={thread.agent} size={12} />
           </div>
         </ContextMenu.Trigger>
         <ContextMenuContent className="min-w-52" onKeyDown={onMenuKeyDown}>

@@ -8,7 +8,7 @@ import { openFile } from '../features/workspace/openers'
 import { sessionKey } from '../lib/agents'
 import { basename } from '../lib/attachments'
 import { pendingSendKey, useCodex } from '../store/codex'
-import { canContinueQueued, canSteerQueued, type PendingThreadMode } from '../store/pendingQueue'
+import { canContinueQueued, type PendingThreadMode } from '../store/pendingQueue'
 import { MessageImage } from './MessageImage'
 import { IconButton, Modal } from './ui'
 
@@ -36,7 +36,7 @@ function attachmentPreviews(input: readonly UserInput[], targetId: string, cwd: 
 
 const newThreadActions = [
   { mode: 'start', label: t('新会话开始'), Icon: MessageSquarePlus },
-  { mode: 'continue', label: t('新会话继续'), Icon: GitBranch },
+  { mode: 'continue', label: t('新对话继续'), Icon: GitBranch },
 ] as const
 
 export function SendQueue({
@@ -72,7 +72,7 @@ export function SendQueue({
   useEffect(() => () => release.current?.(), [])
   if (!chat || !pending?.length) return null
 
-  const canSteer = running && canSteerQueued(agent) && !!view?.activeTurnId
+  const canSteer = running && !!view?.activeTurnId
   const canContinue = canContinueQueued(agent)
   const hasFinishedTurn = !!view?.turns?.some((turn) => turn.outcome)
 
@@ -117,7 +117,7 @@ export function SendQueue({
   const destinationBlocked = continuing && (!canContinue || !hasFinishedTurn)
 
   return (
-    <div className={`shrink-0 ${compact ? 'px-3' : 'px-6'}`}>
+    <div className={`shrink-0 ${compact ? 'px-4' : 'px-6'}`}>
       <section
         aria-label={t('发送队列')}
         className={`mx-auto rounded-xl border border-qn-border bg-qn-panel px-3 py-2 text-ui-sm ${contentWidthClassName}`}
@@ -131,7 +131,7 @@ export function SendQueue({
               <li key={item.id} className="rounded-md bg-qn-elevated px-2">
                 <div className="flex min-h-7 items-center gap-1.5">
                   <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                    {(text || !attachments.length) && <span className="min-w-0 truncate">{text || t('附件或技能')}</span>}
+                    {(text || !attachments.length) && <span className="min-w-0 truncate" title={text || undefined}>{text || t('附件或技能')}</span>}
                     {attachments.length > 0 && (
                       <div className={`flex shrink-0 flex-wrap gap-1 py-0.5 ${text ? 'max-w-1/2' : 'max-w-full'}`}>
                         {attachments}
@@ -153,7 +153,7 @@ export function SendQueue({
                     <button
                       type="button"
                       className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 text-qn-accent hover:underline"
-                      title={t('补充到当前一轮')}
+                      title={agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
                       onClick={() => void steer(chat, item.id)}
                     >
                       <CornerDownRight size={12} aria-hidden />{t('引导')}
@@ -177,7 +177,7 @@ export function SendQueue({
                     <X size={13} />
                   </IconButton>
                 </div>
-                {item.error && <div role="status" className="break-words pb-1 text-qn-warn">{translateMessage(item.error)}</div>}
+                {item.error && <div role="status" className="wrap-anywhere pb-1 text-qn-warn">{translateMessage(item.error)}</div>}
               </li>
             )
           })}
@@ -200,7 +200,8 @@ export function SendQueue({
               <textarea
                 autoFocus
                 aria-label={t('排队消息正文')}
-                className="qn-input qn-scroll min-h-28 resize-y"
+                className="qn-input qn-scroll min-h-28 resize-y overflow-x-hidden wrap-anywhere"
+                wrap="soft"
                 value={edit.text}
                 onChange={(event) => setEdit({ id: edit.id, text: event.target.value })}
                 onKeyDown={(event) => {
@@ -215,21 +216,21 @@ export function SendQueue({
       )}
       {destination && (
         <Modal
-          title={continuing ? t('新会话继续') : t('新会话开始')}
+          title={continuing ? t('新对话继续') : t('新会话开始')}
           description={continuing
-            ? t('继承最后一个已结束轮次的上下文，在新会话里发送这条消息。')
+            ? t('继承最后一个已结束轮次的上下文，在右侧打开分支并发送这条消息。')
             : t('从空白会话开始，用这条消息作为第一条消息。')}
           onClose={closeDestination}
           footer={
             <div className="flex justify-end gap-2">
               <button type="button" className="qn-button-subtle" disabled={moving} onClick={closeDestination}>{t('取消')}</button>
               <button type="button" className="qn-button disabled:opacity-40" disabled={!moved || moving || destinationBlocked}
-                onClick={() => void submitDestination()}>{moving ? t('正在发送…') : t('在新会话发送')}</button>
+                onClick={() => void submitDestination()}>{moving ? t('正在发送…') : continuing ? t('在侧边栏发送') : t('在新会话发送')}</button>
             </div>
           }
         >
           {moved ? (
-            <p className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-inset p-2 text-ui-sm">
+            <p className="max-h-32 overflow-y-auto whitespace-pre-wrap wrap-anywhere rounded-lg border border-qn-border bg-qn-inset p-2 text-ui-sm">
               {moved.text.trim() || t('附件或技能')}
             </p>
           ) : <p className="text-qn-muted">{t('这条消息已离开队列。')}</p>}

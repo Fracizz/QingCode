@@ -1,6 +1,8 @@
 /** getSessionMessages / listSessions 的历史 → v2 Thread/turns/items（纯函数）。 */
 import { emptyMapState, mapHistoryMessage } from './items'
+import { userTaskNotification } from './taskNotification'
 import type { ThreadStatus } from '../../../../vendor/codex-protocol/ts/v2/ThreadStatus'
+import { isSteerPlacement, type SteerPlacement } from '../steerHistory'
 import {
   asRecord,
   buildThread,
@@ -19,6 +21,16 @@ export interface HistoryResult {
   thread: Json
   turns: Json[]
   items: V2Item[]
+  forkPoints: { turnId: string; firstMessageId: string; lastMessageId: string }[]
+}
+
+export type ClaudeSteerHistory = { placement: SteerPlacement; startsTurn: boolean }
+
+export function parseClaudeSteer(value: unknown): ClaudeSteerHistory | undefined {
+  const entry = asRecord(value)
+  if (isSteerPlacement(entry?.placement) && typeof entry.startsTurn === 'boolean') {
+    return { placement: entry.placement, startsTurn: entry.startsTurn }
+  }
 }
 
 /** SDKSessionInfo 的时间戳是毫秒，v2 Thread 用秒。 */
@@ -66,6 +78,8 @@ interface OpenTurn {
   id: string
   itemIds: string[]
   error?: string
+  firstMessageId: string
+  lastMessageId: string
 }
 
 /**
@@ -100,13 +114,14 @@ export function lastReplyModel(messages: unknown[]): string | null {
 }
 
 /**
- * 按用户消息切分 turns：每条带文本的用户消息开启新 turn，
- * tool_result 与 assistant 消息归属当前 turn；item 映射复用 items.ts。
+ * 按用户输入切分 turns，后台任务通知、工具回执与回复都归属当前 turn。
  */
 export function sessionMessagesToThread(
   meta: SessionMeta,
   messages: unknown[],
   config: ThreadConfig = {},
+  taskDeliveryIds?: ReadonlyMap<string, string>,
+  steers?: ReadonlyMap<string, ClaudeSteerHistory>,
 ): HistoryResult {
   const state = emptyMapState()
   const open: OpenTurn[] = []
@@ -118,19 +133,21 @@ export function sessionMessagesToThread(
     const apiMessage = asRecord(raw)
     if (!apiMessage) continue
     const role = scalarText(apiMessage.role)
-    if (role === 'user' && hasUserText(apiMessage.content)) {
-      current = { id: `turn-${meta.id}-${index}`, itemIds: [] }
-      open.push(current)
-    }
-    if (!current) {
-      current = { id: `turn-${meta.id}-${index}`, itemIds: [] }
-      open.push(current)
-    }
+    const messageId = scalarText(entry?.uuid)
+    const steer = steers?.get(messageId)
     // SDK 的 assistant/user 包装类型与 Anthropic API 的 message 对象不同，这里补一层。
     const sdkMessage: Json = {
       type: role === 'assistant' ? 'assistant' : 'user',
       message: apiMessage,
+      uuid: entry?.uuid,
+      origin: entry?.origin,
     }
+    if (!current || (role === 'user' && hasUserText(apiMessage.content) && !userTaskNotification(sdkMessage)
+      && (steer?.startsTurn ?? true))) {
+      current = { id: `turn-${meta.id}-${index}`, itemIds: [], firstMessageId: messageId, lastMessageId: '' }
+      open.push(current)
+    }
+    if ((role === 'user' || role === 'assistant') && messageId) current.lastMessageId = messageId
     const ctx: MapContext = { threadId: meta.id, turnId: current.id, cwd: meta.cwd }
     const before = state.order.length
     if (role === 'assistant') {
@@ -138,7 +155,9 @@ export function sessionMessagesToThread(
       if (apiError) current.error = apiError
       else delete current.error
     }
-    mapHistoryMessage(sdkMessage, ctx, state)
+    mapHistoryMessage(sdkMessage, ctx, state, taskDeliveryIds)
+    const item = state.items[messageId]
+    if (steer && item?.type === 'userMessage') item.steering = steer.placement
     for (const id of state.order.slice(before)) current.itemIds.push(id)
   }
   // item 的 completed 状态可能在后续消息里才补齐，turn 对象必须最后一次性生成。
@@ -148,8 +167,10 @@ export function sessionMessagesToThread(
       turn.itemIds.map((id) => state.items[id]).filter(isRecord),
       turn.error ? 'failed' : 'completed',
       turn.error ?? null,
+      'history',
     ),
   )
   const items = state.order.map((id) => state.items[id]).filter(isRecord)
-  return { thread: buildThread(meta, finalTurns, config), turns: finalTurns, items }
+  const forkPoints = open.map(({ id: turnId, firstMessageId, lastMessageId }) => ({ turnId, firstMessageId, lastMessageId }))
+  return { thread: buildThread(meta, finalTurns, config), turns: finalTurns, items, forkPoints }
 }

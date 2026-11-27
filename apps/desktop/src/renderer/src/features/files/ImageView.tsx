@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Binary, Download, ExternalLink } from 'lucide-react'
 import { t } from '@qn/codex-client'
+import { ZoomableImage } from '../../components/ZoomableImage'
 import { cn } from '../../lib/cn'
 import { basename, imageDataUrl } from './fileLinks'
 
@@ -18,21 +19,9 @@ export function ImageView({
   onDownload?: DownloadAction
 }) {
   const src = useMemo(() => imageDataUrl(content, path), [content, path])
-  const [originalSize, setOriginalSize] = useState(false)
   if (!src) return <BinaryNotice path={path} className={className} onDownload={onDownload} />
   return (
-    <div className={cn('qn-scroll flex min-h-0 flex-1 overflow-auto bg-qn-code p-4', className)}>
-      <button
-        type="button"
-        className={cn('m-auto flex shrink-0 items-center justify-center', originalSize ? 'cursor-zoom-out' : 'h-full w-full cursor-zoom-in')}
-        aria-label={originalSize ? t('适应窗口') : t('查看原始尺寸')}
-        title={originalSize ? t('适应窗口') : t('查看原始尺寸')}
-        aria-pressed={originalSize}
-        onClick={() => setOriginalSize((value) => !value)}
-      >
-        <img src={src} alt={basename(path)} className={originalSize ? 'max-w-none' : 'max-h-full max-w-full object-contain'} />
-      </button>
-    </div>
+    <ZoomableImage src={src} alt={basename(path)} allowOriginalSize className={cn('bg-qn-code p-4', className)} />
   )
 }
 

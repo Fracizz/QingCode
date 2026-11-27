@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { RateLimitSnapshot, RateLimitWindow } from './codex-types'
 import {
   applyRateLimitsUpdate,
+  claudeQuotaBlocked,
+  claudeQuotaResetAt,
   compactText,
   emptySnapshot,
   formatReset,
   mergeSnapshot,
   pickAccount,
+  pickClaudeSnapshot,
   pickSnapshot,
   remainingQuotaPercent,
   severity,
@@ -134,6 +137,19 @@ describe('mergeSnapshot', () => {
       })?.secondary?.usedPercent,
     ).toBe(95)
   })
+})
+
+it('Claude 通知与读取使用同一份时间，拒绝事件可以只带重置时间', () => {
+  const observedAt = 1_800_000_000_000
+  const rejectionResetsAt = 1_800_000_120
+  const rateLimits = { observedAt, rejectionResetsAt, rateLimitReachedType: 'rate_limit_reached' }
+  const pushed = pickClaudeSnapshot({ method: 'account/rateLimits/updated', params: { rateLimits } })
+  expect(pickClaudeSnapshot({ rateLimits })).toEqual(pushed)
+  expect(pushed?.observedAt).toBe(observedAt)
+  expect(claudeQuotaResetAt(pushed)).toBe(rejectionResetsAt)
+  expect(claudeQuotaBlocked(pushed, observedAt)).toBe(true)
+  expect(claudeQuotaBlocked(pushed, rejectionResetsAt * 1000)).toBe(false)
+  expect(pickClaudeSnapshot({ rateLimits: { primary: makeWindow(0) } })?.observedAt).toBeUndefined()
 })
 
 describe('windowLabel / windowShortLabel', () => {

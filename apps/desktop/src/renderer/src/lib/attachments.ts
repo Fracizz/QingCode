@@ -81,13 +81,13 @@ export function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path
 }
 
-/** 粘贴图片在正文里的占位，和附件卡片上的名字一致。 */
+/** 输入框内的图片文件名占位。 */
 export function imagePlaceholder(name: string): string {
   return `[${name}]`
 }
 
 /**
- * 给粘贴的图片取不重名的名字：截图通常都叫 image.png，重名时占位无法对应到具体附件，
+ * 给图片附件取不重名的名字：截图通常都叫 image.png，重名时占位无法对应到具体附件，
  * 所以依次改成 image-2.png、image-3.png。
  */
 export function uniqueImageName(name: string, taken: Iterable<string>): string {
@@ -113,13 +113,45 @@ export function insertAtSelection(value: string, start: number, end: number, tex
   return { value: left + inserted + right, caret: left.length + inserted.length }
 }
 
-/** 移除附件时去掉正文里对应的第一个占位，连带吃掉它后面的一个空格。 */
+export function insertImagePlaceholders(
+  value: string,
+  names: string[],
+  selection = { start: value.length, end: value.length },
+  pastedText = '',
+): { value: string; caret: number } {
+  const { start, end } = selection
+  // 剪贴板同时有文件和文字时，先插入文字，再接上图片名。
+  const plain = pastedText.replace(/\r\n?/g, '\n')
+  const nextText = plain ? value.slice(0, start) + plain + value.slice(end) : value
+  const position = start + plain.length
+  if (!names.length) return { value: nextText, caret: position }
+  return insertAtSelection(nextText, position, plain ? position : end, names.map(imagePlaceholder).join(' '))
+}
+
+/** 去掉对应的第一个占位及一个分隔空格，保留原有换行。 */
 export function removePlaceholder(value: string, name: string): string {
   const token = imagePlaceholder(name)
   const index = value.indexOf(token)
   if (index < 0) return value
   const end = index + token.length
-  return value.slice(0, index) + value.slice(value[end] === ' ' ? end + 1 : end)
+  if (value[end] === ' ') return value.slice(0, index) + value.slice(end + 1)
+  const start = value[index - 1] === ' ' ? index - 1 : index
+  return value.slice(0, start) + value.slice(end)
+}
+
+/** 图片名单独显示，正文只保留用户输入的内容。 */
+export function stripImagePlaceholders(value: string, attachments: readonly Attachment[]): string {
+  for (const item of attachments) {
+    if (item.kind === 'image') value = removePlaceholder(value, item.name)
+  }
+  return value
+}
+
+/** 历史消息的内嵌图片只带数据，用格式和序号生成预览标签。 */
+export function embeddedImageLabel(src: string, index: number): string {
+  const format = /^data:image\/([^;,]+)/.exec(src)?.[1]
+  const name = index === 0 ? 'image' : `image-${index + 1}`
+  return imagePlaceholder(`${name}${format ? `.${format}` : ''}`)
 }
 
 export type SkillRef = { name: string; path: string }
@@ -197,9 +229,10 @@ export type SlashItem = {
   /** 技能来源（用户级 / 项目级 / 系统），仅展示。 */
   scope?: string
   path?: string
+  reason?: string | null
 }
 
-/** 排序：名称前缀匹配 > 名称包含 > 描述包含；同级内命令在技能之前、再按名称。 */
+/** 排序：名称前缀匹配 > 名称包含 > 描述包含；同级命令按菜单顺序，技能按名称。 */
 export function filterSlashItems(items: SlashItem[], query: string): SlashItem[] {
   const q = query.trim().toLowerCase()
   const rank = (item: SlashItem): number => {
@@ -216,8 +249,8 @@ export function filterSlashItems(items: SlashItem[], query: string): SlashItem[]
     .sort(
       (a, b) =>
         a.score - b.score ||
-        (a.item.kind === b.item.kind ? 0 : a.item.kind === 'command' ? -1 : 1) ||
-        a.item.name.localeCompare(b.item.name),
+        (a.item.kind !== b.item.kind ? (a.item.kind === 'command' ? -1 : 1)
+          : a.item.kind === 'skill' ? a.item.name.localeCompare(b.item.name) : 0),
     )
     .map((entry) => entry.item)
 }

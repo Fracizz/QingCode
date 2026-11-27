@@ -333,6 +333,7 @@ describe('result / rate_limit_event / turn 收尾', () => {
       type: 'result',
       subtype: 'success',
       is_error: false,
+      duration_ms: 1234,
       usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 2 },
       total_cost_usd: 0.012,
       result: '你好',
@@ -341,6 +342,7 @@ describe('result / rate_limit_event / turn 收尾', () => {
     const turn = mapped[0]?.params.turn as Json
     expect(turn.status).toBe('completed')
     expect(turn.id).toBe('turn-1')
+    expect(turn.durationMs).toBe(1234)
     const usage = mapped[1]?.params.tokenUsage as Json
     expect((usage.total as Json).totalTokens).toBe(17)
     expect(usage.estimatedCostUsd).toBe(0.012)
