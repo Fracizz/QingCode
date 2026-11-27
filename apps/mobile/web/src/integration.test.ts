@@ -504,7 +504,7 @@ describe('模拟网关全链路', () => {
     await state().openThread(claudeThread!, 'claude')
     expect(state().draftText).toBe('失败仍保留')
     expect(state().annotations).toMatchObject([{ quote: '引用', comment: '备注' }])
-    expect(state().modelPrefs['codex:local']?.model).toBe('gpt-5.5-mini')
+    expect(state().modelPrefs.codex?.model).toBe('gpt-5.5-mini')
 
     const approvalRequestId = 98765
     const approvalEvent = (msg: unknown, seq: number) => state().handleGatewayEvent({

@@ -335,6 +335,12 @@ describe('手机网关纯逻辑', () => {
     expect(({} as Record<string, unknown>).codex).toBeUndefined()
   })
 
+  it('mobile.agents 下发隐藏模型名单，坏数据丢弃', () => {
+    const result = mobileAgentsFromSettings({ general: { hiddenModels: { claude: ['default', 1], gpt: ['x'] } }, agents: {} })
+    expect(result.hiddenModels).toEqual({ claude: ['default'] })
+    expect('hiddenModels' in mobileAgentsFromSettings({ general: { hiddenModels: { claude: [] } } })).toBe(false)
+  })
+
   it('codex.open 以电脑设置指定可执行文件和配置目录', () => {
     expect(injectAgentPath({ targetId: 'local', method: 'codex.open', params: { agent: 'codex' } }, APP_SETTINGS))
       .toEqual({ targetId: 'local', method: 'codex.open', params: {

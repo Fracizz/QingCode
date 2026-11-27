@@ -73,6 +73,7 @@ export interface QueryLike extends AsyncIterable<unknown> {
   setModel?(model?: string): Promise<void>
   setPermissionMode?(mode: PermissionMode): Promise<void>
   applyFlagSettings?(settings: Record<string, unknown>): Promise<void>
+  getContextUsage?(opts?: { detail?: 'summary' | 'full' }): Promise<unknown>
 }
 
 /** 可注入的 SDK 门面：真机走动态 import，测试注入假的 query 工厂。 */
@@ -108,6 +109,8 @@ interface BridgeSession {
   historyModel?: string | null
   permissionMode: PermissionMode
   allowsBypass: boolean
+  /** 已向 SDK 查询过上下文窗口；每个会话只查一次，失败也不重试。 */
+  contextWindowProbed?: boolean
 }
 
 interface ClaudeScope {
@@ -950,6 +953,9 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     for (const note of mapped.notifications) {
       if (note.method !== 'account/rateLimits/updated') this.notify(note)
     }
+    if (session.state.contextWindow == null && session.state.contextUsage && record?.type !== 'result') {
+      this.probeContextWindow(session)
+    }
     if (record?.type === 'result') {
       const userMessageIds = record.user_message_uuids
       if (session.turnId && Array.isArray(userMessageIds)) {
@@ -967,6 +973,29 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       }
       this.touch(session)
     }
+  }
+
+  /**
+   * 窗口大小原本只在每轮结束的 result.modelUsage 里给出，首轮进行中占用环只能空着。
+   * 首次拿到用量时用 SDK 的 getContextUsage（summary 模式不额外调用计数接口）补上窗口并重发一次。
+   */
+  private probeContextWindow(session: BridgeSession): void {
+    const query = session.query
+    if (session.contextWindowProbed || !query?.getContextUsage) return
+    session.contextWindowProbed = true
+    void query.getContextUsage({ detail: 'summary' }).then((raw) => {
+      const usage = asRecord(raw)
+      const window = finite(usage?.rawMaxTokens) ?? finite(usage?.maxTokens)
+      if (!window || window <= 0 || session.query !== query || session.state.contextWindow != null) return
+      session.state.contextWindow = window
+      const last = session.state.contextUsage
+      if (!session.turnId || !last) return
+      this.notify({ method: 'thread/tokenUsage/updated', params: {
+        threadId: session.meta.id,
+        turnId: session.turnId,
+        tokenUsage: { total: last, last, modelContextWindow: window, estimated: true },
+      } })
+    }, () => undefined)
   }
 
   private startSteeredTurn(session: BridgeSession): string {

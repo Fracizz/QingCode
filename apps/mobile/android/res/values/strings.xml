@@ -5,4 +5,9 @@
     <string name="desktop_connection_title">QingCode is staying connected to your computer</string>
     <string name="install_confirm_unavailable">Cannot open the system install confirmation. Return to the app and try again</string>
     <string name="install_rejected">Android refused to install this update</string>
+    <string name="download_channel">File downloads</string>
+    <string name="download_running">Downloading %1$s</string>
+    <string name="download_done">Saved %1$s</string>
+    <string name="download_failed">Failed to download %1$s</string>
+    <string name="download_cancel">Cancel</string>
 </resources>

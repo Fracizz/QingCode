@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createServer, type Server as HttpsServer } from 'node:https'
-import { isGlobalAccessMode, resolveAccessMode, turnAccessOverride, type GlobalAccessMode } from '@qn/codex-client'
+import { isGlobalAccessMode, resolveAccessMode, sanitizeHiddenModels, turnAccessOverride, type GlobalAccessMode, type HiddenModels } from '@qn/codex-client'
 import { isJsonRpcRequest } from '@qn/protocol'
 import { redactToken } from '../remoteCommands'
 import { RouterError, toWireError, type CodexReplyRoute } from '../router'
@@ -172,6 +172,8 @@ function ownRecord(value: unknown, key: string): JsonRecord | null {
 export type MobileAgentsResult = {
   defaultAgent: AgentName
   globalAccessMode?: GlobalAccessMode
+  /** 电脑端设置的隐藏模型名单，手机只读。 */
+  hiddenModels?: HiddenModels
   agents: Record<string, Partial<Record<AgentName, { enabled: boolean }>>>
 }
 
@@ -192,7 +194,13 @@ export function mobileAgentsFromSettings(settings: unknown): MobileAgentsResult 
     agents[targetId] = picked
   }
   const globalAccessMode = general?.globalAccessMode
-  return { defaultAgent, agents, ...(isGlobalAccessMode(globalAccessMode) ? { globalAccessMode } : {}) }
+  const hiddenModels = sanitizeHiddenModels(general?.hiddenModels)
+  return {
+    defaultAgent,
+    agents,
+    ...(isGlobalAccessMode(globalAccessMode) ? { globalAccessMode } : {}),
+    ...(hiddenModels ? { hiddenModels } : {}),
+  }
 }
 
 const AGENT_PATH_KEYS: Record<AgentName, 'codexPath' | 'claudePath' | 'piPath'> = {

@@ -1,5 +1,5 @@
 // 多 Agent 纯逻辑：会话键、事件路由、启用状态、会话列表合并。思路移植自桌面 lib/agents.ts，不跨包 import。
-import { isGlobalAccessMode, type GlobalAccessMode, t } from '@qn/codex-client'
+import { isGlobalAccessMode, sanitizeHiddenModels, type GlobalAccessMode, type HiddenModels, t } from '@qn/codex-client'
 import { byCreatedAt, type ThreadSummary } from './state'
 import type { AgentKind } from './types'
 
@@ -54,6 +54,8 @@ export type MobileAgentSettings = {
   /** 电脑网关支持锁屏后代发排队消息（mobile.queue.put / take）。 */
   backgroundQueue?: true
   globalAccessMode?: GlobalAccessMode
+  /** 电脑端设置的隐藏模型名单（只读）。 */
+  hiddenModels?: HiddenModels
   agents: Record<string, Partial<Record<AgentKind, { enabled: boolean }>>>
 }
 
@@ -70,11 +72,13 @@ export function parseMobileAgents(value: unknown): MobileAgentSettings | null {
     }
     agents[targetId] = prefs
   }
+  const hiddenModels = sanitizeHiddenModels(value.hiddenModels)
   return {
     defaultAgent: isAgentKind(value.defaultAgent) ? value.defaultAgent : DEFAULT_AGENT,
     ...(value.fastHistoryOpen === true ? { fastHistoryOpen: true } : {}),
     ...(value.backgroundQueue === true ? { backgroundQueue: true } : {}),
     ...(isGlobalAccessMode(value.globalAccessMode) ? { globalAccessMode: value.globalAccessMode } : {}),
+    ...(hiddenModels ? { hiddenModels } : {}),
     agents,
   }
 }

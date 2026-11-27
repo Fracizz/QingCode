@@ -15,4 +15,4 @@ New-Item -ItemType Directory -Force -Path apps/mobile/android/build/test-classes
 & "$jdk\bin\java.exe" -cp apps/mobile/android/build/test-classes com.qingcode.next.PureLogicTest
 ```
 
-输出 `pure logic tests passed` 即通过。真机应覆盖扫码应用可用与不可用、冷启动深链、多图选择及取消、完整下载及取消、中文键盘及旋转，以及 APK 签名不符和系统安装确认。语言方面覆盖系统首选语言为中文、其他语言（次选含中文）时的通知渠道名、常驻通知和安装 Toast，以及应用内切换后正在运行的通知随之更新。
+输出 `pure logic tests passed` 即通过。真机应覆盖扫码应用可用与不可用、冷启动深链、多图选择及取消、完整下载及取消（含切后台、划掉任务后继续下载，通知栏取消，常见扩展名不被追加 .bin）、中文键盘及旋转，以及 APK 签名不符和系统安装确认。语言方面覆盖系统首选语言为中文、其他语言（次选含中文）时的通知渠道名、常驻通知和安装 Toast，以及应用内切换后正在运行的通知随之更新。

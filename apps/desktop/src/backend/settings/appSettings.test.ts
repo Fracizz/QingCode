@@ -216,3 +216,20 @@ describe('mergeAppSettings', () => {
     expect(next.general).toMatchObject({ ...DEFAULT_FONT_SIZES, chatFontSize: 18, editorFontSize: 16 })
   })
 })
+
+describe('hiddenModels', () => {
+  it('默认不写字段，按 Agent 合并补丁，空数组清空', () => {
+    expect(defaultAppSettings().general.hiddenModels).toBeUndefined()
+    const first = mergeAppSettings(defaultAppSettings(), { general: { hiddenModels: { claude: ['default'] } } })
+    expect(first.general.hiddenModels).toEqual({ claude: ['default'] })
+    const second = mergeAppSettings(first, { general: { hiddenModels: { codex: ['gpt-5'] } } })
+    expect(second.general.hiddenModels).toEqual({ claude: ['default'], codex: ['gpt-5'] })
+    const cleared = mergeAppSettings(second, { general: { hiddenModels: { claude: [], codex: [] } } })
+    expect('hiddenModels' in cleared.general).toBe(false)
+  })
+
+  it('落盘数据里的坏名单被丢弃', () => {
+    const settings = sanitizeAppSettings({ general: { hiddenModels: { claude: [1, '', 'haiku'], gpt: ['x'] } } })
+    expect(settings.general.hiddenModels).toEqual({ claude: ['haiku'] })
+  })
+})

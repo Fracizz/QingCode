@@ -1,4 +1,4 @@
-import type { AgentKind, GlobalAccessMode } from '@qn/codex-client'
+import type { AgentKind, GlobalAccessMode, HiddenModels } from '@qn/codex-client'
 
 /** 目标上可用的对话 Agent（mvp §11、T22）；缺省为 codex。 */
 export type { AgentKind }
@@ -207,6 +207,8 @@ export type AppSettings = {
     sidebarFontSize: number
     projectFontSize: number
     sessionFontSize: number
+    /** 用户在模型选择器里隐藏的模型 id，按 Agent 各一份；没有隐藏项时省略。手机经网关只读。 */
+    hiddenModels?: HiddenModels
   }
   /** 按目标 id 分组，每个 agent 一份偏好 */
   agents: Record<string, Partial<Record<SettingsAgentKind, AgentPrefs>>>

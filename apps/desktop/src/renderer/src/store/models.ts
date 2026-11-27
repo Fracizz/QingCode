@@ -39,7 +39,8 @@ type ModelsState = {
   /** 按 sessionKey（agent + 目标）缓存：不同目标上的 Codex 版本可能给出不同模型。 */
   lists: Record<string, ModelList>
   /**
-   * 新会话（草稿）的默认偏好，按 agent 记；换目标后仍沿用同一模型（目标上没有该模型时自动回落默认）。
+   * 新会话（草稿）的默认偏好，按 agent 记，取最后一次手动修改（不论在哪个会话改的）；
+   * 换目标后仍沿用同一模型（目标上没有该模型时自动回落默认）。
    * 也是还没有单独记录的旧会话的回落值。
    */
   prefs: Record<string, ModelPrefs>
@@ -48,7 +49,7 @@ type ModelsState = {
   load: (targetId: string, agent: AgentKind, rpc: CodexRpcLike, force?: boolean) => Promise<void>
   /** 丢弃缓存的列表（如配置目录切换后），下次 load 重新请求。 */
   invalidate: (targetId: string, agent: AgentKind) => void
-  /** 带 threadId 时只改该会话；不带（草稿）时改 agent 默认，作为之后新会话的初始选择。 */
+  /** 用户手动改选：更新 agent 默认；带 threadId 时同时记到该会话，其他已记录的会话不受影响。 */
   setPrefs: (agent: AgentKind, patch: Partial<ModelPrefs>, scope?: PrefsScope) => void
   /** 把发送时实际使用的选择记到会话上，之后改默认不会再影响它。 */
   rememberThreadPrefs: (targetId: string, agent: AgentKind, threadId: string, prefs: ModelPrefs) => void
@@ -169,9 +170,10 @@ export const useModels = create<ModelsState>((set, get) => ({
       const threadPrefs = putThreadPrefs(state.threadPrefs, key, next)
       set({ threadPrefs })
       writePrefs(THREAD_PREFS_KEY, threadPrefs)
-      return
     }
-    const { seen: _seen, ...defaults } = { ...EMPTY_PREFS, ...state.prefs[agent], ...patch }
+    // 会话里改选时以该会话改完后的完整选择为默认，避免只改强度时配上默认里的另一个模型。
+    const base = scope?.threadId ? prefsFor(state, scope.targetId, agent, scope.threadId) : state.prefs[agent]
+    const { seen: _seen, ...defaults } = { ...EMPTY_PREFS, ...base, ...patch }
     const prefs = { ...state.prefs, [agent]: defaults }
     set({ prefs })
     writePrefs(PREFS_KEY, prefs)

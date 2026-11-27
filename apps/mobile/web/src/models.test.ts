@@ -155,6 +155,13 @@ describe('按会话记忆模型偏好', () => {
       .toMatchObject({ model: 'gpt-small', effort: 'minimal' })
   })
 
+  it('新会话默认按 agent 记，换主机沿用，旧版按主机存的默认仅作回落', () => {
+    const last = { model: 'gpt-small', effort: 'minimal', fast: false }
+    const table = { codex: last, [sid]: { model: 'gpt-big', effort: 'high', fast: true } }
+    expect(prefsFor(table, 'codex', sid, null, models)).toEqual(last)
+    expect(prefsFor(table, 'codex', 'codex:remote', null, models)).toEqual(last)
+  })
+
   it('会话记录有上限，agent 默认不被淘汰', () => {
     let table: Record<string, typeof EMPTY_PREFS> = { [sid]: EMPTY_PREFS }
     for (let i = 0; i < 510; i++) table = putThreadPrefs(table, threadPrefsKey(sid, `t${i}`), EMPTY_PREFS)

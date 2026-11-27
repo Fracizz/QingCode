@@ -200,6 +200,7 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
     runOnUiThread(() -> {
       if (destroyed) return;
       DesktopConnectionService.renameChannel(this);
+      ProjectDownloadService.renameChannel(this);
       if (!connectionServiceStarted) return;
       try {
         startForegroundService(new Intent(this, DesktopConnectionService.class));

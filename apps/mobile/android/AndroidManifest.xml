@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
@@ -38,6 +39,9 @@
         </activity>
         <service android:name=".DesktopConnectionService" android:exported="false"
             android:foregroundServiceType="connectedDevice" android:stopWithTask="true" />
+        <!-- 下载在后台继续，划掉任务也不停止，完成或取消后自行退出。 -->
+        <service android:name=".ProjectDownloadService" android:exported="false"
+            android:foregroundServiceType="dataSync" android:stopWithTask="false" />
         <receiver android:name=".ApkInstallReceiver" android:exported="false" />
     </application>
 </manifest>

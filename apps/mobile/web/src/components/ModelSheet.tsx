@@ -1,5 +1,5 @@
 import { Check, ChevronDown, Zap } from 'lucide-react'
-import { localizeModelDescription, t, translateMessage } from '@qn/codex-client'
+import { t, translateMessage, withoutHiddenModels } from '@qn/codex-client'
 import { useEffect, useMemo, useState } from 'react'
 import { sessionKey } from '../agents'
 import { EMPTY_PREFS, effortHint, effortLabel, pickModel, prefsFor, resolveSelection, triggerLabel, visibleModels, type ModelPrefs } from '../models'
@@ -8,6 +8,9 @@ import type { AgentKind } from '../types'
 import { AgentQuota } from './RateLimitView'
 import { Button, Dialog, Loading, LoadingIcon, Note } from './ui'
 import { WorkspaceSearch } from './WorkspaceHome'
+
+/** 可见模型超过这个数才显示搜索框。 */
+const SEARCH_THRESHOLD = 8
 
 /**
  * 输入区的"模型 · 推理强度"入口 + 底部弹层。
@@ -32,6 +35,8 @@ export function ModelPicker({ targetId, agent, open: controlledOpen, onOpenChang
   const open = controlledOpen ?? ownOpen
   const setOpen = onOpenChange ?? setOwnOpen
   const [query, setQuery] = useState('')
+  // 电脑端设置的隐藏名单，手机只读。
+  const hidden = useApp((s) => s.agentSettings?.hiddenModels?.[agent])
 
   useEffect(() => {
     if (opened) void load(targetId, agent)
@@ -39,7 +44,12 @@ export function ModelPicker({ targetId, agent, open: controlledOpen, onOpenChang
 
   const models = list?.models ?? []
   const selection = useMemo(() => resolveSelection(models, prefs), [models, prefs])
-  const options = useMemo(() => visibleModels(models, selection.model?.model, query), [models, selection.model?.model, query])
+  const options = useMemo(
+    () => withoutHiddenModels(visibleModels(models, selection.model?.model, query), hidden, selection.model?.model),
+    [models, selection.model?.model, query, hidden],
+  )
+  // 模型不多时不显示搜索框，省出一行。
+  const searchable = withoutHiddenModels(models, hidden, selection.model?.model).length > SEARCH_THRESHOLD || query !== ''
 
   if (!opened || (!open && models.length === 0 && !list?.loading && !list?.error)) return null
   const showFast = agent === 'codex' && selection.fastTier !== null
@@ -68,92 +78,91 @@ export function ModelPicker({ targetId, agent, open: controlledOpen, onOpenChang
       {open && (
         <Dialog title={t('模型与推理强度')} onClose={close}>
           {list?.error && <Note tone="error" message={list.error} actionLabel={t('重试')} onAction={() => void load(targetId, agent, true)} />}
-          {(models.length > 1 || query !== '') && (
+          {searchable && (
             <div className="mb-2"><WorkspaceSearch label={t('搜索模型')} query={query} onChange={setQuery} /></div>
           )}
           {list?.loading && models.length === 0 && <Loading text={t('正在加载模型…')} />}
           {!list?.loading && !list?.error && options.length === 0 && (
             <p className="py-3 text-center text-sm text-qn-muted">{query.trim() ? t('没有匹配的模型') : t('暂无可选模型')}</p>
           )}
-          <div className="mb-3 space-y-2" role="listbox" aria-label={t('模型')}>
-            {options.map((model) => {
-              const selected = model.model === selection.model?.model
-              return (
-                <button
-                  key={model.id}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  className={`qn-row qn-option rounded-xl border px-3 py-2.5 ${selected ? 'border-qn-outline-hover bg-qn-accent/10' : 'border-qn-border'}`}
-                  onClick={() => setPrefs(targetId, agent, pickModel(models, prefs, model.model))}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[15px] font-medium">{translateMessage(model.displayName)}</span>
-                    {model.description && (
-                      <span className="mt-0.5 block whitespace-normal text-xs leading-[18px] text-qn-muted [overflow-wrap:anywhere]">
-                        {localizeModelDescription(model.description)}
-                      </span>
-                    )}
-                  </span>
-                  {selected && <Check size={16} className="shrink-0 text-qn-accent" aria-hidden />}
-                </button>
-              )
-            })}
-          </div>
-
-          {selection.model && selection.model.efforts.length > 0 && (
-            <div className="mb-3">
-              <div className="qn-label">{t('推理强度')}</div>
-              <div className="qn-segment" role="radiogroup" aria-label={t('推理强度')}>
-                {selection.model.efforts.map((effort) => {
-                  const active = effort.value === selection.effort
-                  return (
-                    <button
-                      key={effort.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={active}
-                      onClick={() => setPrefs(targetId, agent, { ...prefs, effort: effort.value })}
-                    >
-                      {effortLabel(effort.value)}
-                    </button>
-                  )
-                })}
-              </div>
-              {selection.effort && effortHint(selection.effort) && (
-                <p className="qn-hint">{effortHint(selection.effort)}</p>
-              )}
-            </div>
-          )}
-
-          {showFast && (
-            <div className="mb-3">
-              <div className="qn-label">{t('速度')}</div>
-              <div className="qn-segment" role="radiogroup" aria-label={t('速度')}>
-                <button type="button" role="radio" aria-checked={!selection.fast}
-                  onClick={() => setPrefs(targetId, agent, { ...prefs, fast: false })}>
-                  {t('标准')}
-                </button>
-                <button type="button" role="radio" aria-checked={selection.fast}
-                  onClick={() => setPrefs(targetId, agent, { ...prefs, fast: true })}>
-                  <Zap size={14} className="text-qn-warn" aria-hidden /> {t('快速')}
-                </button>
-              </div>
-              <p className="qn-hint">{t('快速档响应更快，额度消耗更多')}</p>
+          {/* 紧凑单行列表：只显示模型名。描述由关键词粗略翻译，常与模型不符，手机上不再展示。 */}
+          {options.length > 0 && (
+            <div className="mb-3 divide-y divide-qn-border overflow-hidden rounded-xl border border-qn-border" role="listbox" aria-label={t('模型')}>
+              {options.map((model) => {
+                const selected = model.model === selection.model?.model
+                return (
+                  <button
+                    key={model.id}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    className={`qn-row px-3 py-2 active:bg-qn-raised ${selected ? 'bg-qn-accent/10' : ''}`}
+                    onClick={() => setPrefs(targetId, agent, pickModel(models, prefs, model.model))}
+                  >
+                    <span className={`min-w-0 flex-1 truncate text-[15px] ${selected ? 'font-medium' : ''}`}>{translateMessage(model.displayName)}</span>
+                    {selected && <Check size={16} className="shrink-0 text-qn-accent" aria-hidden />}
+                  </button>
+                )
+              })}
             </div>
           )}
 
           <AgentQuota targetId={targetId} agent={agent} />
 
-          <div className="flex gap-2">
-            {agent !== 'codex' && (prefs.model || prefs.effort) && (
-              <Button className="flex-1" onClick={() => setPrefs(targetId, agent, EMPTY_PREFS)}>
-                {t('跟随 Agent 默认')}
-              </Button>
+          {/* 推理强度与完成按钮吸底：模型再多也不用滚到底才能调强度。负外边距盖住面板底部留白。 */}
+          <div className="sticky bottom-0 -mb-[max(16px,env(safe-area-inset-bottom))] border-t border-qn-border bg-qn-panel pt-3 pb-[max(16px,env(safe-area-inset-bottom))]">
+            {selection.model && selection.model.efforts.length > 0 && (
+              <div className="mb-3">
+                <div className="qn-label">{t('推理强度')}</div>
+                <div className="qn-segment" role="radiogroup" aria-label={t('推理强度')}>
+                  {selection.model.efforts.map((effort) => {
+                    const active = effort.value === selection.effort
+                    return (
+                      <button
+                        key={effort.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setPrefs(targetId, agent, { ...prefs, effort: effort.value })}
+                      >
+                        {effortLabel(effort.value)}
+                      </button>
+                    )
+                  })}
+                </div>
+                {selection.effort && effortHint(selection.effort) && (
+                  <p className="qn-hint">{effortHint(selection.effort)}</p>
+                )}
+              </div>
             )}
-            <Button variant="primary" className="flex-1" onClick={close}>
-              {t('完成')}
-            </Button>
+
+            {showFast && (
+              <div className="mb-3">
+                <div className="qn-label">{t('速度')}</div>
+                <div className="qn-segment" role="radiogroup" aria-label={t('速度')}>
+                  <button type="button" role="radio" aria-checked={!selection.fast}
+                    onClick={() => setPrefs(targetId, agent, { ...prefs, fast: false })}>
+                    {t('标准')}
+                  </button>
+                  <button type="button" role="radio" aria-checked={selection.fast}
+                    onClick={() => setPrefs(targetId, agent, { ...prefs, fast: true })}>
+                    <Zap size={14} className="text-qn-warn" aria-hidden /> {t('快速')}
+                  </button>
+                </div>
+                <p className="qn-hint">{t('快速档响应更快，额度消耗更多')}</p>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              {agent !== 'codex' && (prefs.model || prefs.effort) && (
+                <Button className="flex-1" onClick={() => setPrefs(targetId, agent, EMPTY_PREFS)}>
+                  {t('跟随 Agent 默认')}
+                </Button>
+              )}
+              <Button variant="primary" className="flex-1" onClick={close}>
+                {t('完成')}
+              </Button>
+            </div>
           </div>
         </Dialog>
       )}

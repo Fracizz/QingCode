@@ -177,7 +177,6 @@ public final class NativeBridge {
   void close() {
     if (!closed.compareAndSet(false, true)) return;
     activityRequests.close();
-    downloads.close();
     updates.close();
     for (EventStream stream : streams.values()) stream.stop(null, false);
     streams.clear();
@@ -229,9 +228,8 @@ public final class NativeBridge {
     if ("clipboard.read".equals(method)) return readClipboard();
     if ("clipboard.write".equals(method)) return writeClipboard(params);
     if ("images.pick".equals(method)) return inputs.pickImages(params);
-    if ("download.begin".equals(method)) return downloads.begin(params);
-    if ("download.append".equals(method)) return downloads.append(params);
-    if ("download.finish".equals(method)) return downloads.finish(params);
+    if ("download.start".equals(method)) return downloads.start(params);
+    if ("download.status".equals(method)) return downloads.status(params);
     if ("download.cancel".equals(method)) return downloads.cancel(params);
     if ("updates.status".equals(method)) return updates.status();
     if ("updates.check".equals(method)) return updates.check(params);

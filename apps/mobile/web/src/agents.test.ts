@@ -59,6 +59,7 @@ describe('启用状态与默认 Agent', () => {
     })
     expect(parseMobileAgents(null)).toBeNull()
     expect(parseMobileAgents({ defaultAgent: 'gpt' })).toEqual({ defaultAgent: 'codex', agents: {} })
+    expect(parseMobileAgents({ defaultAgent: 'claude', hiddenModels: { claude: ['default', 2] } })?.hiddenModels).toEqual({ claude: ['default'] })
   })
 
   it('取不到设置时只显示 Codex；未配置的 Agent 默认启用', () => {

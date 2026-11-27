@@ -58,10 +58,9 @@
 | `clipboard.read` | `{}` | 剪贴板文本字符串（无内容时 `""`） |
 | `clipboard.write` | `{text}` | `{ok:true}`。文本上限 256 Ki UTF-16 字符。 |
 | `images.pick` | `{maxCount?, maxBytes?}` | `{images:[{name,mime,dataUrl}], skipped}`。系统选择器支持选取最多四张图，返回的压缩后总字节数不超过 700 KiB。 |
-| `download.begin` | `{name,size,mime?}` | 系统保存位置选择器。返回 `{id}` 或取消时的 `null`。文件最长 512 MiB。 |
-| `download.append` | `{id,offset,data}` | 顺序追加 base64 分块，解码后每块最多 256 KiB。返回 `{written}` 表示已写字节数。 |
-| `download.finish` | `{id}` | 长度核对后将暂存文件写到用户选定位置。返回 `{name}`。 |
-| `download.cancel` | `{id}` | 取消指定下载并尝试清理未完成文件，返回 `{ok:true}`。 |
+| `download.start` | `{host, port?, fp, token, projectId, targetId, path, name, size}` | 原生前台服务经网关 `mobile.files.read` 逐块拉取并直接写入目标文件，应用切后台或页面销毁后继续。Android 10+ 自动保存到「下载/QingCode」，Android 8/9 打开系统保存界面（取消时返回 `null`）。MIME 按扩展名取系统映射，避免文件提供方追加 `.bin`。同一时间只允许一个下载，文件最长 512 MiB。返回状态快照。 |
+| `download.status` | `{id?}` | 状态快照 `{id,name,path,size,written,state,auto,error?,savedName?}`，`state` 为 `running`/`done`/`failed`/`cancelled`，`auto` 表示自动保存到下载目录。省略 `id` 时返回最近一次下载，没有时返回 `null`。 |
+| `download.cancel` | `{id}` | 取消指定下载并清理未完成文件，返回 `{ok:true}`。通知栏也可取消。 |
 | `updates.status` | `{}` | `{versionName,versionCode,online:true}`。`online` 表示支持用户配置更新地址。 |
 | `updates.check` | `{url}` | 从用户填写的直达 HTTPS `.apk` 地址下载、暂存并核对包名和签名。返回 `{available,versionName,versionCode,id?}`，存在新版本时的 `id` 有效期为 15 分钟。 |
 | `updates.install` | `{id?}` | 使用已检查更新的 `id`，或在缺省时打开系统选择器读取本地 APK。安装前再次核对包名、签名和更高版本，通过 Android 界面确认。返回 `{started}`。 |

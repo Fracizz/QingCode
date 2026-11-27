@@ -24,17 +24,18 @@ describe('按会话记模型与推理强度', () => {
     })
   })
 
-  it('会话内修改只影响该会话，草稿修改作为新会话默认', () => {
+  it('最后一次手动修改作为新会话默认，不改其他已记录的会话', () => {
     const { setPrefs } = useModels.getState()
     setPrefs('codex', { model: 'b', effort: 'high' }, { targetId: 'local', threadId: 't1' })
     setPrefs('codex', { effort: 'low' }, { targetId: 'local', threadId: null })
 
     const state = useModels.getState()
     expect(prefsFor(state, 'local', 'codex', 't1')).toEqual({ model: 'b', effort: 'high', fast: false })
-    expect(prefsFor(state, 'local', 'codex', 't2')).toEqual({ ...EMPTY_PREFS, effort: 'low' })
-    expect(prefsFor(state, 'local', 'codex', null)).toEqual({ ...EMPTY_PREFS, effort: 'low' })
+    expect(prefsFor(state, 'local', 'codex', null)).toEqual({ ...EMPTY_PREFS, model: 'b', effort: 'low' })
     expect(overridesFor('local', 'codex', 't1')).toMatchObject({ model: 'b', effort: 'high' })
-    expect(overridesFor('local', 'codex', 't2')).toMatchObject({ model: 'a', effort: 'low' })
+    // 在会话里改选后，新会话沿用该会话改完后的模型与强度。
+    setPrefs('codex', { effort: 'medium' }, { targetId: 'local', threadId: 't1' })
+    expect(overridesFor('local', 'codex', null)).toMatchObject({ model: 'b', effort: 'medium' })
   })
 
   it('发送时固定到会话后，再改默认不影响已有会话', () => {
@@ -49,7 +50,7 @@ describe('按会话记模型与推理强度', () => {
 
   it('不同目标或 Agent 下同 id 的会话互不影响', () => {
     useModels.getState().setPrefs('codex', { model: 'b' }, { targetId: 'local', threadId: 't1' })
-    expect(prefsFor(useModels.getState(), 'remote', 'codex', 't1')).toBe(EMPTY_PREFS)
+    expect(useModels.getState().threadPrefs[threadPrefsKey('remote', 'codex', 't1')]).toBeUndefined()
     expect(prefsFor(useModels.getState(), 'local', 'claude', 't1')).toBe(EMPTY_PREFS)
   })
 

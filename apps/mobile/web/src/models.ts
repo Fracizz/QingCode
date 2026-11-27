@@ -170,7 +170,7 @@ export function pickModel(models: readonly ModelOption[], prefs: ModelPrefs, mod
   return { ...prefs, model, ...(keepEffort ? {} : { effort: null }) }
 }
 
-/** 偏好表按会话键（agent + 目标）持久化；损坏数据回落为空。 */
+/** 偏好表（agent 默认 + 各会话记录）；损坏数据回落为空。 */
 export function parsePrefs(raw: string | null | undefined): Record<string, ModelPrefs> {
   if (!raw) return {}
   try {
@@ -211,7 +211,8 @@ export function prefsFor(
   models: readonly ModelOption[] = [],
   saved?: SavedThreadConfig,
 ): ModelPrefs {
-  const base = { ...EMPTY_PREFS, ...table[sessionId] }
+  // 新会话默认按 agent 记，不分主机；旧版本按会话键（agent + 目标）存的默认仅作回落。
+  const base = { ...EMPTY_PREFS, ...(table[agent] ?? table[sessionId]) }
   delete base.seen
   if (!threadId) return base
   const own = table[threadPrefsKey(sessionId, threadId)]

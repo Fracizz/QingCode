@@ -1,4 +1,4 @@
-import { getLocale, isGlobalAccessMode, t } from '@qn/codex-client'
+import { getLocale, isGlobalAccessMode, mergeHiddenModels, sanitizeHiddenModels, sanitizeHiddenModelsPatch, t } from '@qn/codex-client'
 import type {
   AgentPrefs,
   AppSettings,
@@ -122,9 +122,15 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
       theme: isSettingsTheme(general.theme) ? general.theme : defaults.general.theme,
       globalAccessMode: isGlobalAccessMode(general.globalAccessMode) ? general.globalAccessMode : defaults.general.globalAccessMode,
       ...resolveFontSizes(general),
+      ...hiddenModelsField(sanitizeHiddenModels(general.hiddenModels)),
     },
     agents,
   }
+}
+
+// 没有隐藏项时不写字段，保持旧设置文件形状。
+function hiddenModelsField(value: AppSettings['general']['hiddenModels']): Pick<AppSettings['general'], 'hiddenModels'> {
+  return value ? { hiddenModels: value } : {}
 }
 
 export function sanitizeSettingsPatch(raw: unknown): AppSettingsPatch {
@@ -139,6 +145,9 @@ export function sanitizeSettingsPatch(raw: unknown): AppSettingsPatch {
   if (isGlobalAccessMode(general.globalAccessMode)) nextGeneral.globalAccessMode = general.globalAccessMode
   if (isSettingsDensity(general.density)) nextGeneral.density = general.density
   if (isSettingsTheme(general.theme)) nextGeneral.theme = general.theme
+  // 补丁里出现的 Agent 整份替换，空数组表示清空。
+  const hiddenModels = sanitizeHiddenModelsPatch(general.hiddenModels)
+  if (hiddenModels) nextGeneral.hiddenModels = hiddenModels
   if (Object.keys(nextGeneral).length > 0) patch.general = nextGeneral
 
   const rawAgents = isRecord(root.agents) ? root.agents : {}
@@ -180,6 +189,8 @@ export function mergeAppSettings(current: AppSettings, patch: AppSettingsPatch):
   const base = sanitizeAppSettings(current)
   const delta = sanitizeSettingsPatch(patch)
   const general = { ...base.general, ...(delta.general ?? {}) }
+  // hiddenModels 按 Agent 合并，而不是整张表覆盖。
+  general.hiddenModels = mergeHiddenModels(base.general.hiddenModels, delta.general?.hiddenModels)
   const agents = emptyAgentMap()
   for (const [targetId, prefs] of Object.entries(base.agents)) agents[targetId] = { ...prefs }
   for (const [targetId, patchPrefs] of Object.entries(delta.agents ?? {})) {

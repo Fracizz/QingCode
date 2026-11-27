@@ -3,4 +3,9 @@
     <string name="desktop_connection_title">QingCode 正在后台保持电脑连接</string>
     <string name="install_confirm_unavailable">无法打开系统安装确认，请回到应用重试</string>
     <string name="install_rejected">Android 拒绝安装此更新</string>
+    <string name="download_channel">文件下载</string>
+    <string name="download_running">正在下载 %1$s</string>
+    <string name="download_done">已保存 %1$s</string>
+    <string name="download_failed">%1$s 下载失败</string>
+    <string name="download_cancel">取消</string>
 </resources>

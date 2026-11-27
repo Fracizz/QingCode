@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { estimatedTurnUsage, t, translateMessage } from '@qn/codex-client'
-import { Check, ChevronDown, Zap } from 'lucide-react'
+import { estimatedTurnUsage, t, toggleHiddenModel, translateMessage, withoutHiddenModels, type HiddenModels } from '@qn/codex-client'
+import { Check, ChevronDown, Eye, EyeOff, SlidersHorizontal, Zap } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { sessionKey } from '../lib/agents'
 import { formatCost } from '../lib/claudeUsage'
@@ -14,6 +14,7 @@ import {
   resolveSelection,
   triggerLabel,
 } from '../lib/models'
+import { useSetting, useSettings } from '../features/settings/settingsStore'
 import { useCodex } from '../store/codex'
 import { prefsFor, useModels } from '../store/models'
 import { ListOption } from './ListOption'
@@ -55,6 +56,10 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
   const open = controlledOpen ?? ownOpen
   const setOpen = onOpenChange ?? setOwnOpen
   const [query, setQuery] = useState('')
+  // 管理模式：列出全部模型，点行切换隐藏；名单存在电脑设置里，手机经网关只读同一份。
+  const [managing, setManaging] = useState(false)
+  const hiddenList = useSetting((settings) => settings.general.hiddenModels?.[agent])
+  const updateSettings = useSettings((s) => s.update)
   const searchRef = useRef<HTMLInputElement>(null)
 
   const savedConfig = useCodex((s) => threadId ? s.sessions[key]?.state?.threads[threadId]?.savedConfig : undefined)
@@ -73,7 +78,11 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
 
   const models = list?.models ?? []
   const selection = useMemo(() => resolveSelection(models, prefs), [models, prefs])
-  const visible = useMemo(() => filterModels(models, query), [models, query])
+  const filtered = useMemo(() => filterModels(models, query), [models, query])
+  const visible = useMemo(
+    () => managing ? filtered : withoutHiddenModels(filtered, hiddenList, selection.model?.model),
+    [managing, filtered, hiddenList, selection.model?.model],
+  )
 
   const empty = models.length === 0 && !list?.loading && !list?.error
   if (!open && piDraft && (piDraft.starting || empty)) {
@@ -97,12 +106,21 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
     setPrefs(agent, { model, ...(option && prefs.effort && !option.efforts.some((e) => e.value === prefs.effort) ? { effort: null } : {}) }, scope)
   }
 
+  const toggleHidden = (model: string) => {
+    const next: HiddenModels = {}
+    next[agent] = toggleHiddenModel(hiddenList, model)
+    void updateSettings({ general: { hiddenModels: next } })
+  }
+
   return (
     <PopoverRoot
       open={open}
       onOpenChange={(value) => {
         setOpen(value)
-        if (!value) setQuery('')
+        if (!value) {
+          setQuery('')
+          setManaging(false)
+        }
       }}
     >
       <PopoverTrigger asChild>
@@ -138,13 +156,33 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && visible[0]) {
+            if (event.key === 'Enter' && visible[0] && !managing) {
               event.preventDefault()
               pick(visible[0].model)
               setQuery('')
             }
           }}
         />
+        {models.length > 0 && (
+          <div className="flex items-center justify-between gap-2 border-b border-qn-border px-3.5 py-1.5">
+            <span className="min-w-0 truncate text-ui text-qn-muted">
+              {managing
+                ? t('隐藏的模型不会出现在电脑和手机的模型列表中')
+                : hiddenList?.length ? t('{count} 个模型已隐藏', { count: hiddenList.length }) : ''}
+            </span>
+            <button
+              type="button"
+              aria-pressed={managing}
+              className={cn(
+                'inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
+                managing ? 'bg-qn-active text-qn-text' : 'text-qn-muted hover:bg-qn-hover hover:text-qn-text',
+              )}
+              onClick={() => setManaging((value) => !value)}
+            >
+              {managing ? t('完成') : <><SlidersHorizontal size={13} aria-hidden /> {t('管理模型')}</>}
+            </button>
+          </div>
+        )}
 
         <div className="qn-scroll max-h-[min(320px,45vh)] space-y-1 overflow-y-auto p-1.5" role="listbox" aria-label={t('模型')}>
           <ErrorNote
@@ -166,7 +204,24 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
               </button>
             </EmptyState>
           )}
-          {visible.map((model) => {
+          {managing && visible.map((model) => {
+            const hidden = hiddenList?.includes(model.model) === true
+            const name = translateMessage(model.displayName)
+            return (
+              <button
+                key={model.id}
+                type="button"
+                aria-pressed={!hidden}
+                aria-label={hidden ? t('显示 {name}', { name }) : t('隐藏 {name}', { name })}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover"
+                onClick={() => toggleHidden(model.model)}
+              >
+                <span className={cn('min-w-0 flex-1 truncate text-ui-md', hidden ? 'text-qn-muted line-through' : 'font-medium text-qn-text')}>{name}</span>
+                {hidden ? <EyeOff size={15} className="shrink-0 text-qn-muted" aria-hidden /> : <Eye size={15} className="shrink-0 text-qn-text" aria-hidden />}
+              </button>
+            )
+          })}
+          {!managing && visible.map((model) => {
             const selected = model.model === selection.model?.model
             return (
               <ListOption

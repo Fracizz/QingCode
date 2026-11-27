@@ -10,8 +10,8 @@ export function Logo({ size = 16, className = '' }: { size?: number; className?:
       className={`shrink-0 ${className}`}
     >
       <rect width="512" height="512" rx="112" fill="#0E0F11" />
-      <path fill="#4ECDB5" d="M250 387.62A132 132 0 1 1 359.53 312H299.9A82 82 0 1 0 250 337.39Z" />
-      <rect x="268" y="330" width="136" height="48" rx="10" fill="#FFFFFF" />
+      <path fill="#4ECDB5" d="M256 391.58A145 145 0 1 1 376.08 309H310.24A90 90 0 1 0 256 336.33Z" />
+      <rect x="276" y="329" width="150" height="52" rx="11" fill="#FFFFFF" />
     </svg>
   )
 }

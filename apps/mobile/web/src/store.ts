@@ -393,7 +393,10 @@ type AppState = {
   respondUserInput: (requestId: RequestId, answers: Record<string, string[]>) => Promise<boolean>
   loadModels: (targetId: string, agent: AgentKind, force?: boolean) => Promise<void>
   /** 带 threadId 时只改该会话；不带（草稿）时改 agent 默认，作为之后新会话的初始选择。 */
+  /** 用户手动改选：更新新会话默认；带 threadId 时同时记到该会话。 */
   setModelPrefs: (targetId: string, agent: AgentKind, prefs: ModelPrefs, threadId?: string | null) => void
+  /** 只把选择固定到会话上（发送时使用），不改默认。 */
+  rememberThreadPrefs: (targetId: string, agent: AgentKind, threadId: string, prefs: ModelPrefs) => void
   refreshRateLimits: (targetId: string) => Promise<void>
   refreshClaudeRateLimits: (targetId: string) => Promise<boolean>
   refreshAccountUsage: (targetId: string) => Promise<void>
@@ -858,6 +861,14 @@ export const useApp = create<AppState>((set, get) => {
     persistArchives()
   }
 
+  const saveModelPrefs = (modelPrefs: Record<string, ModelPrefs>): void => {
+    const { activeId } = get()
+    if (!activeId) return
+    set({ modelPrefs })
+    desktopModelPrefs[activeId] = modelPrefs
+    saveRecord(STORAGE_DESKTOP_MODEL_PREFS, desktopModelPrefs)
+  }
+
   const removeSavedDesktopState = (id: string): void => {
     delete savedChats[id]
     delete desktopModelPrefs[id]
@@ -1094,7 +1105,7 @@ export const useApp = create<AppState>((set, get) => {
       // 本轮配置记为 seen：之后历史回报的就是它，不会被当成另一端的改动。
       const recordKey = threadPrefsKey(session.key, threadId)
       const own = get().modelPrefs[recordKey]
-      if (own) get().setModelPrefs(targetId, agent, { ...own, seen: { ...modelNote.config } }, threadId)
+      if (own) get().rememberThreadPrefs(targetId, agent, threadId, { ...own, seen: { ...modelNote.config } })
     }
     const current = get().sessions[session.key]
     if (current?.transport !== session.transport || completedTurns.get(session.transport)?.has(turn.id)) return
@@ -3360,7 +3371,7 @@ export const useApp = create<AppState>((set, get) => {
         if (epoch !== desktopEpoch) return
         const remembered = get().modelPrefs[threadPrefsKey(sessionId, threadId)]
         if (remembered?.model !== prefs.model || remembered?.effort !== prefs.effort || remembered?.fast !== prefs.fast) {
-          get().setModelPrefs(targetId, agent, prefs, threadId)
+          get().rememberThreadPrefs(targetId, agent, threadId, prefs)
         }
       }
       const enqueue = async (chat: SendAddress, sentDraftKey: string) => {
@@ -3765,18 +3776,18 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     setModelPrefs: (targetId, agent, prefs, threadId) => {
-      const { activeId, modelPrefs } = get()
-      if (!activeId) return
+      if (!get().activeId) return
+      if (threadId) get().rememberThreadPrefs(targetId, agent, threadId, prefs)
+      const { seen: _seen, ...defaults } = prefs
+      saveModelPrefs({ ...get().modelPrefs, [agent]: defaults })
+    },
+
+    rememberThreadPrefs: (targetId, agent, threadId, prefs) => {
       const sessionId = sessionKey(targetId, agent)
       // 记下改选时会话历史的配置；之后历史变了才说明是另一端换过模型。
-      const saved = threadId ? get().sessions[sessionId]?.state.threads[threadId]?.savedConfig : undefined
+      const saved = get().sessions[sessionId]?.state.threads[threadId]?.savedConfig
       const record = !prefs.seen && saved ? { ...prefs, seen: { model: saved.model, effort: saved.effort } } : prefs
-      const next = threadId
-        ? putThreadPrefs(modelPrefs, threadPrefsKey(sessionId, threadId), record)
-        : { ...modelPrefs, [sessionId]: prefs }
-      set({ modelPrefs: next })
-      desktopModelPrefs[activeId] = next
-      saveRecord(STORAGE_DESKTOP_MODEL_PREFS, desktopModelPrefs)
+      saveModelPrefs(putThreadPrefs(get().modelPrefs, threadPrefsKey(sessionId, threadId), record))
     },
 
     refreshRateLimits: async (targetId) => {

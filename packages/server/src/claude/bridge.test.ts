@@ -406,6 +406,31 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
     }
   })
 
+  it('首轮进行中向 SDK 查询上下文窗口，占用环不必等到本轮结束', async () => {
+    const probe = vi.fn(async () => ({ totalTokens: 1200, maxTokens: 180_000, rawMaxTokens: 200_000 }))
+    Object.assign(FakeQuery.prototype, { getContextUsage: probe })
+    const h = harness()
+    try {
+      await h.bridge.open({})
+      request(h, 'turn', 'turn/start', { threadId: 'old-1', input: [{ type: 'text', text: '你好' }] })
+      await response(h, 'turn')
+      const query = h.queries[0]!
+      query.emit({ type: 'assistant', message: { id: 'a1', role: 'assistant', content: [], usage: { input_tokens: 1000, output_tokens: 200 } } })
+      const usages = () => h.recv.filter((entry) => entry.msg.method === 'thread/tokenUsage/updated')
+        .map((entry) => (entry.msg.params as Json).tokenUsage as Json)
+      await until(() => usages().some((usage) => usage.modelContextWindow === 200_000))
+      expect(usages()[0]).toMatchObject({ modelContextWindow: null, last: { totalTokens: 1200 } })
+      query.emit({ type: 'assistant', message: { id: 'a2', role: 'assistant', content: [], usage: { input_tokens: 1500, output_tokens: 100 } } })
+      await until(() => usages().length >= 3)
+      expect(usages().at(-1)).toMatchObject({ modelContextWindow: 200_000, last: { totalTokens: 1600 } })
+      expect(probe).toHaveBeenCalledTimes(1)
+      expect(probe).toHaveBeenCalledWith({ detail: 'summary' })
+    } finally {
+      h.bridge.shutdown()
+      delete (FakeQuery.prototype as Partial<QueryLike>).getContextUsage
+    }
+  })
+
   it('元数据预读一次历史以回报会话模型，分页从最近轮次回读并复用同一份 SDK 快照', async () => {
     const readMessages = vi.fn(async () => [0, 1, 2].flatMap((index) => [
       { message: { id: `u${index}`, role: 'user', content: [{ type: 'text', text: `问题 ${index}` }] } },
