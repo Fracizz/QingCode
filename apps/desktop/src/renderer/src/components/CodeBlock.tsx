@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { ThemedTokenWithVariants } from 'shiki/core'
 import { Check, Copy } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { copyText } from '../lib/clipboard'
 import { shouldHighlight } from '../lib/highlight'
 import { highlightTokens } from '../lib/shiki'
@@ -54,10 +55,10 @@ export function CodeBlock({ code, lang, streaming = false }: { code: string; lan
           type="button"
           className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-qn-muted opacity-70 hover:bg-qn-hover hover:text-qn-text group-hover/code:opacity-100"
           onClick={() => void copy()}
-          aria-label="复制代码"
+          aria-label={t('复制代码')}
         >
           {copied ? <Check size={13} className="text-qn-ok" /> : <Copy size={13} />}
-          {copied ? '已复制' : '复制'}
+          {copied ? t('已复制') : t('复制')}
         </button>
       </div>
       <pre className="qn-pre qn-scroll">

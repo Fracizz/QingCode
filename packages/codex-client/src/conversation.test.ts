@@ -94,6 +94,14 @@ const userItem = item('userMessage', 'i-user', {
   content: [{ type: 'text', text: '请执行命令', text_elements: [] }],
 })
 
+it('加载会话时记下 Thread 上的模型与推理强度，后续不带配置的快照保留原值', () => {
+  const loaded = loadThread(emptyState(), { id: 't1', model: 'gpt-5.5', reasoningEffort: 'high', turns: [] } as unknown as LoadableThread)
+  expect(threadOf(loaded).savedConfig).toEqual({ model: 'gpt-5.5', effort: 'high' })
+  const again = loadThread(loaded, { id: 't1', turns: [] } as unknown as LoadableThread)
+  expect(threadOf(again).savedConfig).toEqual({ model: 'gpt-5.5', effort: 'high' })
+  expect(threadOf(loadThread(emptyState(), { id: 't1', model: null, turns: [] } as unknown as LoadableThread)).savedConfig).toBeUndefined()
+})
+
 describe('跨端会话状态', () => {
   it('从状态事件区分待审批、待输入和运行中', () => {
     const change = (activeFlags: string[]) => note('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags } })

@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import { create } from 'zustand'
 import type { LegacyDetectResult, LegacyImportResult } from '../../../shared/backendApi'
 import { call } from '../lib/backend'
@@ -58,7 +59,7 @@ export const useLegacy = create<LegacyState>((set, get) => ({
         set({ detect: null, error: null })
         return
       }
-      set({ error: friendlyError(err, '检测旧版数据失败') })
+      set({ error: friendlyError(err, t('检测旧版数据失败')) })
     }
   },
 
@@ -89,7 +90,7 @@ export const useLegacy = create<LegacyState>((set, get) => ({
       set({ path: picked, result: null })
       await get().detectNow(picked)
     } catch (err) {
-      set({ error: friendlyError(err, '选择文件失败') })
+      set({ error: friendlyError(err, t('选择文件失败')) })
     }
   },
 
@@ -105,7 +106,7 @@ export const useLegacy = create<LegacyState>((set, get) => ({
       await useTargets.getState().load()
       await useProjects.getState().reloadAll()
     } catch (err) {
-      set({ busy: false, error: friendlyError(err, '导入旧版数据失败') })
+      set({ busy: false, error: friendlyError(err, t('导入旧版数据失败')) })
     }
   },
 }))

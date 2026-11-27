@@ -1,3 +1,4 @@
+import { t, translateMessage } from '@qn/codex-client'
 import type { TargetState } from '../../../shared/backendApi'
 
 // 目标连接状态的展示语义：侧栏切换器、标题栏面包屑、状态栏共用，保证颜色与文案一致。
@@ -11,11 +12,11 @@ export const targetDotClass: Record<TargetState, string> = {
 }
 
 export const targetStateLabel: Record<TargetState, string> = {
-  idle: '未连接',
-  connecting: '连接中',
-  deploying: '部署中',
-  ready: '已就绪',
-  error: '连接失败',
+  idle: t('未连接'),
+  connecting: t('连接中'),
+  deploying: t('部署中'),
+  ready: t('已就绪'),
+  error: t('连接失败'),
 }
 
 export function isTargetBusy(state: TargetState): boolean {
@@ -33,6 +34,8 @@ export function matchTarget(
 ): boolean {
   const q = query.trim().toLowerCase()
   if (!q) return true
-  return [target.name, target.host ?? '', target.username ?? '']
+  // 本机目标名随语言显示，搜索按看到的名称匹配。
+  const name = target.kind === 'local' ? translateMessage(target.name) : target.name
+  return [name, target.host ?? '', target.username ?? '']
     .some((field) => field.toLowerCase().includes(q))
 }

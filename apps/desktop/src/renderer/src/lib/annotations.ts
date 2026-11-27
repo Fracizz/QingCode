@@ -1,4 +1,4 @@
-import type { ItemView } from '@qn/codex-client'
+import { t, type ItemView } from '@qn/codex-client'
 
 export type Annotation = {
   id: string
@@ -37,7 +37,7 @@ export function buildAnnotatedMessage(annotations: readonly Annotation[], input:
 }
 
 export function annotationLabel(count: number): string {
-  return `💬 ${count} 条注释`
+  return count === 1 ? t('💬 1 条注释') : t('💬 {count} 条注释', { count })
 }
 
 export function annotationExcerpt(annotation: Annotation, limit = 120): string {
@@ -52,12 +52,12 @@ export function sideChatExcerpt(items: readonly ItemView[], selection?: { text: 
   const questionIndex = items.slice(0, sourceIndex).findLastIndex((item) => item.kind === 'user')
   const question = items[questionIndex]
   const blocks: string[] = []
-  if (question?.kind === 'user') blocks.push('本轮问题：' + question.text.slice(0, 600))
+  if (question?.kind === 'user') blocks.push('本轮问题：' + question.text.slice(0, 600)) // i18n-ignore: 随消息发给模型
   if (selection) {
-    blocks.push('所选片段：\n' + selection.text)
+    blocks.push('所选片段：\n' + selection.text) // i18n-ignore: 随消息发给模型
   } else {
     const answer = items.slice(questionIndex + 1).findLast((item) => item.kind === 'agent')
-    if (answer?.kind === 'agent') blocks.push('回复摘录：\n' + answer.text.slice(0, 800))
+    if (answer?.kind === 'agent') blocks.push('回复摘录：\n' + answer.text.slice(0, 800)) // i18n-ignore: 随消息发给模型
   }
   return blocks.join('\n\n')
 }

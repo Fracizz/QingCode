@@ -1,5 +1,5 @@
 import { ChevronDown, MessageCircleMore, Square } from 'lucide-react'
-import { collectSubagents, resolveAccessMode, sessionStatus, sessionStatusLabels, type ItemView, type UserInput } from '@qn/codex-client'
+import { collectSubagents, resolveAccessMode, sessionStatus, sessionStatusLabels, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { bindChatPinch } from '../chatFont'
@@ -113,9 +113,9 @@ export function ChatPage() {
   const stopError = currentStop?.error
   const activeItemIds = running ? view.turns?.find((turn) => turn.id === view.activeTurnId)?.itemIds : undefined
   const progress = running && approvals.length === 0
-    ? view.activity === 'input' ? '等待输入…'
-      : view.activity === 'pending' ? '等待审批…'
-        : `${agentLabel(selectedAgent)} ${replyPhase(items, activeItemIds)}…`
+    ? view.activity === 'input' ? t('等待输入…')
+      : view.activity === 'pending' ? t('等待审批…')
+        : t('{agent} {phase}…', { agent: agentLabel(selectedAgent), phase: replyPhase(items, activeItemIds) })
     : null
   const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
     item.type === 'contextCompaction' && item.status === 'inProgress' && activeItemIds?.includes(item.id))
@@ -182,7 +182,7 @@ export function ChatPage() {
   const statusLabel = selectedThreadId ? sessionStatusLabels[sessionStatus(view, thread?.activity)] : null
   const cwd = currentCwd({ projects, selectedProjectId })
   const imageUnavailable = resolveSelection(models ?? [], modelPrefs).model?.imageInput === false
-    ? '当前模型不支持图片' : undefined
+    ? t('当前模型不支持图片') : undefined
   const fileActions = useMemo<FileActions>(() => ({
     cwd,
     openFile: (location) => void openFile(location),
@@ -239,7 +239,7 @@ export function ChatPage() {
       await loadEarlierHistory(reveal)
       setHistoryLoad((current) => current === load ? null : current)
     } catch (error) {
-      setHistoryLoad((current) => current === load ? { ...load, error: friendlyError(error, '加载历史失败') } : current)
+      setHistoryLoad((current) => current === load ? { ...load, error: friendlyError(error, t('加载历史失败')) } : current)
     }
   }
 
@@ -265,7 +265,7 @@ export function ChatPage() {
       await interrupt()
       setStopRequest((current) => current === request ? null : current)
     } catch (err) {
-      const error = `未能中断本轮。${friendlyError(err, '请重试')}`
+      const error = t('未能中断本轮。{message}', { message: translateMessage(friendlyError(err, t('请重试'))) })
       setStopRequest((current) => current === request ? { ...request, error } : current)
     }
   }
@@ -274,7 +274,7 @@ export function ChatPage() {
     <>
       {subagents.length > 0 && (
         <Header
-          title={threadTitle || project?.name || '对话'}
+          title={threadTitle || project?.name || t('对话')}
           icon={<MessageCircleMore size={16} strokeWidth={1.75} className="shrink-0 text-qn-muted" aria-hidden />}
           subtitle={
             // 项目名可能很长：只让项目名截断，状态与 Agent 始终可见。
@@ -296,8 +296,8 @@ export function ChatPage() {
         <div className="border-b border-qn-border bg-qn-panel px-3 pt-2">
           <Note
             tone="warn"
-            message="电脑连接需要重新配对"
-            actionLabel="重新配对"
+            message={t('电脑连接需要重新配对')}
+            actionLabel={t('重新配对')}
             onAction={() => beginRepair(activeId)}
           />
         </div>
@@ -305,22 +305,22 @@ export function ChatPage() {
       {approvals.length > 0 && (
         <button className="qn-row border-b border-qn-border bg-qn-panel px-3 text-sm" type="button"
           onClick={() => approvalsRef.current?.scrollIntoView({ block: 'nearest' })}>
-          <Badge tone="warn">{approvals.length} 项待审批</Badge>
-          <span className="min-w-0 flex-1 truncate text-qn-muted">{approvals[0]?.title}</span><ChevronDown size={16} aria-hidden />
+          <Badge tone="warn">{approvals.length === 1 ? t('1 项待审批') : t('{count} 项待审批', { count: approvals.length })}</Badge>
+          <span className="min-w-0 flex-1 truncate text-qn-muted">{translateMessage(approvals[0]?.title ?? '')}</span><ChevronDown size={16} aria-hidden />
         </button>
       )}
       <div ref={chatSurface} className="qn-chat-surface">
         <div className="relative flex min-h-0 flex-1 flex-col">
           <div ref={scrollRef} className="qn-body qn-scroll" onScroll={updateScroll}>
             {session?.openError && (
-              <Note message={session.openError} tone="error" actionLabel="重试"
+              <Note message={session.openError} tone="error" actionLabel={t('重试')}
                 onAction={() => { if (selectedTargetId) void ensureOpen(selectedTargetId, selectedAgent) }} />
             )}
-            {!running && items.length === 0 && approvals.length === 0 && !view?.historyCursor && !stopPositions.size && !interrupted && <Empty>发送消息开始对话。</Empty>}
+            {!running && items.length === 0 && approvals.length === 0 && !view?.historyCursor && !stopPositions.size && !interrupted && <Empty>{t('发送消息开始对话。')}</Empty>}
             <div className="space-y-4">
               {(firstVisible > 0 || view?.historyCursor) && (
                 <Button variant="ghost" className="mx-auto flex" disabled={historyLoading} onClick={() => void showEarlier()}>
-                  {historyLoading ? '正在加载更早消息…' : '查看更早消息'}
+                  {historyLoading ? t('正在加载更早消息…') : t('查看更早消息')}
                 </Button>
               )}
               {historyError && <Note message={historyError} tone="error" />}
@@ -362,7 +362,7 @@ export function ChatPage() {
             <Button className="absolute bottom-3 left-3 bg-qn-panel shadow-lg"
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => { setQuote(selection); window.getSelection()?.removeAllRanges(); setSelection(null) }}>
-              引用选中文字
+              {t('引用选中文字')}
             </Button>
           )}
         </div>
@@ -403,7 +403,7 @@ export function ChatPage() {
           canSteer={selectedAgent === 'codex' && !!view?.activeTurnId}
           toolbar={
             <>
-              {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">无审批：工具直接执行</span>}
+              {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">{t('无审批：工具直接执行')}</span>}
               {selectedTargetId && selectedThreadId && selectedAgent !== 'pi' && (
                 <AccessModePicker key={chatKey} agent={selectedAgent} mode={accessSelection} effectiveMode={accessMode}
                   inheritedMode={inheritedAccessMode}
@@ -427,7 +427,7 @@ export function ChatPage() {
 }
 
 function TurnInterrupted({ announce }: { announce: boolean }) {
-  return <div className="qn-turn-interrupted" role={announce ? 'status' : undefined}><Square size={13} aria-hidden />本轮已中断</div>
+  return <div className="qn-turn-interrupted" role={announce ? 'status' : undefined}><Square size={13} aria-hidden />{t('本轮已中断')}</div>
 }
 
 /** Claude 会把失败原因同时作为一条普通回复发出；交给错误卡片统一显示，不重复两遍。 */
@@ -442,7 +442,7 @@ function TurnErrorCard({ message }: { message: string }) {
   return (
     <div className="qn-note qn-note-error qn-turn-error" role="alert">
       <div className="font-semibold">{title}</div>
-      {detail && <div className="mt-1 text-xs whitespace-pre-wrap">{detail}</div>}
+      {detail && <div className="mt-1 text-xs whitespace-pre-wrap">{translateMessage(detail)}</div>}
     </div>
   )
 }

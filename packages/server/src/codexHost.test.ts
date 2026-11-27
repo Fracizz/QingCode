@@ -19,7 +19,7 @@ const fakeCodex = JSON.stringify([process.execPath, '-e', `
       });
     }
     if (method === 'thread/start') return send({ id, result: {
-      thread: { id: 'thread' }, approvalPolicy: 'on-request',
+      thread: { id: 'thread' }, approvalPolicy: 'on-request', approvalsReviewer: 'user',
       sandbox: { type: 'workspaceWrite', writableRoots: ['/work'], networkAccess: false },
     } });
     if (method === 'turn/start' && params.hold) send({ method: 'turn/started', params: { threadId: 'thread' } });
@@ -112,6 +112,7 @@ describe('Codex 权限覆盖', () => {
         result: {
           ...original,
           approvalPolicy: 'on-request',
+          approvalsReviewer: 'user',
           sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/work'], networkAccess: false },
         },
       })

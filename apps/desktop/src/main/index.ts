@@ -6,10 +6,16 @@ import {
   ipcMain,
   Menu,
   MessageChannelMain,
+  nativeImage,
   shell,
+  Tray,
   utilityProcess,
 } from 'electron'
+import { addEnglishMessages, resolveLocale, setLocale, t } from '@qn/protocol'
+import nodeMessages from '../../../../packages/codex-client/src/i18n/node.en'
 import { registerSecretHandlers } from './secrets'
+
+addEnglishMessages(nodeMessages)
 
 const smoke = process.argv.includes('--smoke')
 const isDev = !app.isPackaged
@@ -31,6 +37,8 @@ let windowReady = false
 let shuttingDown = false
 let smokeTimer: NodeJS.Timeout | null = null
 let restartTimer: NodeJS.Timeout | null = null
+let tray: Tray | null = null
+let trayHintShown = false
 
 function deliverPort(): void {
   if (!windowReady || !rendererPort || !win || win.isDestroyed()) return
@@ -184,6 +192,16 @@ function createWindow(): void {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
+  // 关闭按钮默认只隐藏到托盘，后台会话和手机网关继续运行；真正退出走托盘菜单。
+  window.on('close', (event) => {
+    if (shuttingDown || smoke || !tray) return
+    event.preventDefault()
+    window.hide()
+    if (!trayHintShown && process.platform === 'win32') {
+      trayHintShown = true
+      tray.displayBalloon({ title: t('QingCode Next 仍在后台运行'), content: t('可从托盘图标打开或退出。'), iconType: 'info' })
+    }
+  })
   window.on('closed', () => {
     if (win === window) win = null
     windowReady = false
@@ -198,17 +216,52 @@ function createWindow(): void {
   }
 }
 
+function showWindow(): void {
+  if (!win || win.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
+function createTray(): void {
+  // 开发时渲染进程走 dev server，图标取源码 public；打包后 public 已复制到 out/renderer。
+  const iconPath = isDev ? join(appRoot, 'src', 'renderer', 'public', 'icon.png') : join(appRoot, 'out', 'renderer', 'icon.png')
+  const icon = nativeImage.createFromPath(iconPath)
+  tray = new Tray(icon.isEmpty() ? icon : icon.resize({ width: 16, height: 16 }))
+  tray.setToolTip('QingCode Next')
+  updateTrayMenu()
+  tray.on('click', showWindow)
+  tray.on('double-click', showWindow)
+}
+
+function updateTrayMenu(): void {
+  tray?.setContextMenu(Menu.buildFromTemplate([
+    { label: t('显示主窗口'), click: showWindow },
+    { type: 'separator' },
+    { label: t('退出'), click: () => app.quit() },
+  ]))
+}
+
 function registerIpc(): void {
+  // 渲染进程持有语言偏好，加载时同步过来，原生对话框与托盘跟随界面语言。
+  ipcMain.on('app:setLocale', (_event, locale: unknown) => {
+    if (locale !== 'zh' && locale !== 'en') return
+    setLocale(locale)
+    updateTrayMenu()
+  })
   // kind 只接受预设值，渲染进程不能传任意过滤器/标题。
   ipcMain.handle('dialog:openFile', async (_event, kind: unknown) => {
     const preset =
       kind === 'legacyDb'
-        ? { title: '选择旧版 QingCode 数据库', filters: [{ name: 'SQLite 数据库', extensions: ['db'] }] }
-        : { title: '选择 SSH 私钥文件', filters: [{ name: '私钥文件', extensions: ['pem', 'key', 'ppk'] }] }
+        ? { title: t('选择旧版 QingCode 数据库'), filters: [{ name: t('SQLite 数据库'), extensions: ['db'] }] }
+        : { title: t('选择 SSH 私钥文件'), filters: [{ name: t('私钥文件'), extensions: ['pem', 'key', 'ppk'] }] }
     const result = await dialog.showOpenDialog({
       title: preset.title,
       properties: ['openFile'],
-      filters: [...preset.filters, { name: '所有文件', extensions: ['*'] }],
+      filters: [...preset.filters, { name: t('所有文件'), extensions: ['*'] }],
     })
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
@@ -221,7 +274,7 @@ function registerIpc(): void {
     if (parts.some((part) => !part || part === '.' || part === '..' || /[:\\\x00-\x1f]/.test(part))) throw new Error('项目文件路径无效')
     const name = parts[parts.length - 1]!
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
-      title: openAfterDownload ? '下载并打开' : '下载到本机',
+      title: openAfterDownload ? t('下载并打开') : t('下载到本机'),
       defaultPath: join(app.getPath('downloads'), name),
     })
     if (canceled || !filePath) return false
@@ -279,6 +332,8 @@ function registerIpc(): void {
 app.on('before-quit', () => {
   shuttingDown = true
   if (restartTimer) clearTimeout(restartTimer)
+  tray?.destroy()
+  tray = null
 })
 
 if (!app.requestSingleInstanceLock()) {
@@ -286,25 +341,21 @@ if (!app.requestSingleInstanceLock()) {
   if (smoke) app.exit(1)
   else app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (win) {
-      if (win.isMinimized()) win.restore()
-      win.focus()
-    }
-  })
+  // 窗口可能已隐藏到托盘，再次启动时需要重新显示。
+  app.on('second-instance', () => showWindow())
   void app.whenReady().then(() => {
+    setLocale(resolveLocale('system', app.getPreferredSystemLanguages()))
     // 自绘标题栏，不要系统菜单栏（Alt 也不会唤出）；复制粘贴等编辑快捷键由 Chromium 原生处理。
     // macOS 的 Cmd+C/V/Q 依赖应用菜单，只在其他平台去掉。
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
     registerIpc()
     startBackend()
+    if (!smoke) createTray()
     createWindow()
     if (smoke) {
       smokeTimer = setTimeout(() => app.exit(1), 30_000)
     }
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
-    })
+    app.on('activate', () => showWindow())
   })
 }
 

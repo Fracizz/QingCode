@@ -1,6 +1,7 @@
 // 图片附件的纯逻辑：文件筛选、data URL 解析与校验、按模型输入模态判断能否发图。
 import { MAX_FRAME_BYTES } from '@qn/protocol'
 import type { UserInput } from '@qn/codex-client'
+import { t } from '@qn/codex-client'
 
 /** 单张图片上限（按解码后字节数）；与 server 侧 Claude/pi 映射的上限一致。 */
 export const IMAGE_MAX_BYTES = 10 * 1024 * 1024
@@ -11,7 +12,7 @@ const MIME_SET = new Set<string>(IMAGE_MIME_TYPES)
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i
 // 给 JSON-RPC 外层、会话 ID 和模型/权限参数留出空间。
 const MAX_TURN_INPUT_BYTES = MAX_FRAME_BYTES - 8 * 1024
-const OVERSIZE_TURN_INPUT = '消息和附件编码后超过传输上限，请移除部分内容后再发送'
+const OVERSIZE_TURN_INPUT = t('消息和附件编码后超过传输上限，请移除部分内容后再发送')
 
 type FileLike = { name: string; type: string; size: number }
 
@@ -38,21 +39,21 @@ export function screenFiles<T extends FileLike>(
   const rejected: { name: string; reason: string }[] = []
   let images = options.existingImages
   for (const file of files) {
-    const name = file.name || '粘贴的图片'
+    const name = file.name || t('粘贴的图片')
     if (!isSupportedImage(file)) {
       accepted.push(file)
       continue
     }
     if (!options.imagesAllowed) {
-      rejected.push({ name, reason: options.unsupportedReason ?? '当前模型不支持图片输入' })
+      rejected.push({ name, reason: options.unsupportedReason ?? t('当前模型不支持图片输入') })
       continue
     }
     if (file.size > IMAGE_MAX_BYTES) {
-      rejected.push({ name, reason: `图片超过 ${formatMiB(IMAGE_MAX_BYTES)}（${formatMiB(file.size)}）` })
+      rejected.push({ name, reason: t('图片超过 {limit}（{size}）', { limit: formatMiB(IMAGE_MAX_BYTES), size: formatMiB(file.size) }) })
       continue
     }
     if (images >= MAX_IMAGES) {
-      rejected.push({ name, reason: `一条消息最多 ${MAX_IMAGES} 张图片` })
+      rejected.push({ name, reason: t('一条消息最多 {count} 张图片', { count: MAX_IMAGES }) })
       continue
     }
     images += 1
@@ -80,9 +81,9 @@ export function base64Bytes(data: string): number {
 /** 单张已读入的图片能否发送；返回原因或 null。 */
 export function imageDataUrlProblem(url: string): string | null {
   const parsed = parseImageDataUrl(url)
-  if (!parsed) return '图片数据无效'
-  if (!MIME_SET.has(parsed.mimeType)) return `不支持的图片类型 ${parsed.mimeType}`
-  if (parsed.bytes > IMAGE_MAX_BYTES) return `图片超过 ${formatMiB(IMAGE_MAX_BYTES)}`
+  if (!parsed) return t('图片数据无效')
+  if (!MIME_SET.has(parsed.mimeType)) return t('不支持的图片类型 {type}', { type: parsed.mimeType })
+  if (parsed.bytes > IMAGE_MAX_BYTES) return t('图片超过 {limit}', { limit: formatMiB(IMAGE_MAX_BYTES) })
   return null
 }
 
@@ -92,11 +93,11 @@ export function imageDataUrlProblem(url: string): string | null {
  */
 export function imageSendBlock(dataUrls: string[], imagesAllowed: boolean, unsupportedReason?: string): string | null {
   if (dataUrls.length === 0) return null
-  if (!imagesAllowed) return `${unsupportedReason ?? '当前模型不支持图片输入'}，请移除图片后再发送`
-  if (dataUrls.length > MAX_IMAGES) return `一条消息最多 ${MAX_IMAGES} 张图片，请移除多余的图片`
+  if (!imagesAllowed) return t('{reason}，请移除图片后再发送', { reason: unsupportedReason ?? t('当前模型不支持图片输入') })
+  if (dataUrls.length > MAX_IMAGES) return t('一条消息最多 {count} 张图片，请移除多余的图片', { count: MAX_IMAGES })
   for (const url of dataUrls) {
     const problem = imageDataUrlProblem(url)
-    if (problem) return `${problem}，请移除后再发送`
+    if (problem) return t('{problem}，请移除后再发送', { problem })
   }
   if (dataUrls.reduce((sum, url) => sum + url.length, 0) > MAX_TURN_INPUT_BYTES) return OVERSIZE_TURN_INPUT
   return turnInputSizeProblem(dataUrls.map((url) => ({ type: 'image', url })))
@@ -146,5 +147,5 @@ export function imageSupportFor(table: ModalityTable | null, model: string | nul
   const modalities = table.models[id]
   if (!modalities || modalities.length === 0) return ALLOWED
   if (modalities.includes('image')) return ALLOWED
-  return { allowed: false, reason: `当前模型${modelName ? ` ${modelName} ` : ''}不支持图片输入` }
+  return { allowed: false, reason: modelName ? t('当前模型 {model} 不支持图片输入', { model: modelName }) : t('当前模型不支持图片输入') }
 }

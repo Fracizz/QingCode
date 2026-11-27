@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  parseSessionConfig,
   encodeCwdDir,
   listPiSessions,
   parseSessionLines,
@@ -100,5 +101,28 @@ describe('listPiSessions（只读会话文件）', () => {
       readHead: () => '',
     }
     expect(listPiSessions(cwd, io, 'MISSING')).toEqual([])
+  })
+})
+
+describe('parseSessionConfig', () => {
+  const line = (value: unknown) => JSON.stringify(value)
+  it('按条目顺序取最后一次的模型与思考档位，模型带 provider 前缀与 model/list 对齐', () => {
+    expect(parseSessionConfig([
+      line({ type: 'session', id: 's1' }),
+      line({ type: 'model_change', provider: 'openai', modelId: 'gpt-5' }),
+      line({ type: 'thinking_level_change', thinkingLevel: 'low' }),
+      line({ type: 'message', message: { role: 'user', content: 'x' } }),
+      line({ type: 'message', message: { role: 'assistant', provider: 'anthropic', model: 'claude-opus-5-5', thinkingLevel: 'high' } }),
+      '{"type":"model_change", 截断',
+    ])).toEqual({ model: 'anthropic/claude-opus-5-5', thinkingLevel: 'high' })
+  })
+
+  it('显式切换晚于回复时以切换为准；没有记录时为空', () => {
+    expect(parseSessionConfig([
+      line({ type: 'message', message: { role: 'assistant', provider: 'a', model: 'm1', thinkingLevel: 'high' } }),
+      line({ type: 'model_change', provider: 'b', modelId: 'm2' }),
+      line({ type: 'thinking_level_change', thinkingLevel: 'minimal' }),
+    ])).toEqual({ model: 'b/m2', thinkingLevel: 'minimal' })
+    expect(parseSessionConfig([line({ type: 'session', id: 's1' })])).toEqual({ model: null, thinkingLevel: null })
   })
 })

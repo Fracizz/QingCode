@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Binary, Download, ExternalLink } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { cn } from '../../lib/cn'
 import { basename, imageDataUrl } from './fileLinks'
 
@@ -24,8 +25,8 @@ export function ImageView({
       <button
         type="button"
         className={cn('m-auto flex shrink-0 items-center justify-center', originalSize ? 'cursor-zoom-out' : 'h-full w-full cursor-zoom-in')}
-        aria-label={originalSize ? '适应窗口' : '查看原始尺寸'}
-        title={originalSize ? '适应窗口' : '查看原始尺寸'}
+        aria-label={originalSize ? t('适应窗口') : t('查看原始尺寸')}
+        title={originalSize ? t('适应窗口') : t('查看原始尺寸')}
         aria-pressed={originalSize}
         onClick={() => setOriginalSize((value) => !value)}
       >
@@ -37,7 +38,7 @@ export function ImageView({
 
 export function BinaryNotice({
   path,
-  message = '这是二进制文件，无法按文本显示',
+  message = t('这是二进制文件，无法按文本显示'),
   className,
   onDownload,
 }: {
@@ -67,16 +68,16 @@ export function BinaryNotice({
           <button type="button" className="qn-button-subtle inline-flex items-center gap-1.5"
             disabled={downloading} onClick={() => void download(false)}>
             <Download size={14} aria-hidden />
-            下载
+            {t('下载')}
           </button>
           <button type="button" className="qn-button-subtle inline-flex items-center gap-1.5"
             disabled={downloading} onClick={() => void download(true)}>
             <ExternalLink size={14} aria-hidden />
-            下载并打开
+            {t('下载并打开')}
           </button>
         </div>
       )}
-      {downloading && <div role="status" className="text-ui-sm text-qn-muted">正在下载…</div>}
+      {downloading && <div role="status" className="text-ui-sm text-qn-muted">{t('正在下载…')}</div>}
     </div>
   )
 }

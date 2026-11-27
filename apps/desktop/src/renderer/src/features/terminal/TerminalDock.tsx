@@ -1,6 +1,7 @@
 import type { TermInfo } from '@qn/protocol'
 import { Plus, Terminal, X } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { t, translateMessage } from '@qn/codex-client'
 import { ResizeHandle } from '../../components/ResizeHandle'
 import { EmptyState, ErrorNote, IconButton, Spinner } from '../../components/ui'
 import { cn } from '../../lib/cn'
@@ -21,7 +22,7 @@ function TerminalTab({ visible, ...props }: { visible: boolean; ready: boolean; 
   }, [visible])
   if (!visible && !visited) return null
   return (
-    <Suspense fallback={visible && <div className="p-3"><Spinner label="正在加载终端…" /></div>}>
+    <Suspense fallback={visible && <div className="p-3"><Spinner label={t('正在加载终端…')} /></div>}>
       <TerminalView visible={visible} {...props} />
     </Suspense>
   )
@@ -49,7 +50,7 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
     void serverCall(targetId, 'term.list', {}).then(({ terminals }) => {
       if (current) setState((previous) => restoreTerminalTabs(terminals, cwd, previous.activeId))
     }).catch((err: unknown) => {
-      if (current) setWarning(friendlyError(err, '读取终端列表失败'))
+      if (current) setWarning(translateMessage(friendlyError(err, t('读取终端列表失败'))))
     }).finally(() => {
       if (current) setLoading(false)
     })
@@ -70,7 +71,7 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
         }))
       }
     } catch (err) {
-      if (mounted.current) setWarning(friendlyError(err, '新建终端失败'))
+      if (mounted.current) setWarning(translateMessage(friendlyError(err, t('新建终端失败'))))
     } finally {
       if (mounted.current) setBusy(false)
     }
@@ -87,7 +88,7 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
         ))
       }
     } catch (err) {
-      if (mounted.current) setWarning(friendlyError(err, '关闭终端失败'))
+      if (mounted.current) setWarning(translateMessage(friendlyError(err, t('关闭终端失败'))))
     } finally {
       if (mounted.current) setBusy(false)
     }
@@ -99,10 +100,10 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
     <>
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-qn-border px-2">
         <Terminal size={14} className="ml-1 shrink-0 text-qn-muted" aria-hidden />
-        <span className="mr-1 shrink-0 text-ui-sm text-qn-muted">终端</span>
+        <span className="mr-1 shrink-0 text-ui-sm text-qn-muted">{t('终端')}</span>
         <div className="qn-scroll flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {state.tabs.map((info, index) => {
-            const name = info.shell.split(/[\\/]/).at(-1) || '终端'
+            const name = info.shell.split(/[\\/]/).at(-1) || t('终端')
             const label = `${name} ${index + 1}`
             const active = info.termId === state.activeId
             return (
@@ -116,21 +117,21 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
                 >
                   {label}
                 </button>
-                <IconButton size="sm" label={`关闭 ${label}`} disabled={disabled} onClick={() => void close(info.termId)}>
+                <IconButton size="sm" label={t('关闭 {name}', { name: label })} disabled={disabled} onClick={() => void close(info.termId)}>
                   <X size={12} />
                 </IconButton>
               </div>
             )
           })}
         </div>
-        <IconButton size="sm" label="新建终端" disabled={disabled} onClick={() => void create()}>
+        <IconButton size="sm" label={t('新建终端')} disabled={disabled} onClick={() => void create()}>
           <Plus size={15} />
         </IconButton>
-        <IconButton size="sm" label="收起终端面板" onClick={useTerminalDock.getState().close}>
+        <IconButton size="sm" label={t('收起终端面板')} onClick={useTerminalDock.getState().close}>
           <X size={14} />
         </IconButton>
       </div>
-      {!ready && <div className="shrink-0 px-3 py-1 text-ui-sm text-qn-warn" role="status">目标未连接</div>}
+      {!ready && <div className="shrink-0 px-3 py-1 text-ui-sm text-qn-warn" role="status">{t('目标未连接')}</div>}
       {warning && (
         <div className="shrink-0 px-2 pt-2">
           <ErrorNote
@@ -141,9 +142,9 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
         </div>
       )}
       <div className="relative min-h-0 flex-1">
-        {ready && loading && !state.tabs.length && <div className="p-3"><Spinner label="正在读取终端…" /></div>}
+        {ready && loading && !state.tabs.length && <div className="p-3"><Spinner label={t('正在读取终端…')} /></div>}
         {!state.tabs.length && !(ready && loading) && (
-          <EmptyState>{ready ? '点击新建终端，在当前项目中启动 shell。' : '连接目标后可打开终端。'}</EmptyState>
+          <EmptyState>{ready ? t('点击新建终端，在当前项目中启动 shell。') : t('连接目标后可打开终端。')}</EmptyState>
         )}
         {state.tabs.map((info) => (
           <TerminalTab key={`${info.termId}:${info.startedAt}`} targetId={targetId} info={info} ready={ready} visible={open && info.termId === state.activeId} />
@@ -168,7 +169,7 @@ export function TerminalDock() {
 
   return (
     <section
-      aria-label="终端面板"
+      aria-label={t('终端面板')}
       className={cn('relative flex max-h-[min(65%,calc(100%-24rem))] shrink-0 flex-col border-t border-qn-border bg-qn-bg', !open && 'hidden')}
       style={{ height }}
     >
@@ -180,7 +181,7 @@ export function TerminalDock() {
         onReset={() => setHeight(DEFAULT_HEIGHT)}
         min={152}
         max={640}
-        label="调整终端面板高度"
+        label={t('调整终端面板高度')}
         className="absolute inset-x-0 -top-1 z-10"
       />
       {targetId && cwd ? (
@@ -188,10 +189,10 @@ export function TerminalDock() {
       ) : (
         <>
           <div className="flex h-9 shrink-0 items-center justify-between border-b border-qn-border px-3 text-ui-sm text-qn-muted">
-            <span>终端</span>
-            <IconButton size="sm" label="收起终端面板" onClick={useTerminalDock.getState().close}><X size={14} /></IconButton>
+            <span>{t('终端')}</span>
+            <IconButton size="sm" label={t('收起终端面板')} onClick={useTerminalDock.getState().close}><X size={14} /></IconButton>
           </div>
-          <EmptyState>先在左侧选择一个项目。</EmptyState>
+          <EmptyState>{t('先在左侧选择一个项目。')}</EmptyState>
         </>
       )}
     </section>

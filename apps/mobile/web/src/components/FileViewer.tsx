@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { basename, imageDataUrl, isImagePath } from '../fileLinks'
 import { useApp } from '../store'
@@ -14,7 +15,7 @@ const DIFF_CLASS: Record<DiffRow['kind'], string> = {
 
 function FileImage({ src, title }: { src: string; title: string }) {
   const [failed, setFailed] = useState(false)
-  if (failed) return <Note message="无法显示这张图片，文件内容可能不完整" tone="warn" />
+  if (failed) return <Note message={t('无法显示这张图片，文件内容可能不完整')} tone="warn" />
   return (
     <div className="flex justify-center rounded-lg border border-qn-border bg-black/30 p-2">
       <img src={src} alt={title} decoding="async" onError={() => setFailed(true)} className="max-h-[70dvh] max-w-full object-contain" />
@@ -32,7 +33,7 @@ function TextView({ content, line }: { content: string; line: number | null }) {
     ref.current?.querySelector(`[data-line="${line}"]`)?.scrollIntoView({ block: 'center' })
   }, [line, lines.length])
 
-  if (lines.length === 0) return <div className="py-6 text-center text-sm text-qn-muted">（空文件）</div>
+  if (lines.length === 0) return <div className="py-6 text-center text-sm text-qn-muted">{t('（空文件）')}</div>
   return (
     <div ref={ref} className="qn-code qn-scroll">
       {lines.map((row) => (
@@ -47,10 +48,10 @@ function TextView({ content, line }: { content: string; line: number | null }) {
 
 function DiffView({ text }: { text: string }) {
   const { rows, truncated } = useMemo(() => diffRows(text), [text])
-  if (rows.length === 0) return <div className="py-6 text-center text-sm text-qn-muted">没有差异</div>
+  if (rows.length === 0) return <div className="py-6 text-center text-sm text-qn-muted">{t('没有差异')}</div>
   return (
     <>
-      {truncated && <Note message={`差异较长，仅显示前 ${rows.length} 行`} tone="warn" />}
+      {truncated && <Note message={t('差异较长，仅显示前 {count} 行', { count: rows.length })} tone="warn" />}
       <div className="qn-code qn-scroll">
         {rows.map((row, index) => (
           <div key={index} className={`qn-code-row ${DIFF_CLASS[row.kind]}`}>
@@ -79,12 +80,12 @@ export function FileViewer() {
 
   return (
     <div className="qn-viewer" data-image={imageRequested || undefined}
-      role="dialog" aria-modal="true" aria-label={`查看 ${title}`}>
+      role="dialog" aria-modal="true" aria-label={t('查看 {name}', { name: title })}>
       <Header
-        title={viewer.mode === 'diff' ? `差异 · ${title}` : title}
+        title={viewer.mode === 'diff' ? t('差异 · {name}', { name: title }) : title}
         subtitle={viewer.path}
         onBack={close}
-        right={<Badge>只读</Badge>}
+        right={<Badge>{t('只读')}</Badge>}
       />
       <div className="qn-body qn-scroll">
         {viewer.notice && <Note message={viewer.notice} tone="warn" />}
@@ -92,7 +93,7 @@ export function FileViewer() {
           <Note
             message={viewer.error}
             tone="error"
-            actionLabel="重试"
+            actionLabel={t('重试')}
             onAction={() =>
               void (viewer.mode === 'diff'
                 ? openDiff({ path: viewer.path, diff: viewer.diffSource === 'card' ? viewer.diff : null })
@@ -102,21 +103,21 @@ export function FileViewer() {
             }
           />
         )}
-        {viewer.loading && <Loading text={viewer.mode === 'diff' ? '正在读取差异…' : imageRequested ? '正在读取图片…' : '正在读取文件…'} />}
+        {viewer.loading && <Loading text={viewer.mode === 'diff' ? t('正在读取差异…') : imageRequested ? t('正在读取图片…') : t('正在读取文件…')} />}
 
         {viewer.mode === 'diff' && viewer.diff !== null && (
           <>
             <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-qn-muted">
               <Badge tone={viewer.diffSource === 'git' ? 'accent' : 'muted'}>
-                {viewer.diffSource === 'git' ? 'Git 工作区差异' : '改动卡片自带差异'}
+                {viewer.diffSource === 'git' ? t('Git 工作区差异') : t('改动卡片自带差异')}
               </Badge>
-              {viewer.diffTruncated && <Badge tone="warn">已截断</Badge>}
+              {viewer.diffTruncated && <Badge tone="warn">{t('已截断')}</Badge>}
               <Button
                 variant="ghost"
                 className="ml-auto px-3 py-1 text-xs"
                 onClick={() => void openFile({ path: viewer.path })}
               >
-                查看文件
+                {t('查看文件')}
               </Button>
             </div>
             <DiffView text={viewer.diff} />
@@ -127,28 +128,28 @@ export function FileViewer() {
           <>
             <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-qn-muted">
               <span>{formatBytes(file.size)}</span>
-              {viewer.line && <span>· 第 {viewer.line} 行</span>}
-              {file.truncated && <Badge tone="warn">已截断</Badge>}
+              {viewer.line && <span>{t('· 第 {line} 行', { line: viewer.line })}</span>}
+              {file.truncated && <Badge tone="warn">{t('已截断')}</Badge>}
             </div>
             {kind === 'image' && <FileImage key={file.path} src={imageDataUrl(file.content, file.path)} title={title} />}
             {kind === 'binary' && (
-              <Note message="这是二进制文件，无法以文本显示。" />
+              <Note message={t('这是二进制文件，无法以文本显示。')} />
             )}
             {kind === 'text' && <TextView content={file.content} line={viewer.line} />}
             {kind === 'text' && file.truncated && (
               <div className="mt-3 flex items-center gap-2">
                 <span className="min-w-0 flex-1 text-[11px] text-qn-muted">
-                  已显示 {formatBytes(file.offset + file.length)} / {formatBytes(file.size)}
+                  {t('已显示 {shown} / {total}', { shown: formatBytes(file.offset + file.length), total: formatBytes(file.size) })}
                 </span>
                 <Button onClick={() => void loadMore()} disabled={viewer.loadingMore}>
-                  {viewer.loadingMore ? '加载中…' : '加载更多'}
+                  {viewer.loadingMore ? t('加载中…') : t('加载更多')}
                 </Button>
               </div>
             )}
           </>
         )}
       </div>
-      <BottomClose onClick={close} label="关闭文件" />
+      <BottomClose onClick={close} label={t('关闭文件')} />
     </div>
   )
 }

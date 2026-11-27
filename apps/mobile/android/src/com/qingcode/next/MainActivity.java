@@ -146,6 +146,19 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
     });
   }
 
+  @Override public void refreshLanguage() {
+    runOnUiThread(() -> {
+      if (destroyed) return;
+      DesktopConnectionService.renameChannel(this);
+      if (!connectionServiceStarted) return;
+      try {
+        startForegroundService(new Intent(this, DesktopConnectionService.class));
+      } catch (IllegalStateException | SecurityException ignored) {
+        // 系统限制启动时保留旧文字，下次启动服务时更新。
+      }
+    });
+  }
+
   private void updateConnectionService() {
     if (destroyed) return;
     Intent intent = new Intent(this, DesktopConnectionService.class);

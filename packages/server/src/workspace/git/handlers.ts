@@ -85,6 +85,7 @@ function requirePaths(params: Params): string[] {
 /** ref / 分支 / 远端名要放在选项位置之前，禁止以 '-' 开头冒充选项。 */
 function safeRef(value: string, label: string): string {
   if (value.startsWith('-') || value.includes('\0')) {
+    // i18n-ignore: 按实际取值在词典登记整句
     throw new WorkspaceError('params', `${label} 非法`)
   }
   return value

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
 import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
 import type { ItemView } from '@qn/codex-client'
-import { collectSubagents, DRAFT_THREAD_ID, supportsSubagentRequests } from '@qn/codex-client'
+import { t, translateMessage, collectSubagents, DRAFT_THREAD_ID, supportsSubagentRequests } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { buildAnnotatedMessage, quoteBlock, sideChatExcerpt, type Annotation } from '../lib/annotations'
 import { agentLabel, sessionKey } from '../lib/agents'
@@ -40,6 +40,7 @@ import { MainHeader } from './shell/MainHeader'
 import { WelcomePane } from './shell/WelcomePane'
 import { SubagentLauncher } from './SubagentDetails'
 import { TurnErrorNote } from './TurnErrorNote'
+import { targetDisplayName } from './targetName'
 import { EmptyState, ErrorNote } from './ui'
 
 const HISTORY_BATCH_SIZE = 60
@@ -61,7 +62,6 @@ function hasDraft(draft: Draft): boolean {
 export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) => void; onAddTarget: () => void }) {
   const targets = useTargets((s) => s.targets)
   const targetState = useTargets((s) => s.states[s.selectedId]?.state ?? 'idle')
-  const sessions = useCodex((s) => s.sessions)
   const currentTargetId = useCodex((s) => s.currentTargetId)
   const currentThreadId = useCodex((s) => s.currentThreadId)
   const currentAgent = useCodex((s) => s.currentAgent)
@@ -124,9 +124,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     updateDraft((item) => ({ ...item, skills: { ...item.skills, [currentAgent]: skills } }))
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
-  const imageSupport = useImageSupport(currentTargetId, currentAgent, !!currentTargetId)
+  const imageSupport = useImageSupport(currentTargetId, currentAgent, !!currentTargetId, currentThreadId)
 
-  const session = currentTargetId ? sessions[sessionKey(currentTargetId, currentAgent)] : undefined
+  // 只订阅当前会话：订阅整个 sessions 时，后台会话的每个流式增量也会让对话区整体重渲染。
+  const session = useCodex((s) => s.currentTargetId ? s.sessions[sessionKey(s.currentTargetId, s.currentAgent)] : undefined)
   // 草稿态没有 threadId，发送中的用户消息先放在草稿线程里，避免对话区空白。
   const visibleThreadId = currentThreadId ?? DRAFT_THREAD_ID
   const chatKey = currentTargetId ? pendingSendKey({ targetId: currentTargetId, agent: currentAgent, threadId: visibleThreadId }) : null
@@ -202,7 +203,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       await loadEarlierHistory(reveal)
       setHistoryLoad((current) => current === load ? null : current)
     } catch (error) {
-      setHistoryLoad((current) => current === load ? { ...load, error: friendlyError(error, '加载历史失败') } : current)
+      setHistoryLoad((current) => current === load ? { ...load, error: friendlyError(error, t('加载历史失败')) } : current)
     }
   }
 
@@ -326,16 +327,20 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       unsupportedReason: imageSupport.reason ?? undefined,
     })
     if (rejected.length > 0) {
-      const detail = rejected.map((item) => `${item.name}：${item.reason}`).join('；')
-      notify(`未添加 ${rejected.length} 张图片（${detail}）`)
+      const detail = rejected
+        .map((item) => t('{name}：{reason}', { name: item.name, reason: translateMessage(item.reason) }))
+        .join(t('；'))
+      notify(t('未添加 {count} 张图片（{detail}）', { count: rejected.length, detail }))
     }
     if (accepted.length === 0) return
     const room = MAX_ATTACHMENTS - attachments.length - reads
     if (room <= 0) {
-      notify('最多添加 ' + MAX_ATTACHMENTS + ' 个附件')
+      notify(t('最多添加 {max} 个附件', { max: MAX_ATTACHMENTS }))
       return
     }
-    if (accepted.length > room) notify('最多添加 ' + MAX_ATTACHMENTS + ' 个附件，已忽略多出的 ' + (accepted.length - room) + ' 个')
+    if (accepted.length > room) notify(
+      t('最多添加 {max} 个附件，已忽略多出的 {count} 个', { max: MAX_ATTACHMENTS, count: accepted.length - room }),
+    )
     // 只有本机目标能直接引用本机路径；SSH 与直连目标都要先上传。
     const isLocal = targets.find((item) => item.id === targetId)?.kind === 'local'
     for (const file of accepted.slice(0, room)) {
@@ -350,18 +355,21 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         updateReads(1)
         void readImage(file)
           .then(({ dataUrl, size }) => {
-            setAttachments((prev) => [...prev, { id, kind: 'image', name: file.name || '粘贴的图片', size, dataUrl }])
+            setAttachments((prev) => [...prev, { id, kind: 'image', name: file.name || t('粘贴的图片'), size, dataUrl }])
           })
           .catch((err: unknown) => {
             if (draftKey === composerDraftKey(useCodex.getState())) {
-              notify((file.name || '图片') + '：' + (err instanceof Error ? err.message : '读取失败'))
+              notify(t('{name}：{reason}', {
+                name: file.name || t('图片'),
+                reason: err instanceof Error ? translateMessage(err.message) : t('读取失败'),
+              }))
             }
           })
           .finally(() => updateReads(-1))
         continue
       }
       if (file.size > MAX_FILE_BYTES) {
-        notify(file.name + ' 超过 ' + MAX_FILE_BYTES / 1024 / 1024 + ' MB，未添加')
+        notify(t('{name} 超过 {size} MB，未添加', { name: file.name, size: MAX_FILE_BYTES / 1024 / 1024 }))
         continue
       }
       const localPath = window.qn?.pathForFile?.(file) ?? ''
@@ -379,7 +387,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       uploadToTarget(targetId, file)
         .then((path) => patchAttachment(id, { status: 'ready', targetPath: path }))
         .catch((err: unknown) =>
-          patchAttachment(id, { status: 'error', error: err instanceof Error ? err.message : '上传失败' }),
+          patchAttachment(id, { status: 'error', error: err instanceof Error ? err.message : t('上传失败') }),
         )
     }
   }
@@ -440,9 +448,9 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
 
   const slashItems = useMemo<SlashItem[]>(
     () => [
-      { id: 'new', kind: 'command', name: 'new', description: '开始新会话' },
-      ...(running ? [{ id: 'stop', kind: 'command' as const, name: 'stop', description: '停止当前运行' }] : []),
-      { id: 'refresh', kind: 'command', name: 'refresh', description: '刷新会话列表与技能' },
+      { id: 'new', kind: 'command', name: 'new', description: t('开始新会话') },
+      ...(running ? [{ id: 'stop', kind: 'command' as const, name: 'stop', description: t('停止当前运行') }] : []),
+      { id: 'refresh', kind: 'command', name: 'refresh', description: t('刷新会话列表与技能') },
       ...(skillList?.items ?? []),
     ],
     [running, skillList],
@@ -469,9 +477,9 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     })
   }, [draftKey])
   const agentStatus = session?.opening
-    ? `${agentLabel(currentAgent)} 启动中…`
+    ? t('{agent} 启动中…', { agent: agentLabel(currentAgent) })
     : session?.openError && !session.opened
-      ? `${agentLabel(currentAgent)} 不可用`
+      ? t('{agent} 不可用', { agent: agentLabel(currentAgent) })
       : null
 
   return (
@@ -492,7 +500,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
 
       {openingThread && (
         <div className="flex items-center gap-2 border-b border-qn-border px-6 py-2 text-ui-md text-qn-muted" role="status">
-          <LoadingIcon size={14} aria-hidden /> 正在加载会话历史…
+          <LoadingIcon size={14} aria-hidden /> {t('正在加载会话历史…')}
         </div>
       )}
 
@@ -532,16 +540,16 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
               </div>
             ) : empty && !view?.historyCursor ? (
               <div className="flex flex-1 items-center justify-center">
-                <EmptyState>会话暂无消息，发送一条开始对话。</EmptyState>
+                <EmptyState>{t('会话暂无消息，发送一条开始对话。')}</EmptyState>
               </div>
             ) : (
               <div className="space-y-4 pt-4">
                 {(firstVisible > 0 || view?.historyCursor) && (
                   <button type="button" className="mx-auto block rounded-full px-3 py-1.5 text-ui-md text-qn-muted hover:bg-qn-hover" disabled={historyLoading} onClick={() => void showEarlier()}>
-                    {historyLoading ? '正在加载更早消息…' : '查看更早消息'}
+                    {historyLoading ? t('正在加载更早消息…') : t('查看更早消息')}
                   </button>
                 )}
-                {historyError && <div role="alert" className="text-center text-ui-md text-qn-danger">{historyError}</div>}
+                {historyError && <div role="alert" className="text-center text-ui-md text-qn-danger">{translateMessage(historyError)}</div>}
                 {flow.slice(firstVisible).map((entry, index) => {
                   const previous = index > 0 ? flow[firstVisible + index - 1] : undefined
                   return entry.kind === 'tools' ? (
@@ -583,7 +591,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
             className="qn-surface-float absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5 text-ui-sm hover:bg-qn-hover"
             onClick={scrollToBottom}
           >
-            <ArrowDown size={14} /> 回到底部
+            <ArrowDown size={14} /> {t('回到底部')}
           </button>
         )}
       </div>
@@ -619,7 +627,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           imageSupport,
           onAddFiles: addFiles,
           onRemoveAttachment: removeAttachment,
-          blockedReason: readingImages > 0 ? '正在读取图片…' : attachmentsBlocking(attachments),
+          blockedReason: readingImages > 0 ? t('正在读取图片…') : attachmentsBlocking(attachments),
         }}
         slash={{
           items: slashItems,
@@ -651,7 +659,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
             <span className="flex min-w-0 items-center gap-1.5">
               <StatusDot className={targetDotClass[targetState]} />
               <TargetIcon size={13} className="shrink-0" />
-              <span className="truncate">{target?.name ?? '未选择目标'}</span>
+              <span className="truncate">{target ? targetDisplayName(target) : t('未选择目标')}</span>
             </span>
             {project && (
               <span className="flex min-w-0 items-center gap-1.5" title={project.path}>
@@ -666,9 +674,11 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       {dragging && (
         <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-accent/60 bg-qn-bg/85 text-ui-md text-qn-text">
           <ImagePlus size={28} className="text-qn-accent" />
-          松开以添加图片或文件
+          {t('松开以添加图片或文件')}
           <span className="text-ui-sm text-qn-muted">
-            图片随消息发送；其他文件{target && target.kind !== 'local' ? '会先上传到目标机' : '按本机路径引用'}
+            {target && target.kind !== 'local'
+              ? t('图片随消息发送；其他文件会先上传到目标机')
+              : t('图片随消息发送；其他文件按本机路径引用')}
           </span>
         </div>
       )}

@@ -1,3 +1,4 @@
+import { getLocale, t, translateMessage } from '@qn/codex-client'
 import { matchCommandText } from './match'
 import type { PaletteCommand } from './types'
 
@@ -113,7 +114,7 @@ export type RankedCommand = {
   recent: boolean
 }
 
-const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
+const collator = new Intl.Collator(getLocale() === 'en' ? 'en-US' : 'zh-CN', { numeric: true, sensitivity: 'base' })
 
 const byCategoryThenTitle = (a: PaletteCommand, b: PaletteCommand): number => {
   // 无分类的命令排在有分类的之后
@@ -186,12 +187,12 @@ export function moveSelection(
 }
 
 export function errorMessage(err: unknown): string {
-  if (err instanceof Error && err.message) return err.message
-  if (typeof err === 'string' && err) return err
+  if (err instanceof Error && err.message) return translateMessage(err.message)
+  if (typeof err === 'string' && err) return translateMessage(err)
   if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string' && err.message) {
-    return err.message
+    return translateMessage(err.message)
   }
-  return '未知错误'
+  return t('未知错误')
 }
 
 /** 运行命令并把同步抛错与异步拒绝都收敛到 onError，调用方无需 try/catch。 */
@@ -203,7 +204,7 @@ export async function executeCommand(
     await command.run()
     return true
   } catch (err) {
-    onError(`命令"${command.title}"执行失败：${errorMessage(err)}`, command)
+    onError(t('命令"{title}"执行失败：{message}', { title: command.title, message: errorMessage(err) }), command)
     return false
   }
 }

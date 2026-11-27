@@ -2,6 +2,7 @@ import '@xterm/xterm/css/xterm.css'
 import type { TermInfo } from '@qn/protocol'
 import { ChevronDown, ChevronUp, ClipboardPaste, Copy, Search, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { t } from '@qn/codex-client'
 import { SearchField } from '../../components/SearchField'
 import { ErrorNote, IconButton } from '../../components/ui'
 import { cn } from '../../lib/cn'
@@ -59,8 +60,8 @@ export default function TerminalView({
     session.current?.clearSearch()
   }
   const exitLabel = status.exit && (
-    status.exit.signal ? `终端已退出（${status.exit.signal}）`
-      : status.exit.code !== null ? `终端已退出（退出码 ${status.exit.code}）` : '终端已退出'
+    status.exit.signal ? t('终端已退出（{signal}）', { signal: status.exit.signal })
+      : status.exit.code !== null ? t('终端已退出（退出码 {code}）', { code: status.exit.code }) : t('终端已退出')
   )
 
   return (
@@ -68,17 +69,17 @@ export default function TerminalView({
       <div className="flex shrink-0 items-center gap-1 px-2 py-0.5">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 text-ui-xs text-qn-muted" aria-live="polite">
           {exitLabel && <span>{exitLabel}</span>}
-          {status.attaching && <span>正在接回终端…</span>}
-          {status.historyLost && <span className="text-qn-warn">部分历史输出已丢失</span>}
-          {!status.supportsResize && <span>当前终端尺寸固定</span>}
+          {status.attaching && <span>{t('正在接回终端…')}</span>}
+          {status.historyLost && <span className="text-qn-warn">{t('部分历史输出已丢失')}</span>}
+          {!status.supportsResize && <span>{t('当前终端尺寸固定')}</span>}
         </div>
-        <IconButton size="sm" label="复制选中内容（Ctrl Shift C）" onClick={() => void session.current?.copy()}>
+        <IconButton size="sm" label={t('复制选中内容（Ctrl Shift C）')} onClick={() => void session.current?.copy()}>
           <Copy size={13} />
         </IconButton>
-        <IconButton size="sm" label="粘贴（Ctrl Shift V）" disabled={!status.writable} onClick={() => void session.current?.paste()}>
+        <IconButton size="sm" label={t('粘贴（Ctrl Shift V）')} disabled={!status.writable} onClick={() => void session.current?.paste()}>
           <ClipboardPaste size={13} />
         </IconButton>
-        <IconButton size="sm" label="搜索终端（Ctrl Shift F）" aria-expanded={searchOpen} onClick={openSearch}>
+        <IconButton size="sm" label={t('搜索终端（Ctrl Shift F）')} aria-expanded={searchOpen} onClick={openSearch}>
           <Search size={13} />
         </IconButton>
       </div>
@@ -96,10 +97,10 @@ export default function TerminalView({
           <SearchField
             ref={searchInput}
             boxed
-            label="搜索终端输出"
+            label={t('搜索终端输出')}
             type="search"
             value={query}
-            placeholder="搜索终端输出"
+            placeholder={t('搜索终端输出')}
             className="flex-1"
             inputClassName="h-7 rounded bg-qn-bg py-0 text-ui-sm"
             onChange={(event) => {
@@ -117,10 +118,10 @@ export default function TerminalView({
               }
             }}
           />
-          {query && !found && <span className="text-ui-xs text-qn-muted" role="status">无匹配</span>}
-          <IconButton size="sm" label="上一个匹配" disabled={!query} onClick={() => find(query, true)}><ChevronUp size={14} /></IconButton>
-          <IconButton size="sm" label="下一个匹配" disabled={!query} onClick={() => find(query)}><ChevronDown size={14} /></IconButton>
-          <IconButton size="sm" label="关闭终端搜索" onClick={closeSearch}><X size={14} /></IconButton>
+          {query && !found && <span className="text-ui-xs text-qn-muted" role="status">{t('无匹配')}</span>}
+          <IconButton size="sm" label={t('上一个匹配')} disabled={!query} onClick={() => find(query, true)}><ChevronUp size={14} /></IconButton>
+          <IconButton size="sm" label={t('下一个匹配')} disabled={!query} onClick={() => find(query)}><ChevronDown size={14} /></IconButton>
+          <IconButton size="sm" label={t('关闭终端搜索')} onClick={closeSearch}><X size={14} /></IconButton>
         </div>
       )}
       <div className="relative min-h-0 flex-1 overflow-hidden">

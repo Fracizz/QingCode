@@ -217,3 +217,13 @@ it('每个项目独立保存显示全部或仅显示最近会话的偏好', asyn
   const { useProjects: reloaded } = await import('./projects')
   expect(reloaded.getState().fullThreadLists).toEqual(['a'])
 })
+
+it('收起全部会话只影响指定目标，未加载的目标也会改写本机记录', () => {
+  const saved = JSON.stringify({ projectId: 'a', expandedIds: ['a', 'b'] })
+  localStorage.setItem('qn.projects.tree.local', saved)
+  localStorage.setItem('qn.projects.tree.remote', saved)
+  useProjects.getState().collapseAll('local')
+  expect(useProjects.getState().treeByTarget.get('local')).toEqual({ projectId: 'a', expandedIds: [] })
+  expect(JSON.parse(localStorage.getItem('qn.projects.tree.local')!)).toEqual({ projectId: 'a', expandedIds: [] })
+  expect(localStorage.getItem('qn.projects.tree.remote')).toBe(saved)
+})

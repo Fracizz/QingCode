@@ -169,7 +169,7 @@ export class RunManager {
 
     child.stdout?.on('data', (buf: Buffer) => this.append(record, 'stdout', record.decoders.stdout.write(buf)))
     child.stderr?.on('data', (buf: Buffer) => this.append(record, 'stderr', record.decoders.stderr.write(buf)))
-    child.on('error', (err) => this.log(`run ${runId} 进程错误：${err.message}`))
+    child.on('error', (err) => this.log(`run ${runId} 进程错误：${err.message}`)) // i18n-ignore: 仅进日志
 
     let exitInfo: { code: number | null; signal: NodeJS.Signals | null } | null = null
     let closeTimer: ReturnType<typeof setTimeout> | null = null

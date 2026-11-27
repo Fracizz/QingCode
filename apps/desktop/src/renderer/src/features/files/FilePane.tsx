@@ -14,6 +14,7 @@ import {
   Search,
   X,
 } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { ErrorNote, IconButton, Spinner } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { copyText } from '../../lib/clipboard'
@@ -76,14 +77,14 @@ function TabBody({
   if (tab.status === 'loading' && !tab.content) {
     body = (
       <div className="flex min-h-0 flex-1 items-center justify-center">
-        <Spinner label="读取文件…" />
+        <Spinner label={t('读取文件…')} />
       </div>
     )
   } else if (tab.binary) {
     body = <BinaryNotice key={tab.id} path={tab.path} onDownload={onDownload} />
   } else if (kind === 'image') {
     body = tab.truncated ? (
-      <BinaryNotice key={tab.id} path={tab.path} message="图片过大，仅能读取前 10 MiB" onDownload={onDownload} />
+      <BinaryNotice key={tab.id} path={tab.path} message={t('图片过大，仅能读取前 10 MiB')} onDownload={onDownload} />
     ) : (
       <ImageView key={tab.id} content={tab.content} path={tab.path} onDownload={onDownload} />
     )
@@ -92,7 +93,7 @@ function TabBody({
       <MarkdownPreview key={tab.id} content={tab.content} targetId={tab.targetId} cwd={tab.cwd ?? dirname(tab.path)}
         onViewSource={() => useFiles.getState().setView(tab.id, 'source')} />
       {tab.truncated && <button type="button" className="qn-button-subtle" disabled={tab.busy} onClick={onLoadMore}>
-        {tab.busy ? '加载中…' : '加载更多'}
+        {tab.busy ? t('加载中…') : t('加载更多')}
       </button>}
     </>
   } else {
@@ -110,7 +111,7 @@ function TabBody({
     <div className="flex min-h-0 flex-1 flex-col">
       {tab.status === 'error' && (
         <div className="shrink-0 p-2">
-          <ErrorNote message={tab.error ?? '读取文件失败'} onRetry={onRefresh} />
+          <ErrorNote message={tab.error ?? t('读取文件失败')} onRetry={onRefresh} />
         </div>
       )}
       {tab.saveError && (
@@ -153,20 +154,20 @@ export function FilePane({ className, scope, primary = false }: {
               {reason && (
                 <span
                   className="inline-flex h-6 items-center gap-1 rounded-md px-1 text-ui-xs text-qn-muted"
-                  title={`只读 · ${readOnlyLabel(reason)}`}
+                  title={t('只读 · {reason}', { reason: readOnlyLabel(reason) })}
                 >
                   <LockKeyhole size={12} />
                 </span>
               )}
               {scope && inProject(active) && active.kind === 'file' && active.targetId !== 'local' && (
-                <IconButton label="下载远程磁盘文件到本机" size="sm"
+                <IconButton label={t('下载远程磁盘文件到本机')} size="sm"
                   onClick={() => void downloadProjectFile(active.targetId, scope.cwd, active.path)}>
                   <Download size={13} />
                 </IconButton>
               )}
               {sourceVisible && (
                 <IconButton
-                  label="在文件中查找（Ctrl+F）"
+                  label={t('在文件中查找（Ctrl+F）')}
                   size="sm"
                   onClick={() => {
                     const view = editorRef.current
@@ -176,15 +177,15 @@ export function FilePane({ className, scope, primary = false }: {
                   <Search size={13} />
                 </IconButton>
               )}
-              <IconButton label="复制完整路径" size="sm" onClick={() => void copyText(active.path)}>
+              <IconButton label={t('复制完整路径')} size="sm" onClick={() => void copyText(active.path)}>
                 <Copy size={13} />
               </IconButton>
-              <IconButton label="刷新（有未保存改动时会先确认）" size="sm" onClick={() => refresh(active.id)}>
+              <IconButton label={t('刷新（有未保存改动时会先确认）')} size="sm" onClick={() => refresh(active.id)}>
                 <RotateCw size={13} />
               </IconButton>
               {active.kind === 'file' && !reason && active.dirty && (
                 <IconButton
-                  label="保存（Ctrl+S）"
+                  label={t('保存（Ctrl+S）')}
                   size="sm"
                   disabled={active.saving}
                   onClick={() => void save(active.id)}
@@ -194,19 +195,19 @@ export function FilePane({ className, scope, primary = false }: {
               )}
               {markdown && (
                 <IconButton
-                  label={active.view === 'preview' ? '查看源码' : 'Markdown 预览'}
+                  label={active.view === 'preview' ? t('查看源码') : t('Markdown 预览')}
                   size="sm"
                   onClick={() => setView(active.id, active.view === 'preview' ? 'source' : 'preview')}
                 >
                   {active.view === 'preview' ? <Code size={13} /> : <Eye size={13} />}
                 </IconButton>
               )}
-              <IconButton label="关闭全部标签" size="sm" onClick={() => requestCloseAll(tabs.map((tab) => tab.id))}>
+              <IconButton label={t('关闭全部标签')} size="sm" onClick={() => requestCloseAll(tabs.map((tab) => tab.id))}>
                 <X size={13} />
               </IconButton>
             </>
           )}
-          {!primary && <IconButton label="收起文件查看面板" size="sm" onClick={() => setOpen(false)}>
+          {!primary && <IconButton label={t('收起文件查看面板')} size="sm" onClick={() => setOpen(false)}>
             <PanelRightClose size={13} />
           </IconButton>}
         </div>
@@ -224,8 +225,8 @@ export function FilePane({ className, scope, primary = false }: {
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
           <FileText size={26} className="text-qn-dim" />
-          <div className="text-ui text-qn-muted">{primary ? '选择文件开始查看' : '点击对话里的文件路径或 Markdown 链接，在这里查看与编辑'}</div>
-          <div className="text-ui-sm text-qn-dim">Ctrl+S 保存、Ctrl+F 搜索、Ctrl+H 替换、Ctrl+G 跳转行</div>
+          <div className="text-ui text-qn-muted">{primary ? t('选择文件开始查看') : t('点击对话里的文件路径或 Markdown 链接，在这里查看与编辑')}</div>
+          <div className="text-ui-sm text-qn-dim">{t('Ctrl+S 保存、Ctrl+F 搜索、Ctrl+H 替换、Ctrl+G 跳转行')}</div>
         </div>
       )}
       <FileDialogs />

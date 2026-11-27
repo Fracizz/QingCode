@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import {
   isBackendEventMessage,
   isBackendResponse,
@@ -44,7 +45,7 @@ function usePort(next: MessagePort): void {
   const replaced = port !== null && port !== next
   if (port && port !== next) {
     for (const request of pending.values()) {
-      request.reject(new BackendCallError('port_replaced', 'backend 通道已重建，请重试'))
+      request.reject(new BackendCallError('port_replaced', t('backend 通道已重建，请重试')))
     }
     pending.clear()
     try {
@@ -77,7 +78,7 @@ function handle(data: unknown): void {
       try {
         cb(data.payload)
       } catch (err) {
-        console.error('[backend] 事件回调失败', err)
+        console.error('[backend] 事件回调失败', err) // i18n-ignore: 控制台日志
       }
     }
   }

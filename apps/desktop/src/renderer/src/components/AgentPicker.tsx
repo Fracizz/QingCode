@@ -1,4 +1,5 @@
 import { Check, ChevronDown, Pin, PinOff, RotateCw } from 'lucide-react'
+import { t, translateMessage } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { AGENTS, agentLabel, availabilityReason } from '../lib/agents'
 import { agentPrefs, useSettings } from '../features/settings'
@@ -6,6 +7,7 @@ import { useAgentPrefs } from '../store/agentPrefs'
 import { useCodex } from '../store/codex'
 import { useTargets } from '../store/targets'
 import { AgentIcon } from './AgentIcon'
+import { targetDisplayName } from './targetName'
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from './primitives'
 import { Badge } from './ui'
 
@@ -19,7 +21,8 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
   const probeAgents = useCodex((s) => s.probeAgents)
   const defaultAgent = useAgentPrefs((s) => (targetId ? s.byTarget[targetId] : undefined))
   const setDefault = useAgentPrefs((s) => s.setDefault)
-  const targetName = useTargets((s) => s.targets.find((item) => item.id === targetId)?.name)
+  const target = useTargets((s) => s.targets.find((item) => item.id === targetId))
+  const targetName = target ? targetDisplayName(target) : t('此连接')
   const isDefault = defaultAgent === agent
   // 设置 → Agent 里对该目标关闭的 Agent 不出现在新建会话的选择里（当前所选除外，避免选中项消失）。
   const settings = useSettings((s) => s.settings)
@@ -40,7 +43,7 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
         <button
           type="button"
           className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-ui text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover"
-          aria-label="选择 Agent"
+          aria-label={t('选择 Agent')}
         >
           <AgentIcon agent={agent} size={14} />
           {agentLabel(agent)}
@@ -48,7 +51,7 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
         </button>
       </MenuTrigger>
       <MenuContent side="top" className="w-72">
-        <MenuLabel>新会话使用的 Agent</MenuLabel>
+        <MenuLabel>{t('新会话使用的 Agent')}</MenuLabel>
         {visible.map((item) => {
           const status = statuses?.[item]
           return (
@@ -62,9 +65,9 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
             >
               <span className="flex items-center gap-1.5">
                 {agentLabel(item)}
-                {item === defaultAgent && <Badge>默认</Badge>}
+                {item === defaultAgent && <Badge>{t('默认')}</Badge>}
               </span>
-              <span className="block truncate text-ui-sm text-qn-dim">{availabilityReason(item, status)}</span>
+              <span className="block truncate text-ui-sm text-qn-dim">{translateMessage(availabilityReason(item, status))}</span>
             </MenuItem>
           )
         })}
@@ -78,8 +81,8 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
           }}
         >
           {isDefault
-            ? `取消「${targetName ?? '此连接'}」的默认 Agent`
-            : `将 ${agentLabel(agent)} 设为「${targetName ?? '此连接'}」默认`}
+            ? t('取消「{target}」的默认 Agent', { target: targetName })
+            : t('将 {agent} 设为「{target}」默认', { agent: agentLabel(agent), target: targetName })}
         </MenuItem>
         <MenuItem
           icon={<RotateCw size={14} />}
@@ -89,7 +92,7 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
             if (targetId) void probeAgents(targetId)
           }}
         >
-          重新检测
+          {t('重新检测')}
         </MenuItem>
       </MenuContent>
     </Menu>

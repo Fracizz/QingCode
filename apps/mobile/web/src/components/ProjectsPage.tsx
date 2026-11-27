@@ -1,5 +1,7 @@
+import { t } from '@qn/codex-client'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
+import { pageName } from '../names'
 import { useApp } from '../store'
 import { filterProjects, orderWorkspaceProjects, placeWorkspaceProject, useWorkspacePreferences } from '../workspace'
 import { SortableList } from './SortableList'
@@ -28,15 +30,15 @@ export function ProjectsPage() {
 
   return (
     <>
-      <Header title="项目" subtitle={target?.name} onBack={goBack} />
+      <Header title={pageName('projects')} subtitle={target?.name} onBack={goBack} />
       <main className="qn-body qn-scroll">
         {error && <Note message={error} tone="error" onClose={clearError} />}
-        {projects.length > 0 && <WorkspaceSearch label="按项目、主机或路径搜索" query={query} onChange={setQuery} />}
-        {loading && <Loading text="正在读取项目…" />}
-        {!loading && list.length === 0 && <Empty>{query ? '没有匹配的项目。' : '该目标下还没有项目。'}</Empty>}
+        {projects.length > 0 && <WorkspaceSearch label={t('按项目、主机或路径搜索')} query={query} onChange={setQuery} />}
+        {loading && <Loading text={t('正在读取项目…')} />}
+        {!loading && list.length === 0 && <Empty>{query ? t('没有匹配的项目。') : t('该目标下还没有项目。')}</Empty>}
         {list.length > 0 && (
           <div className="mt-3">
-            <SortableList items={list} itemKey={(project) => project.id} disabled={sorting === false} label="项目"
+            <SortableList items={list} itemKey={(project) => project.id} disabled={sorting === false} label={pageName('projects')}
               onMove={(from, to) => desktopId && placeWorkspaceProject(desktopId, list, from, to)}>
               {(project) => <WorkspaceProjectRow project={project} target={target} sortable={sorting && list.length > 1}
                 onOpen={() => void selectProject(project.id)} />}
@@ -45,7 +47,7 @@ export function ProjectsPage() {
         )}
       </main>
       <div className="qn-footer">
-        <Button variant="primary" className="w-full" onClick={() => void openDirectory()}><Plus size={17} aria-hidden />添加项目</Button>
+        <Button variant="primary" className="w-full" onClick={() => void openDirectory()}><Plus size={17} aria-hidden />{t('添加项目')}</Button>
       </div>
     </>
   )

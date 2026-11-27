@@ -1,3 +1,4 @@
+import { t, translateMessage } from '@qn/codex-client'
 import { ChevronLeft, LoaderCircle, X, type LucideIcon, type LucideProps } from 'lucide-react'
 import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode, type TouchEvent } from 'react'
 import { agentLabel } from '../agents'
@@ -71,7 +72,7 @@ export function Header({
   return (
     <header className={className ? `qn-header ${className}` : 'qn-header'}>
       {onBack && (
-        <Button variant="ghost" className="qn-header-icon" onClick={onBack} aria-label="返回">
+        <Button variant="ghost" className="qn-header-icon" onClick={onBack} aria-label={t('返回')}>
           <ChevronLeft size={22} strokeWidth={1.9} />
         </Button>
       )}
@@ -123,14 +124,15 @@ export function Note({
   const cls = tone === 'error' ? 'qn-note-error' : tone === 'warn' ? 'qn-note-warn' : ''
   return (
     <div className={`qn-note ${cls} mb-3 flex items-center gap-2`}>
-      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{message}</span>
+      {/* 提示可能来自电脑端、daemon 或原生层，统一在展示时翻译；已是当前语言的原样返回。 */}
+      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{translateMessage(message)}</span>
       {actionLabel && onAction && (
         <button type="button" className="qn-note-action" onClick={onAction}>
           {actionLabel}
         </button>
       )}
       {onClose && (
-        <button type="button" className="qn-note-close" aria-label="关闭提示" onClick={onClose}>
+        <button type="button" className="qn-note-close" aria-label={t('关闭提示')} onClick={onClose}>
           <X size={15} />
         </button>
       )}
@@ -210,7 +212,7 @@ export function Dialog({
         <div className="mb-3 flex min-h-11 items-center gap-2">
           <h2 className="qn-title flex-1">{title}</h2>
           {closeAt === 'top' && (
-            <Button autoFocus variant="ghost" className="qn-header-icon" onClick={onClose} aria-label="关闭">
+            <Button autoFocus variant="ghost" className="qn-header-icon" onClick={onClose} aria-label={t('关闭')}>
               <X size={20} />
             </Button>
           )}
@@ -223,7 +225,7 @@ export function Dialog({
 }
 
 /** 手机单手操作时手在屏幕下方：全屏页面的关闭按钮放在底部居中。 */
-export function BottomClose({ onClick, autoFocus, label = '关闭' }: { onClick: () => void; autoFocus?: boolean; label?: string }) {
+export function BottomClose({ onClick, autoFocus, label = t('关闭') }: { onClick: () => void; autoFocus?: boolean; label?: string }) {
   return (
     <div className="qn-bottom-close">
       <Button autoFocus={autoFocus} className="qn-bottom-close-button" onClick={onClick} aria-label={label}>
@@ -237,7 +239,7 @@ export function LoadingIcon({ className = '', ...props }: LucideProps) {
   return <LoaderCircle size={14} strokeWidth={2.5} aria-hidden="true" className={`qn-spin shrink-0 ${className}`} {...props} />
 }
 
-export function Loading({ text = '正在加载…' }: { text?: string }) {
+export function Loading({ text = t('正在加载…') }: { text?: string }) {
   return (
     <div className="flex items-center justify-center gap-2 py-6 text-center text-sm text-qn-muted" role="status">
       <LoadingIcon size={16} />{text}

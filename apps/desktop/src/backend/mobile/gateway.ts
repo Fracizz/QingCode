@@ -229,6 +229,7 @@ function forwardRpcParams(body: JsonRecord, method: string): unknown {
       delete input.claudePermissionMode
       delete input.qingcodeAccessOverride
       delete input.approvalPolicy
+      delete input.approvalsReviewer
       delete input.sandboxPolicy
       next.msg = { ...next.msg, params: input }
     }
@@ -725,7 +726,7 @@ export class MobileGateway {
     try {
       line = `${JSON.stringify(event)}\n`
     } catch {
-      line = '{"name":"event.error","payload":{"message":"事件无法序列化"}}\n'
+      line = `${JSON.stringify({ name: 'event.error', payload: { message: '事件无法序列化' } })}\n`
     }
     try {
       client.res.write(line)

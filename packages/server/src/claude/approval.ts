@@ -93,8 +93,8 @@ export function permissionResult(response: unknown, suggestions?: unknown): Perm
     case 'acceptForSession':
       return { behavior: 'allow', updatedPermissions: sessionSuggestions(suggestions) }
     case 'cancel':
-      return { behavior: 'deny', message: '用户拒绝', interrupt: true }
+      return { behavior: 'deny', message: '用户拒绝', interrupt: true } // i18n-ignore: 回给模型的拒绝原因
     default:
-      return { behavior: 'deny', message: '用户拒绝' }
+      return { behavior: 'deny', message: '用户拒绝' } // i18n-ignore: 回给模型的拒绝原因
   }
 }

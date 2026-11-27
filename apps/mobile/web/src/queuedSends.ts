@@ -17,6 +17,7 @@ export type QueuedSend = ChatDraft & {
 }
 
 export const QUEUE_STORAGE_KEY = 'queuedSends'
+// i18n-ignore: 随发送队列持久化并参与比较，展示时用 translateMessage 翻译
 export const UNCONFIRMED_QUEUED_SEND = '上次发送结果未确认，请核对对话后再继续'
 
 type Queues = Record<string, QueuedSend[]>
@@ -74,6 +75,7 @@ export function restoreQueues(raw: string | null, connections: readonly Connecti
         accessMode,
         sending: false,
         error: item.sending ? UNCONFIRMED_QUEUED_SEND
+          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
           : typeof item.error === 'string' ? item.error : index === 0 ? '已恢复排队消息，等待继续发送' : undefined,
       }
     })

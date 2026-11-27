@@ -178,6 +178,7 @@ export function registerTargetMethods(router: BackendRouter): void {
       } catch (err) {
         // 授权已不存在（远端被重置）时照常清除本地配置。
         const message = err instanceof Error ? err.message : String(err)
+        // i18n-ignore: 匹配远端返回的错误原文
         if (!message.includes('授权不存在')) throw connectFailed(err)
       }
     }

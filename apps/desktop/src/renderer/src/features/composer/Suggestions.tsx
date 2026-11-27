@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
+import { t } from '@qn/codex-client'
 import { cn } from '../../lib/cn'
 
 export function Suggestions({
@@ -31,9 +32,9 @@ export function Suggestions({
         {children}
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-qn-border px-3 py-1.5 text-ui-xs text-qn-dim">
-        <span>↑↓ 选择</span>
+        <span>{t('↑↓ 选择')}</span>
         <span>Enter / Tab {confirmHint}</span>
-        <span>Esc 关闭</span>
+        <span>{t('Esc 关闭')}</span>
         {trailingHint}
       </div>
     </div>

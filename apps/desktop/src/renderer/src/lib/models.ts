@@ -1,5 +1,5 @@
 // 模型选择器的纯逻辑：模型列表过滤、推理强度/速度档位、偏好解析、上下文占用。
-import { localizeModelDescription } from '@qn/codex-client'
+import { getLocale, localizeModelDescription, translateMessage } from '@qn/codex-client'
 
 export type ModelOption = {
   id: string
@@ -70,17 +70,20 @@ export function filterModels(models: ModelOption[], query: string): ModelOption[
   )
 }
 
-const EFFORT_LABELS: Record<string, string> = {
-  none: '关闭',
-  off: '关闭',
-  minimal: '最低',
-  low: '低',
-  medium: '中',
-  high: '高',
-  xhigh: '超高',
-  max: '极高',
-  ultra: '极致',
-}
+// 档位名按语言分两张表而不走词典：“关闭”“高”等单词在别处是另一种英文说法。
+const EFFORT_LABELS: Record<string, string> = getLocale() === 'en'
+  ? { none: 'Off', off: 'Off', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', ultra: 'Ultra' }
+  : {
+      none: '关闭', // i18n-ignore: 中文档位名
+      off: '关闭', // i18n-ignore: 中文档位名
+      minimal: '最低', // i18n-ignore: 中文档位名
+      low: '低', // i18n-ignore: 中文档位名
+      medium: '中', // i18n-ignore: 中文档位名
+      high: '高', // i18n-ignore: 中文档位名
+      xhigh: '超高', // i18n-ignore: 中文档位名
+      max: '极高', // i18n-ignore: 中文档位名
+      ultra: '极致', // i18n-ignore: 中文档位名
+    }
 
 export function effortLabel(effort: string | null | undefined): string {
   if (!effort) return ''
@@ -138,7 +141,7 @@ export function turnOverrides(selection: ResolvedSelection): {
 
 export function triggerLabel(selection: ResolvedSelection): string {
   if (!selection.model) return ''
-  return [selection.model.displayName, effortLabel(selection.effort)].filter(Boolean).join(' · ')
+  return [translateMessage(selection.model.displayName), effortLabel(selection.effort)].filter(Boolean).join(' · ')
 }
 
 /** localStorage 中的偏好表（按 agent）；损坏数据回落为空。 */

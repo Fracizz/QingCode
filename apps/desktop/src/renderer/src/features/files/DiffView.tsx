@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Columns2, FileText, Rows3 } from 'lucide-react'
+import { t, translateMessage } from '@qn/codex-client'
 import { ErrorNote, Spinner, EmptyState } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { parseUnifiedDiff } from './diffModel'
@@ -47,14 +48,14 @@ function UnifiedDiffBody({
   if (status === 'loading') {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center">
-        <Spinner label="读取差异…" />
+        <Spinner label={t('读取差异…')} />
       </div>
     )
   }
   if (status === 'error') {
     return (
       <div className="min-h-0 flex-1 p-3">
-        <ErrorNote message={error ?? '读取差异失败'} onRetry={onRetry} />
+        <ErrorNote message={error ?? t('读取差异失败')} onRetry={onRetry} />
         {canOpenInstead && onOpenFile && (
           <button
             type="button"
@@ -62,7 +63,7 @@ function UnifiedDiffBody({
             className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-qn-border-strong px-2.5 py-1 text-ui-sm text-qn-text hover:bg-qn-hover"
           >
             <FileText size={13} />
-            打开文件
+            {t('打开文件')}
           </button>
         )}
       </div>
@@ -71,7 +72,7 @@ function UnifiedDiffBody({
   return (
     <div className="qn-scroll min-h-0 flex-1 overflow-auto bg-qn-code font-mono text-[length:var(--qn-editor-font-size,13px)] leading-[1.6]">
       {rows.length === 0 ? (
-        <EmptyState>没有改动 · {path}</EmptyState>
+        <EmptyState>{t('没有改动 · {path}', { path })}</EmptyState>
       ) : (
         <div className="min-w-max py-1">
           {rows.map((row, index) => (
@@ -109,7 +110,7 @@ function MergeDiffBody({
         if (alive) setSides(result)
       },
       (err: unknown) => {
-        if (alive) onError(err instanceof Error ? err.message : '读取差异两侧失败')
+        if (alive) onError(err instanceof Error ? translateMessage(err.message) : t('读取差异两侧失败'))
       },
     )
     return () => {
@@ -122,7 +123,7 @@ function MergeDiffBody({
   if (!sides) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center">
-        <Spinner label="读取差异两侧…" />
+        <Spinner label={t('读取差异两侧…')} />
       </div>
     )
   }
@@ -130,8 +131,8 @@ function MergeDiffBody({
     <>
       {layout === 'side' && (
         <div className="flex shrink-0 items-center gap-4 border-b border-qn-border px-3 py-1 text-ui-xs text-qn-muted">
-          <span className="flex-1 truncate">左 · {sides.oldLabel}</span>
-          <span className="flex-1 truncate">右 · {sides.newLabel}</span>
+          <span className="flex-1 truncate">{t('左 · {label}', { label: sides.oldLabel })}</span>
+          <span className="flex-1 truncate">{t('右 · {label}', { label: sides.newLabel })}</span>
         </div>
       )}
       <MergeEditor
@@ -185,11 +186,11 @@ export function DiffView({
         </div>
       )}
       {truncated && (
-        <div className="shrink-0 border-b border-qn-border px-3 py-1 text-ui-sm text-qn-dim">diff 内容已截断</div>
+        <div className="shrink-0 border-b border-qn-border px-3 py-1 text-ui-sm text-qn-dim">{t('diff 内容已截断')}</div>
       )}
       {canMerge && (
         <div className="flex h-8 shrink-0 items-center gap-1 border-b border-qn-border px-2">
-          <span className="min-w-0 flex-1 truncate text-ui-xs text-qn-dim">{diffModeLabel(mode, commit)} · 只读</span>
+          <span className="min-w-0 flex-1 truncate text-ui-xs text-qn-dim">{t('{label} · 只读', { label: diffModeLabel(mode, commit) })}</span>
           <button
             type="button"
             onClick={() => setLayout('side')}
@@ -198,7 +199,7 @@ export function DiffView({
               layout === 'side' ? 'bg-qn-active text-qn-text' : 'text-qn-muted',
             )}
           >
-            <Columns2 size={12} /> 并排
+            <Columns2 size={12} /> {t('并排')}
           </button>
           <button
             type="button"
@@ -208,13 +209,13 @@ export function DiffView({
               layout === 'unified' ? 'bg-qn-active text-qn-text' : 'text-qn-muted',
             )}
           >
-            <Rows3 size={12} /> 统一
+            <Rows3 size={12} /> {t('统一')}
           </button>
         </div>
       )}
       {mergeError && (
         <div className="shrink-0 border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-ui-sm text-qn-warn">
-          {mergeError} · 已退回 diff 文本
+          {t('{error} · 已退回 diff 文本', { error: translateMessage(mergeError) })}
         </div>
       )}
       {canMerge && !mergeError ? (

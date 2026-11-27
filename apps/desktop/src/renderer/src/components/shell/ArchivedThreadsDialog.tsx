@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react'
 import { ArchiveRestore, RotateCw } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { agentLabel } from '../../lib/agents'
 import { friendlyError } from '../../lib/errors'
 import { formatTime, threadKey, type ThreadSummary } from '../../lib/threads'
 import { useCodex } from '../../store/codex'
 import { useTargets } from '../../store/targets'
+import { targetDisplayName } from '../targetName'
 import { EmptyState, ErrorNote, Modal, Spinner } from '../ui'
 
 export function ArchivedThreadsDialog({ targetId, onClose }: { targetId: string; onClose: () => void }) {
   const ready = useTargets((state) => state.states[targetId]?.state === 'ready')
-  const name = useTargets((state) => state.targets.find((target) => target.id === targetId)?.name) ?? targetId
+  const target = useTargets((state) => state.targets.find((item) => item.id === targetId))
+  const name = target ? targetDisplayName(target) : targetId
   const listArchivedThreads = useCodex((state) => state.listArchivedThreads)
   const restoreThread = useCodex((state) => state.restoreThread)
   const [threads, setThreads] = useState<ThreadSummary[]>([])
@@ -29,7 +32,7 @@ export function ArchivedThreadsDialog({ targetId, onClose }: { targetId: string;
       setThreads(threads)
       setLoadError(error)
     }).catch((error: unknown) => {
-      if (!cancelled) setLoadError(friendlyError(error, '加载已归档会话失败'))
+      if (!cancelled) setLoadError(friendlyError(error, t('加载已归档会话失败')))
     }).finally(() => {
       if (!cancelled) setLoading(false)
     })
@@ -45,7 +48,7 @@ export function ArchivedThreadsDialog({ targetId, onClose }: { targetId: string;
       await restoreThread(targetId, thread)
       setThreads((list) => list.filter(({ agent, id }) => threadKey(agent, id) !== key))
     } catch (error) {
-      setRestoreError(friendlyError(error, '恢复会话失败'))
+      setRestoreError(friendlyError(error, t('恢复会话失败')))
     } finally {
       setRestoring(null)
     }
@@ -53,24 +56,24 @@ export function ArchivedThreadsDialog({ targetId, onClose }: { targetId: string;
 
   return (
     <Modal
-      title="已归档会话"
-      description={`${name} · 恢复后会话将重新出现在项目列表中。`}
+      title={t('已归档会话')}
+      description={t('{name} · 恢复后会话将重新出现在项目列表中。', { name })}
       onClose={onClose}
       width="max-w-2xl"
       footer={(
         <div className="flex justify-end">
           <button type="button" className="qn-button-subtle gap-1.5" disabled={!ready || loading || restoring !== null} onClick={reload}>
-            <RotateCw size={14} aria-hidden="true" /> 刷新
+            <RotateCw size={14} aria-hidden="true" /> {t('刷新')}
           </button>
         </div>
       )}
     >
-      {!ready ? <EmptyState>连接此目标后即可查看已归档会话。</EmptyState> : (
+      {!ready ? <EmptyState>{t('连接此目标后即可查看已归档会话。')}</EmptyState> : (
         <>
           <ErrorNote message={loadError} onRetry={restoring === null ? reload : undefined} />
           <ErrorNote message={restoreError} onClose={() => setRestoreError(null)} />
-          {loading ? <div className="py-5"><Spinner label="正在加载已归档会话…" /></div> : (
-            threads.length === 0 && !loadError ? <EmptyState>暂无已归档会话。</EmptyState> : (
+          {loading ? <div className="py-5"><Spinner label={t('正在加载已归档会话…')} /></div> : (
+            threads.length === 0 && !loadError ? <EmptyState>{t('暂无已归档会话。')}</EmptyState> : (
               <ul className="divide-y divide-qn-border">
                 {threads.map((thread) => {
                   const key = threadKey(thread.agent, thread.id)
@@ -85,11 +88,11 @@ export function ArchivedThreadsDialog({ targetId, onClose }: { targetId: string;
                       <button
                         type="button"
                         className="qn-button-subtle shrink-0 gap-1.5"
-                        aria-label={`恢复会话 ${thread.title}`}
+                        aria-label={t('恢复会话 {title}', { title: thread.title })}
                         disabled={restoring !== null}
                         onClick={() => void restore(thread)}
                       >
-                        <ArchiveRestore size={14} aria-hidden="true" /> {restoring === key ? '恢复中…' : '恢复'}
+                        <ArchiveRestore size={14} aria-hidden="true" /> {restoring === key ? t('恢复中…') : t('恢复')}
                       </button>
                     </li>
                   )

@@ -16,10 +16,10 @@ const item: QueuedSend = {
 
 describe('手机发送队列', () => {
   it('重开时保留未发送项及附件，明确标记已发出但未确认的项', () => {
-    const raw = serializeQueues({ [key]: [item, { ...item, id: 'in-flight', sending: true, accessMode: 'readOnly' }] }, [conn])
+    const raw = serializeQueues({ [key]: [item, { ...item, id: 'in-flight', sending: true, accessMode: 'auto' }] }, [conn])
     const [first, inFlight] = restoreQueues(raw, [conn], {})[key] ?? []
     expect(first).toMatchObject({ ...item, sending: false, error: '已恢复排队消息，等待继续发送' })
-    expect(inFlight).toMatchObject({ id: 'in-flight', accessMode: 'readOnly', sending: false, error: expect.stringContaining('未确认') })
+    expect(inFlight).toMatchObject({ id: 'in-flight', accessMode: 'auto', sending: false, error: expect.stringContaining('未确认') })
     expect(restoreQueues(raw, [{ ...conn, fp: 'cd'.repeat(32) }], {})).toEqual({})
     const archived = archivedThreadKey(conn.id, 'local', { id: 'thread', agent: 'codex' })
     expect(restoreQueues(raw, [conn], { [archived]: true })).toEqual({})

@@ -104,7 +104,7 @@ interface InitDeferred {
   reject(err: Error): void
 }
 
-type AccessSettings = { approvalPolicy: unknown; sandboxPolicy: Record<string, unknown> }
+type AccessSettings = { approvalPolicy: unknown; approvalsReviewer?: string; sandboxPolicy: Record<string, unknown> }
 type StartingTurn = { threadId: unknown; completed: Set<string> }
 
 export interface CodexCommand {
@@ -217,7 +217,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
     if (!isRecord(msg)) return
     const kind = classifyJsonRpc(msg)
     if (kind === 'invalid') {
-      this.hub.log('忽略客户端发送的非法 JSON-RPC')
+      this.hub.log('忽略客户端发送的非法 JSON-RPC') // i18n-ignore: 仅进日志
       return
     }
     if (kind === 'request') {
@@ -235,7 +235,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
         this.hub.send(clientId, {
           t: 'codex.recv',
           seq: null,
-          msg: { id: originalId, error: { code: -32000, message: `${this.agentLabel} 未运行` } },
+          msg: { id: originalId, error: { code: -32000, message: `${this.agentLabel} 未运行` } }, // i18n-ignore: 按实际取值在词典登记整句
         })
         return
       }
@@ -272,7 +272,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
     if (this.closed) return
     const kind = classifyJsonRpc(msg)
     if (kind === 'invalid') {
-      this.hub.log('agent 发来无法识别的 JSON-RPC')
+      this.hub.log('agent 发来无法识别的 JSON-RPC') // i18n-ignore: 仅进日志
       return
     }
     if (kind === 'response') {
@@ -323,7 +323,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
         seq: null,
         msg: {
           id: forwarded.originalId,
-          error: { code: -32000, message: `${this.agentLabel} 已退出` },
+          error: { code: -32000, message: `${this.agentLabel} 已退出` }, // i18n-ignore: 按实际取值在词典登记整句
         },
       })
     }
@@ -336,6 +336,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
       ...(info.message ? { message: redact(info.message) } : {}),
     })
     this.hub.log(
+      // i18n-ignore: 仅进日志
       `${this.agentLabel} 退出 (code=${String(info.code)} signal=${String(info.signal)})`,
     )
   }
@@ -422,7 +423,7 @@ export class CodexHost extends JsonRpcAgentHost {
   protected sendToAgent(msg: Record<string, unknown>): void {
     const stdin = this.child?.stdin
     if (!stdin || stdin.destroyed || !stdin.writable) {
-      this.hub.log('codex stdin 不可写，消息已丢弃')
+      this.hub.log('codex stdin 不可写，消息已丢弃') // i18n-ignore: 仅进日志
       return
     }
     try {
@@ -431,7 +432,7 @@ export class CodexHost extends JsonRpcAgentHost {
       const line = JSON.stringify(outgoing)
       if (typeof line === 'string') stdin.write(`${line}\n`)
     } catch {
-      this.hub.log('序列化发往 codex 的消息失败')
+      this.hub.log('序列化发往 codex 的消息失败') // i18n-ignore: 仅进日志
     }
   }
 
@@ -504,10 +505,10 @@ export class CodexHost extends JsonRpcAgentHost {
     child.stderr?.on('data', (chunk: unknown) => {
       if (this.child === child) this.onStderr(toText(chunk))
     })
-    child.stdin?.on('error', () => this.hub.log('codex stdin 写入失败'))
+    child.stdin?.on('error', () => this.hub.log('codex stdin 写入失败')) // i18n-ignore: 仅进日志
     child.on('error', (err: Error) => {
       if (this.child !== child) return
-      this.hub.log(`codex 启动失败: ${redact(err.message)}`)
+      this.hub.log(`codex 启动失败: ${redact(err.message)}`) // i18n-ignore: 仅进日志
       this.finishChild(null, null, err.message)
     })
     child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
@@ -536,7 +537,7 @@ export class CodexHost extends JsonRpcAgentHost {
           this.skippingStdoutLine = true
           // app-server 的响应把 id 放在内容之前，超限时仍可结束这条请求。
           if (responseId) this.handleCodexMessage({ id: responseId, error: OVERSIZE_RESPONSE })
-          else this.hub.log('codex stdout 单行过长，已丢弃')
+          else this.hub.log('codex stdout 单行过长，已丢弃') // i18n-ignore: 仅进日志
         } else {
           this.stdoutRemainder += chunk.slice(start, end)
         }
@@ -570,17 +571,17 @@ export class CodexHost extends JsonRpcAgentHost {
     try {
       parsed = JSON.parse(line)
     } catch {
-      this.hub.log('codex stdout 出现非 JSON 行')
+      this.hub.log('codex stdout 出现非 JSON 行') // i18n-ignore: 仅进日志
       return
     }
     if (!isRecord(parsed)) {
-      this.hub.log('codex stdout 出现非对象消息')
+      this.hub.log('codex stdout 出现非对象消息') // i18n-ignore: 仅进日志
       return
     }
     // 回放还会附加帧类型和序号，须在入缓冲前为这些字段留出空间。
     if (line.length > MAX_REPLAY_EVENT_BYTES / 3
         && classifyJsonRpc(parsed) !== 'response' && Buffer.byteLength(JSON.stringify(parsed)) > MAX_REPLAY_EVENT_BYTES) {
-      this.hub.log('codex stdout 事件超过传输大小上限')
+      this.hub.log('codex stdout 事件超过传输大小上限') // i18n-ignore: 仅进日志
       return
     }
     this.handleCodexMessage(parsed)
@@ -647,6 +648,8 @@ export class CodexHost extends JsonRpcAgentHost {
         // app-server 将每轮覆盖项沿用到后续轮次，普通发送需要恢复会话原有权限。
         params.approvalPolicy ??= baseline.approvalPolicy
         params.sandboxPolicy ??= baseline.sandboxPolicy
+        // 「替我批准」会切换审批审查方，也需随基线一起恢复。
+        if (baseline.approvalsReviewer) params.approvalsReviewer ??= baseline.approvalsReviewer
       }
     }
     this.startingTurns.set(msg.id, { threadId, completed: new Set() })
@@ -656,10 +659,14 @@ export class CodexHost extends JsonRpcAgentHost {
   private readThreadAccess(result: unknown): void {
     if (!isRecord(result) || !isRecord(result.thread) || !isRecord(result.sandbox)) return
     const id = result.thread.id
-    const { approvalPolicy, sandbox } = result
+    const { approvalPolicy, approvalsReviewer, sandbox } = result
     if (typeof id !== 'string' || this.managedAccess.has(id)) return
     if (typeof approvalPolicy !== 'string' && !isRecord(approvalPolicy)) return
-    this.threadAccess.set(id, { approvalPolicy, sandboxPolicy: sandbox })
+    this.threadAccess.set(id, {
+      approvalPolicy,
+      sandboxPolicy: sandbox,
+      ...(typeof approvalsReviewer === 'string' ? { approvalsReviewer } : {}),
+    })
   }
 
   private clearRequestState(): void {

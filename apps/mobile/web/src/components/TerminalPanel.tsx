@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import { ChevronDown, ChevronUp, Ellipsis, Keyboard, Plus, Send } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import { FitAddon } from '@xterm/addon-fit'
@@ -20,8 +21,8 @@ import './terminal.css'
 
 const controlKeys = [
   ['Esc', '\x1b', 'Esc'], ['Tab', '\t', 'Tab'], ['^C', '\x03', 'Ctrl+C'],
-  ['⇧Tab', '\x1b[Z', 'Shift+Tab'], ['↑', '\x1b[A', '上方向键'], ['↓', '\x1b[B', '下方向键'],
-  ['⌫', '\x7f', '退格'], ['←', '\x1b[D', '左方向键'], ['→', '\x1b[C', '右方向键'],
+  ['⇧Tab', '\x1b[Z', 'Shift+Tab'], ['↑', '\x1b[A', t('上方向键')], ['↓', '\x1b[B', t('下方向键')],
+  ['⌫', '\x7f', t('退格')], ['←', '\x1b[D', t('左方向键')], ['→', '\x1b[C', t('右方向键')],
 ] as const
 const encoder = new TextEncoder()
 const MAX_INPUT = 128 * 1024
@@ -118,7 +119,7 @@ function mountTerminal(
         dimensions = { cols: result.cols, rows: result.rows }
         applyDimensions(dimensions)
       }).catch((error: unknown) => {
-        if (hasCurrentGeneration(current)) update({ error: friendlyError(error, '调整终端尺寸失败') })
+        if (hasCurrentGeneration(current)) update({ error: friendlyError(error, t('调整终端尺寸失败')) })
       })
     }, 100)
   }
@@ -129,17 +130,17 @@ function mountTerminal(
   const write = (bytes: Uint8Array): Promise<boolean> => {
     if (!status.writable || !bytes.length) return Promise.resolve(false)
     if (bytes.length > MAX_INPUT) {
-      update({ error: '单次终端输入最多 128 KiB。' })
+      update({ error: t('单次终端输入最多 128 KiB。') })
       return Promise.resolve(false)
     }
     const current = generation
     const transfer = inputQueue.then(async () => {
       if (!hasCurrentGeneration(current) || !status.writable) return false
       const result = await rpc<{ acceptedBytes: number }>('write', { data: encodeTerminalInput(bytes) })
-      if (result.acceptedBytes !== bytes.length) throw new Error('目标只接收了部分输入')
+      if (result.acceptedBytes !== bytes.length) throw new Error(t('目标只接收了部分输入'))
       return hasCurrentGeneration(current)
     }).catch((error: unknown) => {
-      if (hasCurrentGeneration(current)) update({ error: friendlyError(error, '无法发送终端输入') })
+      if (hasCurrentGeneration(current)) update({ error: friendlyError(error, t('无法发送终端输入')) })
       return false
     })
     inputQueue = transfer
@@ -180,13 +181,13 @@ function mountTerminal(
       update({
         attaching: false, exit, writable: result.alive && !exit && !missing,
         historyLost: status.historyLost || replay.historyLost,
-        error: missing ? '终端输出出现缺口，请重试接回。' : status.error,
+        error: missing ? t('终端输出出现缺口，请重试接回。') : status.error,
       })
       scheduleFit()
     }).catch((error: unknown) => {
       if (!hasCurrentGeneration(current)) return
       pending = null
-      update({ attaching: false, writable: false, error: friendlyError(error, '无法接回终端') })
+      update({ attaching: false, writable: false, error: friendlyError(error, t('无法接回终端')) })
     })
   }
 
@@ -206,7 +207,7 @@ function mountTerminal(
         try {
           output(chunk)
         } catch {
-          update({ error: '终端输出无法读取，请重试接回。', writable: false })
+          update({ error: t('终端输出无法读取，请重试接回。'), writable: false })
         }
       } else {
         attach()
@@ -335,11 +336,11 @@ function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTe
   }
   const paste = () => {
     setActionError(null)
-    void controls.current?.paste().catch((error: unknown) => setActionError(friendlyError(error, '无法粘贴剪贴板')))
+    void controls.current?.paste().catch((error: unknown) => setActionError(friendlyError(error, t('无法粘贴剪贴板'))))
   }
   const copy = () => {
     setActionError(null)
-    void controls.current?.copy().catch((error: unknown) => setActionError(friendlyError(error, '无法复制选区')))
+    void controls.current?.copy().catch((error: unknown) => setActionError(friendlyError(error, t('无法复制选区'))))
   }
   const sendWithKeyboard = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey) || event.nativeEvent.isComposing) return
@@ -351,54 +352,55 @@ function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTe
   return (
     <>
       {connected && !ready && (
-        <Note message="目标连接已中断。" tone="warn"
-          actionLabel={targetState !== 'connecting' && targetState !== 'deploying' ? '连接目标' : undefined}
+        <Note message={t('目标连接已中断。')} tone="warn"
+          actionLabel={targetState !== 'connecting' && targetState !== 'deploying' ? t('连接目标') : undefined}
           onAction={() => requestConnect(project.targetId)} />
       )}
-      {status.attaching && <Loading text="正在接回终端…" />}
-      {status.exit && <Note message={`终端已退出${status.exit.signal ? ` · ${status.exit.signal}` : status.exit.code !== null ? ` · 退出码 ${status.exit.code}` : ''}`} />}
-      {status.historyLost && <p className="text-xs text-qn-warn">部分历史超出目标的输出缓冲，已显示剩余记录。</p>}
-      {status.error && <Note message={status.error} tone="error" actionLabel={ready ? '重试接回' : undefined}
+      {status.attaching && <Loading text={t('正在接回终端…')} />}
+      {status.exit && <Note message={`${t('终端已退出')}${status.exit.signal ? ` · ${status.exit.signal}`
+        : status.exit.code !== null ? ` · ${t('退出码 {code}', { code: status.exit.code })}` : ''}`} />}
+      {status.historyLost && <p className="text-xs text-qn-warn">{t('部分历史超出目标的输出缓冲，已显示剩余记录。')}</p>}
+      {status.error && <Note message={status.error} tone="error" actionLabel={ready ? t('重试接回') : undefined}
         onAction={() => controls.current?.attach()} />}
       {actionError && <Note message={actionError} tone="error" onClose={() => setActionError(null)} />}
 
-      {menu && <Dialog title="终端操作" onClose={onCloseMenu}>
+      {menu && <Dialog title={t('终端操作')} onClose={onCloseMenu}>
         <div className="grid gap-1">
-          <Button variant="ghost" disabled={!status.writable} onClick={() => { onCloseMenu(); paste() }}>粘贴到终端</Button>
-          <Button variant="ghost" onClick={() => { onCloseMenu(); copy() }}>复制选区</Button>
-          <Button variant="ghost" onClick={() => { onCloseMenu(); setSearchOpen(true) }}>搜索输出</Button>
-          <Button variant="ghost" onClick={() => { onCloseMenu(); setSelectableText(controls.current?.readText() ?? '') }}>阅读输出</Button>
-          <Button variant="ghost" disabled={!connected || busy} onClick={onCloseTerminal}>关闭终端</Button>
+          <Button variant="ghost" disabled={!status.writable} onClick={() => { onCloseMenu(); paste() }}>{t('粘贴到终端')}</Button>
+          <Button variant="ghost" onClick={() => { onCloseMenu(); copy() }}>{t('复制选区')}</Button>
+          <Button variant="ghost" onClick={() => { onCloseMenu(); setSearchOpen(true) }}>{t('搜索输出')}</Button>
+          <Button variant="ghost" onClick={() => { onCloseMenu(); setSelectableText(controls.current?.readText() ?? '') }}>{t('阅读输出')}</Button>
+          <Button variant="ghost" disabled={!connected || busy} onClick={onCloseTerminal}>{t('关闭终端')}</Button>
         </div>
       </Dialog>}
       {searchOpen && (
         <div className="flex items-center gap-2">
-          <input className="qn-input min-w-0 flex-1" type="search" aria-label="搜索终端输出" value={query}
+          <input className="qn-input min-w-0 flex-1" type="search" aria-label={t('搜索终端输出')} value={query}
             onChange={(event) => { setQuery(event.target.value); find(event.target.value) }} />
-          <Button aria-label="上一个匹配" disabled={!query} onClick={() => find(query, true)}><ChevronUp size={17} /></Button>
-          <Button aria-label="下一个匹配" disabled={!query} onClick={() => find(query)}><ChevronDown size={17} /></Button>
-          <Button variant="ghost" onClick={() => { setQuery(''); find(''); setSearchOpen(false) }}>关闭</Button>
-          {query && !found && <span role="status" className="text-xs text-qn-muted">无匹配</span>}
+          <Button aria-label={t('上一个匹配')} disabled={!query} onClick={() => find(query, true)}><ChevronUp size={17} /></Button>
+          <Button aria-label={t('下一个匹配')} disabled={!query} onClick={() => find(query)}><ChevronDown size={17} /></Button>
+          <Button variant="ghost" onClick={() => { setQuery(''); find(''); setSearchOpen(false) }}>{t('关闭')}</Button>
+          {query && !found && <span role="status" className="text-xs text-qn-muted">{t('无匹配')}</span>}
         </div>
       )}
       <div className="qn-terminal-surface">
-        <div ref={host} className="qn-terminal-host" aria-label="终端输出" />
+        <div ref={host} className="qn-terminal-host" aria-label={t('终端输出')} />
       </div>
-      {selectableText !== null && <Dialog title="阅读终端输出" placement="full" onClose={() => setSelectableText(null)}>
-        <pre className="qn-terminal-readable" tabIndex={0}>{selectableText || '暂无终端输出'}</pre>
+      {selectableText !== null && <Dialog title={t('阅读终端输出')} placement="full" onClose={() => setSelectableText(null)}>
+        <pre className="qn-terminal-readable" tabIndex={0}>{selectableText || t('暂无终端输出')}</pre>
       </Dialog>}
-      <div className="qn-terminal-tools qn-terminal-keys" aria-label="终端快捷键">
+      <div className="qn-terminal-tools qn-terminal-keys" aria-label={t('终端快捷键')}>
         {controlKeys.map(([name, value, label]) => (
-          <Button key={name} aria-label={`发送 ${label}`} onClick={() => void controls.current?.write(value)} disabled={!status.writable}>{name}</Button>
+          <Button key={name} aria-label={t('发送 {key}', { key: label })} onClick={() => void controls.current?.write(value)} disabled={!status.writable}>{name}</Button>
         ))}
       </div>
       <div className="flex items-end gap-2">
-        <Button variant="ghost" aria-label="终端键盘" disabled={!status.writable} onClick={() => controls.current?.focus()}>
+        <Button variant="ghost" aria-label={t('终端键盘')} disabled={!status.writable} onClick={() => controls.current?.focus()}>
           <Keyboard size={18} aria-hidden />
         </Button>
-        <textarea className="qn-textarea min-w-0 flex-1" rows={1} aria-label="终端草稿" value={draft}
-          onChange={(event) => setDraft(event.target.value)} onKeyDown={sendWithKeyboard} placeholder="输入命令后发送" />
-        <Button variant="primary" aria-label={writing ? '发送中' : '发送命令'} onClick={() => void submit()} disabled={!status.writable || writing}>
+        <textarea className="qn-textarea min-w-0 flex-1" rows={1} aria-label={t('终端草稿')} value={draft}
+          onChange={(event) => setDraft(event.target.value)} onKeyDown={sendWithKeyboard} placeholder={t('输入命令后发送')} />
+        <Button variant="primary" aria-label={writing ? t('发送中') : t('发送命令')} onClick={() => void submit()} disabled={!status.writable || writing}>
           <Send size={17} aria-hidden />
         </Button>
       </div>
@@ -426,7 +428,7 @@ export function TerminalPanel({ project }: { project: Project }) {
     let current = true
     void projectRpc<{ terminals: TermInfo[] }>(project, 'mobile.term.list', {}, desktopId).then((result) => {
       if (!current) return
-      if (!Array.isArray(result?.terminals)) throw new Error('电脑未提供手机终端，请检查桌面版设置。')
+      if (!Array.isArray(result?.terminals)) throw new Error(t('电脑未提供手机终端，请检查桌面版设置。'))
       setError(null)
       setNeedsTarget(false)
       const terminals = [...result.terminals].sort((a, b) => a.startedAt - b.startedAt)
@@ -435,7 +437,7 @@ export function TerminalPanel({ project }: { project: Project }) {
         ?? terminals.find((item) => item.alive)?.termId ?? terminals[0]?.termId ?? null)
     }).catch((error: unknown) => {
       if (!current) return
-      setError(friendlyError(error, '读取终端失败'))
+      setError(friendlyError(error, t('读取终端失败')))
       setNeedsTarget(errorCode(error) === 'not_connected')
       setList((existing) => existing ?? [])
     })
@@ -450,11 +452,11 @@ export function TerminalPanel({ project }: { project: Project }) {
     setBusy(true)
     try {
       const terminal = await projectRpc<TermOpenResult>(project, 'mobile.term.open', { cols: 80, rows: 20 }, desktopId)
-      if (!terminal.termId) throw new Error('电脑返回了无效的终端信息')
+      if (!terminal.termId) throw new Error(t('电脑返回了无效的终端信息'))
       setList((items) => [...(items ?? []).filter((item) => item.termId !== terminal.termId), terminal])
       setTermId(terminal.termId)
     } catch (error) {
-      setError(friendlyError(error, '新建项目终端失败'))
+      setError(friendlyError(error, t('新建项目终端失败')))
     } finally {
       setBusy(false)
     }
@@ -471,7 +473,7 @@ export function TerminalPanel({ project }: { project: Project }) {
         ?? list?.find((item) => item.termId !== selected.termId)?.termId ?? null)
       setClosing(false)
     } catch (error) {
-      setError(friendlyError(error, '关闭终端失败'))
+      setError(friendlyError(error, t('关闭终端失败')))
     } finally {
       setBusy(false)
     }
@@ -479,27 +481,27 @@ export function TerminalPanel({ project }: { project: Project }) {
 
   return (
     <section className="qn-terminal-panel">
-      <div className="flex items-center gap-1" aria-label="项目终端">
-        {selected && <select className="qn-input min-w-0 flex-1 truncate" aria-label="切换终端" value={termId ?? ''}
+      <div className="flex items-center gap-1" aria-label={t('项目终端')}>
+        {selected && <select className="qn-input min-w-0 flex-1 truncate" aria-label={t('切换终端')} value={termId ?? ''}
           disabled={busy} onChange={(event) => { setTermId(event.target.value); setClosing(false); setMenu(false) }}>
-          {list?.map((item, index) => <option key={item.termId} value={item.termId}>终端 {index + 1}{item.alive ? '' : ' · 已退出'}</option>)}
+          {list?.map((item, index) => <option key={item.termId} value={item.termId}>{t('终端 {index}', { index: index + 1 })}{item.alive ? '' : t(' · 已退出')}</option>)}
         </select>}
-        <Button variant={selected ? 'ghost' : 'primary'} aria-label="新建终端" disabled={!connected || busy || list === null || needsTarget}
-          onClick={() => void open()}><Plus size={19} aria-hidden />{!selected && '新建终端'}</Button>
-        {selected && <Button variant="ghost" aria-label="终端操作" onClick={() => setMenu(true)}><Ellipsis size={19} aria-hidden /></Button>}
+        <Button variant={selected ? 'ghost' : 'primary'} aria-label={t('新建终端')} disabled={!connected || busy || list === null || needsTarget}
+          onClick={() => void open()}><Plus size={19} aria-hidden />{!selected && t('新建终端')}</Button>
+        {selected && <Button variant="ghost" aria-label={t('终端操作')} onClick={() => setMenu(true)}><Ellipsis size={19} aria-hidden /></Button>}
       </div>
       {closing && selected && (
         <div className="flex items-center gap-2 rounded-xl border border-qn-border px-2 text-sm">
-          <span className="flex-1">关闭会终止该终端。</span>
-          <Button variant="ghost" disabled={busy} onClick={() => setClosing(false)}>取消</Button>
-          <Button variant="danger" disabled={busy} onClick={() => void terminate()}>关闭</Button>
+          <span className="flex-1">{t('关闭会终止该终端。')}</span>
+          <Button variant="ghost" disabled={busy} onClick={() => setClosing(false)}>{t('取消')}</Button>
+          <Button variant="danger" disabled={busy} onClick={() => void terminate()}>{t('关闭')}</Button>
         </div>
       )}
-      {error && <Note message={error} tone="error" actionLabel={needsTarget ? '连接目标' : '重试'}
+      {error && <Note message={error} tone="error" actionLabel={needsTarget ? t('连接目标') : t('重试')}
         onAction={() => needsTarget ? requestConnect(project.targetId) : setRefresh((attempt) => attempt + 1)} />}
-      {list === null && connected && <Loading text="正在读取可接回的项目终端…" />}
+      {list === null && connected && <Loading text={t('正在读取可接回的项目终端…')} />}
       {!connected && connectionWarning && <Note message={connectionWarning} tone="warn" />}
-      {list?.length === 0 && !error && <p className="py-5 text-center text-sm text-qn-muted">该项目还没有手机终端。</p>}
+      {list?.length === 0 && !error && <p className="py-5 text-center text-sm text-qn-muted">{t('该项目还没有手机终端。')}</p>}
       {desktopId && selected && <TerminalScreen key={`${desktopId}:${selected.termId}`} desktopId={desktopId} project={project} info={selected}
         menu={menu} busy={busy} onCloseMenu={() => setMenu(false)} onCloseTerminal={() => { setMenu(false); setClosing(true) }} />}
     </section>

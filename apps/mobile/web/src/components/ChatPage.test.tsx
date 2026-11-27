@@ -35,7 +35,7 @@ it('长会话先显示最新消息，可以逐批查看完整历史', async () =
       root.render(<ChatPage />)
     })
     expect(host.textContent).toContain('记录[124]')
-    expect(host.querySelector('button[aria-label="访问模式：继承总控"]')).not.toBeNull()
+    expect(host.querySelector('button[aria-label="访问模式：请求批准（跟随总控）"]')).not.toBeNull()
     expect(host.textContent).toContain('记录[65]')
     expect(host.textContent).not.toContain('记录[64]')
     await act(() => earlier()?.click())

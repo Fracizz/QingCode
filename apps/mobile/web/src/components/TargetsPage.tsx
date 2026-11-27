@@ -1,6 +1,8 @@
+import { t, translateMessage } from '@qn/codex-client'
 import { FolderOpen, PlugZap, Unplug } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { formatAddress } from '../link'
+import { connectionName } from '../names'
 import { useApp } from '../store'
 import type { TargetState } from '../types'
 import { Badge, Button, Dialog, Empty, Header, Loading, Note, SheetAction, StatusDot } from './ui'
@@ -8,11 +10,11 @@ import { TargetRateLimits } from './RateLimitView'
 import { WorkspaceIcon } from './WorkspaceHome'
 
 const stateText: Record<TargetState, string> = {
-  idle: '未连接',
-  connecting: '连接中…',
-  deploying: '部署中…',
-  ready: '就绪',
-  error: '连接失败',
+  idle: t('未连接'),
+  connecting: t('连接中…'),
+  deploying: t('部署中…'),
+  ready: t('就绪'),
+  error: t('连接失败'),
 }
 
 function stateTone(state: TargetState): 'ok' | 'danger' | 'muted' | 'accent' {
@@ -50,15 +52,15 @@ export function TargetsPage() {
 
   return (
     <>
-      <Header title="目标与额度" subtitle={conn?.name} onBack={goBack}
+      <Header title={t('目标与额度')} subtitle={conn && connectionName(conn.name)} onBack={goBack}
         right={<Button variant="ghost" onClick={() => void Promise.all([loadTargets(), loadAgentSettings()])}
-          aria-label="刷新目标"><WorkspaceIcon name="refresh" /></Button>} />
+          aria-label={t('刷新目标')}><WorkspaceIcon name="refresh" /></Button>} />
       <div className="qn-body qn-scroll">
-        {repair && conn && <Note tone="error" message="请重新配对这台电脑。" actionLabel="重新配对" onAction={() => beginRepair(conn.id)} />}
+        {repair && conn && <Note tone="error" message={t('请重新配对这台电脑。')} actionLabel={t('重新配对')} onAction={() => beginRepair(conn.id)} />}
         {error && <Note message={error} tone="error" onClose={clearError} />}
         {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
-        {connectingTarget?.kind === 'ssh' && <Note message="首次连接或 SSH 指纹变化时，请在电脑上确认指纹。" />}
-        {targets.length === 0 ? (error || repair || eventsError ? <Empty>没有可用的目标。</Empty> : <Loading text="正在读取目标…" />) : (
+        {connectingTarget?.kind === 'ssh' && <Note message={t('首次连接或 SSH 指纹变化时，请在电脑上确认指纹。')} />}
+        {targets.length === 0 ? (error || repair || eventsError ? <Empty>{t('没有可用的目标。')}</Empty> : <Loading text={t('正在读取目标…')} />) : (
           <div className="qn-list-group">
             {targets.map((target) => {
               const state = states[target.id]?.state ?? 'idle'
@@ -73,15 +75,15 @@ export function TargetsPage() {
                     <span className="qn-row-copy">
                       <span className="qn-list-primary">{target.name}</span>
                       {target.kind !== 'local' && <span className="qn-subtitle block">
-                        {target.kind === 'direct' && '直连 · '}{formatAddress(target.host, target.port)}
+                        {target.kind === 'direct' && t('直连 · ')}{formatAddress(target.host, target.port)}
                       </span>}
                     </span>
-                    <Badge tone={stateTone(state)}>{canOpen ? '查看项目' : busy ? stateText[state] : '连接'}</Badge>
+                    <Badge tone={stateTone(state)}>{canOpen ? t('查看项目') : busy ? stateText[state] : t('连接')}</Badge>
                   </button>
                   <Button variant="ghost" className="qn-list-action" onClick={() => setMenu(target.id)}
-                    aria-label={`${target.name} 的目标操作`}><WorkspaceIcon name="more" /></Button>
+                    aria-label={t('{name} 的目标操作', { name: target.name })}><WorkspaceIcon name="more" /></Button>
                   <TargetRateLimits targetId={target.id} targetName={target.name} available={eventsConnected && !repair && canOpen && !busy} />
-                  {errors[target.id] && <p className="w-full break-words text-xs text-qn-danger">{errors[target.id]}</p>}
+                  {errors[target.id] && <p className="w-full break-words text-xs text-qn-danger">{translateMessage(errors[target.id] ?? '')}</p>}
                 </div>
               )
             })}
@@ -91,14 +93,14 @@ export function TargetsPage() {
       {selected && (
         <Dialog title={selected.name} onClose={() => setMenu(null)}>
           {selected.kind !== 'local' && <p className="mb-2 text-xs text-qn-muted">
-            {selected.kind === 'ssh' ? `${selected.username}@` : '直连 · '}{formatAddress(selected.host, selected.port)}
+            {selected.kind === 'ssh' ? `${selected.username}@` : t('直连 · ')}{formatAddress(selected.host, selected.port)}
           </p>}
           <div className="grid">
-            <SheetAction icon={FolderOpen} onClick={() => { setMenu(null); void selectTarget(selected.id) }}>查看项目</SheetAction>
+            <SheetAction icon={FolderOpen} onClick={() => { setMenu(null); void selectTarget(selected.id) }}>{t('查看项目')}</SheetAction>
             {states[selected.id]?.state === 'ready' ? (
-              <SheetAction icon={Unplug} onClick={() => { setMenu(null); void disconnectTarget(selected.id) }}>断开目标</SheetAction>
+              <SheetAction icon={Unplug} onClick={() => { setMenu(null); void disconnectTarget(selected.id) }}>{t('断开目标')}</SheetAction>
             ) : (
-              <SheetAction icon={PlugZap} onClick={() => { setMenu(null); requestConnect(selected.id) }} disabled={connectingId === selected.id}>连接</SheetAction>
+              <SheetAction icon={PlugZap} onClick={() => { setMenu(null); requestConnect(selected.id) }} disabled={connectingId === selected.id}>{t('连接')}</SheetAction>
             )}
           </div>
         </Dialog>

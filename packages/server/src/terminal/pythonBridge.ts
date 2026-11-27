@@ -15,6 +15,7 @@ export const PYTHON_PROBE_SOURCE = [
   '}))',
 ].join('\n')
 
+// i18n-ignore: Python 桥源码，中文只出现在其注释里
 export const PYTHON_BRIDGE_SOURCE = String.raw`
 import errno
 import fcntl

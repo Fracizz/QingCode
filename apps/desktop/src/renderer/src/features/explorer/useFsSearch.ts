@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FsSearchMode, FsSearchMatch, FsSearchResultEvt } from '@qn/protocol'
+import { t } from '@qn/codex-client'
 import { onServerEvt, serverCall } from '../workspace/serverCall'
 import { describeWorkspaceError } from './treeModel'
 
@@ -59,7 +60,7 @@ export function useFsSearch(targetId: string, options: FsSearchOptions): FsSearc
       done: payload.done === true,
       truncated: previous.truncated || payload.truncated === true,
       error: payload.error
-        ? describeWorkspaceError({ message: payload.error }, '搜索失败')
+        ? describeWorkspaceError({ message: payload.error }, t('搜索失败'))
         : previous.error,
       searching: payload.done !== true,
     }))
@@ -126,7 +127,7 @@ export function useFsSearch(targetId: string, options: FsSearchOptions): FsSearc
           setState({
             ...EMPTY,
             done: true,
-            error: describeWorkspaceError(err, '搜索失败'),
+            error: describeWorkspaceError(err, t('搜索失败')),
           })
         }
       })()

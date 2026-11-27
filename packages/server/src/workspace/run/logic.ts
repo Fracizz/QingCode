@@ -35,6 +35,7 @@ function parseEnv(value: unknown, where: string): Record<string, string> | undef
 function parseType(value: unknown, where: string): RunTaskType {
   if (value === undefined || value === null) return 'command'
   if (typeof value !== 'string' || !RUN_TASK_TYPES.includes(value as RunTaskType)) {
+    // i18n-ignore: 按实际取值在词典登记整句
     throw new WorkspaceError('params', `${where} 只能是 ${RUN_TASK_TYPES.join('、')}`)
   }
   return value as RunTaskType
@@ -204,8 +205,9 @@ export type CommandTools = {
   comspec?: string
 }
 
-function assertSingleLine(value: string, what: string): void {
-  if (/[\r\n\0]/.test(value)) throw new WorkspaceError('params', `${what}不能包含换行或空字符`)
+// 传整句而非名词片段，展示端才能按整句翻译。
+function assertSingleLine(value: string, message: string): void {
+  if (/[\r\n\0]/.test(value)) throw new WorkspaceError('params', message)
 }
 
 function windowsPath(target: string): string {
@@ -237,10 +239,10 @@ function powershell(tools: CommandTools, scriptPath: string): SpawnPlan {
 
 function windowsPlan(type: RunTaskType, target: string, tools: CommandTools): SpawnPlan {
   if (type === 'command') {
-    assertSingleLine(target, '命令')
+    assertSingleLine(target, '命令不能包含换行或空字符')
     return cmdLine(tools, target)
   }
-  assertSingleLine(target, '脚本路径')
+  assertSingleLine(target, '脚本路径不能包含换行或空字符')
   const file = windowsPath(target)
   const kind: ScriptKind = type === 'script' ? scriptKind(file) : type
   if (kind !== 'ps1' && file.includes('"')) throw new WorkspaceError('params', '脚本路径不能包含双引号')
@@ -271,7 +273,7 @@ function nonWslBash(found: string | null): string | null {
 
 function posixPlan(type: RunTaskType, target: string, tools: CommandTools): SpawnPlan {
   if (type === 'command') return plan('sh', ['-lc', target])
-  assertSingleLine(target, '脚本路径')
+  assertSingleLine(target, '脚本路径不能包含换行或空字符')
   const kind: ScriptKind = type === 'script' ? scriptKind(target) : type
   switch (kind) {
     case 'bat':

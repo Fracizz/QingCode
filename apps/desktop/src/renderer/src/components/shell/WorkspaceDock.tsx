@@ -1,5 +1,6 @@
 import { FolderTree, GitBranch, Play, Search, X } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { t } from '@qn/codex-client'
 import { FileExplorer, SearchPanel } from '../../features/explorer'
 import { FilePane, useFiles } from '../../features/files'
 import { GitPanel } from '../../features/git'
@@ -12,10 +13,10 @@ import { ResizeHandle } from '../ResizeHandle'
 import { IconButton } from '../ui'
 
 export const DOCK_TOOLS: Array<{ id: DockTool; label: string; hint: string; icon: ReactNode }> = [
-  { id: 'explorer', label: '资源管理器', hint: 'Ctrl Shift E', icon: <FolderTree size={15} /> },
-  { id: 'search', label: '搜索', hint: 'Ctrl Shift F', icon: <Search size={15} /> },
-  { id: 'git', label: '源代码管理', hint: 'Ctrl Shift G', icon: <GitBranch size={15} /> },
-  { id: 'run', label: '运行', hint: 'Ctrl Shift R', icon: <Play size={15} /> },
+  { id: 'explorer', label: t('资源管理器'), hint: 'Ctrl Shift E', icon: <FolderTree size={15} /> },
+  { id: 'search', label: t('搜索'), hint: 'Ctrl Shift F', icon: <Search size={15} /> },
+  { id: 'git', label: t('源代码管理'), hint: 'Ctrl Shift G', icon: <GitBranch size={15} /> },
+  { id: 'run', label: t('运行'), hint: 'Ctrl Shift R', icon: <Play size={15} /> },
 ]
 
 /** 文件/Git 功能作用于当前项目；未选项目或目标未连接时给出提示。 */
@@ -23,8 +24,8 @@ export function useWorkspaceScope(): { targetId: string; cwd: string } | { reaso
   const targetId = useCodex((s) => s.currentTargetId)
   const cwd = useCodex((s) => s.currentCwd)
   const ready = useTargets((s) => (targetId ? s.states[targetId]?.state === 'ready' : false))
-  if (!targetId || !cwd) return { reason: '先在左侧选择一个项目' }
-  if (!ready) return { reason: '目标未连接' }
+  if (!targetId || !cwd) return { reason: t('先在左侧选择一个项目') }
+  if (!ready) return { reason: t('目标未连接') }
   return { targetId, cwd }
 }
 
@@ -62,7 +63,7 @@ export function WorkspaceDock() {
             min={FILES_MIN}
             max={FILES_MAX}
             onChange={(width) => useDock.getState().setFilesWidth(width)}
-            label="调整文件面板宽度"
+            label={t('调整文件面板宽度')}
             className="absolute inset-y-0 -left-1 z-10"
           />
           <FilePane scope={'reason' in scope ? undefined : scope} className="min-h-0 flex-1" />
@@ -80,14 +81,14 @@ export function WorkspaceDock() {
             min={TOOL_MIN}
             max={TOOL_MAX}
             onChange={(width) => useDock.getState().setToolWidth(width)}
-            label="调整工具栏宽度"
+            label={t('调整工具栏宽度')}
             className="absolute inset-y-0 -left-1 z-10"
           />
           <div className="flex h-9 shrink-0 items-center gap-1 border-b border-qn-border px-2">
             {DOCK_TOOLS.map((item) => (
               <IconButton
                 key={item.id}
-                label={`${item.label}（${item.hint}）`}
+                label={t('{label}（{hint}）', { label: item.label, hint: item.hint })}
                 aria-pressed={item.id === tool}
                 onClick={() => useDock.getState().toggleTool(item.id)}
                 className={item.id === tool ? 'bg-qn-active text-qn-text' : undefined}
@@ -96,7 +97,7 @@ export function WorkspaceDock() {
               </IconButton>
             ))}
             <span className="ml-1 min-w-0 flex-1 truncate text-ui-sm text-qn-muted">{meta.label}</span>
-            <IconButton label="收起" onClick={() => useDock.getState().hideTool()}>
+            <IconButton label={t('收起')} onClick={() => useDock.getState().hideTool()}>
               <X size={14} />
             </IconButton>
           </div>
@@ -115,18 +116,18 @@ export function ProjectFilesView({ onQuickOpen }: { onQuickOpen: () => void }) {
   const width = useDock((s) => s.toolWidth)
   if ('reason' in scope) return <div className="m-auto text-ui-md text-qn-muted">{scope.reason}</div>
   return (
-    <main aria-label="项目文件" className="flex min-h-0 min-w-0 flex-1">
+    <main aria-label={t('项目文件')} className="flex min-h-0 min-w-0 flex-1">
       <aside className="relative flex min-h-0 max-w-[45%] flex-col border-r border-qn-border bg-qn-sidebar" style={{ width }}>
         <div className="flex flex-wrap items-center gap-1 border-b border-qn-border p-1.5 text-ui-sm">
           <button type="button" className="qn-button-subtle aria-pressed:bg-qn-active" aria-pressed={tool === 'explorer'}
-            onClick={() => useDock.getState().toggleTool('explorer')}>目录</button>
-          <button type="button" className="qn-button-subtle" onClick={onQuickOpen} title="Ctrl+P">找文件</button>
+            onClick={() => useDock.getState().toggleTool('explorer')}>{t('目录')}</button>
+          <button type="button" className="qn-button-subtle" onClick={onQuickOpen} title="Ctrl+P">{t('找文件')}</button>
           <button type="button" className="qn-button-subtle aria-pressed:bg-qn-active" aria-pressed={tool === 'search'}
-            onClick={() => useDock.getState().toggleTool('search')}>搜内容</button>
+            onClick={() => useDock.getState().toggleTool('search')}>{t('搜内容')}</button>
         </div>
         <ToolBody tool={tool} />
         <ResizeHandle orientation="vertical" value={width} min={TOOL_MIN} max={TOOL_MAX}
-          label="调整文件导航宽度" className="absolute inset-y-0 -right-1" onChange={useDock.getState().setToolWidth} />
+          label={t('调整文件导航宽度')} className="absolute inset-y-0 -right-1" onChange={useDock.getState().setToolWidth} />
       </aside>
       <FilePane primary scope={scope} className="min-w-0 flex-1" />
     </main>

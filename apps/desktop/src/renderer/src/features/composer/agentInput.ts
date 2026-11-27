@@ -3,7 +3,7 @@
 import type { UserInput } from '@qn/codex-client'
 
 /** 与 Claude 桥 attachmentNote 同一格式，历史展示时 splitUserText 能拆回文件标签。 */
-const ATTACHMENT_NOTE = '附件文件（请按需读取）：'
+const ATTACHMENT_NOTE = '附件文件（请按需读取）：' // i18n-ignore: 发给模型的附件说明，历史展示靠它拆分
 
 /** Codex v2 的 mention 用于 app / plugin 等资源（app://、plugin://），不是工作区文件。 */
 const RESOURCE_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i

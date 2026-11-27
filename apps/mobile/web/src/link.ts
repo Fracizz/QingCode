@@ -18,6 +18,7 @@ export type PairingDraft = {
 }
 
 export const PAIR_SCHEME = 'qingcode-next://pair'
+// i18n-ignore: 与电脑端共用的连接信息文本，手机端仅 mock 与单测生成
 export const CONNECTION_INFO_TITLE = 'QingCode Next 手机连接'
 export const DEFAULT_PAIRING_PORT = 38500
 
@@ -126,9 +127,9 @@ export function buildConnectionInfo(info: PairingInfo): ConnectionInfo {
   const link = buildPairingLink(info)
   const text = [
     CONNECTION_INFO_TITLE,
-    `电脑：${info.name.trim() || '未命名电脑'}`,
-    `地址：${formatAddress(info.host, info.port)}`,
-    '在 QingCode Next 手机版「添加连接」中粘贴即可导入：',
+    `电脑：${info.name.trim() || '未命名电脑'}`, // i18n-ignore: 连接信息文本
+    `地址：${formatAddress(info.host, info.port)}`, // i18n-ignore: 连接信息文本
+    '在 QingCode Next 手机版「添加连接」中粘贴即可导入：', // i18n-ignore: 连接信息文本
     link,
   ].join('\n')
   return { text, link }
@@ -154,7 +155,7 @@ function parseCandidate(link: string): PairingInfo | null {
   if (fp === null) return null
   const code = params.get('code')?.trim() ?? ''
   if (!code || code.length > 128 || /[\u0000-\u001f\u007f]/.test(code)) return null
-  const name = params.get('name')?.trim() || '未命名电脑'
+  const name = params.get('name')?.trim() || '未命名电脑' // i18n-ignore: 默认名按原文保存，展示时翻译
   return { host, port, fp, name, code }
 }
 

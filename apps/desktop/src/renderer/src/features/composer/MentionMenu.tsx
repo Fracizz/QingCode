@@ -1,4 +1,5 @@
 import { File as FileIcon } from 'lucide-react'
+import { getLocale, t } from '@qn/codex-client'
 import { ListOption } from '../../components/ListOption'
 import { LoadingIcon } from '../../components/LoadingIcon'
 import { EmptyState, ErrorNote } from '../../components/ui'
@@ -23,16 +24,17 @@ export function MentionMenu({
   onHover: (index: number) => void
   onChoose: (item: MentionCandidate) => void
 }) {
-  const empty = query.trim() === '' ? '输入文件名搜索项目文件' : searching ? '正在搜索…' : '没有匹配的文件'
+  const empty = query.trim() === '' ? t('输入文件名搜索项目文件') : searching ? t('正在搜索…') : t('没有匹配的文件')
 
   return (
     <Suggestions
-      label="引用文件"
+      label={t('引用文件')}
       active={active}
-      confirmHint="引用"
+      // i18n-ignore: 与引用选中文字的“引用”同形而英文含义不同，不能共用词条
+      confirmHint={getLocale() === 'en' ? 'Mention' : '引用'}
       trailingHint={searching && items.length > 0 && (
         <span className="ml-auto flex items-center gap-1">
-          <LoadingIcon size={11} /> 搜索中
+          <LoadingIcon size={11} /> {t('搜索中')}
         </span>
       )}
     >

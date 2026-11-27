@@ -105,14 +105,21 @@ export function listHistoryItems(threadId: string, turns: readonly Json[], param
 
 /** SDK/RPC 只提供整份历史。翻页复用最新快照，短时只保留一个会话。 */
 export class HistoryPageCache {
-  private entry: { threadId: string; read: Promise<Json[]>; loading: boolean; expires: NodeJS.Timeout | null } | null = null
+  private entry: { threadId: string; read: Promise<Json[]>; loading: boolean; prefetched: boolean; expires: NodeJS.Timeout | null } | null = null
 
-  read(threadId: string, continuePage: boolean, load: () => Promise<Json[]>): Promise<Json[]> {
+  /**
+   * prefetch：由 thread/resume 预读（为取会话模型）。紧随其后的首页请求复用这份快照一次，
+   * 避免同一次打开会话读两遍历史；之后的首页请求照常重读以拿到最新内容。
+   */
+  read(threadId: string, continuePage: boolean, load: () => Promise<Json[]>, prefetch = false): Promise<Json[]> {
     const previous = this.entry
-    if (previous?.threadId === threadId && (continuePage || previous.loading)) return previous.read
+    if (previous?.threadId === threadId && (continuePage || previous.loading || previous.prefetched)) {
+      if (!prefetch) previous.prefetched = false
+      return previous.read
+    }
     this.clear()
     const read = load()
-    const entry = { threadId, read, loading: true, expires: null as NodeJS.Timeout | null }
+    const entry = { threadId, read, loading: true, prefetched: prefetch, expires: null as NodeJS.Timeout | null }
     this.entry = entry
     void read.then(() => {
       if (this.entry !== entry) return

@@ -1,3 +1,4 @@
+import { t } from '../../protocol/src/i18n'
 import type {
   Model,
   ModelListResponse,
@@ -72,7 +73,7 @@ async function withHistory<T extends { thread: Thread }>(
   isCurrent?: () => boolean,
 ): Promise<T> {
   const checkCurrent = () => {
-    if (isCurrent && !isCurrent()) throw new Error('已取消打开会话')
+    if (isCurrent && !isCurrent()) throw new Error(t('已取消打开会话'))
   }
   try {
     return await request(false)
@@ -80,7 +81,7 @@ async function withHistory<T extends { thread: Thread }>(
     if (!isOversizeHistoryResponse(error)) throw error
     checkCurrent()
     const result = await request(true)
-    if (result.thread?.id !== threadId) throw new Error('返回的会话与所选会话不一致，请重试')
+    if (result.thread?.id !== threadId) throw new Error(t('返回的会话与所选会话不一致，请重试'))
     if (result.thread.turns?.length) return result
 
     // 单页超限时缩小页长，保留命令输出、文件改动和其他完整条目。
@@ -108,7 +109,7 @@ async function withHistory<T extends { thread: Thread }>(
       }
       cursor = page.nextCursor
       if (!cursor) break
-      if (seenCursors.has(cursor)) throw new Error('会话历史分页未前进，请重试')
+      if (seenCursors.has(cursor)) throw new Error(t('会话历史分页未前进，请重试'))
     }
     checkCurrent()
     const history = [...turns.values()]
@@ -148,7 +149,7 @@ export type ThreadHistoryCursor =
 export type ThreadHistoryPage = { turns: Turn[]; earlier: ThreadHistoryCursor | null }
 
 function assertHistoryCurrent(isCurrent?: () => boolean): void {
-  if (isCurrent && !isCurrent()) throw new Error('已取消加载会话历史')
+  if (isCurrent && !isCurrent()) throw new Error(t('已取消加载会话历史'))
 }
 
 async function fitHistoryPage<T>(limit: number, request: (limit: number) => Promise<T>, isCurrent?: () => boolean): Promise<T> {
@@ -176,7 +177,7 @@ async function readTurnItemsPage(
   const page = await fitHistoryPage<ThreadItemsListResponse>(24, (limit) => rpc.request('thread/items/list', {
     threadId, turnId: turn.id, cursor, limit, sortDirection: 'desc',
   }), isCurrent)
-  if (page.nextCursor && page.nextCursor === cursor) throw new Error('会话条目分页未前进，请重试')
+  if (page.nextCursor && page.nextCursor === cursor) throw new Error(t('会话条目分页未前进，请重试'))
   return {
     turns: [{ ...turn, itemsView: 'full', items: page.data.map(({ item, completedAtMs }) =>
       item.completedAtMs == null && completedAtMs != null ? { ...item, completedAtMs } : item,
@@ -206,7 +207,7 @@ export async function readThreadHistoryPage(
     assertHistoryCurrent(isCurrent)
     page = await rpc.request('thread/turns/list', { threadId, cursor, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' })
     assertHistoryCurrent(isCurrent)
-    if (page.nextCursor && page.nextCursor === cursor) throw new Error('会话历史分页未前进，请重试')
+    if (page.nextCursor && page.nextCursor === cursor) throw new Error(t('会话历史分页未前进，请重试'))
     const turn = page.data[0]
     if (!turn) throw error
     try {
@@ -216,7 +217,7 @@ export async function readThreadHistoryPage(
       throw itemError
     }
   }
-  if (page.nextCursor && page.nextCursor === cursor) throw new Error('会话历史分页未前进，请重试')
+  if (page.nextCursor && page.nextCursor === cursor) throw new Error(t('会话历史分页未前进，请重试'))
   return { turns: [...page.data].reverse(), earlier: page.nextCursor ? { turns: page.nextCursor } : null }
 }
 
@@ -232,7 +233,7 @@ export async function openThreadHistory(
     : await rpc.request('thread/read', { threadId, includeTurns: false })
   assertHistoryCurrent(isCurrent)
   const thread = result?.thread
-  if (thread?.id !== threadId) throw new Error('返回的会话与所选会话不一致，请重试')
+  if (thread?.id !== threadId) throw new Error(t('返回的会话与所选会话不一致，请重试'))
   if (thread.turns?.length) return { thread, earlier: null }
   const cursor = 'turnsBackwardsCursor' in result && typeof result.turnsBackwardsCursor === 'string'
     ? { turns: result.turnsBackwardsCursor } : null
@@ -251,7 +252,7 @@ export async function openThreadHistory(
     assertHistoryCurrent(isCurrent)
     const legacy = await readThread(rpc, threadId, isCurrent)
     assertHistoryCurrent(isCurrent)
-    if (legacy.thread?.id !== threadId) throw new Error('返回的会话与所选会话不一致，请重试')
+    if (legacy.thread?.id !== threadId) throw new Error(t('返回的会话与所选会话不一致，请重试'))
     return { thread: legacy.thread, earlier: null }
   }
 }

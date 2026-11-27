@@ -1,3 +1,4 @@
+import { t, translateMessage } from '@qn/codex-client'
 import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, PanelLeft, Square, X } from 'lucide-react'
 import type { UserInput } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
@@ -48,7 +49,7 @@ function rememberImages(key: string, images: DraftImage[]) {
 export function Composer({
   draftKey, text, onChangeText, onSend, onInterrupt, onSwitchSession, interrupting, running, sending, compacting, disabled, imageUnavailable,
   project, annotations, onUpdateAnnotation, onRemoveAnnotation, quoteDraft, onConfirmQuote,
-  onCancelQuote, placeholder = '和 Codex 一起工作', toolbar, canSteer,
+  onCancelQuote, placeholder = t('和 Codex 一起工作'), toolbar, canSteer,
 }: ComposerProps) {
   const [comment, setComment] = useState('')
   const [showAnnotations, setShowAnnotations] = useState(false)
@@ -79,14 +80,14 @@ export function Composer({
     if (!project || query === undefined) return
     let current = true
     setFiles([])
-    setFileStatus('正在查找文件…')
+    setFileStatus(t('正在查找文件…'))
     const timer = setTimeout(() => {
       void suggestFiles(project, query).then((entries) => {
         if (!current) return
         setFiles(entries)
-        setFileStatus(entries.length === 0 ? '没有匹配的文件' : '')
+        setFileStatus(entries.length === 0 ? t('没有匹配的文件') : '')
       }, (error: unknown) => {
-        if (current) setFileStatus(friendlyError(error, '查找文件失败'))
+        if (current) setFileStatus(friendlyError(error, t('查找文件失败')))
       })
     }, 180)
     return () => { current = false; clearTimeout(timer) }
@@ -110,13 +111,16 @@ export function Composer({
       const incoming = Array.isArray(result?.images) ? result.images.filter(isDraftImage) : []
       const next = [...images, ...incoming].slice(0, MAX_IMAGES)
       if (attachmentBytes(next) > IMAGE_BYTES) {
-        setStatus('图片超过可用空间，请选择较小的图片')
+        setStatus(t('图片超过可用空间，请选择较小的图片'))
         return
       }
       updateImages(next)
-      if (result?.skipped) setStatus(`有 ${result.skipped} 张图片无法添加，请选择较小的图片`)
+      if (result?.skipped) {
+        setStatus(result.skipped === 1 ? t('有 1 张图片无法添加，请选择较小的图片')
+          : t('有 {count} 张图片无法添加，请选择较小的图片', { count: result.skipped }))
+      }
     } catch (error) {
-      if (mounted.current) setStatus(friendlyError(error, '无法选择图片'))
+      if (mounted.current) setStatus(friendlyError(error, t('无法选择图片')))
     } finally {
       if (mounted.current) setPicking(false)
     }
@@ -168,23 +172,23 @@ export function Composer({
             <input
               className="qn-input flex-1"
               value={comment}
-              aria-label="引用评论"
-              placeholder="添加可选评论…"
+              aria-label={t('引用评论')}
+              placeholder={t('添加可选评论…')}
               onChange={(event) => setComment(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.nativeEvent.isComposing) confirmQuote()
                 if (event.key === 'Escape') onCancelQuote()
               }}
             />
-            <Button variant="primary" className="px-3" onClick={confirmQuote}>引用</Button>
-            <Button variant="ghost" className="px-3" onClick={onCancelQuote} aria-label="取消引用"><X size={16} /></Button>
+            <Button variant="primary" className="px-3" onClick={confirmQuote}>{t('引用')}</Button>
+            <Button variant="ghost" className="px-3" onClick={onCancelQuote} aria-label={t('取消引用')}><X size={16} /></Button>
           </div>
         </div>
       )}
       {annotations.length > 0 && (
         <div className="mb-2">
           <Button variant="ghost" className="px-2 text-xs" aria-expanded={showAnnotations} onClick={() => setShowAnnotations(!showAnnotations)}>
-            {annotations.length} 条引用 {showAnnotations ? <ChevronUp size={14} aria-hidden /> : <ChevronDown size={14} aria-hidden />}
+            {annotations.length === 1 ? t('1 条引用') : t('{count} 条引用', { count: annotations.length })} {showAnnotations ? <ChevronUp size={14} aria-hidden /> : <ChevronDown size={14} aria-hidden />}
           </Button>
           {showAnnotations && (
             <div className="mt-1 max-h-36 space-y-2 overflow-y-auto">
@@ -192,9 +196,9 @@ export function Composer({
                 <div key={annotation.id} className="rounded-xl border border-qn-border bg-qn-card p-2">
                   <div className="mb-1 flex items-start gap-2">
                     <div className="qn-mono min-w-0 flex-1 whitespace-pre-wrap break-words text-xs text-qn-muted">{annotation.quote}</div>
-                    <Button variant="ghost" onClick={() => onRemoveAnnotation(annotation.id)} aria-label="删除引用"><X size={16} /></Button>
+                    <Button variant="ghost" onClick={() => onRemoveAnnotation(annotation.id)} aria-label={t('删除引用')}><X size={16} /></Button>
                   </div>
-                  <input className="qn-input" value={annotation.comment} aria-label="引用评论" placeholder="评论（可空）"
+                  <input className="qn-input" value={annotation.comment} aria-label={t('引用评论')} placeholder={t('评论（可空）')}
                     onChange={(event) => onUpdateAnnotation(annotation.id, event.target.value)} />
                 </div>
               ))}
@@ -204,7 +208,7 @@ export function Composer({
       )}
       {mention && (
         <div className="absolute inset-x-3 bottom-full z-10 mb-1 max-h-48 overflow-y-auto rounded-xl border border-qn-border bg-qn-panel shadow-lg">
-          {fileStatus && <div className="px-3 py-2 text-xs text-qn-muted" role="status">{fileStatus}</div>}
+          {fileStatus && <div className="px-3 py-2 text-xs text-qn-muted" role="status">{translateMessage(fileStatus)}</div>}
           {files.map((file) => (
             <button key={file.path} type="button" className="qn-row border-b border-qn-border px-3 text-sm last:border-0"
               onPointerDown={(event) => event.preventDefault()} onClick={() => selectFile(file.path)}>
@@ -214,11 +218,11 @@ export function Composer({
         </div>
       )}
       {images.length > 0 && (
-        <ul className="mb-2 flex flex-wrap gap-2" aria-label="图片附件">
+        <ul className="mb-2 flex flex-wrap gap-2" aria-label={t('图片附件')}>
           {images.map((image, index) => (
             <li className="flex items-center gap-1 rounded-xl border border-qn-border px-1" key={`${image.name}:${index}`}>
               <ImageThumbnail src={image.dataUrl} alt={image.name} className="h-11 w-11 rounded-lg object-cover" />
-              <Button variant="ghost" className="p-0!" disabled={sending || picking} onClick={() => updateImages(images.filter((_, at) => at !== index))} aria-label={`移除 ${image.name}`}><X size={15} /></Button>
+              <Button variant="ghost" className="p-0!" disabled={sending || picking} onClick={() => updateImages(images.filter((_, at) => at !== index))} aria-label={t('移除 {name}', { name: image.name })}><X size={15} /></Button>
             </li>
           ))}
         </ul>
@@ -231,8 +235,8 @@ export function Composer({
           rows={1}
           value={text}
           disabled={disabled}
-          aria-label="消息"
-          placeholder={running ? '输入下一条，发送后排队' : placeholder}
+          aria-label={t('消息')}
+          placeholder={running ? t('输入下一条，发送后排队') : placeholder}
           onChange={(event) => { onChangeText(event.target.value); setCaret(event.target.selectionStart) }}
           onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
           onBlur={() => setCaret(null)}
@@ -242,10 +246,10 @@ export function Composer({
         />
         <div className="qn-composer-toolbar">
           <div className="qn-composer-tools">
-            <Button variant="ghost" className="qn-icon-button" onClick={onSwitchSession} aria-label="切换会话" aria-haspopup="dialog">
+            <Button variant="ghost" className="qn-icon-button" onClick={onSwitchSession} aria-label={t('切换会话')} aria-haspopup="dialog">
               <PanelLeft size={19} strokeWidth={1.75} aria-hidden />
             </Button>
-            <Button variant="ghost" className="qn-icon-button" aria-label="添加图片" title={imageUnavailable}
+            <Button variant="ghost" className="qn-icon-button" aria-label={t('添加图片')} title={imageUnavailable}
               onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
               <ImagePlus size={19} strokeWidth={1.75} aria-hidden />
             </Button>
@@ -253,7 +257,7 @@ export function Composer({
           </div>
           <div className="qn-composer-actions">
             {running && (
-              <Button variant="danger" className="qn-stop-button" aria-label={interrupting ? '正在中断' : '停止运行'}
+              <Button variant="danger" className="qn-stop-button" aria-label={interrupting ? t('正在中断') : t('停止运行')}
                 aria-busy={interrupting} disabled={sending || interrupting} onClick={onInterrupt}>
                 {interrupting ? <LoadingIcon size={14} /> : <Square size={11} fill="currentColor" aria-hidden />}
               </Button>
@@ -265,7 +269,7 @@ export function Composer({
             )}
           </div>
         </div>
-        {picking && <div className="px-3 pb-2 text-xs text-qn-muted" role="status">选图中…</div>}
+        {picking && <div className="px-3 pb-2 text-xs text-qn-muted" role="status">{t('选图中…')}</div>}
       </div>
     </div>
   )
@@ -299,8 +303,8 @@ function SendButton({ running, sending, disabled, canSteer, onSend }: {
   return (
     <>
       <Button variant="primary" className="qn-send-button"
-        aria-label={sending ? '发送中' : running ? '排队' : '发送'}
-        title={running ? '点按排队，长按选择发送方式' : undefined}
+        aria-label={sending ? t('发送中') : running ? t('排队') : t('发送')}
+        title={running ? t('点按排队，长按选择发送方式') : undefined}
         aria-haspopup={running ? 'dialog' : undefined}
         disabled={disabled}
         onPointerDown={() => {
@@ -330,21 +334,21 @@ function SendButton({ running, sending, disabled, canSteer, onSend }: {
         {sending ? <LoadingIcon size={16} /> : <ArrowUp size={18} strokeWidth={2.25} aria-hidden />}
       </Button>
       {running && !disabled && (
-        <Button variant="ghost" className="qn-icon-button qn-send-options" aria-label="发送方式" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+        <Button variant="ghost" className="qn-icon-button qn-send-options" aria-label={t('发送方式')} aria-haspopup="dialog" onClick={() => setOpen(true)}>
           <ChevronDown size={15} aria-hidden />
         </Button>
       )}
       {open && (
-        <Dialog title="发送方式" onClose={() => setOpen(false)}>
+        <Dialog title={t('发送方式')} onClose={() => setOpen(false)}>
           <div className="grid gap-2">
             <Button className="justify-between!" onClick={() => select('queue')}>
-              <span>排队</span><span className="text-xs text-qn-muted">本轮结束后发送</span>
+              <span>{t('排队')}</span><span className="text-xs text-qn-muted">{t('本轮结束后发送')}</span>
             </Button>
             <Button className="justify-between!" disabled={!canSteer} onClick={() => select('steer')}>
-              <span>引导</span><span className="text-xs text-qn-muted">{canSteer ? '补充到当前一轮' : '当前 Agent 暂不可用'}</span>
+              <span>{t('引导')}</span><span className="text-xs text-qn-muted">{canSteer ? t('补充到当前一轮') : t('当前 Agent 暂不可用')}</span>
             </Button>
             <Button className="justify-between!" onClick={() => select('immediate')}>
-              <span>立即发送</span><span className="text-xs text-qn-muted">停止本轮后发送</span>
+              <span>{t('立即发送')}</span><span className="text-xs text-qn-muted">{t('停止本轮后发送')}</span>
             </Button>
           </div>
         </Dialog>

@@ -53,6 +53,7 @@ export function createCommandRegistry(options: RegistryOptions = {}): CommandReg
       const ids = new Set<string>()
       for (const command of commands) {
         if (ids.has(command.id) || byId.has(command.id)) {
+          // i18n-ignore: 开发日志
           warn(`[palette] 命令 id 重复："${command.id}"，后注册的覆盖先注册的`)
         }
         ids.add(command.id)

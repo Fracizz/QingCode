@@ -1,4 +1,4 @@
-import type { RateLimitSeverity } from '@qn/codex-client'
+import { getLocale, t, type RateLimitSeverity } from '@qn/codex-client'
 
 export type RateLimitNotificationKind = 'updated' | 'turnCompleted' | 'tokenUsage' | null
 
@@ -31,16 +31,18 @@ function pad2(value: number): string {
 }
 
 export function updatedAtText(ts: number | null | undefined, now: number): string {
-  if (ts === null || ts === undefined || !Number.isFinite(ts)) return '尚未更新'
+  if (ts === null || ts === undefined || !Number.isFinite(ts)) return t('尚未更新')
   const date = new Date(ts)
   const nowDate = new Date(now)
-  if (Number.isNaN(date.getTime()) || Number.isNaN(nowDate.getTime())) return '尚未更新'
+  if (Number.isNaN(date.getTime()) || Number.isNaN(nowDate.getTime())) return t('尚未更新')
   const clock = `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
   const sameDay =
     date.getFullYear() === nowDate.getFullYear() &&
     date.getMonth() === nowDate.getMonth() &&
     date.getDate() === nowDate.getDate()
-  return sameDay
-    ? `最后更新 ${clock}`
-    : `最后更新 ${date.getMonth() + 1}月${date.getDate()}日 ${clock}`
+  if (sameDay) return t('最后更新 {time}', { time: clock })
+  const day = getLocale() === 'en'
+    ? date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : `${date.getMonth() + 1}月${date.getDate()}日` // i18n-ignore: 中文日期格式
+  return t('最后更新 {time}', { time: `${day} ${clock}` })
 }

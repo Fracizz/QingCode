@@ -1,5 +1,5 @@
 // CodexTransport 适配 + 事件流重连：纯逻辑与 IO 分离，可在 Node 下注入假网关单测。
-import type { CodexTransport } from '@qn/codex-client'
+import { t, type CodexTransport } from '@qn/codex-client'
 import type { Gateway } from './client'
 import type { NativeStreamClosed, NativeStreamEvent } from './native'
 import { connectionRepairReason, errorCode, friendlyError, makeId, type RepairReason } from './state'
@@ -94,7 +94,7 @@ export class MobileCodexTransport implements CodexTransport {
   }
 
   async respond(id: string | number, result: unknown): Promise<void> {
-    if (this.disposed) throw new Error('会话连接已切换')
+    if (this.disposed) throw new Error(t('会话连接已切换'))
     await this.sendMessage({ id, result })
   }
 
@@ -148,6 +148,7 @@ export class MobileCodexTransport implements CodexTransport {
     // 网关拒绝 codex.send 时不会回帧，补一条本地错误响应，避免 RPC 一直挂起。
     if (!isRecord(msg) || typeof msg.method !== 'string' || typeof msg.id !== 'string') return
     this.emit(
+      // i18n-ignore: 可能随发送队列持久化，展示时翻译
       { id: msg.id, error: { code: -32000, message: friendlyError(err, '发送 Codex 消息失败'), data: { code: errorCode(err) } } },
       null,
     )
@@ -292,7 +293,7 @@ export class EventStreamController {
       this.lastMessageAt = Date.now()
       if (msg.event.name === 'unauthorized' && this.handlers.onRepair) {
         this.stop()
-        this.handlers.onRepair('unauthorized', '设备已被撤销，请重新配对')
+        this.handlers.onRepair('unauthorized', t('设备已被撤销，请重新配对'))
         return
       }
       this.handlers.onEvent(msg.event)

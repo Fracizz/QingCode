@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Plus, Trash2, X } from 'lucide-react'
+import { t, translateMessage } from '@qn/codex-client'
 import { FormField } from '../../components/FormField'
 import { ErrorNote, IconButton, Modal } from '../../components/ui'
 import { Select } from '../../components/primitives'
@@ -19,17 +20,17 @@ import {
 import type { RunOs, RunTaskType } from './types'
 
 const TYPE_HINT: Record<RunTaskType, string> = {
-  command: 'Windows 用 cmd.exe，Linux/macOS 用 sh -lc',
-  ps1: 'PowerShell 脚本路径（优先 pwsh）',
-  bat: 'BAT/CMD 脚本路径（仅 Windows）',
-  sh: 'sh 脚本路径',
-  script: '按扩展名选择：.ps1 / .bat / .sh / .py / .js',
+  command: t('Windows 用 cmd.exe，Linux/macOS 用 sh -lc'),
+  ps1: t('PowerShell 脚本路径（优先 pwsh）'),
+  bat: t('BAT/CMD 脚本路径（仅 Windows）'),
+  sh: t('sh 脚本路径'),
+  script: t('按扩展名选择：.ps1 / .bat / .sh / .py / .js'),
 }
 
 const typeOptions = RUN_TASK_TYPES.map((type) => ({ value: type, label: TASK_TYPE_LABEL[type] }))
 const restrictionOptions = [
-  { value: 'all', label: '全部系统' },
-  ...RUN_OS.map((os) => ({ value: os, label: `仅 ${OS_LABEL[os]}` })),
+  { value: 'all', label: t('全部系统') },
+  ...RUN_OS.map((os) => ({ value: os, label: t('仅 {os}', { os: OS_LABEL[os] }) })),
 ]
 
 /** 编辑一个运行配置；校验通过后交给 onSave（由面板经 fs.write 写回 run.json）。 */
@@ -70,7 +71,7 @@ export function RunConfigEditor({
       await onSave(draftToConfig(draft))
       onClose()
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err))
+      setSaveError(translateMessage(err instanceof Error ? err.message : String(err)))
     } finally {
       setSaving(false)
     }
@@ -78,8 +79,8 @@ export function RunConfigEditor({
 
   return (
     <Modal
-      title={isNew ? '新建运行配置' : '编辑运行配置'}
-      description="保存到项目的 .qingcode/run.json；只有点击启动才会执行命令。"
+      title={isNew ? t('新建运行配置') : t('编辑运行配置')}
+      description={t('保存到项目的 .qingcode/run.json；只有点击启动才会执行命令。')}
       width="max-w-2xl"
       onClose={onClose}
       footer={
@@ -88,37 +89,37 @@ export function RunConfigEditor({
             {touched && errors.length > 0 ? errors[0] : ''}
           </span>
           <button type="button" className="qn-button-subtle" onClick={onClose}>
-            取消
+            {t('取消')}
           </button>
           <button type="button" className="qn-button" disabled={saving || (touched && errors.length > 0)} onClick={() => void submit()}>
-            {saving ? '保存中…' : '保存'}
+            {saving ? t('保存中…') : t('保存')}
           </button>
         </div>
       }
     >
       <div className="flex flex-col gap-3">
         <ErrorNote message={saveError} onClose={() => setSaveError(null)} />
-        <FormField label="名称">
+        <FormField label={t('名称')}>
           {(control) => (
             <input
               {...control}
               autoFocus
               className="qn-input"
               value={draft.name}
-              placeholder="例如：前后端"
+              placeholder={t('例如：前后端')}
               onChange={(event) => setDraft((d) => ({ ...d, name: event.target.value }))}
             />
           )}
         </FormField>
 
         <div className="flex items-center justify-between">
-          <span className="text-ui-sm text-qn-muted">任务（同时启动）</span>
+          <span className="text-ui-sm text-qn-muted">{t('任务（同时启动）')}</span>
           <button
             type="button"
             className="qn-button-subtle flex items-center gap-1 px-2 py-1 text-ui-sm"
             onClick={() => setDraft((d) => ({ ...d, tasks: [...d.tasks, emptyTaskDraft()] }))}
           >
-            <Plus size={13} /> 添加任务
+            <Plus size={13} /> {t('添加任务')}
           </button>
         </div>
 
@@ -169,21 +170,21 @@ function TaskCard({
         <input
           className="qn-input min-w-0 flex-1"
           value={task.name}
-          placeholder={`任务 ${index + 1} 名称（可选）`}
+          placeholder={t('任务 {index} 名称（可选）', { index: index + 1 })}
           onChange={(event) => onChange({ name: event.target.value })}
         />
         <Select
-          aria-label="任务类型"
+          aria-label={t('任务类型')}
           className="w-36"
           value={task.type}
           options={typeOptions}
           onValueChange={(value) => onChange({ type: value as RunTaskType })}
         />
-        <IconButton label="删除任务" size="sm" danger disabled={!canRemove} onClick={onRemove}>
+        <IconButton label={t('删除任务')} size="sm" danger disabled={!canRemove} onClick={onRemove}>
           <Trash2 size={14} />
         </IconButton>
       </div>
-      <FormField label={task.type === 'command' ? '命令' : '脚本路径'} hint={TYPE_HINT[task.type]}>
+      <FormField label={task.type === 'command' ? t('命令') : t('脚本路径')} hint={TYPE_HINT[task.type]}>
         {(control) => (
           <input
             {...control}
@@ -196,22 +197,22 @@ function TaskCard({
         )}
       </FormField>
       <div className="flex gap-2">
-        <FormField label="工作目录" className="flex-1">
+        <FormField label={t('工作目录')} className="flex-1">
           {(control) => (
             <input
               {...control}
               className="qn-input font-mono text-ui-sm"
               value={task.cwd}
-              placeholder="相对项目根，留空为项目根"
+              placeholder={t('相对项目根，留空为项目根')}
               spellCheck={false}
               onChange={(event) => onChange({ cwd: event.target.value })}
             />
           )}
         </FormField>
         <label className="flex w-40 flex-col gap-1">
-          <span className="text-ui-sm text-qn-muted">系统限制</span>
+          <span className="text-ui-sm text-qn-muted">{t('系统限制')}</span>
           <Select
-            aria-label="系统限制"
+            aria-label={t('系统限制')}
             value={task.restriction}
             options={restrictionOptions}
             disabled={overrideOs.length > 0}
@@ -220,15 +221,15 @@ function TaskCard({
         </label>
       </div>
       {offPlatform && (
-        <div className="text-ui-sm text-qn-warn">当前目标是 {OS_LABEL[platform]}，此任务不会在这里运行。</div>
+        <div className="text-ui-sm text-qn-warn">{t('当前目标是 {os}，此任务不会在这里运行。', { os: OS_LABEL[platform] })}</div>
       )}
       {overrideOs.length > 0 && (
         <div className="flex items-center gap-2 rounded-lg bg-qn-fg/[0.04] px-2 py-1.5 text-ui-sm text-qn-muted">
           <span className="min-w-0 flex-1">
-            含按系统覆盖（{overrideOs.map((os) => OS_LABEL[os]).join('、')}），保存时原样保留。
+            {t('含按系统覆盖（{list}），保存时原样保留。', { list: overrideOs.map((os) => OS_LABEL[os]).join(t('、')) })}
           </span>
           <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => onChange({ overrides: undefined })}>
-            清除覆盖
+            {t('清除覆盖')}
           </button>
         </div>
       )}
@@ -243,13 +244,13 @@ function EnvTable({ rows, onChange }: { rows: TaskDraft['env']; onChange: (rows:
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
-        <span className="text-ui-sm text-qn-muted">环境变量</span>
+        <span className="text-ui-sm text-qn-muted">{t('环境变量')}</span>
         <button
           type="button"
           className="flex items-center gap-1 text-ui-sm text-qn-muted hover:text-qn-text"
           onClick={() => onChange([...rows, { key: '', value: '' }])}
         >
-          <Plus size={12} /> 添加
+          <Plus size={12} /> {t('添加')}
         </button>
       </div>
       {rows.map((row, index) => (
@@ -257,7 +258,7 @@ function EnvTable({ rows, onChange }: { rows: TaskDraft['env']; onChange: (rows:
           <input
             className="qn-input h-7 w-40 py-0 font-mono text-ui-sm"
             value={row.key}
-            placeholder="名称"
+            placeholder={t('名称')}
             spellCheck={false}
             onChange={(event) => update(index, { key: event.target.value })}
           />
@@ -265,11 +266,11 @@ function EnvTable({ rows, onChange }: { rows: TaskDraft['env']; onChange: (rows:
           <input
             className="qn-input h-7 min-w-0 flex-1 py-0 font-mono text-ui-sm"
             value={row.value}
-            placeholder="值"
+            placeholder={t('值')}
             spellCheck={false}
             onChange={(event) => update(index, { value: event.target.value })}
           />
-          <IconButton label="删除变量" size="sm" tooltip={false} onClick={() => onChange(rows.filter((_, i) => i !== index))}>
+          <IconButton label={t('删除变量')} size="sm" tooltip={false} onClick={() => onChange(rows.filter((_, i) => i !== index))}>
             <X size={13} />
           </IconButton>
         </div>

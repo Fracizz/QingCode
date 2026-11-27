@@ -2,7 +2,7 @@ import { Children, isValidElement, memo, useMemo, useState, useSyncExternalStore
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Terminal, Wand2 } from 'lucide-react'
-import { formatReplyTime, localReplyDay, subscribeToReplyDay, type ItemView, type ThreadActivity, type UserInput } from '@qn/codex-client'
+import { getLocale, t, formatReplyTime, localReplyDay, splitMarkdownBlocks, subscribeToReplyDay, type ItemView, type ThreadActivity, type UserInput } from '@qn/codex-client'
 import { basename, editUserText, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
 import { cn } from '../lib/cn'
@@ -120,9 +120,9 @@ function ToolPages<T>({ items, renderItem, className }: {
   return (
     <>
       {lastPage > 0 && <div className="my-1 flex max-w-72 items-center justify-between gap-2 text-qn-muted">
-        <button type="button" className="qn-button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>上一批</button>
+        <button type="button" className="qn-button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>{t('上一批')}</button>
         <span aria-live="polite">{start + 1}–{Math.min(start + TOOL_PAGE_SIZE, items.length)} / {items.length}</span>
-        <button type="button" className="qn-button" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}>下一批</button>
+        <button type="button" className="qn-button" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}>{t('下一批')}</button>
       </div>}
       <div key={currentPage} className={className}>
         {items.slice(start, start + TOOL_PAGE_SIZE).map((item, index) => renderItem(item, start + index))}
@@ -170,7 +170,7 @@ function DiffBlock({ text }: { text: string }) {
   const truncated = lineCount(text) > rows.length
   return (
     <div>
-      {truncated && <div className="px-2 py-1 text-ui-sm text-qn-dim">仅显示末尾 {rows.length} 行</div>}
+      {truncated && <div className="px-2 py-1 text-ui-sm text-qn-dim">{t('仅显示末尾 {count} 行', { count: rows.length })}</div>}
       <pre className="qn-scroll max-h-72 overflow-auto rounded-lg border border-qn-border bg-qn-code py-1 font-mono text-ui-sm leading-5">
         {rows.map((row, index) => (
           <div
@@ -211,12 +211,12 @@ function CommandItem({ item }: { item: Extract<ItemView, { kind: 'command' }> })
       icon={running ? <LoadingIcon /> : <Terminal size={14} />}
       summary={
         <>
-          {running ? '正在运行 ' : '已运行 '}
-          <code className="font-mono text-ui-sm text-qn-text/90">{item.command || '（命令）'}</code>
+          {running ? `${t('正在运行')} ` : `${t('已运行')} `}
+          <code className="font-mono text-ui-sm text-qn-text/90">{item.command || t('（命令）')}</code>
         </>
       }
       trailing={
-        failed ? <Badge tone="danger">退出码 {item.exitCode}</Badge> : statusTone(item.status) === 'danger' ? <Badge tone="danger">{item.status}</Badge> : null
+        failed ? <Badge tone="danger">{t('退出码 {code}', { code: item.exitCode ?? '' })}</Badge> : statusTone(item.status) === 'danger' ? <Badge tone="danger">{item.status}</Badge> : null
       }
     >
       <CommandDetails item={item} running={running} />
@@ -232,11 +232,11 @@ function CommandDetails({ item, running }: { item: Extract<ItemView, { kind: 'co
       {item.cwd && <div className="mb-1 font-mono text-ui-sm text-qn-dim">{item.cwd}</div>}
       {output ? (
         <pre className="qn-scroll max-h-72 overflow-auto whitespace-pre rounded-lg border border-qn-border bg-qn-code px-3 py-2 font-mono text-ui-sm leading-5 text-qn-text/85">
-          {truncated && <span className="block text-qn-dim">…（仅显示末尾 200 行）</span>}
+          {truncated && <span className="block text-qn-dim">{t('…（仅显示末尾 200 行）')}</span>}
           {output}
         </pre>
       ) : (
-        <div className="text-ui-sm text-qn-dim">{running ? '等待输出…' : '无输出'}</div>
+        <div className="text-ui-sm text-qn-dim">{running ? t('等待输出…') : t('无输出')}</div>
       )}
     </>
   )
@@ -246,7 +246,7 @@ function FileChangeItem({ item }: { item: Extract<ItemView, { kind: 'fileChange'
   return (
     <ToolRow
       icon={<FileDiff size={14} />}
-      summary={item.changes.length === 0 ? '等待改动内容…' : `编辑了 ${item.changes.length} 个文件`}
+      summary={item.changes.length === 0 ? t('等待改动内容…') : t('编辑了 {count} 个文件', { count: item.changes.length })}
     >
       <FileChangeDetails changes={item.changes} />
     </ToolRow>
@@ -289,6 +289,23 @@ function ReplyTime({ completedAtMs, className }: { completedAtMs: number; classN
   return time && <time className={className} dateTime={time.dateTime} title={time.full}>{time.label}</time>
 }
 
+const remarkPlugins = [remarkGfm]
+
+/** 单块 Markdown：memo 后文本和组件不变就跳过重新解析。 */
+const MarkdownBlock = memo(function MarkdownBlock({ text, components }: { text: string; components: Components }) {
+  return (
+    <ReactMarkdown remarkPlugins={remarkPlugins} components={components} urlTransform={qnUrlTransform}>
+      {text}
+    </ReactMarkdown>
+  )
+})
+
+/** 流式消息按块渲染：已完成的块文本不变、走 memo，每个增量只重新解析末尾一块。 */
+function StreamingMarkdown({ text, components }: { text: string; components: Components }) {
+  const blocks = useMemo(() => splitMarkdownBlocks(text), [text])
+  return blocks.map((block, index) => <MarkdownBlock key={index} text={block} components={components} />)
+}
+
 function AgentMessage({ id, text, streaming, completedAtMs, showStreamingDots, onFork }: {
   id: string; text: string; streaming: boolean; completedAtMs?: number; showStreamingDots?: boolean
   onFork?: (itemId: string, markdown: string) => void
@@ -304,9 +321,7 @@ function AgentMessage({ id, text, streaming, completedAtMs, showStreamingDots, o
           key={streaming ? 'streaming' : 'complete'}
           fallback={<div className="whitespace-pre-wrap wrap-anywhere">{text}</div>}
         >
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={qnUrlTransform}>
-            {text}
-          </ReactMarkdown>
+          {streaming ? <StreamingMarkdown text={text} components={components} /> : <MarkdownBlock text={text} components={components} />}
         </RenderBoundary>
       </div>
       {!streaming && <MessageActions markdown={text} onFork={onFork ? () => onFork(id, text) : undefined} />}
@@ -315,7 +330,7 @@ function AgentMessage({ id, text, streaming, completedAtMs, showStreamingDots, o
 }
 
 export function TurnProgress({ activity }: { activity?: ThreadActivity }) {
-  const message = activity === 'input' ? '等待输入…' : activity === 'pending' ? '等待审批…' : '正在处理…'
+  const message = activity === 'input' ? t('等待输入…') : activity === 'pending' ? t('等待审批…') : t('正在处理…')
   return (
     <FeedbackRow
       message={message}
@@ -326,7 +341,7 @@ export function TurnProgress({ activity }: { activity?: ThreadActivity }) {
 }
 
 export function TurnStopped({ durationMs }: { durationMs: number | null }) {
-  const message = durationMs === null ? '你已停止' : `你已停止，已用时 ${formatStoppedDuration(durationMs)}`
+  const message = durationMs === null ? t('你已停止') : t('你已停止，已用时 {duration}', { duration: formatStoppedDuration(durationMs) })
   return <FeedbackRow message={message} className="qn-message-activity text-ui leading-6 text-qn-muted" />
 }
 
@@ -356,7 +371,7 @@ function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, o
       return (
         <ToolRow
           icon={item.streaming ? <LoadingIcon /> : <Lightbulb size={14} strokeWidth={1.75} />}
-          summary={item.streaming ? '正在思考…' : '思考过程'}
+          summary={item.streaming ? t('正在思考…') : t('思考过程')}
         >
           {item.summary.trim() && (
             <div className="whitespace-pre-wrap break-words border-l border-qn-border pl-3 text-[length:calc(var(--qn-chat-font-size,15px)_-_1px)] leading-[1.8] text-qn-muted">
@@ -411,7 +426,7 @@ export const WorkGroup = memo(function WorkGroup({
   return (
     <ActivityDetails
       inline
-      summary={<span>{durationMs ? `工作了 ${formatDuration(durationMs)}` : '工作过程'}</span>}
+      summary={<span>{durationMs ? t('工作了 {duration}', { duration: formatDuration(durationMs) }) : t('工作过程')}</span>}
       afterChevron={replyCompletedAtMs !== undefined && <ReplyTime completedAtMs={replyCompletedAtMs} className="ml-2 whitespace-nowrap text-ui-sm tabular-nums text-qn-muted" />}
     >
       <ToolPages items={entries} className="mt-2 space-y-3" renderItem={(entry) => entry.kind === 'tools'
@@ -462,7 +477,7 @@ function UserMessage({ item, onEdit }: {
       {visible.length > 0 && (
         <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
           {visible.map((src, index) => (
-            <MessageImage key={index} src={src} label={`图片 ${index + 1}`} />
+            <MessageImage key={index} src={src} label={`${t('图片')} ${index + 1}`} />
           ))}
         </div>
       )}
@@ -495,7 +510,7 @@ function UserMessage({ item, onEdit }: {
         >
           <textarea
             autoFocus
-            aria-label="编辑已发送的消息"
+            aria-label={t('编辑已发送的消息')}
             className="qn-scroll block min-h-20 w-full resize-y bg-transparent px-1 text-[length:var(--qn-composer-font-size,15px)] leading-[1.7] outline-none"
             value={edit}
             disabled={saving}
@@ -508,10 +523,10 @@ function UserMessage({ item, onEdit }: {
               if (event.key === 'Escape' && !event.nativeEvent.isComposing && !saving) setEdit(null)
             }}
           />
-          {editFailed && <div role="status" className="px-1 text-ui-sm text-qn-warn">发送失败，修改已保留</div>}
+          {editFailed && <div role="status" className="px-1 text-ui-sm text-qn-warn">{t('发送失败，修改已保留')}</div>}
           <div className="mt-2 flex flex-wrap justify-end gap-1.5 text-ui-sm">
-            <button type="button" disabled={saving} className="rounded-md px-2 py-1 text-qn-muted hover:bg-qn-hover" onClick={() => setEdit(null)}>取消</button>
-            <button type="submit" disabled={!canSave || saving} className="rounded-md bg-qn-text px-2 py-1 text-qn-bg disabled:opacity-40">{saving ? '提交中…' : '发送修订'}</button>
+            <button type="button" disabled={saving} className="rounded-md px-2 py-1 text-qn-muted hover:bg-qn-hover" onClick={() => setEdit(null)}>{t('取消')}</button>
+            <button type="submit" disabled={!canSave || saving} className="rounded-md bg-qn-text px-2 py-1 text-qn-bg disabled:opacity-40">{saving ? t('提交中…') : t('发送修订')}</button>
           </div>
         </form>
       ) : parsed.text.trim() && (
@@ -521,9 +536,9 @@ function UserMessage({ item, onEdit }: {
       )}
       {edit === null && (timestamp || parsed.text.trim() || onEdit) && (
         <div className="flex h-6 items-center gap-1 text-ui-sm text-qn-muted">
-          {timestamp && <time className="mr-1" dateTime={timestamp.toISOString()}>{timestamp.toLocaleString('zh-CN', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false })}</time>}
+          {timestamp && <time className="mr-1" dateTime={timestamp.toISOString()}>{timestamp.toLocaleString(getLocale() === 'en' ? 'en-US' : 'zh-CN', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false })}</time>}
           {parsed.text.trim() && (
-            <IconButton label={copied ? '已复制' : '复制消息'} size="sm" onClick={() => void copyText(parsed.text).then((ok) => {
+            <IconButton label={copied ? t('已复制') : t('复制消息')} size="sm" onClick={() => void copyText(parsed.text).then((ok) => {
               setCopied(ok)
               if (ok) window.setTimeout(() => setCopied(false), 1600)
             })}>
@@ -531,7 +546,7 @@ function UserMessage({ item, onEdit }: {
             </IconButton>
           )}
           {onEdit && (
-            <IconButton label="编辑消息" size="sm" onClick={() => {
+            <IconButton label={t('编辑消息')} size="sm" onClick={() => {
               setEditFailed(false)
               setEdit(parsed.text)
             }}>

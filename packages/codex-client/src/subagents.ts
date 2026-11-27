@@ -1,7 +1,9 @@
+import { t } from '../../protocol/src/i18n'
 import type { UserInput } from './codex-types'
 import type { ItemView, ThreadView } from './conversation'
 import { sessionStatus, sessionStatusLabels } from './threadStatus'
 
+// i18n-ignore: 发给模型的委派请求
 const REQUEST = '请将适合独立处理的部分委派给子代理，等待所需结果，再汇总完成本次请求。'
 
 export function supportsSubagentRequests(agent: string): boolean {
@@ -55,17 +57,17 @@ export type SubagentEntry = {
 
 export function subagentStatusTone(status: string): 'active' | 'ok' | 'warn' | 'danger' | 'muted' {
   switch (status) {
-    case '运行中': case '已启动': case '等待启动': case '调用中': return 'active'
-    case '待审批': case '待输入': return 'warn'
-    case '已完成': case '调用已返回': return 'ok'
-    case '失败': case '调用失败': return 'danger'
+    case t('运行中'): case t('已启动'): case t('等待启动'): case t('调用中'): return 'active'
+    case t('待审批'): case t('待输入'): return 'warn'
+    case t('已完成'): case t('调用已返回'): return 'ok'
+    case t('失败'): case t('调用失败'): return 'danger'
     default: return 'muted'
   }
 }
 
 export function subagentRecordStatus(status: string, view?: ThreadView): string {
   const recorded = sessionStatus(view)
-  if (recorded === 'idle' || (status && status !== '已启动' && status !== '等待启动')) return status
+  if (recorded === 'idle' || (status && status !== t('已启动') && status !== t('等待启动'))) return status
   return sessionStatusLabels[recorded]
 }
 
@@ -105,7 +107,7 @@ export function collectSubagents(
 
   for (const item of items) {
     if (item.kind !== 'subagent') continue
-    const title = item.title === '子代理' ? activityTitles[item.status] ?? item.title : item.title
+    const title = item.title === t('子代理') ? activityTitles[item.status] ?? item.title : item.title
     const event = { id: item.id, title, status: item.status, detail: item.detail || undefined }
     if (item.agents?.length) {
       for (const agent of item.agents) {
@@ -120,13 +122,13 @@ export function collectSubagents(
         entry.result = agent.result || entry.result
         entry.activity.push(event)
       }
-    } else if (item.title === '子代理' && item.detail) {
+    } else if (item.title === t('子代理') && item.detail) {
       const entry = getEntry(`path:${item.detail}`)
       entry.name = item.detail.split('/').filter(Boolean).at(-1) || item.detail
       entry.model ||= item.model || ''
       updateAgentStatus(entry, item.status)
       entry.activity.push(event)
-    } else if (item.role || item.result || item.title === '委派给子代理' || item.title === toolLabels.spawnAgent || item.title === '子代理') {
+    } else if (item.role || item.result || item.title === t('委派给子代理') || item.title === toolLabels.spawnAgent || item.title === t('子代理')) {
       const entry = getEntry(`item:${item.id}`)
       entry.name = item.name || ''
       entry.role = item.role || ''
@@ -150,7 +152,7 @@ export function collectSubagents(
     const status = sessionStatus(live)
     return {
       ...entry,
-      name: identity?.name || entry.name || identity?.role || entry.role || `子代理 ${index + 1}`,
+      name: identity?.name || entry.name || identity?.role || entry.role || t('子代理 {index}', { index: index + 1 }),
       role: identity?.role || entry.role,
       model: identity?.model || entry.model,
       task: entry.task || identity?.task || '',
@@ -160,46 +162,46 @@ export function collectSubagents(
 }
 
 const toolLabels = {
-  spawnAgent: '启动子代理',
-  sendInput: '向子代理发送消息',
-  sendMessage: '向子代理发送消息',
-  resumeAgent: '恢复子代理',
-  followupTask: '继续子代理任务',
-  wait: '等待子代理',
-  closeAgent: '关闭子代理',
-  interruptAgent: '中断子代理',
-  listAgents: '列出子代理',
+  spawnAgent: t('启动子代理'),
+  sendInput: t('向子代理发送消息'),
+  sendMessage: t('向子代理发送消息'),
+  resumeAgent: t('恢复子代理'),
+  followupTask: t('继续子代理任务'),
+  wait: t('等待子代理'),
+  closeAgent: t('关闭子代理'),
+  interruptAgent: t('中断子代理'),
+  listAgents: t('列出子代理'),
 }
 
 const callStatuses: Readonly<Record<string, string>> = {
-  inProgress: '调用中',
-  completed: '调用已返回',
-  failed: '调用失败',
-  interrupted: '调用已中断',
+  inProgress: t('调用中'),
+  completed: t('调用已返回'),
+  failed: t('调用失败'),
+  interrupted: t('调用已中断'),
 }
 
 const activityStatuses = {
-  started: '已启动',
-  interacted: '已交互',
-  interrupted: '已中断',
-  completed: '已完成',
+  started: t('已启动'),
+  interacted: t('已交互'),
+  interrupted: t('已中断'),
+  completed: t('已完成'),
 }
 
 const activityTitles: Readonly<Record<string, string>> = {
-  [activityStatuses.started]: '启动子代理',
-  [activityStatuses.interacted]: '与子代理交互',
-  [activityStatuses.interrupted]: '子代理中断',
-  [activityStatuses.completed]: '子代理完成',
+  [activityStatuses.started]: t('启动子代理'),
+  [activityStatuses.interacted]: t('与子代理交互'),
+  [activityStatuses.interrupted]: t('子代理中断'),
+  [activityStatuses.completed]: t('子代理完成'),
 }
 
 const agentStatuses: Readonly<Record<string, string>> = {
-  pendingInit: '等待启动',
-  running: '运行中',
-  interrupted: '已中断',
-  completed: '已完成',
-  errored: '失败',
-  shutdown: '已关闭',
-  notFound: '未找到',
+  pendingInit: t('等待启动'),
+  running: t('运行中'),
+  interrupted: t('已中断'),
+  completed: t('已完成'),
+  errored: t('失败'),
+  shutdown: t('已关闭'),
+  notFound: t('未找到'),
 }
 
 function label(labels: Readonly<Record<string, string>>, key: unknown): string {
@@ -228,7 +230,7 @@ export function describeSubagentItem(
         return { threadId, label: '', status: label(agentStatuses, state.status), result: string(state.message) }
       })
     return {
-      kind: 'subagent', id, title: label(toolLabels, item.tool) || '子代理协作',
+      kind: 'subagent', id, title: label(toolLabels, item.tool) || t('子代理协作'),
       status: label(callStatuses, item.status), detail: string(item.prompt),
       ...(string(item.model) ? { model: string(item.model) } : {}),
       ...(agents.length ? { agents } : {}),
@@ -239,7 +241,7 @@ export function describeSubagentItem(
     const path = string(item.agentPath)
     const status = label(activityStatuses, item.kind)
     return {
-      kind: 'subagent', id, title: '子代理', status, detail: threadId ? '' : path,
+      kind: 'subagent', id, title: t('子代理'), status, detail: threadId ? '' : path,
       ...(string(item.model) ? { model: string(item.model) } : {}),
       ...(threadId ? { agents: [{ threadId, label: path, status, result: '' }] } : {}),
     }
@@ -253,7 +255,7 @@ export function describeSubagentItem(
       return block.type === 'text' || block.type === 'inputText' ? string(block.text) : ''
     }).filter(Boolean).join('\n\n') : ''
     return {
-      kind: 'subagent', id, title: '委派给子代理', status: label(callStatuses, item.status), detail,
+      kind: 'subagent', id, title: t('委派给子代理'), status: label(callStatuses, item.status), detail,
       ...(string(args.description) ? { name: string(args.description) } : {}),
       ...(string(args.subagent_type) ? { role: string(args.subagent_type) } : {}),
       ...(result ? { result } : {}),

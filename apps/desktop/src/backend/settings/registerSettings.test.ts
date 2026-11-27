@@ -60,7 +60,7 @@ describe('registerSettingsMethods', () => {
     const events: unknown[] = []
     instance.onEmit((name, payload) => events.push({ name, payload }))
     const first = (await instance.invoke('settings.save', {
-      general: { sendKey: 'ctrlEnter', autoConnectLast: false, globalAccessMode: 'restricted' },
+      general: { sendKey: 'ctrlEnter', autoConnectLast: false, globalAccessMode: 'auto' },
       agents: { local: { codex: { enabled: false, path: 'C:\\bin\\codex.exe' } } },
     })) as AppSettings
     expect(first.general).toMatchObject({ sendKey: 'ctrlEnter', autoConnectLast: false, density: 'comfortable' })
@@ -79,7 +79,7 @@ describe('registerSettingsMethods', () => {
     expect(await instance.invoke('settings.get', undefined)).toEqual(second)
     const text = await readFile(join(userData, 'settings.json'), 'utf8')
     expect(JSON.parse(text)).toMatchObject({ general: { density: 'compact', autoArchiveDays: 90, theme: 'light' } })
-    expect(events).toEqual([{ name: 'settings.access', payload: { globalAccessMode: 'restricted' } }])
+    expect(events).toEqual([{ name: 'settings.access', payload: { globalAccessMode: 'auto' } }])
   })
 
   it('并发保存左侧字号时合并有效设置', async () => {

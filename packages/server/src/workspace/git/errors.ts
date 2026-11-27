@@ -87,6 +87,7 @@ export function isEmptyRepoError(stderr: string): boolean {
 function summarize(input: GitFailureInput): string {
   const text =
     tailLines(redactCredentials(input.stderr)) || tailLines(redactCredentials(input.stdout))
+  // i18n-ignore: 按实际取值在词典登记整句
   return text || `git 命令失败（退出码 ${input.exitCode ?? '未知'}）`
 }
 
@@ -101,6 +102,7 @@ export function classifyGitFailure(input: GitFailureInput): GitFailure | null {
     }
     return {
       code: 'git_failed',
+      // i18n-ignore: 按实际取值在词典登记整句
       message: redactCredentials(`无法启动 git: ${input.spawnError.message ?? '未知错误'}`),
     }
   }

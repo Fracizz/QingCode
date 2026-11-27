@@ -19,6 +19,7 @@ import { friendlyError } from '../lib/errors'
 import { Select } from './primitives'
 import { Checkbox, ErrorNote, IconButton, Modal } from './ui'
 import { CircleCheck, Folder } from 'lucide-react'
+import { t, translateMessage } from '@qn/codex-client'
 
 type Draft = {
   name: string
@@ -73,7 +74,7 @@ type DirectConfirmation = {
 
 function directDraftFrom(info: DirectInfo): DirectDraft {
   const host = info.hosts[0] ?? ''
-  return { name: info.name ?? `直连 ${host}`.trim(), host, port: String(info.port) }
+  return { name: info.name ?? `${t('直连')} ${host}`.trim(), host, port: String(info.port) }
 }
 
 /** 编辑时没有连接码，用目标本身拼出同形状的数据；token 留空表示沿用已保存的授权。 */
@@ -168,18 +169,18 @@ export function TargetForm({
     setPassed(null)
     const port = Number(draft.port)
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      setError('端口需为 1–65535 的整数')
+      setError(t('端口需为 1–65535 的整数'))
       return null
     }
     const host = draft.host.trim()
     if (!host) {
-      setError('主机不能为空')
+      setError(t('主机不能为空'))
       return null
     }
     let auth: SshAuth
     if (draft.authKind === 'key') {
       if (!draft.keyPath.trim()) {
-        setError('请选择私钥文件')
+        setError(t('请选择私钥文件'))
         return null
       }
       auth = { kind: 'key', keyPath: draft.keyPath.trim() }
@@ -223,7 +224,7 @@ export function TargetForm({
     const info = extractDirectInfo(text)
     if (!info) {
       setCodeInfo(null)
-      setCodeError('连接码无效')
+      setCodeError(t('连接码无效'))
       lastCode.current = null
       return
     }
@@ -244,23 +245,23 @@ export function TargetForm({
     setError(null)
     setPassed(null)
     if (!codeInfo) {
-      setError('连接码无效')
+      setError(t('连接码无效'))
       return null
     }
     const port = Number(directDraft.port)
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      setError('端口需为 1–65535 的整数')
+      setError(t('端口需为 1–65535 的整数'))
       return null
     }
     const host = directDraft.host.trim()
     if (!host) {
-      setError('主机不能为空')
+      setError(t('主机不能为空'))
       return null
     }
     return {
       ...(directSavedId ? { id: directSavedId } : {}),
       kind: 'direct',
-      name: directDraft.name.trim() || `直连 ${host}`,
+      name: directDraft.name.trim() || `${t('直连')} ${host}`,
       host,
       port,
       fingerprint: codeInfo.fingerprint,
@@ -277,7 +278,7 @@ export function TargetForm({
     if (initial?.kind !== 'ssh') return
     const listen = Number(directConfig.listen.trim() || '47390')
     if (!Number.isInteger(listen) || listen < 1 || listen > 65535) {
-      setError('远端监听端口需为 1–65535 的整数')
+      setError(t('远端监听端口需为 1–65535 的整数'))
       return
     }
     setError(null)
@@ -306,9 +307,9 @@ export function TargetForm({
     try {
       target = await enableDirect(params)
     } catch (err) {
-      const reason = friendlyError(err, '开启直连加速失败')
+      const reason = translateMessage(friendlyError(err, t('开启直连加速失败')))
       if (saved && alive.current) {
-        useTargets.setState({ notice: `直连加速配置失败，正在通过 SSH 连接。${reason}` })
+        useTargets.setState({ notice: t('直连加速配置失败，正在通过 SSH 连接。{reason}', { reason }) })
         finishSave(saved.target, saved.credentials)
       } else {
         setError(reason)
@@ -328,13 +329,13 @@ export function TargetForm({
     try {
       setSshDirect((await disableDirect(sshId, directCredentials())).direct)
     } catch (err) {
-      setError(friendlyError(err, '关闭直连加速失败'))
+      setError(friendlyError(err, t('关闭直连加速失败')))
     } finally {
       setBusy(null)
     }
   }
 
-  const describeProbe = ({ os, nodeVersion }: TargetProbe) => `连接成功：${os} · Node ${nodeVersion}`
+  const describeProbe = ({ os, nodeVersion }: TargetProbe) => t('连接成功：{os} · Node {version}', { os, version: nodeVersion })
 
   const runTest = async () => {
     const input = buildInput()
@@ -343,7 +344,7 @@ export function TargetForm({
       setBusy('test')
       setPassed(describeProbe(await test(input, typedCredentials())))
     } catch (err) {
-      setError(friendlyError(err, '连接测试失败'))
+      setError(friendlyError(err, t('连接测试失败')))
     } finally {
       setBusy(null)
     }
@@ -361,7 +362,7 @@ export function TargetForm({
       target = await save(input)
       setSshSavedId(target.id)
     } catch (err) {
-      setError(friendlyError(err, '保存连接失败'))
+      setError(friendlyError(err, t('保存连接失败')))
       setBusy(null)
       return
     }
@@ -379,7 +380,7 @@ export function TargetForm({
         finishSave(target, credentials)
       }
     } catch (err) {
-      setError(`配置已保存，但连接测试失败：${friendlyError(err, '未知错误')}`)
+      setError(t('配置已保存，但连接测试失败：{reason}', { reason: translateMessage(friendlyError(err, t('未知错误'))) }))
     } finally {
       setBusy(null)
     }
@@ -395,7 +396,7 @@ export function TargetForm({
       if (target.kind === 'direct') setDirectSavedId(target.id)
       finishSave(target, {})
     } catch (err) {
-      setError(friendlyError(err, '保存直连目标失败'))
+      setError(friendlyError(err, t('保存直连目标失败')))
     } finally {
       setBusy(null)
     }
@@ -407,24 +408,24 @@ export function TargetForm({
       const path = await window.qn.openFile()
       if (path) patch({ keyPath: path })
     } catch (err) {
-      setError(friendlyError(err, '选择私钥文件失败'))
+      setError(friendlyError(err, t('选择私钥文件失败')))
     }
   }
 
   const secretLabel = draft.authKind === 'key'
-    ? '私钥口令（可选）'
-    : initial ? '密码（留空则使用已保存的密码）' : '密码（连接时使用）'
+    ? t('私钥口令（可选）')
+    : initial ? t('密码（留空则使用已保存的密码）') : t('密码（连接时使用）')
   const directMode = mode === 'direct'
   const modalTitle = initial
-    ? (directMode ? '编辑直连目标' : '编辑 SSH 连接')
-    : (directMode ? '添加直连目标' : '添加 SSH 连接')
+    ? (directMode ? t('编辑直连目标') : t('编辑 SSH 连接'))
+    : (directMode ? t('添加直连目标') : t('添加 SSH 连接'))
 
   if (directConfirmation) {
     const { host, params, saved } = directConfirmation
     return (
       <Modal
-        title="确认开启直连加速"
-        description={`将通过 SSH 在 ${host} 上配置 TLS 直连。直连失败时会自动通过 SSH 连接。`}
+        title={t('确认开启直连加速')}
+        description={t('将通过 SSH 在 {host} 上配置 TLS 直连。直连失败时会自动通过 SSH 连接。', { host })}
         onClose={() => setDirectConfirmation(null)}
         footer={
           <div className="flex justify-end gap-2">
@@ -432,18 +433,20 @@ export function TargetForm({
               setDirectConfirmation(null)
               if (saved) finishSave(saved.target, saved.credentials)
             }}>
-              {saved ? '仅使用 SSH' : '取消'}
+              {saved ? t('仅使用 SSH') : t('取消')}
             </button>
             <button className="qn-button" type="button" onClick={() => void runEnableDirect(directConfirmation)}>
-              确认并开启
+              {t('确认并开启')}
             </button>
           </div>
         }
       >
         <p className="text-ui leading-5 text-qn-muted">
           {saved
-            ? '将优先使用远端已有的直连监听。首次创建监听时使用 47390 端口，仅接受本机和私网来源。'
-            : `远端监听端口为 ${params.listen}，${params.allowPublic ? '允许公网来源。' : '仅接受本机和私网来源。'}`}
+            ? t('将优先使用远端已有的直连监听。首次创建监听时使用 47390 端口，仅接受本机和私网来源。')
+            : params.allowPublic
+              ? t('远端监听端口为 {port}，允许公网来源。', { port: params.listen ?? '' })
+              : t('远端监听端口为 {port}，仅接受本机和私网来源。', { port: params.listen ?? '' })}
         </p>
       </Modal>
     )
@@ -458,15 +461,15 @@ export function TargetForm({
           {!directMode && (
             <button className="qn-button-subtle mr-auto" type="button" disabled={busy !== null}
               onClick={() => void runTest()}>
-              {busy === 'test' ? '测试中…' : '测试连接'}
+              {busy === 'test' ? t('测试中…') : t('测试连接')}
             </button>
           )}
           <button className="qn-button-subtle" type="button" onClick={onClose}>
-            取消
+            {t('取消')}
           </button>
           <button className="qn-button" type="submit" form="target-form" disabled={busy !== null}>
-            {busy === 'enable' && !initial ? '正在开启直连加速…'
-              : busy === 'save' ? (directMode ? '保存中…' : '保存并测试中…') : '保存'}
+            {busy === 'enable' && !initial ? t('正在开启直连加速…')
+              : busy === 'save' ? (directMode ? t('保存中…') : t('保存并测试中…')) : t('保存')}
           </button>
         </div>
       }
@@ -477,11 +480,11 @@ export function TargetForm({
           <div className="flex gap-1 rounded-lg border border-qn-border bg-qn-bg p-1">
             <button type="button" disabled={busy !== null} onClick={() => switchMode('ssh')}
               className={`h-8 flex-1 rounded-lg px-3 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent ${mode === 'ssh' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
-              SSH 连接
+              {t('SSH 连接')}
             </button>
             <button type="button" disabled={busy !== null} onClick={() => switchMode('direct')}
               className={`h-8 flex-1 rounded-lg px-3 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent ${mode === 'direct' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
-              直连（连接码）
+              {t('直连（连接码）')}
             </button>
           </div>
         )}
@@ -492,7 +495,7 @@ export function TargetForm({
                 <textarea
                   className="qn-input min-h-20 resize-y font-mono text-ui-sm leading-5"
                   rows={3}
-                  placeholder="粘贴 qn-direct: 开头的连接码（可连同前后其它文字一起复制）"
+                  placeholder={t('粘贴 qn-direct: 开头的连接码（可连同前后其它文字一起复制）')}
                   value={codeText}
                   onChange={(event) => applyCode(event.target.value)}
                 />
@@ -501,118 +504,118 @@ export function TargetForm({
             )}
             {codeInfo && (
               <>
-                <input className="qn-input" placeholder="名称" value={directDraft.name}
+                <input className="qn-input" placeholder={t('名称')} value={directDraft.name}
                   onChange={(event) => patchDirect({ name: event.target.value })} />
                 {codeInfo.hosts.length > 1 && (
                   <Select
-                    aria-label="候选拨号地址"
+                    aria-label={t('候选拨号地址')}
                     value={codeInfo.hosts.includes(directDraft.host) ? directDraft.host : ''}
                     onValueChange={(value) => patchDirect({ host: value })}
                     options={codeInfo.hosts.map((host) => ({ value: host, label: host }))}
-                    placeholder="选择候选地址，也可在下方手动输入"
+                    placeholder={t('选择候选地址，也可在下方手动输入')}
                   />
                 )}
                 <div className="flex gap-2">
-                  <input className="qn-input min-w-0 flex-1" placeholder="主机" value={directDraft.host}
+                  <input className="qn-input min-w-0 flex-1" placeholder={t('主机')} value={directDraft.host}
                     onChange={(event) => patchDirect({ host: event.target.value })} />
-                  <input className="qn-input w-20" placeholder="端口" inputMode="numeric" value={directDraft.port}
+                  <input className="qn-input w-20" placeholder={t('端口')} inputMode="numeric" value={directDraft.port}
                     onChange={(event) => patchDirect({ port: event.target.value })} />
                 </div>
                 <div className="rounded-lg border border-qn-border px-3 py-2 text-ui-sm leading-5 text-qn-muted">
-                  证书指纹 <span className="font-mono text-qn-text">{codeInfo.fingerprint.slice(0, 16)}…</span>（只读）
+                  {t('证书指纹')} <span className="font-mono text-qn-text">{codeInfo.fingerprint.slice(0, 16)}…</span>{t('（只读）')}
                 </div>
               </>
             )}
           </div>
         ) : (
           <>
-          <input className="qn-input" placeholder="名称" value={draft.name}
+          <input className="qn-input" placeholder={t('名称')} value={draft.name}
             onChange={(e) => patch({ name: e.target.value })} />
           <div className="flex gap-2">
-            <input className="qn-input min-w-0 flex-1" placeholder="主机" value={draft.host}
+            <input className="qn-input min-w-0 flex-1" placeholder={t('主机')} value={draft.host}
               onChange={(e) => patch({ host: e.target.value })} />
-            <input className="qn-input w-20" placeholder="端口" inputMode="numeric" value={draft.port}
+            <input className="qn-input w-20" placeholder={t('端口')} inputMode="numeric" value={draft.port}
               onChange={(e) => patch({ port: e.target.value })} />
           </div>
-          <input className="qn-input" placeholder="用户名" value={draft.username}
+          <input className="qn-input" placeholder={t('用户名')} value={draft.username}
             onChange={(e) => patch({ username: e.target.value })} />
           <Select
-            aria-label="认证方式"
+            aria-label={t('认证方式')}
             value={draft.authKind}
             onValueChange={(value) => patch({ authKind: value as Draft['authKind'] })}
             options={[
-              { value: 'password', label: '密码' },
-              { value: 'key', label: '私钥文件' },
+              { value: 'password', label: t('密码') },
+              { value: 'key', label: t('私钥文件') },
               { value: 'agent', label: 'ssh-agent' },
             ]}
           />
           {draft.authKind === 'key' && (
             <div className="flex gap-2">
-              <input className="qn-input min-w-0 flex-1" placeholder="私钥路径" value={draft.keyPath}
+              <input className="qn-input min-w-0 flex-1" placeholder={t('私钥路径')} value={draft.keyPath}
                 onChange={(e) => patch({ keyPath: e.target.value })} />
-              <IconButton label="选择私钥文件" onClick={() => void pickKey()}>
+              <IconButton label={t('选择私钥文件')} onClick={() => void pickKey()}>
                 <Folder size={14} />
               </IconButton>
             </div>
           )}
           {(draft.authKind === 'password' || draft.authKind === 'key') && (
             <>
-              <PasswordInput placeholder={initial?.kind === 'ssh' && initial.hasSavedSecret ? `${secretLabel}（已保存，留空沿用）` : secretLabel}
+              <PasswordInput placeholder={initial?.kind === 'ssh' && initial.hasSavedSecret ? t('{label}（已保存，留空沿用）', { label: secretLabel }) : secretLabel}
                 value={draft.authKind === 'key' ? draft.passphrase : draft.password}
                 onChange={(e) => patch(draft.authKind === 'key' ? { passphrase: e.target.value } : { password: e.target.value })} />
               <Checkbox checked={draft.remember} onChange={(value) => patch({ remember: value })}>
-                记住密码 / 口令（用本机系统加密保存）
+                {t('记住密码 / 口令（用本机系统加密保存）')}
               </Checkbox>
               <p className="text-ui-sm leading-5 text-qn-muted">
-                凭据只在连接时传给 backend，不写入连接配置。
+                {t('凭据只在连接时传给 backend，不写入连接配置。')}
               </p>
             </>
           )}
           {!initial && (
             <Checkbox checked={autoDirect} onChange={setAutoDirect} disabled={busy !== null}>
-              开启直连加速
+              {t('开启直连加速')}
             </Checkbox>
           )}
           {initial?.kind === 'ssh' && (
             <div className="mt-3 space-y-2 rounded-lg border border-qn-border px-3 py-2.5">
-              <div className="text-ui font-medium text-qn-text">直连加速</div>
+              <div className="text-ui font-medium text-qn-text">{t('直连加速')}</div>
               {sshDirect ? (
                 <>
                   <div className="text-ui-sm leading-5 text-qn-muted">
-                    已开启：<span className="font-mono text-qn-text">{sshDirect.host}:{sshDirect.port}</span>
-                    {' · '}指纹 <span className="font-mono text-qn-text">{sshDirect.fingerprint.slice(0, 16)}…</span>
+                    {t('已开启：')}<span className="font-mono text-qn-text">{sshDirect.host}:{sshDirect.port}</span>
+                    {' · '}{t('指纹')} <span className="font-mono text-qn-text">{sshDirect.fingerprint.slice(0, 16)}…</span>
                   </div>
                   <button className="qn-button-subtle" type="button" disabled={busy !== null}
                     onClick={() => void runDisableDirect()}>
-                    {busy === 'disable' ? '正在关闭…' : '关闭直连加速'}
+                    {busy === 'disable' ? t('正在关闭…') : t('关闭直连加速')}
                   </button>
                 </>
               ) : (
                 <>
                   <p className="text-ui-sm leading-5 text-qn-muted">
-                    经 SSH 在远端开启 TLS 直连，之后连接优先直连、失败自动回退 SSH
+                    {t('经 SSH 在远端开启 TLS 直连，之后连接优先直连、失败自动回退 SSH')}
                   </p>
                   <div className="flex gap-2">
-                    <FormField label="远端监听端口" className="flex-1">
+                    <FormField label={t('远端监听端口')} className="flex-1">
                       {(control) => (
                         <input {...control} className="qn-input" placeholder="47390" inputMode="numeric" value={directConfig.listen}
                           onChange={(event) => setDirectConfig((value) => ({ ...value, listen: event.target.value }))} />
                       )}
                     </FormField>
-                    <FormField label="拨号地址" className="flex-1">
+                    <FormField label={t('拨号地址')} className="flex-1">
                       {(control) => (
-                        <input {...control} className="qn-input" placeholder="可填 frp / Tailscale 地址" value={directConfig.host}
+                        <input {...control} className="qn-input" placeholder={t('可填 frp / Tailscale 地址')} value={directConfig.host}
                           onChange={(event) => setDirectConfig((value) => ({ ...value, host: event.target.value }))} />
                       )}
                     </FormField>
                   </div>
                   <Checkbox checked={directConfig.allowPublic}
                     onChange={(checked) => setDirectConfig((value) => ({ ...value, allowPublic: checked }))}>
-                    允许公网来源（不推荐）
+                    {t('允许公网来源（不推荐）')}
                   </Checkbox>
                   <button className="qn-button-subtle" type="button" disabled={busy !== null}
                     onClick={requestEnableDirect}>
-                    {busy === 'enable' ? '正在开启…' : '开启直连加速'}
+                    {busy === 'enable' ? t('正在开启…') : t('开启直连加速')}
                   </button>
                 </>
               )}

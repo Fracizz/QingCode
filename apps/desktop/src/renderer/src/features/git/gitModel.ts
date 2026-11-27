@@ -1,4 +1,5 @@
 import type { GitBranch, GitCommit, GitFileStatus, GitStatusResult } from '@qn/protocol'
+import { getLocale, t, translateMessage } from '@qn/codex-client'
 
 // Git 面板的展示语义与路径换算全部收在这里，避免组件里散落 porcelain 字母判断。
 
@@ -7,9 +8,9 @@ export type StatusTone = 'muted' | 'accent' | 'ok' | 'warn' | 'danger'
 export type StatusInfo = { label: string; tone: StatusTone }
 
 export const gitGroups: ReadonlyArray<{ key: GitGroupKey; label: string }> = [
-  { key: 'conflicts', label: '冲突' },
-  { key: 'staged', label: '已暂存' },
-  { key: 'unstaged', label: '未暂存' },
+  { key: 'conflicts', label: t('冲突') },
+  { key: 'staged', label: t('已暂存') },
+  { key: 'unstaged', label: t('未暂存') },
 ]
 
 /** 按 targetId + cwd 分仓；JSON 数组编码避免路径里出现分隔符时撞键。 */
@@ -56,27 +57,27 @@ export function statusLetter(file: GitFileStatus, group: GitGroupKey): string {
 
 export function statusInfo(letter: string): StatusInfo {
   const raw = (letter ?? '').trim()
-  if (!raw || raw === '.' || raw === '!') return { label: '无变化', tone: 'muted' }
+  if (!raw || raw === '.' || raw === '!') return { label: t('无变化'), tone: 'muted' }
   if (raw.length > 1 && (raw.includes('U') || raw === 'AA' || raw === 'DD')) {
-    return { label: '冲突', tone: 'danger' }
+    return { label: t('冲突'), tone: 'danger' }
   }
   switch (raw.charAt(0)) {
     case 'M':
-      return { label: '修改', tone: 'warn' }
+      return { label: t('修改'), tone: 'warn' }
     case 'A':
-      return { label: '新增', tone: 'ok' }
+      return { label: t('新增'), tone: 'ok' }
     case 'D':
-      return { label: '删除', tone: 'danger' }
+      return { label: t('删除'), tone: 'danger' }
     case 'R':
-      return { label: '重命名', tone: 'accent' }
+      return { label: t('重命名'), tone: 'accent' }
     case 'C':
-      return { label: '复制', tone: 'accent' }
+      return { label: t('复制'), tone: 'accent' }
     case 'U':
-      return { label: '冲突', tone: 'danger' }
+      return { label: t('冲突'), tone: 'danger' }
     case '?':
-      return { label: '未跟踪', tone: 'muted' }
+      return { label: t('未跟踪'), tone: 'muted' }
     case 'T':
-      return { label: '类型变更', tone: 'warn' }
+      return { label: t('类型变更'), tone: 'warn' }
     default:
       return { label: raw, tone: 'muted' }
   }
@@ -125,16 +126,16 @@ export function joinRepoPath(root: string, relative: string): string {
 export function aheadBehindText(ahead: number, behind: number): string {
   const up = Math.max(0, Math.floor(Number.isFinite(ahead) ? ahead : 0))
   const down = Math.max(0, Math.floor(Number.isFinite(behind) ? behind : 0))
-  if (!up && !down) return '已与远端同步'
+  if (!up && !down) return t('已与远端同步')
   const parts: string[] = []
-  if (up) parts.push(`领先 ${up} 个提交`)
-  if (down) parts.push(`落后 ${down} 个提交`)
+  if (up) parts.push(t('领先 {count} 个提交', { count: up }))
+  if (down) parts.push(t('落后 {count} 个提交', { count: down }))
   return parts.join(' · ')
 }
 
 export function aheadBehindBadge(ahead: number, behind: number): string {
   const text = aheadBehindText(ahead, behind)
-  if (text === '已与远端同步') return ''
+  if (text === t('已与远端同步')) return ''
   const parts: string[] = []
   if (ahead > 0) parts.push(`↑${ahead}`)
   if (behind > 0) parts.push(`↓${behind}`)
@@ -143,11 +144,11 @@ export function aheadBehindBadge(ahead: number, behind: number): string {
 
 export function validateCommitMessage(message: string): { ok: boolean; error?: string; warning?: string } {
   const text = message ?? ''
-  if (!text.trim()) return { ok: false, error: '请输入提交信息' }
+  if (!text.trim()) return { ok: false, error: t('请输入提交信息') }
   const firstLine = text.split(/\r?\n/, 1)[0] ?? ''
   // 按码点计数，避免 emoji 被算成两个字符。
   const length = Array.from(firstLine.trim()).length
-  if (length > 72) return { ok: true, warning: `首行 ${length} 字符，超过 72 字符，建议精简` }
+  if (length > 72) return { ok: true, warning: t('首行 {count} 字符，超过 72 字符，建议精简', { count: length }) }
   return { ok: true }
 }
 
@@ -159,14 +160,16 @@ export function formatRelativeTime(ms: number, now: number = Date.now()): string
   if (!Number.isFinite(ms) || ms <= 0) return ''
   const diff = now - ms
   // 远端时钟偏快时按「刚刚」处理。
-  if (diff < MINUTE) return '刚刚'
-  if (diff < HOUR) return `${Math.floor(diff / MINUTE)} 分钟前`
-  if (diff < DAY) return `${Math.floor(diff / HOUR)} 小时前`
-  if (diff < 2 * DAY) return '昨天'
-  if (diff < 7 * DAY) return `${Math.floor(diff / DAY)} 天前`
+  if (diff < MINUTE) return t('刚刚')
+  if (diff < HOUR) return t('{count} 分钟前', { count: Math.floor(diff / MINUTE) })
+  if (diff < DAY) return t('{count} 小时前', { count: Math.floor(diff / HOUR) })
+  if (diff < 2 * DAY) return t('昨天')
+  if (diff < 7 * DAY) return t('{count} 天前', { count: Math.floor(diff / DAY) })
   const date = new Date(ms)
   const md = `${date.getMonth() + 1}/${date.getDate()}`
-  return date.getFullYear() === new Date(now).getFullYear() ? md : `${date.getFullYear()}/${md}`
+  if (date.getFullYear() === new Date(now).getFullYear()) return md
+  // 英文习惯月/日/年。
+  return getLocale() === 'en' ? `${md}/${date.getFullYear()}` : `${date.getFullYear()}/${md}`
 }
 
 export function shortHash(hash: string, length = 7): string {
@@ -174,7 +177,7 @@ export function shortHash(hash: string, length = 7): string {
 }
 
 export function branchLabel(branch: string | null): string {
-  return branch?.trim() ? branch : '（分离 HEAD）'
+  return branch?.trim() ? branch : t('（分离 HEAD）')
 }
 
 export function filterBranches(branches: GitBranch[], query: string): GitBranch[] {
@@ -196,10 +199,10 @@ export function discardPrompt(files: GitFileStatus[]): string {
   const names = pathsFor(files)
   const untracked = files.some(isUntracked)
   const head = untracked
-    ? '将删除文件（未跟踪，不可恢复）：'
-    : '将丢弃以下文件的未提交修改，此操作不可撤销：'
+    ? t('将删除文件（未跟踪，不可恢复）：')
+    : t('将丢弃以下文件的未提交修改，此操作不可撤销：')
   const preview = names.slice(0, 8).map((name) => `· ${name}`).join('\n')
-  const more = names.length > 8 ? `\n… 共 ${names.length} 项` : ''
+  const more = names.length > 8 ? `\n${t('… 共 {count} 项', { count: names.length })}` : ''
   return `${head}\n${preview}${more}`
 }
 
@@ -224,28 +227,28 @@ function readError(err: unknown): { code: string | null; message: string } {
 }
 
 const codeMessages: Record<string, string> = {
-  auth_required: '远端需要认证，请在远端配置 ssh-agent 或凭据助手',
-  not_repo: '当前目录不是 Git 仓库',
-  git_missing: '未找到 git，请在目标机器安装 Git 后重试',
-  not_connected: '目标未连接，请先连接后再操作',
-  not_implemented: 'server 尚未实现 Git 能力，请升级 qn-server',
-  unknown_method: 'server 不支持该 Git 方法，请升级 qn-server',
-  conflict: '存在未解决的冲突，请先处理',
-  permission: '没有权限执行该操作',
+  auth_required: t('远端需要认证，请在远端配置 ssh-agent 或凭据助手'),
+  not_repo: t('当前目录不是 Git 仓库'),
+  git_missing: t('未找到 git，请在目标机器安装 Git 后重试'),
+  not_connected: t('目标未连接，请先连接后再操作'),
+  not_implemented: t('server 尚未实现 Git 能力，请升级 qn-server'),
+  unknown_method: t('server 不支持该 Git 方法，请升级 qn-server'),
+  conflict: t('存在未解决的冲突，请先处理'),
+  permission: t('没有权限执行该操作'),
 }
 
 export function describeGitError(
   err: unknown,
-  fallback = 'Git 操作失败',
+  fallback = t('Git 操作失败'),
 ): { code: string | null; message: string } {
   const { code, message } = readError(err)
   const known = code ? codeMessages[code] : undefined
   if (known) return { code, message: known }
   if (code === 'git_failed') {
-    const summary = stderrSummary(message)
-    return { code, message: summary ? `Git 命令失败：${summary}` : `${fallback}：Git 命令失败` }
+    const summary = stderrSummary(translateMessage(message))
+    return { code, message: summary ? t('Git 命令失败：{summary}', { summary }) : t('{fallback}：Git 命令失败', { fallback }) }
   }
-  const summary = stderrSummary(message)
+  const summary = stderrSummary(translateMessage(message))
   return { code, message: summary || fallback }
 }
 

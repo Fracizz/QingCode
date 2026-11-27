@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, MessagesSquare, PanelRightClose, Quote, X } from 'lucide-react'
 import type { ItemView } from '@qn/codex-client'
+import { t } from '@qn/codex-client'
 import { agentLabel, DEFAULT_AGENT, sessionKey } from '../lib/agents'
 import { annotationExcerpt, type Annotation } from '../lib/annotations'
 import { isAtBottom } from '../lib/diff'
@@ -27,7 +28,6 @@ export function SideChat() {
   const sideDraft = side?.draft ?? ''
   const sideError = side?.error
   const endSideChat = useCodex((s) => s.endSideChat)
-  const sessions = useCodex((s) => s.sessions)
   const sending = useCodex((s) => s.sending)
   const setSideDraft = useCodex((s) => s.setSideDraft)
   const addSideAnnotation = useCodex((s) => s.addSideAnnotation)
@@ -46,7 +46,8 @@ export function SideChat() {
   const [availableWidth, setAvailableWidth] = useState(SIDE_CHAT_DEFAULT_WIDTH + 48)
   const { docked, min, max, width } = sideChatLayout(preferredWidth, availableWidth)
 
-  const session = sideTargetId && sideAgent ? sessions[sessionKey(sideTargetId, sideAgent)] : undefined
+  // 只订阅侧聊所在会话，其他会话的流式增量不触发重渲染。
+  const session = useCodex((s) => sideTargetId && sideAgent ? s.sessions[sessionKey(sideTargetId, sideAgent)] : undefined)
   const chatKey = sideTargetId && sideAgent && sideThreadId && pendingSendKey({ targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId })
   const sendingMessage = useCodex((s) => s.sendingMessage?.key === chatKey ? s.sendingMessage : null)
   const queueLength = useCodex((s) => chatKey ? s.pendingSends[chatKey]?.length : 0)
@@ -81,14 +82,14 @@ export function SideChat() {
 
   if (!sideOpen || !sideTargetId || !sideAgent) return null
 
-  const status = side.expired ? '会话已结束' : approvals.length ? '等待审批' : running ? '正在运行' : side.busy ? '正在发送' : null
+  const status = side.expired ? t('会话已结束') : approvals.length ? t('等待审批') : running ? t('正在运行') : side.busy ? t('正在发送') : null
   const showWelcome = timeline.length === 0 && approvals.length === 0 && !showProgress && !side.expired && !side.busy && !session?.openError
   const annotationCount = side.annotations.filter((annotation) => annotation.quote.trim()).length
 
   return (
     <aside
       ref={panelRef}
-      aria-label="侧边对话"
+      aria-label={t('侧边对话')}
       className={`${docked ? 'relative' : 'absolute inset-y-0 right-0 shadow-2xl'} qn-side-chat z-20 flex min-h-0 max-w-full shrink-0 flex-col border-l border-qn-border-strong bg-qn-panel [container-type:size]`}
       style={{ width }}
     >
@@ -101,7 +102,7 @@ export function SideChat() {
           max={max}
           onChange={setPreferredWidth}
           onReset={() => setPreferredWidth(SIDE_CHAT_DEFAULT_WIDTH)}
-          label="调整侧边对话宽度（双击复位）"
+          label={t('调整侧边对话宽度（双击复位）')}
           className="absolute inset-y-0 -left-[5px]"
         />
       )}
@@ -110,15 +111,15 @@ export function SideChat() {
           <MessagesSquare size={16} aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-ui-md font-medium text-qn-text">侧边对话</h2>
+          <h2 className="truncate text-ui-md font-medium text-qn-text">{t('侧边对话')}</h2>
           <p className="truncate text-ui-sm text-qn-muted" role="status" title={status ?? undefined}>
-            {agentLabel(agent)} · {status ?? '临时会话'}
+            {agentLabel(agent)} · {status ?? t('临时会话')}
           </p>
         </div>
-        <IconButton label="收起侧边对话" tooltipSide="bottom" onClick={closeSideChat}>
+        <IconButton label={t('收起侧边对话')} tooltipSide="bottom" onClick={closeSideChat}>
           <PanelRightClose size={16} />
         </IconButton>
-        <IconButton label="结束侧边对话" tooltipSide="bottom" disabled={side.busy || running || !!queueLength || approvals.length > 0} onClick={() => void endSideChat()}>
+        <IconButton label={t('结束侧边对话')} tooltipSide="bottom" disabled={side.busy || running || !!queueLength || approvals.length > 0} onClick={() => void endSideChat()}>
           <X size={16} />
         </IconButton>
       </header>
@@ -145,9 +146,9 @@ export function SideChat() {
               <span className="mx-auto mb-3 grid size-10 place-items-center rounded-xl border border-qn-border-strong bg-qn-elevated text-qn-muted">
                 <Quote size={19} aria-hidden />
               </span>
-              <p className="text-ui-md font-medium text-qn-text">接着聊一个细节</p>
+              <p className="text-ui-md font-medium text-qn-text">{t('接着聊一个细节')}</p>
               <p className="mt-1.5 text-ui leading-5 text-qn-muted">
-                {annotationCount ? '下方的引用会随问题发送。' : '也可以在主对话选中文字，引用到这里。'}
+                {annotationCount ? t('下方的引用会随问题发送。') : t('也可以在主对话选中文字，引用到这里。')}
               </p>
             </div>
           </div>
@@ -186,17 +187,17 @@ export function SideChat() {
         {side.expired && (
           <button type="button" className="qn-button-subtle mx-3 mb-2 text-ui-md" disabled={side.busy || sendingQueued}
             onClick={() => void useCodex.getState().restartSideChat()}>
-            重新开始侧聊
+            {t('重新开始侧聊')}
           </button>
         )}
         <Composer
           key={ownerKey}
           compact
           autoFocus
-          placeholder="继续追问…"
+          placeholder={t('继续追问…')}
           annotationCount={annotationCount}
           context={side.annotations.length > 0 && (
-            <ul aria-label="引用上下文" className="qn-scroll max-h-[min(8rem,22cqh)] space-y-1.5 overflow-y-auto px-2.5 pt-2.5">
+            <ul aria-label={t('引用上下文')} className="qn-scroll max-h-[min(8rem,22cqh)] space-y-1.5 overflow-y-auto px-2.5 pt-2.5">
               {side.annotations.map((annotation) => (
                 <SideQuote
                   key={annotation.id}
@@ -234,19 +235,19 @@ function SideQuote({ annotation, disabled, onEdit, onRemove }: {
   onEdit: (quote: string) => void
   onRemove: () => void
 }) {
-  const excerpt = annotationExcerpt(annotation) || '空引用'
+  const excerpt = annotationExcerpt(annotation) || t('空引用')
   return (
     <li className="relative rounded-lg border border-qn-border-strong bg-qn-panel">
       <details className="group">
         <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg py-2 pl-2.5 pr-9 text-ui-sm text-qn-muted hover:text-qn-text focus-visible:outline-2 focus-visible:outline-qn-accent [&::-webkit-details-marker]:hidden">
           <Quote size={13} className="shrink-0" aria-hidden />
-          <span className="shrink-0 font-medium text-qn-text">引用</span>
+          <span className="shrink-0 font-medium text-qn-text">{t('引用')}</span>
           <span className="flex-1 truncate">{excerpt}</span>
           <ChevronDown size={13} className="ml-auto shrink-0 group-open:rotate-180" aria-hidden />
         </summary>
         <div className="border-t border-qn-border p-2">
           <textarea
-            aria-label="编辑引用文字"
+            aria-label={t('编辑引用文字')}
             className="qn-input qn-scroll block max-h-24 min-h-10 resize-none bg-qn-panel [field-sizing:content]"
             value={annotation.quote}
             disabled={disabled}
@@ -255,7 +256,7 @@ function SideQuote({ annotation, disabled, onEdit, onRemove }: {
           {annotation.comment && <p className="mt-1.5 whitespace-pre-wrap text-ui text-qn-muted [overflow-wrap:anywhere]">{annotation.comment}</p>}
         </div>
       </details>
-      <IconButton label={`移除引用 ${excerpt}`} size="sm" tooltip={false} className="absolute top-1 right-1" disabled={disabled} onClick={onRemove}>
+      <IconButton label={t('移除引用 {excerpt}', { excerpt })} size="sm" tooltip={false} className="absolute top-1 right-1" disabled={disabled} onClick={onRemove}>
         <X size={13} />
       </IconButton>
     </li>

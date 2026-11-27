@@ -1,15 +1,17 @@
+import { t } from '@qn/codex-client'
+
 async function toPng(image: HTMLImageElement): Promise<Blob> {
   await image.decode()
   const canvas = document.createElement('canvas')
   canvas.width = image.naturalWidth
   canvas.height = image.naturalHeight
   const context = canvas.getContext('2d')
-  if (!context) throw new Error('无法绘制图片')
+  if (!context) throw new Error(t('无法绘制图片'))
   context.drawImage(image, 0, 0)
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (blob) resolve(blob)
-      else reject(new Error('无法生成 PNG'))
+      else reject(new Error(t('无法生成 PNG')))
     }, 'image/png')
   })
 }

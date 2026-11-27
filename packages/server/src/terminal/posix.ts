@@ -31,6 +31,7 @@ function runProbe(file: string, args: string[]): Promise<{ ok: boolean; stdout: 
       resolve({
         ok: !err,
         stdout: String(stdout ?? ''),
+        // i18n-ignore: 按实际取值在词典登记整句
         error: err ? ((err as NodeJS.ErrnoException).code === 'ENOENT' ? `未找到 ${file}` : err.message) : '',
       })
     })

@@ -181,3 +181,75 @@ function readEntries(io: SessionIo, dir: string): string[] {
     return []
   }
 }
+
+/** 会话最近一次使用的模型（provider/id，与 model/list 的 id 同格式）与思考档位。 */
+export interface PiSessionConfig {
+  model: string | null
+  thinkingLevel: string | null
+}
+
+/**
+ * 按 session-format.md 的条目顺序取最后一次的模型与思考档位：
+ * model_change / thinking_level_change 是显式切换，assistant 消息上的 provider/model/thinkingLevel 是实际使用值。
+ * 会话是树形结构，这里按文件顺序取最后写入的值，对线性会话即当前分支。
+ */
+export function parseSessionConfig(lines: string[]): PiSessionConfig {
+  let model: string | null = null
+  let thinkingLevel: string | null = null
+  const setModel = (provider: string, id: string) => {
+    if (id) model = provider ? `${provider}/${id}` : id
+  }
+  for (const line of lines) {
+    if (!line.trim()) continue
+    let record: Json | null
+    try {
+      record = asRecord(JSON.parse(line))
+    } catch {
+      // 首尾分块切开的半行不是完整 JSON，忽略。
+      continue
+    }
+    if (!record) continue
+    if (record.type === 'model_change') setModel(scalarText(record.provider), scalarText(record.modelId) || scalarText(record.model))
+    else if (record.type === 'thinking_level_change') thinkingLevel = scalarText(record.thinkingLevel) || thinkingLevel
+    else if (record.type === 'message') {
+      const message = asRecord(record.message)
+      if (scalarText(message?.role) !== 'assistant') continue
+      setModel(scalarText(message?.provider), scalarText(message?.model))
+      thinkingLevel = scalarText(message?.thinkingLevel) || thinkingLevel
+    }
+  }
+  return { model, thinkingLevel }
+}
+
+const CONFIG_TAIL_BYTES = 256 * 1024
+
+/**
+ * 只读会话文件的头部与尾部各一块：头部有创建时的 model_change，尾部有最近的切换和回复。
+ * 中间的切换只在尾部没有更新记录时才会漏掉，换来大会话也只读固定字节数。
+ */
+export function readPiSessionConfig(file: string): PiSessionConfig {
+  const empty: PiSessionConfig = { model: null, thinkingLevel: null }
+  let fd: number
+  try {
+    if (!fs.lstatSync(file).isFile()) return empty
+    fd = fs.openSync(file, 'r')
+  } catch {
+    return empty
+  }
+  try {
+    const size = fs.fstatSync(fd).size
+    const read = (start: number, length: number) => {
+      const buffer = Buffer.alloc(length)
+      const count = fs.readSync(fd, buffer, 0, length, start)
+      return buffer.subarray(0, count).toString('utf8')
+    }
+    const head = read(0, Math.min(size, HEAD_BYTES))
+    const tailStart = Math.max(HEAD_BYTES, size - CONFIG_TAIL_BYTES)
+    const tail = size > tailStart ? read(tailStart, size - tailStart) : ''
+    return parseSessionConfig([...head.split('\n'), ...tail.split('\n')])
+  } catch {
+    return empty
+  } finally {
+    fs.closeSync(fd)
+  }
+}

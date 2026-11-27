@@ -1,4 +1,4 @@
-import { isActiveThread, isThreadOutcome, sessionStatus } from '@qn/codex-client'
+import { isActiveThread, isThreadOutcome, sessionStatus, t } from '@qn/codex-client'
 import { create } from 'zustand'
 import { archivedThreadKey, sessionKey } from './agents'
 import { getGateway } from './client'
@@ -77,7 +77,8 @@ export function filterProjects(projects: Project[], targets: Target[], query: st
   const byId = new Map(targets.map((target) => [target.id, target]))
   return scoped.filter((project) => {
     const target = byId.get(project.targetId)
-    const host = target?.kind === 'direct' ? `直连 ${target.host}` : target?.kind === 'ssh' ? `远端 ${target.host}` : undefined
+    const host = target?.kind === 'direct' ? t('直连 {host}', { host: target.host })
+      : target?.kind === 'ssh' ? t('远端 {host}', { host: target.host }) : undefined
     return [project.name, project.path, target?.name, host]
       .some((value) => value?.toLocaleLowerCase().includes(needle))
   })

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent } from 'react'
 import { Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, SquarePen, X } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { copyText } from '../../lib/clipboard'
 import type { Project } from '../../../../shared/backendApi'
 import { sessionKey } from '../../lib/agents'
@@ -106,7 +107,7 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
           className="flex min-h-8 w-full items-center gap-2 rounded-lg pl-[30px] text-left text-[length:var(--qn-project-detail-font-size)] leading-tight text-qn-dim hover:bg-qn-hover hover:text-qn-text"
           onClick={() => openPicker(targetId)}
         >
-          <FolderPlus size={14} /> 添加项目
+          <FolderPlus size={14} /> {t('添加项目')}
         </button>
       )}
 
@@ -236,7 +237,7 @@ function ProjectRow({
         <input
           ref={inputRef}
           value={draft}
-          aria-label="项目名称"
+          aria-label={t('项目名称')}
           className="qn-input min-h-7 min-w-0 flex-1 px-1.5 py-0 text-[length:var(--qn-project-detail-font-size)] leading-tight"
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commit}
@@ -282,9 +283,9 @@ function ProjectRow({
       >
         <ProjectInitial name={project.name} />
         <span className="min-w-0 flex-1 truncate">{project.name}</span>
-        {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
+        {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label={t('已置顶')} />}
         {sortProps && (
-          <span title="拖动排序，或按 Alt+↑ / Alt+↓ 移动" className="flex h-7 w-5 shrink-0 items-center justify-center text-qn-muted opacity-0 group-focus-visible:opacity-100 group-hover:opacity-100">
+          <span title={t('拖动排序，或按 Alt+↑ / Alt+↓ 移动')} className="flex h-7 w-5 shrink-0 items-center justify-center text-qn-muted opacity-0 group-focus-visible:opacity-100 group-hover:opacity-100">
             <DragHandleIcon />
           </span>
         )}
@@ -295,7 +296,7 @@ function ProjectRow({
           <MenuTrigger asChild>
             <button
               type="button"
-              aria-label="更多操作"
+              aria-label={t('更多操作')}
               className="flex h-7 w-7 items-center justify-center rounded-md text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text data-[state=open]:text-qn-text"
             >
               <Ellipsis size={15} />
@@ -303,21 +304,21 @@ function ProjectRow({
           </MenuTrigger>
           <MenuContent align="start" className="min-w-52" onKeyDown={shortcut}>
             <MenuItem icon={pinned ? <PinOff size={14} /> : <Pin size={14} />} hint="P" onSelect={() => togglePin(project.id)}>
-              {pinned ? '取消置顶' : '置顶'}
+              {pinned ? t('取消置顶') : t('置顶')}
             </MenuItem>
             <MenuItem icon={<Pencil size={14} />} hint="E" onSelect={beginRename}>
-              重命名
+              {t('重命名')}
             </MenuItem>
             <MenuItem icon={<Copy size={14} />} hint="C" onSelect={copyPath}>
-              复制路径
+              {t('复制路径')}
             </MenuItem>
             <MenuSeparator />
-            <MenuItem icon={<X size={14} />} title="不删除磁盘文件" onSelect={() => void remove(project.id)}>
-              移除项目
+            <MenuItem icon={<X size={14} />} title={t('不删除磁盘文件')} onSelect={() => void remove(project.id)}>
+              {t('移除项目')}
             </MenuItem>
           </MenuContent>
         </Menu>
-        <IconButton label="在此项目新建会话" className="h-7 w-7" onClick={onNewDraft}>
+        <IconButton label={t('在此项目新建会话')} className="h-7 w-7" onClick={onNewDraft}>
           <SquarePen size={14} />
         </IconButton>
       </span>
@@ -380,9 +381,8 @@ function ThreadList({ project, now, active, reveal, onActivate, onNewDraft }: {
   const threadsError = list?.error
   const currentKey = useCodex((s) => active && s.currentTargetId === targetId && s.currentCwd === cwd && s.currentThreadId
     ? threadKey(s.currentAgent, s.currentThreadId) : null)
-  const currentAgent = useCodex((s) => s.currentAgent)
-  const sessions = useCodex((s) => s.sessions)
-  const openError = active ? sessions[sessionKey(targetId, currentAgent)]?.openError : null
+  // 只取打开错误这一项：订阅整个 sessions 会让每个流式增量都重渲染整棵会话树。
+  const openError = useCodex((s) => active ? s.sessions[sessionKey(targetId, s.currentAgent)]?.openError ?? null : null)
   const refreshThreads = useCodex((s) => s.refreshThreads)
   const showAll = useProjects((s) => s.fullThreadLists.includes(projectId))
   const setShowAll = useProjects((s) => s.setShowAllThreads)
@@ -425,10 +425,10 @@ function ThreadList({ project, now, active, reveal, onActivate, onNewDraft }: {
   }, [reveal, active, currentKey, threads, threadsLoading, targetId, cwd])
 
   return (
-    <div ref={listRef} role="group" aria-label={`${project.name}会话列表`} tabIndex={-1} className="flex flex-col gap-0.5 pt-0.5 pb-1.5">
+    <div ref={listRef} role="group" aria-label={t('{name}会话列表', { name: project.name })} tabIndex={-1} className="flex flex-col gap-0.5 pt-0.5 pb-1.5">
       {threadsLoading && threads.length === 0 && (
         <div className="py-1.5 pl-(--qn-tree-title-start)">
-          <Spinner label="加载会话…" />
+          <Spinner label={t('加载会话…')} />
         </div>
       )}
 
@@ -438,13 +438,12 @@ function ThreadList({ project, now, active, reveal, onActivate, onNewDraft }: {
           className="flex min-h-8 w-full items-center rounded-lg py-0.5 pl-(--qn-tree-title-start) text-left text-[length:var(--qn-session-font-size)] leading-tight text-qn-muted hover:bg-qn-hover hover:text-qn-text"
           onClick={onNewDraft}
         >
-          暂无会话，开始一个
+          {t('暂无会话，开始一个')}
         </button>
       )}
 
       {shown.map((thread) => {
         const key = threadKey(thread.agent, thread.id)
-        const view = sessions[sessionKey(targetId, thread.agent)]?.state.threads[thread.id]
         return (
           <ThreadRow
             key={key}
@@ -452,7 +451,6 @@ function ThreadList({ project, now, active, reveal, onActivate, onNewDraft }: {
             targetId={targetId}
             now={now}
             current={key === currentKey}
-            view={view}
             onActivate={onActivate}
           />
         )
@@ -465,7 +463,7 @@ function ThreadList({ project, now, active, reveal, onActivate, onNewDraft }: {
           aria-expanded={showAll}
           onClick={() => setShowAll(projectId, !showAll)}
         >
-          {showAll ? '收起会话' : `显示其余 ${remaining} 个会话`}
+          {showAll ? t('收起会话') : t('显示其余 {count} 个会话', { count: remaining })}
         </button>
       )}
 
@@ -480,7 +478,7 @@ function ThreadList({ project, now, active, reveal, onActivate, onNewDraft }: {
         />
       )}
       {threadsError && threadsError === openError && (
-        <div className="py-1 pl-(--qn-tree-title-start) text-[length:var(--qn-session-detail-font-size)] leading-tight text-qn-muted">会话列表不可用</div>
+        <div className="py-1 pl-(--qn-tree-title-start) text-[length:var(--qn-session-detail-font-size)] leading-tight text-qn-muted">{t('会话列表不可用')}</div>
       )}
     </div>
   )

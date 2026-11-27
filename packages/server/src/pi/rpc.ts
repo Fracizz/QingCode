@@ -138,7 +138,7 @@ export class PiRpcProcess {
     child.stdout?.on('data', (chunk) => this.onStdout(toText(chunk)))
     child.stderr?.on('data', (chunk) => this.onStderr(toText(chunk)))
     child.on('error', (err) => {
-      this.options.log(`pi RPC 启动失败: ${redact(err.message)}`)
+      this.options.log(`pi RPC 启动失败: ${redact(err.message)}`) // i18n-ignore: 仅进日志
     })
     child.on('exit', (code, signal) => this.handleExit(code, signal))
   }
@@ -203,7 +203,7 @@ export class PiRpcProcess {
     try {
       stdin.write(`${JSON.stringify(record)}\n`)
     } catch (err) {
-      this.options.log(`pi RPC 写入失败: ${redact(describe(err))}`)
+      this.options.log(`pi RPC 写入失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
     }
   }
 
@@ -211,12 +211,12 @@ export class PiRpcProcess {
     this.stdoutRemainder += chunk
     if (this.stdoutRemainder.length > MAX_LINE_BYTES) {
       this.stdoutRemainder = ''
-      this.options.log('pi RPC stdout 单行过长，已丢弃')
+      this.options.log('pi RPC stdout 单行过长，已丢弃') // i18n-ignore: 仅进日志
       return
     }
     const { records, remainder, invalid } = splitJsonl(this.stdoutRemainder)
     this.stdoutRemainder = remainder
-    if (invalid > 0) this.options.log(`pi RPC stdout 出现 ${invalid} 行非 JSON 记录`)
+    if (invalid > 0) this.options.log(`pi RPC stdout 出现 ${invalid} 行非 JSON 记录`) // i18n-ignore: 仅进日志
     for (const record of records) {
       const kind = classifyRecord(record)
       if (kind === 'response') {

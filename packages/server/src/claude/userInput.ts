@@ -176,6 +176,7 @@ export async function loadLocalImage(
 /** mention 不读内容，只在文本末尾列出路径，让 Claude 按需用工具读取。 */
 export function attachmentNote(mentions: { name: string; path: string }[]): string {
   if (mentions.length === 0) return ''
+  // i18n-ignore: 发给模型的提示词
   return `附件文件（请按需读取）：\n${mentions.map((m) => `- ${m.name}: ${m.path}`).join('\n')}`
 }
 

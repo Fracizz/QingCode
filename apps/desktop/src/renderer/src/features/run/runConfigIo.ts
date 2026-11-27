@@ -1,4 +1,5 @@
 import type { FsEntry } from '@qn/protocol'
+import { t, translateMessage } from '@qn/codex-client'
 import { BackendCallError, call } from '../../lib/backend'
 import { serverCall } from '../workspace/serverCall'
 import {
@@ -39,8 +40,8 @@ function isNotFound(err: unknown): boolean {
 
 async function readText(targetId: string, path: string, limit?: number): Promise<{ content: string; mtimeMs: number }> {
   const result = await serverCall(targetId, 'fs.read', { path, ...(limit ? { length: limit } : {}) })
-  if (result.binary) throw new Error(`${path} 不是文本文件`)
-  if (result.truncated) throw new Error(`${path} 过大`)
+  if (result.binary) throw new Error(t('{path} 不是文本文件', { path }))
+  if (result.truncated) throw new Error(t('{path} 过大', { path }))
   return { content: result.content, mtimeMs: result.mtimeMs }
 }
 
@@ -61,7 +62,7 @@ export async function loadRunConfigs(targetId: string, root: string): Promise<Lo
     const parsed = parseRunConfigFile(text.content)
     const loaded: LoadedRunConfigs = parsed.ok
       ? { file: parsed.file, source }
-      : { file: { configs: [] }, source, error: `${source === 'qingcode' ? '.qingcode' : '.nestcode'}/run.json 格式错误：${parsed.error}` }
+      : { file: { configs: [] }, source, error: t('{dir}/run.json 格式错误：{error}', { dir: source === 'qingcode' ? '.qingcode' : '.nestcode', error: parsed.error }) }
     if (source === 'qingcode') loaded.mtimeMs = text.mtimeMs
     return loaded
   }
@@ -101,7 +102,7 @@ export async function discoverProject(targetId: string, root: string, os: RunOs)
   const tasks: DiscoveredTask[] = []
   const warnings: DiscoveryWarning[] = []
   const warn = (source: string, err: unknown): void => {
-    warnings.push({ source, message: err instanceof Error ? err.message : String(err) })
+    warnings.push({ source, message: translateMessage(err instanceof Error ? err.message : String(err)) })
   }
   const rootEntries = await listDir(targetId, root)
   const fileNames = rootEntries.filter((e) => e.kind !== 'dir').map((e) => e.name)
@@ -153,7 +154,7 @@ export async function discoverProject(targetId: string, root: string, os: RunOs)
   const dirs = rootEntries
     .filter((e) => e.kind === 'dir' && !e.name.startsWith('.') && !IGNORED_DIRS.has(e.name))
     .sort((a, b) => a.name.localeCompare(b.name))
-  if (dirs.length > MAX_CHILD_DIRS) warnings.push({ source: '.', message: `只扫描前 ${MAX_CHILD_DIRS} 个子目录` })
+  if (dirs.length > MAX_CHILD_DIRS) warnings.push({ source: '.', message: t('只扫描前 {count} 个子目录', { count: MAX_CHILD_DIRS }) })
   // 逐个扫描：SSH 目标上并发几十个请求会拖慢对话。
   for (const entry of dirs.slice(0, MAX_CHILD_DIRS)) {
     const dir = joinPath(root, entry.name)

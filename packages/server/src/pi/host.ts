@@ -40,7 +40,7 @@ import {
 import { resolvePiExecutable, type PiExecutable } from './resolve'
 import { PiRpcProcess, type PiRpcOptions, type RpcRecord } from './rpc'
 import { isPiLevel, parsePiModelKey, piModelList } from './models'
-import { listPiSessions, type PiSessionInfo } from './sessions'
+import { listPiSessions, readPiSessionConfig, type PiSessionConfig, type PiSessionInfo } from './sessions'
 import { resolvePiPrompt } from './turnInput'
 
 export interface PiCapabilities {
@@ -122,7 +122,7 @@ export class PiHost extends JsonRpcAgentHost {
       : resolvePiExecutable(explicit)
     this.pi = resolved
     this.opened = true
-    this.hub.log(`pi 桥已就绪 ${resolved.version}`)
+    this.hub.log(`pi 桥已就绪 ${resolved.version}`) // i18n-ignore: 仅进日志
     // initialize 由 daemon 负责，pi 桥没有 app-server 握手结果可缓存。
     return { initialize: null, agentVersion: resolved.version }
   }
@@ -140,7 +140,7 @@ export class PiHost extends JsonRpcAgentHost {
 
   protected sendToAgent(msg: RpcRecord): void {
     void this.dispatch(msg).catch((err: unknown) => {
-      this.hub.log(`pi 消息处理失败: ${redact(describe(err))}`)
+      this.hub.log(`pi 消息处理失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
     })
   }
 
@@ -168,7 +168,7 @@ export class PiHost extends JsonRpcAgentHost {
       this.emit({ id, result })
     } catch (err) {
       const { code, message } = rpcErrorOf(err)
-      this.hub.log(`pi ${method} 失败: ${redact(message)}`)
+      this.hub.log(`pi ${method} 失败: ${redact(message)}`) // i18n-ignore: 仅进日志
       this.emit({ id, error: { code, message } })
     }
   }
@@ -278,9 +278,10 @@ export class PiHost extends JsonRpcAgentHost {
     const metadataOnly = (method === 'thread/resume' && params.excludeTurns === true)
       || (method === 'thread/read' && params.includeTurns === false)
     const paged = method === 'thread/turns/list' || method === 'thread/items/list'
+    const config = paged ? undefined : sessionConfig(session)
     if (metadataOnly) {
       const status = session.turnId ? { type: 'active', activeFlags: [] } : { type: 'idle' }
-      return { thread: { ...piThread(meta), status, historyMode: 'paginated' } }
+      return { thread: { ...piThread(meta, [], config), status, historyMode: 'paginated' } }
     }
     const load = async () => {
       const rpc = await this.ensureRpc(session)
@@ -300,7 +301,7 @@ export class PiHost extends JsonRpcAgentHost {
     const turns = turnId ? [...saved, buildTurn(turnId, [], 'inProgress')] : saved
     if (method === 'thread/turns/list') return listHistoryTurns(threadId, turns, params)
     if (method === 'thread/items/list') return listHistoryItems(threadId, turns, params)
-    const thread = piThread(meta, turns)
+    const thread = piThread(meta, turns, config)
     return { thread: turnId ? { ...thread, status: { type: 'active', activeFlags: [] } } : thread }
   }
 
@@ -373,7 +374,7 @@ export class PiHost extends JsonRpcAgentHost {
     if (target && key !== session.model) {
       const response = await rpc.command('set_model', target)
       if (response.success === false) {
-        this.hub.log(`pi 切换模型失败: ${redact(scalarText(response.error))}`)
+        this.hub.log(`pi 切换模型失败: ${redact(scalarText(response.error))}`) // i18n-ignore: 仅进日志
         throw new PiRpcError(-32603, 'pi 切换模型失败，消息未发送')
       }
       session.model = key
@@ -384,7 +385,7 @@ export class PiHost extends JsonRpcAgentHost {
     if (isPiLevel(level) && level !== session.thinkingLevel) {
       const response = await rpc.command('set_thinking_level', { level })
       if (response.success === false) {
-        this.hub.log(`pi 切换思考强度失败: ${redact(scalarText(response.error))}`)
+        this.hub.log(`pi 切换思考强度失败: ${redact(scalarText(response.error))}`) // i18n-ignore: 仅进日志
         throw new PiRpcError(-32603, 'pi 切换思考强度失败，消息未发送，请检查当前模型支持的档位')
       }
       session.thinkingLevel = level
@@ -427,7 +428,7 @@ export class PiHost extends JsonRpcAgentHost {
     session.rpc = null
     if (session.turnId) this.finishTurn(session, 'failed', 'pi 进程提前退出')
     if (session.meta.ephemeral) this.forgetTemporary(session.meta.id)
-    this.hub.log(`pi 会话进程退出 (thread=${session.meta.id} code=${String(info.code)})`)
+    this.hub.log(`pi 会话进程退出 (thread=${session.meta.id} code=${String(info.code)})`) // i18n-ignore: 仅进日志
   }
 
   private finishTurn(session: PiSession, status: string, error: string | null): void {
@@ -457,7 +458,7 @@ export class PiHost extends JsonRpcAgentHost {
         ? await this.options.listSessions(cwd, threadId)
         : listPiSessions(cwd, undefined, undefined, threadId)
     } catch (err) {
-      this.hub.log(`pi 会话目录读取失败: ${redact(describe(err))}`)
+      this.hub.log(`pi 会话目录读取失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
       return []
     }
   }
@@ -564,6 +565,17 @@ function mapPiEventSafe(
   } catch {
     return { notifications: [], state }
   }
+}
+
+/**
+ * 会话的模型与思考档位：本进程已切换过的值最新，其次读会话文件里最后一次的记录。
+ * 临时会话没有文件，返回空值由客户端沿用默认选择。
+ */
+function sessionConfig(session: PiSession): PiSessionConfig {
+  const saved = session.meta.sessionFile && !session.meta.ephemeral
+    ? readPiSessionConfig(session.meta.sessionFile)
+    : { model: null, thinkingLevel: null }
+  return { model: session.model ?? saved.model, thinkingLevel: session.thinkingLevel ?? saved.thinkingLevel }
 }
 
 function threadStartResult(meta: PiSessionMeta): Json {

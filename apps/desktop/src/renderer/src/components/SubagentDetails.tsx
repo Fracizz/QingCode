@@ -1,4 +1,5 @@
 import {
+  t,
   collectSubagents, mergeSubagentHistory, prependThreadHistory, readSubagentThread, readThreadHistoryPage,
   subagentRecordStatus, subagentStatusTone,
   type CodexRpcLike, type ItemView, type SubagentEntry, type ThreadView,
@@ -21,7 +22,7 @@ const HISTORY_BATCH = 40
 
 function AgentBadge({ status }: { status: string }) {
   const tone = subagentStatusTone(status)
-  return <Badge tone={tone === 'active' ? 'accent' : tone}>{status || '状态未知'}</Badge>
+  return <Badge tone={tone === 'active' ? 'accent' : tone}>{status || t('状态未知')}</Badge>
 }
 
 function AgentAvatar({ size = 17 }: { size?: number }) {
@@ -59,7 +60,7 @@ function AgentRecord({ entry, live, rpc, renderItem }: {
     void readSubagentThread(rpc, threadId, () => current).then((data) => {
       if (current) setHistory({ data, beforeRead })
     }, (err: unknown) => {
-      if (current) setError(friendlyError(err, '无法读取子代理记录'))
+      if (current) setError(friendlyError(err, t('无法读取子代理记录')))
     }).finally(() => {
       if (current) setLoading(false)
     })
@@ -105,7 +106,7 @@ function AgentRecord({ entry, live, rpc, renderItem }: {
       setHistory((value) => value?.data.view === view ? { ...value, data: { ...value.data, view: next } } : value)
       setLimit(items.length + HISTORY_BATCH)
     } catch (err) {
-      if (isCurrent()) setError(friendlyError(err, '无法读取更早的子代理记录'))
+      if (isCurrent()) setError(friendlyError(err, t('无法读取更早的子代理记录')))
     } finally {
       if (isCurrent()) {
         earlierRequest.current = undefined
@@ -115,7 +116,7 @@ function AgentRecord({ entry, live, rpc, renderItem }: {
   }
 
   return (
-    <section className="space-y-4" aria-label="子代理详情">
+    <section className="space-y-4" aria-label={t('子代理详情')}>
       <div className="flex items-start gap-2.5">
         <AgentAvatar size={19} />
         <div className="min-w-0 flex-1">
@@ -125,16 +126,16 @@ function AgentRecord({ entry, live, rpc, renderItem }: {
         <AgentBadge status={subagentRecordStatus(entry.status, history?.data.view)} />
       </div>
       {task && <section className="space-y-1">
-        <h4 className="text-ui-sm font-medium text-qn-muted">委派任务</h4>
+        <h4 className="text-ui-sm font-medium text-qn-muted">{t('委派任务')}</h4>
         <p className="whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-bg/60 px-3 py-2 text-ui">{task}</p>
       </section>}
       {entry.result && <section className="space-y-1">
-        <h4 className="text-ui-sm font-medium text-qn-muted">返回结果</h4>
+        <h4 className="text-ui-sm font-medium text-qn-muted">{t('返回结果')}</h4>
         <div className="whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-bg/60 px-3 py-2 text-ui">{entry.result}</div>
       </section>}
       {entry.activity.length > 0 && (
         <details className="rounded-lg border border-qn-border px-3 py-2 text-ui">
-          <summary className="cursor-pointer select-none font-medium text-qn-muted">活动记录 · {entry.activity.length}</summary>
+          <summary className="cursor-pointer select-none font-medium text-qn-muted">{t('活动记录 · {count}', { count: entry.activity.length })}</summary>
           <ol className="mt-2 divide-y divide-qn-border">
             {entry.activity.map((event) => (
               <li key={event.id} className="py-2">
@@ -148,21 +149,21 @@ function AgentRecord({ entry, live, rpc, renderItem }: {
           </ol>
         </details>
       )}
-      {threadId && <section className="space-y-2 border-t border-qn-border pt-3" aria-label="子会话记录">
+      {threadId && <section className="space-y-2 border-t border-qn-border pt-3" aria-label={t('子会话记录')}>
         <div className="flex items-center justify-between gap-2">
-          <h4 className="text-ui-sm font-medium text-qn-muted">子会话记录{items.length ? ` · ${items.length} 条` : ''}</h4>
-          <IconButton label="刷新记录" size="sm" disabled={!rpc || reading} onClick={refreshHistory}>
+          <h4 className="text-ui-sm font-medium text-qn-muted">{items.length ? t('子会话记录 · {count} 条', { count: items.length }) : t('子会话记录')}</h4>
+          <IconButton label={t('刷新记录')} size="sm" disabled={!rpc || reading} onClick={refreshHistory}>
             <RefreshIcon loading={reading} />
           </IconButton>
         </div>
-        {reading && <Spinner label="正在读取子代理记录…" />}
+        {reading && <Spinner label={t('正在读取子代理记录…')} />}
         {error && <ErrorNote message={error} />}
         {turnError && <ErrorNote message={turnError} />}
-        {!rpc && <p className="text-ui-sm text-qn-muted">会话连接暂不可用。</p>}
-        {!items.length && !reading && !error && rpc && <p className="text-ui-sm text-qn-muted">暂无子会话记录。</p>}
+        {!rpc && <p className="text-ui-sm text-qn-muted">{t('会话连接暂不可用。')}</p>}
+        {!items.length && !reading && !error && rpc && <p className="text-ui-sm text-qn-muted">{t('暂无子会话记录。')}</p>}
         {(items.length > limit || rpc && view?.historyCursor) && (
           <button type="button" className="qn-button" disabled={reading || loadingEarlier} onClick={() => void showEarlier()}>
-            {loadingEarlier ? '正在加载更早记录…' : '查看更早记录'}
+            {loadingEarlier ? t('正在加载更早记录…') : t('查看更早记录')}
           </button>
         )}
         <div className="space-y-3">{items.slice(-limit).map((item) => renderItem(item, item.id === streamingId))}</div>
@@ -184,7 +185,7 @@ export function SubagentLauncher({ entries, threads, rpc, renderItem }: {
   return (
     <PopoverRoot>
       <PopoverTrigger asChild>
-        <IconButton label="子代理" tooltipSide="bottom"
+        <IconButton label={t('子代理')} tooltipSide="bottom"
           className={entries.length ? 'w-auto gap-1.5 px-2 text-violet-300' : undefined}>
           <Bot size={17} strokeWidth={1.8} aria-hidden />
           {entries.length > 0 && <span className="text-ui-sm tabular-nums" aria-hidden>{entries.length}</span>}
@@ -196,21 +197,23 @@ export function SubagentLauncher({ entries, threads, rpc, renderItem }: {
         <div className="flex shrink-0 items-center gap-2.5 border-b border-qn-border px-3 py-2.5">
           <AgentAvatar />
           <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="text-ui-md font-semibold">子代理</h2>
-            <p className="text-ui-sm text-qn-muted">{entries.length} 个子代理{active > 0 ? ` · ${active} 个活动中` : ''}</p>
+            <h2 id={titleId} className="text-ui-md font-semibold">{t('子代理')}</h2>
+            <p className="text-ui-sm text-qn-muted">{t('{count} 个子代理', { count: entries.length })}
+              {active > 0 ? ` · ${t('{count} 个活动中', { count: active })}` : ''}
+            </p>
           </div>
-          <PopoverClose asChild><IconButton label="关闭" tooltip={false}><X size={16} /></IconButton></PopoverClose>
+          <PopoverClose asChild><IconButton label={t('关闭')} tooltip={false}><X size={16} /></IconButton></PopoverClose>
         </div>
         {entry ? (
           <div className="grid min-h-0 grid-cols-[minmax(160px,32%)_minmax(0,1fr)]">
-            <div className="qn-scroll space-y-1 overflow-y-auto overscroll-contain border-r border-qn-border p-2" aria-label="子代理列表">
+            <div className="qn-scroll space-y-1 overflow-y-auto overscroll-contain border-r border-qn-border p-2" aria-label={t('子代理列表')}>
               {entries.map((item) => (
                 <button type="button" key={item.key} aria-pressed={item === entry} onClick={() => setSelected(item.key)}
                   className="flex w-full items-center gap-2 rounded-lg p-2 text-left hover:bg-qn-hover focus-visible:outline-qn-accent aria-pressed:bg-qn-active">
                   <AgentAvatar size={15} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-ui font-medium" title={item.name}>{item.name}</span>
-                    <span className="mt-0.5 block truncate text-ui-sm text-qn-muted">{item.status || '状态未知'}</span>
+                    <span className="mt-0.5 block truncate text-ui-sm text-qn-muted">{item.status || t('状态未知')}</span>
                   </span>
                   <ChevronRight size={13} className="shrink-0 text-qn-dim" aria-hidden />
                 </button>
@@ -222,7 +225,7 @@ export function SubagentLauncher({ entries, threads, rpc, renderItem }: {
               </SubagentRpcContext.Provider>
             </div>
           </div>
-        ) : <EmptyState>当前会话暂无子代理。</EmptyState>}
+        ) : <EmptyState>{t('当前会话暂无子代理。')}</EmptyState>}
       </PopoverContent>
     </PopoverRoot>
   )
@@ -247,7 +250,7 @@ export function SubagentDetails({ item, renderItem }: {
       </button>
       {selected !== null && (
         <Modal title={item.title} width="max-w-3xl" onClose={() => setSelected(null)}>
-          {entries.length > 1 && <div className="mb-3 flex flex-wrap gap-2" aria-label="子代理列表">
+          {entries.length > 1 && <div className="mb-3 flex flex-wrap gap-2" aria-label={t('子代理列表')}>
             {entries.map((candidate) => <button type="button" key={candidate.key} aria-pressed={candidate === entry}
               className={`qn-button ${candidate === entry ? 'text-qn-accent' : ''}`} onClick={() => setSelected(candidate.key)}>
               {candidate.name}
@@ -255,7 +258,7 @@ export function SubagentDetails({ item, renderItem }: {
           </div>}
           {entry
             ? <AgentRecord key={entry.key} entry={entry} rpc={rpc} renderItem={renderItem} />
-            : <p className="whitespace-pre-wrap break-words text-ui-md text-qn-muted">{item.detail || '暂无子代理详情。'}</p>}
+            : <p className="whitespace-pre-wrap break-words text-ui-md text-qn-muted">{item.detail || t('暂无子代理详情。')}</p>}
         </Modal>
       )}
     </div>

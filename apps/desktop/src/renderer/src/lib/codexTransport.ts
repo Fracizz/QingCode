@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import type { CodexTransport } from '@qn/codex-client'
 import type { AgentKind, BackendEvents } from '../../../shared/backendApi'
 import { call, on } from './backend'
@@ -126,7 +127,7 @@ export class BackendCodexTransport implements CodexTransport {
         id,
         error: {
           code: jsonRpcErrorCode(err),
-          message: friendlyError(err, '发送 Agent 消息失败'),
+          message: friendlyError(err, t('发送 Agent 消息失败')),
         },
       },
       null,
@@ -138,7 +139,7 @@ export class BackendCodexTransport implements CodexTransport {
       try {
         cb(msg, seq)
       } catch (error) {
-        console.error('[codex] 传输回调失败', error)
+        console.error('[codex] 传输回调失败', error) // i18n-ignore: 控制台日志
       }
     }
   }

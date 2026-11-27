@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeThreadSummaries, refreshThreadOrder, threadKey, threadPreviewText, toThreadSummaries, toTimestamp, withLocalThreads } from './threads'
+import { mergeThreadSummaries, nextCopyTitle, refreshThreadOrder, threadKey, threadPreviewText, toThreadSummaries, toTimestamp, withLocalThreads } from './threads'
 
 describe('会话列表归一化', () => {
   it('兼容秒/毫秒时间戳', () => {
@@ -94,5 +94,20 @@ describe('withLocalThreads', () => {
   it('服务端已返回的会话以服务端为准', () => {
     const server = { ...summary('new', '/p', 5), title: '服务端标题' }
     expect(withLocalThreads([server], [summary('new', '/p', 2)], '/p')).toEqual([server])
+  })
+})
+
+describe('nextCopyTitle', () => {
+  it('首个分支编号为 2，之后按同名系列最大编号递增', () => {
+    expect(nextCopyTitle('用量和额度', ['用量和额度'])).toBe('用量和额度 (2)')
+    expect(nextCopyTitle('用量和额度', ['用量和额度', '用量和额度 (2)', '用量和额度 (4)'])).toBe('用量和额度 (5)')
+  })
+
+  it('从分支再分支时去掉原有后缀，不叠加', () => {
+    expect(nextCopyTitle('任务 (2)', ['任务', '任务 (2)'])).toBe('任务 (3)')
+  })
+
+  it('不同标题的编号互不影响', () => {
+    expect(nextCopyTitle('甲', ['甲乙 (7)', '乙 (3)'])).toBe('甲 (2)')
   })
 })

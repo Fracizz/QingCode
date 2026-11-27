@@ -1,11 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Archive, Settings, Smartphone, SquarePen, Upload } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { useCodex } from '../../store/codex'
 import { useTargets } from '../../store/targets'
 import { useUi } from '../../store/ui'
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from '../../lib/layout'
 import { LegacyBanner } from '../LegacyImport'
 import { ResizeHandle } from '../ResizeHandle'
+import { targetDisplayName } from '../targetName'
 import { ErrorNote } from '../ui'
 import { ArchivedThreadsDialog } from './ArchivedThreadsDialog'
 import { ProjectTree } from './ProjectTree'
@@ -75,7 +77,7 @@ export function Sidebar({
           onClick={() => startDraft()}
         >
           <SquarePen size={16} className="text-qn-muted" />
-          <span className="flex-1 text-left">新会话</span>
+          <span className="flex-1 text-left">{t('新会话')}</span>
           <kbd className="hidden rounded-md border border-qn-border-strong px-1 font-sans text-[length:var(--qn-sidebar-list-detail-font-size)] text-qn-dim group-hover:inline">
             Ctrl N
           </kbd>
@@ -86,12 +88,12 @@ export function Sidebar({
           onClick={() => setArchiveOpen(true)}
         >
           <Archive size={16} className="text-qn-muted" aria-hidden="true" />
-          已归档会话
+          {t('已归档会话')}
         </button>
       </div>
 
       <div className="flex items-center justify-between pb-0.5 pl-4 pr-2 pt-3">
-        <span className="text-[length:var(--qn-sidebar-list-font-size)] text-qn-muted">工作区</span>
+        <span className="text-[length:var(--qn-sidebar-list-font-size)] text-qn-muted">{t('工作区')}</span>
         <TargetPicker {...targetActions} />
       </div>
 
@@ -106,7 +108,7 @@ export function Sidebar({
         {shown.map((target) => {
           const isCollapsed = collapsed.includes(target.id)
           return (
-            <section key={target.id} aria-label={target.name}>
+            <section key={target.id} aria-label={targetDisplayName(target)}>
               <TargetSectionHeader
                 target={target}
                 actions={targetActions}
@@ -131,13 +133,13 @@ export function Sidebar({
 
       <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-qn-border px-2 py-1.5">
         <div className="flex max-w-full flex-wrap gap-0.5">
-          <FooterButton label="手机连接" onClick={onMobile}>
+          <FooterButton label={t('手机连接')} onClick={onMobile}>
             <Smartphone size={14} />
           </FooterButton>
-          <FooterButton label="导入旧版" onClick={onImport}>
+          <FooterButton label={t('导入旧版')} onClick={onImport}>
             <Upload size={14} />
           </FooterButton>
-          <FooterButton label="设置" onClick={onSettings}>
+          <FooterButton label={t('设置')} onClick={onSettings}>
             <Settings size={14} />
           </FooterButton>
         </div>
@@ -151,7 +153,7 @@ export function Sidebar({
       <ResizeHandle
         orientation="vertical"
         className="absolute inset-y-0 -right-1"
-        label="调整侧栏宽度"
+        label={t('调整侧栏宽度')}
         value={width}
         min={SIDEBAR_MIN_WIDTH}
         max={SIDEBAR_MAX_WIDTH}

@@ -6,9 +6,11 @@ import {
   applyServerRequest,
   archiveThread,
   CodexRpc,
+  createDeltaBuffer,
   emptyState,
   failActiveThreads,
   interruptTurn,
+  isStreamDelta,
   isOversizeHistoryResponse,
   isThreadOutcome,
   listModels,
@@ -38,6 +40,8 @@ import {
   type Thread,
   type TurnOverrides,
   type UserInput,
+  t,
+  translateMessage,
 } from '@qn/codex-client'
 import { ACCESS_PREFS_STORAGE_KEY, accessPreferenceKey, restoreAccessPrefs, type AccessAddress, type AccessPrefs } from './accessPrefs'
 import { create } from 'zustand'
@@ -153,9 +157,9 @@ const STORAGE_ARCHIVED_THREADS = 'archivedThreads'
 const REFRESH_INTERVAL_MS = 60_000
 // pi 等 Agent 在会话进程启动前返回空模型列表，空列表隔一段时间允许重取。
 const EMPTY_MODELS_RETRY_MS = 15_000
-const DEVICE_NAME = 'QingCode Next 手机'
+const DEVICE_NAME = t('QingCode Next 手机')
 const FINGERPRINT_MISMATCH_HINT =
-  '地址指向了另一台电脑或证书已重新生成，请从电脑重新复制连接信息'
+  t('地址指向了另一台电脑或证书已重新生成，请从电脑重新复制连接信息')
 
 export type Page = 'connections' | 'form' | 'workspace' | 'targets' | 'projects' | 'threads' | 'chat'
 
@@ -458,16 +462,16 @@ export function selectedCompactionStarting(state: AppState): boolean {
 
 export function selectedCompactionBlockedReason(state: AppState): string | null {
   const address = selectedSendAddress(state)
-  if (!address || address.agent !== 'codex') return '仅已创建的 Codex 会话支持压缩'
-  if (!state.eventsConnected) return '连接电脑后可压缩会话'
+  if (!address || address.agent !== 'codex') return t('仅已创建的 Codex 会话支持压缩')
+  if (!state.eventsConnected) return t('连接电脑后可压缩会话')
   const session = state.sessions[sessionKey(address.targetId, address.agent)]
   const thread = session?.state.threads[address.threadId]
-  if (!session?.opened || !thread) return '请先打开会话'
-  if (selectedCompactionStarting(state)) return '正在启动压缩…'
-  if (thread.status === 'running' || thread.pendingApprovals.length > 0 || state.sending) return '请先等待当前一轮结束'
-  if (selectedQueuedSends(state)?.length) return '请先处理排队的消息'
+  if (!session?.opened || !thread) return t('请先打开会话')
+  if (selectedCompactionStarting(state)) return t('正在启动压缩…')
+  if (thread.status === 'running' || thread.pendingApprovals.length > 0 || state.sending) return t('请先等待当前一轮结束')
+  if (selectedQueuedSends(state)?.length) return t('请先处理排队的消息')
   const quota = state.rateLimits[address.targetId]?.snapshot
-  if (quota?.rateLimitReachedType || quota?.spendControlReached) return '当前额度已用完'
+  if (quota?.rateLimitReachedType || quota?.spendControlReached) return t('当前额度已用完')
   return null
 }
 
@@ -504,7 +508,7 @@ const openFailureMessage = (agent: AgentKind, err: unknown): string =>
   agentOpenErrorText(
     agentLabel(agent),
     err,
-    agent === 'codex' ? 'Codex 未就绪，请确认目标已连接' : `${agentLabel(agent)} 打开失败，请确认目标机已安装并登录`,
+    agent === 'codex' ? t('Codex 未就绪，请确认目标已连接') : t('{agent} 打开失败，请确认目标机已安装并登录', { agent: agentLabel(agent) }),
   )
 
 const isTargetDisconnected = (err: unknown): boolean =>
@@ -519,7 +523,12 @@ const rateRefresh = new Map<string, Promise<void>>()
 const OPEN_THREAD_TIMEOUT_MS = 30_000
 /** 打开会话时等待事件流恢复的上限（整体仍受 OPEN_THREAD_TIMEOUT_MS 约束）。 */
 const EVENTS_WAIT_MS = 15_000
-const EVENTS_UNAVAILABLE_MESSAGE = '暂时无法连接电脑，正在自动重试。'
+const EVENTS_UNAVAILABLE_MESSAGE = t('暂时无法连接电脑，正在自动重试。')
+
+/** 页面重载前关闭原生层事件流，否则旧连接会一直留到应用退出。 */
+export function releaseEventStream(): void {
+  controller?.stop()
+}
 
 export const useApp = create<AppState>((set, get) => {
   let desktopEpoch = 0
@@ -572,7 +581,7 @@ export const useApp = create<AppState>((set, get) => {
     void queueStorageWrite(ACCESS_PREFS_STORAGE_KEY, () => gateway.storageSet(ACCESS_PREFS_STORAGE_KEY, json))
       .catch(() => {
         if (get().threadAccessModes === threadAccessModes) {
-          set({ notice: '无法保存权限设置，本次修改在手机重启后可能丢失。' })
+          set({ notice: t('无法保存权限设置，本次修改在手机重启后可能丢失。') })
         }
       })
   }
@@ -717,9 +726,9 @@ export const useApp = create<AppState>((set, get) => {
 
   const conversationSession = async (targetId: string, agent: AgentKind, epoch: number) => {
     const ready = await get().ensureOpen(targetId, agent)
-    if (epoch !== desktopEpoch) throw new Error('电脑连接已切换')
+    if (epoch !== desktopEpoch) throw new Error(t('电脑连接已切换'))
     const session = get().sessions[sessionKey(targetId, agent)]
-    if (!ready || !session) throw new Error(session?.openError ?? '会话连接未就绪')
+    if (!ready || !session) throw new Error(session?.openError ?? t('会话连接未就绪'))
     return session
   }
 
@@ -776,6 +785,7 @@ export const useApp = create<AppState>((set, get) => {
     })
     if (get().activeId === id) {
       eventStreamEpoch += 1
+      // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
       pauseQueues([id], '电脑需要重新配对，队列已暂停')
       controller?.stop()
     }
@@ -786,7 +796,7 @@ export const useApp = create<AppState>((set, get) => {
     const active = activeConnection(get())
     if (active?.host !== conn.host || active.port !== conn.port || active.token !== conn.token) return
     const reason = connectionRepairReason(err)
-    if (reason) markRepair(conn.id, reason, friendlyError(err, '请重新配对电脑'))
+    if (reason) markRepair(conn.id, reason, friendlyError(err, t('请重新配对电脑')))
   }
 
   const connectSavedTarget = (conn: Connection, targetId: string): Promise<unknown> =>
@@ -831,11 +841,20 @@ export const useApp = create<AppState>((set, get) => {
       await getGateway().storageSet(STORAGE_CONNECTIONS, serializeConnections(connections))
       await getGateway().storageSet(STORAGE_ACTIVE, activeId)
     } catch (err) {
-      set({ error: friendlyError(err, '保存连接失败') })
+      set({ error: friendlyError(err, t('保存连接失败')) })
     }
   }
 
+  // 每个会话对象各自缓冲流式增量（见 createDeltaBuffer），按 key 记录当前会话的缓冲；
+  // 任何会话写入前先冲刷，保证写入顺序与到达顺序一致。
+  const deltaBuffers = new Map<string, ReturnType<typeof createDeltaBuffer>>()
+
   const patchSession = (key: string, update: (session: AgentSession) => AgentSession, source?: AgentSession): void => {
+    deltaBuffers.get(key)?.flush(key)
+    writeSession(key, update, source)
+  }
+
+  const writeSession = (key: string, update: (session: AgentSession) => AgentSession, source?: AgentSession): void => {
     set((state) => {
       const session = state.sessions[key]
       if (!session || (source && session.transport !== source.transport)) return state
@@ -860,7 +879,7 @@ export const useApp = create<AppState>((set, get) => {
     const json = serializeQueues(snapshot, get().connections)
     const gateway = getGateway()
     const task = queueStorageWrite(QUEUE_STORAGE_KEY, () => gateway.storageSet(QUEUE_STORAGE_KEY, json))
-    void task.catch(() => set({ notice: '无法写入本地发送队列，请检查手机存储' }))
+    void task.catch(() => set({ notice: t('无法写入本地发送队列，请检查手机存储') }))
     return task
   }
 
@@ -869,6 +888,7 @@ export const useApp = create<AppState>((set, get) => {
       const first = list[0]
       const remaining = list.filter((item) => item.id !== id)
       if (first?.id === id && first.error && remaining[0]) {
+        // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         remaining[0] = { ...remaining[0], error: remaining[0].error ?? '队列已暂停' }
       }
       return remaining
@@ -937,9 +957,11 @@ export const useApp = create<AppState>((set, get) => {
     const { accessMode, inheritAccess } = access
     const opened = get().sessions[session.key]
     if (accessMode !== 'default' && !opened?.accessSupported) {
+      // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
       throw new Error('电脑或目标服务暂不支持当前访问模式，请升级后重试')
     }
     if (!mobileTurnFits(targetId, agent, threadId, input, overrides, undefined, access)) {
+      // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
       throw new Error('消息和附件合计超过 1 MiB，请移除部分内容后再发送')
     }
     const params = { threadId, input, model: overrides.model || undefined, effort: overrides.effort || undefined,
@@ -965,6 +987,7 @@ export const useApp = create<AppState>((set, get) => {
       params: { threadId, turn },
     } as ServerNotification
     patchSession(session.key, (value) => ({ ...value, state: applyNotification(value.state, synthetic) }), session)
+    // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
     if (turn.status === 'failed' || turn.status === 'interrupted') pauseQueue(sendKey(address), '上一轮未完成，队列已暂停')
   }
 
@@ -980,6 +1003,7 @@ export const useApp = create<AppState>((set, get) => {
       || isArchived(desktopId, targetId, { agent, id: threadId })) return
     if (!session?.opened || session.linkInterrupted || !state.eventsConnected || reconnectTask || !view || !canSendInBackground()) return
     if (queueLimited(address)) {
+      // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
       pauseQueue(key, '当前额度已用完，队列已暂停')
       return
     }
@@ -998,10 +1022,12 @@ export const useApp = create<AppState>((set, get) => {
       if (!get().eventsConnected || reconnectTask || !canSendInBackground()) return false
       const current = get().sessions[session.key]
       if (!current?.opened || current.linkInterrupted || current.transport !== session.transport) return false
+      // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
       if (queueLimited(address)) throw new Error('当前额度已用完，队列已暂停')
       const thread = current.state.threads[threadId]
       if (thread?.status === 'running') return false
       if (!retry && (thread?.status !== 'idle' || thread.activity === 'interrupted')) {
+        // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         throw new Error('上一轮未完成，队列已暂停')
       }
       return true
@@ -1032,6 +1058,7 @@ export const useApp = create<AppState>((set, get) => {
       if (epoch === desktopEpoch) {
         const streamChanged = streamEpoch !== eventStreamEpoch
         const code = isRecord(err) ? errorCode(err.data) : ''
+        // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         const message = friendlyError(err, '排队消息未发送')
         const replyLost = code === 'network' || code === 'timeout' || message.startsWith('Codex request timed out:')
         // turn/start 的回包不参加事件回放，发出后丢失回包可能已经在电脑执行。
@@ -1081,7 +1108,7 @@ export const useApp = create<AppState>((set, get) => {
     })
     try {
       await interruptTurn(session.rpc, threadId, turnId)
-      if (!(await finished)) throw new Error('未确认当前一轮已停止，请检查会话后重试')
+      if (!(await finished)) throw new Error(t('未确认当前一轮已停止，请检查会话后重试'))
     } finally {
       clearTimeout(timer)
       unsubscribe()
@@ -1104,6 +1131,7 @@ export const useApp = create<AppState>((set, get) => {
 
   const resetSessions = (): void => {
     const activeId = get().activeId
+    // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
     if (activeId) pauseQueues([activeId], '电脑连接已切换，队列已暂停', true)
     for (const session of Object.values(get().sessions)) {
       session.rpc.dispose()
@@ -1122,7 +1150,7 @@ export const useApp = create<AppState>((set, get) => {
 
   const serverReq = async <T>(targetId: string, method: string, params: unknown): Promise<T> => {
     const conn = activeConnection(get())
-    if (!conn) throw new Error('尚未选择电脑')
+    if (!conn) throw new Error(t('尚未选择电脑'))
     const epoch = desktopEpoch
     try {
       return await getGateway().rpc<T>(conn, 'server.req', { targetId, method, params })
@@ -1145,6 +1173,7 @@ export const useApp = create<AppState>((set, get) => {
       const activeId = get().activeId
       const snapshot = get().rateLimits[targetId]?.snapshot
       if (activeId && (snapshot?.rateLimitReachedType || snapshot?.spendControlReached)) {
+        // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         pauseQueues([activeId, targetId, 'codex'], '当前额度已用完，队列已暂停')
       }
     } else if (record.method === 'turn/completed') {
@@ -1162,7 +1191,7 @@ export const useApp = create<AppState>((set, get) => {
     const transport = new MobileCodexTransport(
       targetId,
       async (msg) => {
-        if (epoch !== desktopEpoch) throw new Error('电脑连接已切换')
+        if (epoch !== desktopEpoch) throw new Error(t('电脑连接已切换'))
         // agent 直接放进 params：网关与 backend 都按 params.agent 路由，旧桌面会忽略它。
         const current = activeConnection(get()) ?? conn
         try {
@@ -1199,10 +1228,22 @@ export const useApp = create<AppState>((set, get) => {
       openError: null,
       lastSeq: null,
     }
+    // 换了新会话对象（重连等）时丢弃旧会话还没写入的增量。
+    deltaBuffers.get(key)?.drop(key)
+    const deltas = createDeltaBuffer((_, list) => {
+      if (epoch !== desktopEpoch) return
+      writeSession(key, (current) => ({ ...current, state: list.reduce(applyNotification, current.state) }), session)
+    })
+    deltaBuffers.set(key, deltas)
     set((state) => ({ sessions: { ...state.sessions, [key]: session } }))
 
     rpc.onNotification((notification: ServerNotification) => {
       if (epoch !== desktopEpoch) return
+      // 流式增量没有副作用，先缓冲、定时合并写入，避免手机 WebView 每个增量都整页重渲染。
+      if (isStreamDelta(notification)) {
+        deltas.push(key, notification)
+        return
+      }
       const rawParams: unknown = notification.params
       const params = isRecord(rawParams) ? rawParams : null
       const method = (notification as unknown as JsonRecord).method
@@ -1258,24 +1299,27 @@ export const useApp = create<AppState>((set, get) => {
           const address = { desktopId: conn.id, targetId, agent, threadId: params.threadId }
           if (turn?.status === 'completed') void flushQueue(address)
           else if (turn?.status !== 'interrupted' || !replacing.has(sendKey(address))) {
+            // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
             pauseQueue(sendKey(address), '上一轮未完成，队列已暂停')
           }
         }
       } else if (method === 'error' && !reconnectTask && !get().sessions[key]?.linkInterrupted
         && typeof params?.threadId === 'string' && params.willRetry !== true
         && get().sessions[key]?.state.threads[params.threadId]?.status !== 'running') {
+        // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         pauseQueue(sendKey({ desktopId: conn.id, targetId, agent, threadId: params.threadId }), '上一轮未完成，队列已暂停')
       }
       if (visibleResolution) {
         set((state) => {
           const approvalSubmitting = { ...state.approvalSubmitting }
           delete approvalSubmitting[String(resolved)]
-          return { approvalSubmitting, notice: '审批已处理' }
+          return { approvalSubmitting, notice: t('审批已处理') }
         })
       }
       if (agent === 'claude' && method === 'account/rateLimits/updated') {
         const snapshot = applyRateLimitsUpdate(get().claudeRateLimits[targetId] ?? null, notification)
         if (snapshot) set((state) => ({ claudeRateLimits: { ...state.claudeRateLimits, [targetId]: snapshot } }))
+        // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         if (snapshot?.rateLimitReachedType) pauseQueues([conn.id, targetId, agent], '当前额度已用完，队列已暂停')
       } else if (agent === 'claude' && method === 'thread/tokenUsage/updated') {
         const threadId = params?.threadId
@@ -1311,7 +1355,7 @@ export const useApp = create<AppState>((set, get) => {
     if (!(await get().ensureOpen(targetId, agent))) {
       if (epoch !== desktopEpoch || navigation !== navigationEpoch) return null
       const key = sessionKey(targetId, agent)
-      set({ error: get().sessions[key]?.openError ?? `${agentLabel(agent)} 未就绪` })
+      set({ error: get().sessions[key]?.openError ?? t('{agent} 未就绪', { agent: agentLabel(agent) }) })
       return null
     }
     if (epoch !== desktopEpoch || navigation !== navigationEpoch) return null
@@ -1331,7 +1375,7 @@ export const useApp = create<AppState>((set, get) => {
     } catch (err) {
       if (isCurrent() && showsConversation(session) && get().selectedThreadId === threadId
         && get().sessions[session.key]?.transport === session.transport) {
-        set({ notice: friendlyError(err, '暂时无法补齐会话历史，可再次打开会话') })
+        set({ notice: friendlyError(err, t('暂时无法补齐会话历史，可再次打开会话')) })
       }
       return false
     }
@@ -1568,7 +1612,7 @@ export const useApp = create<AppState>((set, get) => {
           if (activeId) await get().activate(activeId)
           else void get().refreshStatuses()
         } catch (err) {
-          set({ booting: false, error: friendlyError(err, '读取本地连接失败') })
+          set({ booting: false, error: friendlyError(err, t('读取本地连接失败')) })
         }
       })()
       setInterval(() => {
@@ -1675,11 +1719,11 @@ export const useApp = create<AppState>((set, get) => {
       if (!form || form.saving) return
       const info = parsePairingLink(form.paste)
       if (!info) {
-        set({ form: { ...form, testing: false, error: '未找到有效的连接信息，请粘贴包含 qingcode-next://pair? 的文本' } })
+        set({ form: { ...form, testing: false, error: t('未找到有效的连接信息，请粘贴包含 qingcode-next://pair? 的文本') } })
         return
       }
       if (form.mode === 'edit' && info.fp !== normalizeFingerprint(form.draft.fp)) {
-        set({ form: { ...form, testing: false, error: '这份连接信息的证书指纹不同，请作为新连接导入' } })
+        set({ form: { ...form, testing: false, error: t('这份连接信息的证书指纹不同，请作为新连接导入') } })
         return
       }
       const { name, host, port, fp, code } = draftFromInfo(info)
@@ -1708,7 +1752,7 @@ export const useApp = create<AppState>((set, get) => {
         get().parsePaste()
       } catch (err) {
         if (get().form === form) {
-          set({ form: { ...form, testing: false, error: friendlyError(err, '读取剪贴板失败') } })
+          set({ form: { ...form, testing: false, error: friendlyError(err, t('读取剪贴板失败')) } })
         }
       }
     },
@@ -1726,7 +1770,7 @@ export const useApp = create<AppState>((set, get) => {
       const endpoint = draftEndpoint(form.draft)
       const fp = normalizeFingerprint(form.draft.fp)
       if (!endpoint || !fp) {
-        set({ form: { ...form, error: '请先填写有效的主机、端口与 64 位证书指纹' } })
+        set({ form: { ...form, error: t('请先填写有效的主机、端口与 64 位证书指纹') } })
         return
       }
       const pending = { ...form, testing: true, error: null, fpMismatch: null, probe: null }
@@ -1736,7 +1780,7 @@ export const useApp = create<AppState>((set, get) => {
         const actual = normalizeFingerprint(result.fingerprint)
         if (get().form !== pending) return
         if (actual === null) {
-          set({ form: { ...pending, testing: false, error: '电脑未返回有效的证书指纹' } })
+          set({ form: { ...pending, testing: false, error: t('电脑未返回有效的证书指纹') } })
         } else if (actual !== fp) {
           set({ form: { ...pending, testing: false, fpMismatch: FINGERPRINT_MISMATCH_HINT } })
         } else {
@@ -1744,7 +1788,7 @@ export const useApp = create<AppState>((set, get) => {
         }
       } catch (err) {
         if (get().form === pending) {
-          set({ form: { ...pending, testing: false, error: friendlyError(err, '测试连接失败，请检查地址与电脑是否在线') } })
+          set({ form: { ...pending, testing: false, error: friendlyError(err, t('测试连接失败，请检查地址与电脑是否在线')) } })
         }
       }
     },
@@ -1755,12 +1799,12 @@ export const useApp = create<AppState>((set, get) => {
       const endpoint = draftEndpoint(form.draft)
       const fp = normalizeFingerprint(form.draft.fp)
       if (!endpoint || !fp) {
-        set({ form: { ...form, error: '连接信息不完整，请重新粘贴或填写' } })
+        set({ form: { ...form, error: t('连接信息不完整，请重新粘贴或填写') } })
         return
       }
       const draft: ConnectionDraft = { ...form.draft, ...endpoint, fp }
       if (!isValidPairingCode(draft.code)) {
-        set({ form: { ...form, error: '配对密码需为 6–20 位且不含空白字符' } })
+        set({ form: { ...form, error: t('配对密码需为 6–20 位且不含空白字符') } })
         return
       }
       if (form.fpMismatch) {
@@ -1772,14 +1816,14 @@ export const useApp = create<AppState>((set, get) => {
       try {
         const result = await getGateway().pair(
           draft,
-          get().mock ? '浏览器调试' : DEVICE_NAME,
+          get().mock ? t('浏览器调试') : DEVICE_NAME,
         )
         if (get().form !== pending) return
         const previous = form.mode === 'repair' ? get().connections.find((item) => item.id === form.editId) : null
-        if (form.mode === 'repair' && !previous) throw new Error('此电脑连接已移除')
+        if (form.mode === 'repair' && !previous) throw new Error(t('此电脑连接已移除'))
         const conn: Connection = {
           id: previous?.id ?? makeId(),
-          name: draft.name.trim() || '未命名电脑',
+          name: draft.name.trim() || '未命名电脑', // i18n-ignore: 默认名按原文保存，展示时翻译
           host: draft.host,
           port: draft.port,
           fp,
@@ -1811,7 +1855,7 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         const current = get().form
         if (current === pending) {
-          set({ form: { ...current, saving: false, error: friendlyError(err, '配对失败') } })
+          set({ form: { ...current, saving: false, error: friendlyError(err, t('配对失败')) } })
         }
       }
     },
@@ -1821,7 +1865,7 @@ export const useApp = create<AppState>((set, get) => {
       if (!form || form.mode !== 'edit' || !form.editId || form.saving || form.testing) return
       const endpoint = draftEndpoint(form.draft)
       if (!endpoint) {
-        set({ form: { ...form, error: '主机或端口格式不正确' } })
+        set({ form: { ...form, error: t('主机或端口格式不正确') } })
         return
       }
       if (form.fpMismatch) return
@@ -1833,7 +1877,7 @@ export const useApp = create<AppState>((set, get) => {
       try {
         await getGateway().storageSet(STORAGE_CONNECTIONS, serializeConnections(connections))
       } catch (err) {
-        set({ form: { ...form, error: friendlyError(err, '保存修改失败') } })
+        set({ form: { ...form, error: friendlyError(err, t('保存修改失败')) } })
         return
       }
       const changedEndpoint = updated.host !== previous.host || updated.port !== previous.port
@@ -1845,6 +1889,7 @@ export const useApp = create<AppState>((set, get) => {
         eventStreamEpoch += 1
         set({ eventsConnected: false, eventsError: null, targets: [], error: null })
         controller?.stop()
+        // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         pauseQueues([previous.id], '电脑连接已切换，队列已暂停')
         controller?.start(true)
         await get().loadTargets()
@@ -1992,7 +2037,7 @@ export const useApp = create<AppState>((set, get) => {
         if (epoch !== desktopEpoch) return
         markRepairError(conn, epoch, err)
         if (streamEpoch === eventStreamEpoch && get().eventsConnected) {
-          set({ error: friendlyError(err, '读取目标列表失败') })
+          set({ error: friendlyError(err, t('读取目标列表失败')) })
         }
       }
     },
@@ -2056,7 +2101,7 @@ export const useApp = create<AppState>((set, get) => {
     connect: async (id, credentials) => {
       const conn = activeConnection(get())
       if (!conn) {
-        set({ error: '尚未选择电脑' })
+        set({ error: t('尚未选择电脑') })
         return
       }
       const epoch = desktopEpoch
@@ -2076,7 +2121,7 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         if (epoch !== desktopEpoch) return
         markRepairError(conn, epoch, err)
-        const message = hostKeyMessage(err, '连接失败')
+        const message = hostKeyMessage(err, t('连接失败'))
         set((state) => ({
           targetErrors: { ...state.targetErrors, [id]: message },
           targetStates: applyTargetState(state.targetStates, { id, state: 'error', detail: message }),
@@ -2095,11 +2140,12 @@ export const useApp = create<AppState>((set, get) => {
         await getGateway().rpc(conn, 'target.disconnect', { id })
         if (epoch !== desktopEpoch) return
         set((state) => ({ targetStates: applyTargetState(state.targetStates, { id, state: 'idle' }) }))
+        // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         pauseQueues([conn.id, id], '目标连接中断，队列已暂停')
       } catch (err) {
         if (epoch !== desktopEpoch) return
         markRepairError(conn, epoch, err)
-        set({ notice: friendlyError(err, '断开失败') })
+        set({ notice: friendlyError(err, t('断开失败')) })
       }
     },
 
@@ -2133,7 +2179,7 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         if (!isCurrent()) return
         markRepairError(conn, epoch, err)
-        set({ projectsLoading: false, error: friendlyError(err, '读取项目列表失败') })
+        set({ projectsLoading: false, error: friendlyError(err, t('读取项目列表失败')) })
       }
     },
 
@@ -2185,7 +2231,7 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         if (epoch !== desktopEpoch || get().directory !== directory) return
         markRepairError(conn, epoch, err)
-        set({ directory: { ...directory, loading: false, error: friendlyError(err, '读取主目录失败') } })
+        set({ directory: { ...directory, loading: false, error: friendlyError(err, t('读取主目录失败')) } })
       }
     },
 
@@ -2224,7 +2270,7 @@ export const useApp = create<AppState>((set, get) => {
             entries: [],
             parent: parentPath(path),
             loading: false,
-            error: friendlyError(err, '读取目录失败'),
+            error: friendlyError(err, t('读取目录失败')),
             saving: false,
           },
         })
@@ -2267,7 +2313,7 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         if (epoch !== desktopEpoch || get().directory !== pending) return
         markRepairError(conn, epoch, err)
-        set({ directory: { ...pending, saving: false, error: friendlyError(err, '添加项目失败') } })
+        set({ directory: { ...pending, saving: false, error: friendlyError(err, t('添加项目失败')) } })
       }
     },
 
@@ -2282,7 +2328,7 @@ export const useApp = create<AppState>((set, get) => {
       if (busy) return busy
       const conn = activeConnection(get())
       if (!conn) {
-        set({ error: '尚未选择电脑' })
+        set({ error: t('尚未选择电脑') })
         return false
       }
       const session = sessionFor(targetId, agent)
@@ -2417,7 +2463,9 @@ export const useApp = create<AppState>((set, get) => {
             if (!address) return
             const key = sendKey(address)
             const view = get().sessions[session.key]?.state.threads[threadId]
+            // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
             if (!loaded) pauseQueue(key, '未能确认会话状态，队列已暂停')
+            // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
             else if (view?.status === 'error' || view?.activity === 'interrupted') pauseQueue(key, '上一轮未完成，队列已暂停')
           }))
           if (isCurrent()) patchSession(session.key, (value) => ({ ...value, linkInterrupted: false }), session)
@@ -2428,7 +2476,8 @@ export const useApp = create<AppState>((set, get) => {
             patchSession(session.key, (value) => ({ ...value, linkInterrupted: true }), session)
             return
           }
-          patchSession(session.key, (value) => ({ ...value, opened: false, openError: '会话连接已断开，操作时会尝试重新连接' }), session)
+          patchSession(session.key, (value) => ({ ...value, opened: false, openError: t('会话连接已断开，操作时会尝试重新连接') }), session)
+          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
           for (const address of queued()) pauseQueue(sendKey(address), '会话连接未能恢复，队列已暂停')
         }
       }))
@@ -2451,15 +2500,15 @@ export const useApp = create<AppState>((set, get) => {
       const results = await Promise.all(
         agents.map(async (agent): Promise<{ agent: AgentKind; threads: ThreadSummary[]; error: string | null }> => {
           if (!(await get().ensureOpen(targetId, agent))) {
-            const message = get().sessions[sessionKey(targetId, agent)]?.openError ?? `${agentLabel(agent)} 未就绪`
+            const message = get().sessions[sessionKey(targetId, agent)]?.openError ?? t('{agent} 未就绪', { agent: agentLabel(agent) })
             return { agent, threads: [], error: message }
           }
           const session = get().sessions[sessionKey(targetId, agent)]
-          if (!session) return { agent, threads: [], error: `${agentLabel(agent)} 未就绪` }
+          if (!session) return { agent, threads: [], error: t('{agent} 未就绪', { agent: agentLabel(agent) }) }
           try {
             return { agent, threads: await listVisibleThreads(activeId, session, cwd), error: null }
           } catch (err) {
-            return { agent, threads: [], error: friendlyError(err, '加载会话列表失败') }
+            return { agent, threads: [], error: friendlyError(err, t('加载会话列表失败')) }
           }
         }),
       )
@@ -2477,7 +2526,9 @@ export const useApp = create<AppState>((set, get) => {
         threadsLoading: false,
         agentErrors,
         threadsError: allFailed
-          ? results.map((result) => `${agentLabel(result.agent)}：${result.error}`).join('\n')
+          ? results.map((result) => t('{name}：{message}', {
+              name: agentLabel(result.agent), message: translateMessage(result.error ?? ''),
+            })).join('\n')
           : null,
       })
     },
@@ -2528,7 +2579,7 @@ export const useApp = create<AppState>((set, get) => {
       const picked = agent ?? defaultAgentFor(source, targetId)
       set({ error: null })
       if (!targetAgents(get(), targetId).includes(picked)) {
-        set({ error: `${agentLabel(picked)} 已在电脑设置中关闭` })
+        set({ error: t('{agent} 已在电脑设置中关闭', { agent: agentLabel(picked) }) })
         return false
       }
       const session = await withSession(targetId, picked, navigation)
@@ -2554,7 +2605,7 @@ export const useApp = create<AppState>((set, get) => {
         if (workspace) void recordProjectVisit(conn, workspace.project)
         return true
       } catch (err) {
-        if (isCurrent()) set({ error: friendlyError(err, '新建会话失败') })
+        if (isCurrent()) set({ error: friendlyError(err, t('新建会话失败')) })
         return false
       }
     },
@@ -2603,7 +2654,7 @@ export const useApp = create<AppState>((set, get) => {
         if (!isCurrent() || archived()) return false
         const session = get().sessions[key]
         if (!ready || !session) {
-          throw new NativeRequestError(session?.openError ?? `${agentLabel(picked)} 未就绪`, session?.openErrorCode)
+          throw new NativeRequestError(session?.openError ?? t('{agent} 未就绪', { agent: agentLabel(picked) }), session?.openErrorCode)
         }
         if (!(await waitForEvents(conn.id, shouldLoad))) return false
         const before = get().sessions[key]?.state.threads[id]
@@ -2629,7 +2680,7 @@ export const useApp = create<AppState>((set, get) => {
           }
         }
         if (!isCurrent() || archived()) return false
-        if (result?.thread?.id !== id) throw new Error('电脑返回的会话与所选会话不一致，请重试')
+        if (result?.thread?.id !== id) throw new Error(t('电脑返回的会话与所选会话不一致，请重试'))
         if (get().eventsConnected && !reconnectTask && get().sessions[key]?.opened) session.loadedThreads.add(id)
         if (picked === 'codex') {
           if (result.resumed) session.resumedCodexThreads.add(id)
@@ -2662,13 +2713,13 @@ export const useApp = create<AppState>((set, get) => {
       try {
         // 目标连接、恢复会话和历史兜底共用一次等待，迟到的回包不能再切换页面。
         const deadline = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('打开会话超时，请检查电脑连接后重试')), OPEN_THREAD_TIMEOUT_MS)
+          timer = setTimeout(() => reject(new Error(t('打开会话超时，请检查电脑连接后重试'))), OPEN_THREAD_TIMEOUT_MS)
         })
         return await Promise.race([openHistory(), deadline])
       } catch (err) {
         if (isCurrent()) {
           markRepairError(conn, desktopEpoch, err)
-          set({ error: hostKeyMessage(err, '打开会话失败') })
+          set({ error: hostKeyMessage(err, t('打开会话失败')) })
         }
         return false
       } finally {
@@ -2703,7 +2754,7 @@ export const useApp = create<AppState>((set, get) => {
 
     archiveConversation: async (targetId, thread) => {
       const conn = activeConnection(get())
-      if (!conn) throw new Error('尚未选择电脑')
+      if (!conn) throw new Error(t('尚未选择电脑'))
       const key = archivedThreadKey(conn.id, targetId, thread)
       if (get().archivedThreads[key] || archiveFlights.has(key)) return
       const epoch = desktopEpoch
@@ -2712,7 +2763,7 @@ export const useApp = create<AppState>((set, get) => {
       try {
         if (thread.agent !== 'codex') {
           await queueStorageWrite(STORAGE_ARCHIVED_THREADS, async () => {
-            if (!stillPaired()) throw new Error('电脑连接已移除或重新配对')
+            if (!stillPaired()) throw new Error(t('电脑连接已移除或重新配对'))
             await writeArchives({ ...get().archivedThreads, [key]: true })
             if (stillPaired()) {
               set({ archivedThreads: { ...get().archivedThreads, [key]: true } })
@@ -2735,7 +2786,7 @@ export const useApp = create<AppState>((set, get) => {
 
     listArchivedConversations: async ({ targetId, path }) => {
       const conn = activeConnection(get())
-      if (!conn) throw new Error('尚未选择电脑')
+      if (!conn) throw new Error(t('尚未选择电脑'))
       const epoch = desktopEpoch
       const agents = AGENTS.filter((agent) => agent === 'codex' && targetAgents(get(), targetId).includes(agent)
         || agent !== 'codex' && Object.keys(get().archivedThreads).some((key) => key.startsWith(`${JSON.stringify([conn.id, targetId, agent]).slice(0, -1)},`)))
@@ -2746,18 +2797,19 @@ export const useApp = create<AppState>((set, get) => {
           const threads = toThreadSummaries(result, agent).filter((thread) => agent === 'codex' || isArchived(conn.id, targetId, thread))
           return { threads, error: null }
         } catch (err) {
-          return { threads: [], error: `${agentLabel(agent)}：${friendlyError(err, '读取归档失败')}` }
+          const message = translateMessage(friendlyError(err, t('读取归档失败')))
+          return { threads: [], error: t('{name}：{message}', { name: agentLabel(agent), message }) }
         }
       }))
-      if (epoch !== desktopEpoch) throw new Error('电脑连接已切换')
+      if (epoch !== desktopEpoch) throw new Error(t('电脑连接已切换'))
       return { threads: mergeThreadSummaries(results.map(({ threads }) => threads)), error: results.map(({ error }) => error).filter(Boolean).join('\n') || null }
     },
 
     restoreConversation: async (targetId, thread) => {
       const conn = activeConnection(get())
-      if (!conn) throw new Error('尚未选择电脑')
+      if (!conn) throw new Error(t('尚未选择电脑'))
       const key = archivedThreadKey(conn.id, targetId, thread)
-      if (archiveFlights.has(key)) throw new Error('该会话正在处理归档，请稍后重试')
+      if (archiveFlights.has(key)) throw new Error(t('该会话正在处理归档，请稍后重试'))
       const epoch = desktopEpoch
       const stillPaired = () => get().connections.some((item) => item.id === conn.id && item.fp === conn.fp)
       archiveFlights.add(key)
@@ -2787,7 +2839,7 @@ export const useApp = create<AppState>((set, get) => {
     renameConversation: async (targetId, threadId, name) => {
       const epoch = desktopEpoch
       const title = name.trim()
-      if (!title) throw new Error('请输入会话名称')
+      if (!title) throw new Error(t('请输入会话名称'))
       const session = await conversationSession(targetId, 'codex', epoch)
       await setThreadName(session.rpc, threadId, title)
       if (epoch === desktopEpoch && get().selectedTargetId === targetId) {
@@ -2823,7 +2875,7 @@ export const useApp = create<AppState>((set, get) => {
       if (!address || selectedCompactionBlockedReason(initial)) return false
       const key = sendKey(address)
       if (submitting.has(key) || reconnectTask) {
-        set({ error: '会话正在处理消息或恢复连接，请稍后再压缩' })
+        set({ error: t('会话正在处理消息或恢复连接，请稍后再压缩') })
         return false
       }
       const { targetId, agent, threadId } = address
@@ -2845,12 +2897,12 @@ export const useApp = create<AppState>((set, get) => {
         const state = get()
         const current = state.sessions[session.key]
         if (!state.eventsConnected || !current?.opened || current.transport !== session.transport || reconnectTask) {
-          throw new Error('会话连接已中断，请重新打开后再压缩')
+          throw new Error(t('会话连接已中断，请重新打开后再压缩'))
         }
         const thread = current.state.threads[threadId]
-        if (!thread || isArchived(address.desktopId, targetId, { agent, id: threadId })) throw new Error('请重新打开会话')
-        if (thread.status === 'running' || thread.pendingApprovals.length > 0) throw new Error('请先等待当前一轮结束')
-        if (queueLimited(address)) throw new Error('当前额度已用完')
+        if (!thread || isArchived(address.desktopId, targetId, { agent, id: threadId })) throw new Error(t('请重新打开会话'))
+        if (thread.status === 'running' || thread.pendingApprovals.length > 0) throw new Error(t('请先等待当前一轮结束'))
+        if (queueLimited(address)) throw new Error(t('当前额度已用完'))
 
         // 请求只确认已提交。先监听同一会话的事件，以免快速回包留下重复触发的空档。
         const started = new Promise<boolean>((resolve) => {
@@ -2862,10 +2914,12 @@ export const useApp = create<AppState>((set, get) => {
           timer = setTimeout(() => resolve(false), 30_000)
         })
         await session.rpc.request('thread/compact/start', { threadId })
-        if (!(await started)) throw new Error('尚未收到压缩进度，请检查当前会话')
+        if (!(await started)) throw new Error(t('尚未收到压缩进度，请检查当前会话'))
         return true
       } catch (err) {
-        if (isCurrent()) set({ error: `压缩会话失败。${friendlyError(err, '请稍后重试')}` })
+        if (isCurrent()) {
+          set({ error: t('压缩会话失败。{message}', { message: translateMessage(friendlyError(err, t('请稍后重试'))) }) })
+        }
         return false
       } finally {
         unsubscribe()
@@ -2889,12 +2943,12 @@ export const useApp = create<AppState>((set, get) => {
       if (!finalText.trim() && !attachments.length) return false
       const key = currentDraftKey(initial)
       if (!targetId || !key || !conn) {
-        set({ error: '请先选择目标' })
+        set({ error: t('请先选择目标') })
         return false
       }
       if (!keepDraft && queueingDrafts.has(key)) return false
       if (mode === 'steer' && agent !== 'codex') {
-        set({ error: '当前 Agent 不支持引导' })
+        set({ error: t('当前 Agent 不支持引导') })
         return false
       }
       const draft = { text, annotations }
@@ -2911,7 +2965,7 @@ export const useApp = create<AppState>((set, get) => {
       const hasImage = attachments.some((item) => item.type === 'image' || item.type === 'localImage')
       if (attachments.some((item) => item.type === 'localImage')
         || (hasImage && resolveSelection(models, prefs).model?.imageInput === false)) {
-        set({ error: '当前模型不支持此图片附件，或附件类型无效' })
+        set({ error: t('当前模型不支持此图片附件，或附件类型无效') })
         return false
       }
       const message = { ...draft, attachments, delegate }
@@ -2920,12 +2974,12 @@ export const useApp = create<AppState>((set, get) => {
       const accessSelection = selectedAccessPreference(initial)
       const expectedTurnId = mode === 'steer' && view?.status === 'running' ? view.activeTurnId : null
       if (mode === 'steer' && !expectedTurnId) {
-        set({ error: '当前一轮已结束，请选择排队或发送' })
+        set({ error: t('当前一轮已结束，请选择排队或发送') })
         return false
       }
       if (!mobileTurnFits(targetId, agent, initial.selectedThreadId, input, overrides,
         expectedTurnId ?? undefined, mobileTurnAccess(initial, agent, accessSelection))) {
-        set({ error: '消息和附件合计超过 1 MiB，请移除部分内容后再发送' })
+        set({ error: t('消息和附件合计超过 1 MiB，请移除部分内容后再发送') })
         return false
       }
 
@@ -2994,7 +3048,7 @@ export const useApp = create<AppState>((set, get) => {
         const current = get().sessions[session.key]?.state.threads[threadId]
         if (expectedTurnId) {
           if (current?.status !== 'running' || current.activeTurnId !== expectedTurnId) {
-            throw new Error('当前一轮已结束或切换，消息已保留')
+            throw new Error(t('当前一轮已结束或切换，消息已保留'))
           }
           await steerTurn(session.rpc, threadId, expectedTurnId, input)
           if (epoch === desktopEpoch) clearSentDraft(sentDraftKey)
@@ -3003,13 +3057,13 @@ export const useApp = create<AppState>((set, get) => {
         if (current?.status === 'running') {
           if (mode === 'queue') return await enqueue(address, sentDraftKey)
           const turnId = current.activeTurnId
-          if (!turnId) throw new Error('暂未收到当前轮次，请稍后重试')
+          if (!turnId) throw new Error(t('暂未收到当前轮次，请稍后重试'))
           replacing.add(queueKey)
           await interruptAndWait(session, threadId, turnId)
           if (epoch !== desktopEpoch) return false
-          if (navigation !== navigationEpoch) throw new Error('会话已切换，请重新打开后发送')
+          if (navigation !== navigationEpoch) throw new Error(t('会话已切换，请重新打开后发送'))
           if (get().sessions[session.key]?.state.threads[threadId]?.status === 'running') {
-            throw new Error('会话已开始另一轮，请检查后再发送')
+            throw new Error(t('会话已开始另一轮，请检查后再发送'))
           }
           replacing.delete(queueKey)
         }
@@ -3019,9 +3073,10 @@ export const useApp = create<AppState>((set, get) => {
         return true
       } catch (err) {
         if (epoch === desktopEpoch && navigation === navigationEpoch) {
-          set({ error: friendlyError(err, '未确认消息已发送，草稿已保留') })
+          set({ error: friendlyError(err, t('未确认消息已发送，草稿已保留')) })
         }
         if (epoch === desktopEpoch && queueKey && (mode === 'immediate' || mode === 'queue')) {
+          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
           pauseQueue(queueKey, '上一条消息未确认发送，队列已暂停')
         }
         return false
@@ -3093,7 +3148,7 @@ export const useApp = create<AppState>((set, get) => {
         || submitting.has(key) || editingQueue.has(id) || savingQueue.has(id)) return false
       const input = queuedInput(agent, item)
       if (!mobileTurnFits(targetId, agent, threadId, input, {}, turnId)) {
-        set({ error: '消息和附件合计超过 1 MiB，请重新编辑后再引导' })
+        set({ error: t('消息和附件合计超过 1 MiB，请重新编辑后再引导') })
         return false
       }
       const epoch = desktopEpoch
@@ -3105,14 +3160,17 @@ export const useApp = create<AppState>((set, get) => {
         if (epoch !== desktopEpoch) return false
         const current = get().sessions[session.key]
         if (!get().eventsConnected || !current?.opened || current.state.threads[threadId]?.activeTurnId !== turnId) {
+          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
           throw new Error('当前一轮已结束或切换，排队消息已保留')
         }
+        // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         if (queueLimited(address)) throw new Error('当前额度已用完，排队消息已保留')
         await steerTurn(session.rpc, threadId, turnId, input)
         if (epoch === desktopEpoch) void dropQueuedSend(key, id)
         return true
       } catch (err) {
         if (epoch === desktopEpoch) {
+          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
           const error = friendlyError(err, '未确认引导成功，排队消息已保留')
           void updateQueue(key, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: false, error } : entry))
           if (navigation === navigationEpoch) set({ error })
@@ -3138,7 +3196,7 @@ export const useApp = create<AppState>((set, get) => {
       if (!session?.opened || !item || item.sending || item.saving || submitting.has(key)
         || editingQueue.has(id) || savingQueue.has(id) || state.compactingThreads[key]) return false
       if (queueLimited(address)) {
-        set({ error: '当前额度已用完，排队消息已保留' })
+        set({ error: t('当前额度已用完，排队消息已保留') })
         return false
       }
       const input = queuedInput(agent, item)
@@ -3150,6 +3208,7 @@ export const useApp = create<AppState>((set, get) => {
         const current = get().sessions[session.key]
         if (streamEpoch !== eventStreamEpoch || !get().eventsConnected || reconnectTask
           || !current?.opened || current.transport !== session.transport) {
+          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
           throw new Error('连接已中断，排队消息已保留')
         }
       }
@@ -3168,6 +3227,7 @@ export const useApp = create<AppState>((set, get) => {
           if (!isCurrent()) return false
           checkConnection()
           const lastTurn = source?.id === threadId && source.turns?.filter((turn) => isThreadOutcome(turn.status)).at(-1)
+          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
           if (!lastTurn) throw new Error('当前还没有已结束的一轮，可用「新会话开始」')
           // 指定已结束的轮次，分支时不会带入原会话正在执行的工作。
           result = await session.rpc.request('thread/fork', { threadId, lastTurnId: lastTurn.id, excludeTurns: true })
@@ -3177,11 +3237,14 @@ export const useApp = create<AppState>((set, get) => {
         }
         const { thread } = result
         if (!isCurrent()) return false
+        // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         if (!thread?.id || thread.id === threadId) throw new Error('未确认新会话已创建，排队消息已保留')
         created = true
         checkConnection()
+        // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         if (queueLimited(address)) throw new Error('当前额度已用完，排队消息已保留')
         if (!mobileTurnFits(targetId, agent, thread.id, input, item.overrides, undefined, mobileTurnAccess(get(), agent))) {
+          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
           throw new Error('消息和附件合计超过 1 MiB，请重新编辑后再发送')
         }
         if (agent === 'codex') session.resumedCodexThreads.add(thread.id)
@@ -3205,6 +3268,7 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         if (epoch === desktopEpoch) {
           const modeChanged = isRecord(err) && errorCode(err.data) === 'access_mode_changed'
+          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
           const error = submitted && !modeChanged ? UNCONFIRMED_QUEUED_SEND : friendlyError(err, '新会话发送失败，排队消息已保留')
           // 创建或发送失败时保留这条消息，待用户确认后再发送。
           void updateQueue(key, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: false, error } : entry))
@@ -3216,6 +3280,7 @@ export const useApp = create<AppState>((set, get) => {
           submitting.delete(key)
           if (!isCurrent() && !submitted) {
             void updateQueue(key, (list) => list.map((entry) => entry.id === id && entry.sending
+              // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
               ? { ...entry, sending: false, error: '已切换会话，排队消息已保留' } : entry))
           }
           if (created && get().selectedTargetId === targetId) void get().refreshThreads({ skipFailed: true })
@@ -3246,7 +3311,7 @@ export const useApp = create<AppState>((set, get) => {
           ...value, state: loadRecentThreadHistory(value.state, thread, earlier, before),
         }), session)
       } catch (err) {
-        if (epoch === desktopEpoch && navigation === navigationEpoch) set({ error: friendlyError(err, '无法恢复队列') })
+        if (epoch === desktopEpoch && navigation === navigationEpoch) set({ error: friendlyError(err, t('无法恢复队列')) })
         return
       } finally {
         if (epoch === desktopEpoch) submitting.delete(key)
@@ -3269,11 +3334,11 @@ export const useApp = create<AppState>((set, get) => {
       const session = sessions[sessionKey(selectedTargetId, selectedAgent)]
       const approval = session?.state.threads[selectedThreadId]?.pendingApprovals.find((item) => item.requestId === requestId)
       if (!session || !approval) {
-        set({ notice: '该审批已处理或失效' })
+        set({ notice: t('该审批已处理或失效') })
         return false
       }
       if (!availableApprovalDecisions(approval, selectedAgent).includes(decision)) {
-        set({ error: '当前请求不支持该审批选项' })
+        set({ error: t('当前请求不支持该审批选项') })
         return false
       }
       const flights = approvalFlights.get(session.transport) ?? new Map<RequestId, string>()
@@ -3297,7 +3362,7 @@ export const useApp = create<AppState>((set, get) => {
         if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
         const pending = get().sessions[session.key]?.state.threads[selectedThreadId]?.pendingApprovals
         if (!pending?.some((item) => item.requestId === requestId)) return true
-        set({ error: friendlyError(err, '提交审批失败') })
+        set({ error: friendlyError(err, t('提交审批失败')) })
         return false
       } finally {
         if (!acknowledged) {
@@ -3339,7 +3404,7 @@ export const useApp = create<AppState>((set, get) => {
         set((state) => ({
           models: {
             ...state.models,
-            [key]: { models: current?.models ?? [], loading: false, error: friendlyError(err, '加载模型列表失败'), loadedAt: Date.now() },
+            [key]: { models: current?.models ?? [], loading: false, error: friendlyError(err, t('加载模型列表失败')), loadedAt: Date.now() },
           },
         }))
       }
@@ -3373,14 +3438,14 @@ export const useApp = create<AppState>((set, get) => {
           const accountInfo = account.status === 'fulfilled' ? pickAccount(account.value) : null
           const changes: Partial<RateLimitEntry> = {
             loading: false,
-            error: limits.status === 'rejected' ? friendlyError(limits.reason, '读取额度失败') : null,
+            error: limits.status === 'rejected' ? friendlyError(limits.reason, t('读取额度失败')) : null,
           }
           if (snapshot) changes.snapshot = snapshot
           if (accountInfo) changes.account = accountInfo
           if (snapshot || accountInfo) changes.updatedAt = Date.now()
           patchRate(targetId, changes)
         } catch (err) {
-          if (epoch === desktopEpoch) patchRate(targetId, { loading: false, error: friendlyError(err, '读取额度失败') })
+          if (epoch === desktopEpoch) patchRate(targetId, { loading: false, error: friendlyError(err, t('读取额度失败')) })
         } finally {
           if (epoch === desktopEpoch) rateRefresh.delete(targetId)
         }
@@ -3416,10 +3481,10 @@ export const useApp = create<AppState>((set, get) => {
           ? { path: location.path, encoding: 'base64' }
           : { path: location.path, length: READ_CHUNK_BYTES }
         const result = parseFsRead(await serverReq<unknown>(targetId, 'fs.read', params), location.path)
-        if (!result) throw new Error('电脑返回的文件内容格式不正确')
+        if (!result) throw new Error(t('电脑返回的文件内容格式不正确'))
         patchViewer(token, { loading: false, file: result })
       } catch (err) {
-        patchViewer(token, { loading: false, error: viewerError(err, '读取文件失败') })
+        patchViewer(token, { loading: false, error: viewerError(err, t('读取文件失败')) })
       }
     },
 
@@ -3436,11 +3501,11 @@ export const useApp = create<AppState>((set, get) => {
           length: READ_CHUNK_BYTES,
         })
         const next = parseFsRead(raw, viewer.path)
-        if (!next) throw new Error('电脑返回的文件内容格式不正确')
+        if (!next) throw new Error(t('电脑返回的文件内容格式不正确'))
         const current = token === viewerToken ? get().viewer?.file : null
         patchViewer(token, { loadingMore: false, file: current ? appendRead(current, next) : next })
       } catch (err) {
-        patchViewer(token, { loadingMore: false, error: viewerError(err, '加载更多失败') })
+        patchViewer(token, { loadingMore: false, error: viewerError(err, t('加载更多失败')) })
       }
     },
 
@@ -3472,7 +3537,7 @@ export const useApp = create<AppState>((set, get) => {
           ? { loading: false, diff: fallback, diffSource: 'card', notice }
           : { loading: false, error })
       if (!cwd) {
-        useFallback('没有项目目录，显示改动卡片自带的差异', '没有项目目录，无法读取 Git 差异')
+        useFallback(t('没有项目目录，显示改动卡片自带的差异'), t('没有项目目录，无法读取 Git 差异'))
         return
       }
       try {
@@ -3487,11 +3552,11 @@ export const useApp = create<AppState>((set, get) => {
           })
         } else {
           // 已提交或已被还原的改动在工作区里没有差异，回退到 Agent 当时给出的 diff。
-          useFallback('Git 工作区中没有该文件的未提交差异，显示改动卡片自带的差异', 'Git 工作区中没有该文件的未提交差异')
+          useFallback(t('Git 工作区中没有该文件的未提交差异，显示改动卡片自带的差异'), t('Git 工作区中没有该文件的未提交差异'))
         }
       } catch (err) {
-        const message = viewerError(err, '读取 Git 差异失败')
-        useFallback(`${message}，显示改动卡片自带的差异`, message)
+        const message = viewerError(err, t('读取 Git 差异失败'))
+        useFallback(t('{message}，显示改动卡片自带的差异', { message: translateMessage(message) }), message)
       }
     },
 
@@ -3551,8 +3616,8 @@ export const useApp = create<AppState>((set, get) => {
             }
           }
           if (record?.state === 'error') {
-            const detail = typeof record.detail === 'string' ? record.detail : '连接失败'
-            const message = hostKeyMessage({ message: detail }, '连接失败')
+            const detail = typeof record.detail === 'string' ? record.detail : t('连接失败')
+            const message = hostKeyMessage({ message: detail }, t('连接失败'))
             set((state) => ({
               targetErrors: { ...state.targetErrors, [id]: message },
               notice: isHostKeyError({ message: detail }) ? HOST_KEY_HINT : state.notice,
@@ -3599,6 +3664,7 @@ export const useApp = create<AppState>((set, get) => {
             const agent = exitedAgent(payload)
             const desktopId = get().activeId
             if (desktopId) {
+              // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
               pauseQueues(agent ? [desktopId, targetId, agent] : [desktopId, targetId], 'Agent 已退出，队列已暂停')
             }
             for (const session of Object.values(get().sessions)) {
@@ -3608,9 +3674,9 @@ export const useApp = create<AppState>((set, get) => {
               clearPendingApprovals(session)
               patchSession(session.key, (value) => ({
                 ...value,
-                state: failActiveThreads(value.state, `${agentLabel(value.agent)} 进程已退出`),
+                state: failActiveThreads(value.state, t('{agent} 进程已退出', { agent: agentLabel(value.agent) })),
                 opened: false,
-                openError: `${agentLabel(value.agent)} 进程已退出，下次操作将重新启动`,
+                openError: t('{agent} 进程已退出，下次操作将重新启动', { agent: agentLabel(value.agent) }),
               }))
             }
             if (agent === null || agent === 'codex') patchRate(targetId, emptyRateLimit())
@@ -3632,7 +3698,7 @@ export const useApp = create<AppState>((set, get) => {
         }
         case 'unauthorized': {
           const id = get().activeId
-          if (id) markRepair(id, 'unauthorized', '设备已被撤销，请重新配对')
+          if (id) markRepair(id, 'unauthorized', t('设备已被撤销，请重新配对'))
           return
         }
         default:

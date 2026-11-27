@@ -1,5 +1,5 @@
 import { Check, ChevronDown, Zap } from 'lucide-react'
-import { localizeModelDescription } from '@qn/codex-client'
+import { localizeModelDescription, t, translateMessage } from '@qn/codex-client'
 import { useEffect, useMemo, useState } from 'react'
 import { sessionKey } from '../agents'
 import { EMPTY_PREFS, effortHint, effortLabel, pickModel, resolveSelection, triggerLabel, visibleModels } from '../models'
@@ -41,23 +41,23 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
   return (
     <div className="qn-composer-model">
       {/* 打开时补拉一次：首次列表为空（如 pi 刚启动）时，靠这里触发 store 的过期重取。 */}
-      <button type="button" className="qn-chip" onClick={() => { setOpen(true); void load(targetId, agent) }} aria-label="选择模型与推理强度">
+      <button type="button" className="qn-chip" onClick={() => { setOpen(true); void load(targetId, agent) }} aria-label={t('选择模型与推理强度')}>
         {list?.loading && models.length === 0 && <LoadingIcon size={13} />}
         {selection.fast && <Zap size={13} className="shrink-0 text-qn-warn" aria-hidden />}
-        <span className="truncate">{triggerLabel(selection) || '模型'}</span>
+        <span className="truncate">{triggerLabel(selection) || t('模型')}</span>
         <ChevronDown size={14} className="shrink-0" aria-hidden />
       </button>
       {open && (
-        <Dialog title="模型与推理强度" onClose={close}>
-          {list?.error && <Note tone="error" message={list.error} actionLabel="重试" onAction={() => void load(targetId, agent, true)} />}
+        <Dialog title={t('模型与推理强度')} onClose={close}>
+          {list?.error && <Note tone="error" message={list.error} actionLabel={t('重试')} onAction={() => void load(targetId, agent, true)} />}
           {(models.length > 1 || query !== '') && (
-            <div className="mb-2"><WorkspaceSearch label="搜索模型" query={query} onChange={setQuery} /></div>
+            <div className="mb-2"><WorkspaceSearch label={t('搜索模型')} query={query} onChange={setQuery} /></div>
           )}
-          {list?.loading && models.length === 0 && <Loading text="正在加载模型…" />}
+          {list?.loading && models.length === 0 && <Loading text={t('正在加载模型…')} />}
           {!list?.loading && !list?.error && options.length === 0 && (
-            <p className="py-3 text-center text-sm text-qn-muted">{query.trim() ? '没有匹配的模型' : '暂无可选模型'}</p>
+            <p className="py-3 text-center text-sm text-qn-muted">{query.trim() ? t('没有匹配的模型') : t('暂无可选模型')}</p>
           )}
-          <div className="mb-3 space-y-2" role="listbox" aria-label="模型">
+          <div className="mb-3 space-y-2" role="listbox" aria-label={t('模型')}>
             {options.map((model) => {
               const selected = model.model === selection.model?.model
               return (
@@ -70,7 +70,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                   onClick={() => setPrefs(targetId, agent, pickModel(models, prefs, model.model))}
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[15px] font-medium">{model.displayName}</span>
+                    <span className="block truncate text-[15px] font-medium">{translateMessage(model.displayName)}</span>
                     {model.description && (
                       <span className="mt-0.5 block whitespace-normal text-xs leading-[18px] text-qn-muted [overflow-wrap:anywhere]">
                         {localizeModelDescription(model.description)}
@@ -85,8 +85,8 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
 
           {selection.model && selection.model.efforts.length > 0 && (
             <div className="mb-3">
-              <div className="qn-label">推理强度</div>
-              <div className="qn-segment" role="radiogroup" aria-label="推理强度">
+              <div className="qn-label">{t('推理强度')}</div>
+              <div className="qn-segment" role="radiogroup" aria-label={t('推理强度')}>
                 {selection.model.efforts.map((effort) => {
                   const active = effort.value === selection.effort
                   return (
@@ -110,18 +110,18 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
 
           {showFast && (
             <div className="mb-3">
-              <div className="qn-label">速度</div>
-              <div className="qn-segment" role="radiogroup" aria-label="速度">
+              <div className="qn-label">{t('速度')}</div>
+              <div className="qn-segment" role="radiogroup" aria-label={t('速度')}>
                 <button type="button" role="radio" aria-checked={!selection.fast}
                   onClick={() => setPrefs(targetId, agent, { ...prefs, fast: false })}>
-                  标准
+                  {t('标准')}
                 </button>
                 <button type="button" role="radio" aria-checked={selection.fast}
                   onClick={() => setPrefs(targetId, agent, { ...prefs, fast: true })}>
-                  <Zap size={14} className="text-qn-warn" aria-hidden /> 快速
+                  <Zap size={14} className="text-qn-warn" aria-hidden /> {t('快速')}
                 </button>
               </div>
-              <p className="qn-hint">快速档响应更快，额度消耗更多</p>
+              <p className="qn-hint">{t('快速档响应更快，额度消耗更多')}</p>
             </div>
           )}
 
@@ -130,11 +130,11 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
           <div className="flex gap-2">
             {agent !== 'codex' && (prefs.model || prefs.effort) && (
               <Button className="flex-1" onClick={() => setPrefs(targetId, agent, EMPTY_PREFS)}>
-                跟随 Agent 默认
+                {t('跟随 Agent 默认')}
               </Button>
             )}
             <Button variant="primary" className="flex-1" onClick={close}>
-              完成
+              {t('完成')}
             </Button>
           </div>
         </Dialog>

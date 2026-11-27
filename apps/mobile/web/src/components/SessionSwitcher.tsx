@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import { useMemo, useRef, useState } from 'react'
 import { useApp } from '../store'
 import type { Project } from '../types'
@@ -60,13 +61,13 @@ export function SessionSwitcher({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Dialog title="切换会话" onClose={close} placement="left">
-      <div className="qn-segment mb-3" aria-label="会话范围">
-        <Button aria-pressed={scope === 'project'} onClick={() => setScope('project')}>本项目</Button>
-        <Button aria-pressed={scope === 'all'} onClick={() => setScope('all')}>全部</Button>
+    <Dialog title={t('切换会话')} onClose={close} placement="left">
+      <div className="qn-segment mb-3" aria-label={t('会话范围')}>
+        <Button aria-pressed={scope === 'project'} onClick={() => setScope('project')}>{t('本项目')}</Button>
+        <Button aria-pressed={scope === 'all'} onClick={() => setScope('all')}>{t('全部')}</Button>
       </div>
       {scope === 'project' && currentProject && <NewSessionButton project={currentProject} className="w-full" onCreated={onClose} />}
-      <WorkspaceSearch label="搜索会话" query={query} onChange={setQuery} />
+      <WorkspaceSearch label={t('搜索会话')} query={query} onChange={setQuery} />
       {openError && <Note tone="error" message={openError} onClose={() => setOpenError(null)} />}
       <div className="qn-switcher-list">
         {groups.length ? groups.map(({ project, threads }) => (
@@ -89,13 +90,13 @@ export function SessionSwitcher({ onClose }: { onClose: () => void }) {
               })}
             </div>
           </section>
-        )) : <p className="my-6 text-center text-sm text-qn-muted">{query ? '没有匹配的会话。' : '还没有会话。'}</p>}
+        )) : <p className="my-6 text-center text-sm text-qn-muted">{query ? t('没有匹配的会话。') : t('还没有会话。')}</p>}
       </div>
       <Button className="mt-4 w-full shrink-0" onClick={() => {
         close()
         useWorkspace.getState().setTab('sessions')
         useApp.setState({ page: 'workspace' })
-      }}>返回工作台</Button>
+      }}>{t('返回工作台')}</Button>
     </Dialog>
   )
 }

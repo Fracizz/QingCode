@@ -75,12 +75,12 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
 
   const server = await listenSingleInstance(paths, logger)
   if (!server) {
-    logger.info('检测到已有 daemon 实例，本进程退出')
+    logger.info('检测到已有 daemon 实例，本进程退出') // i18n-ignore: 仅进日志
     return 'existing'
   }
 
   writeDaemonJson(paths, { pid: process.pid, version: options.version, startedAt: Date.now() })
-  logger.info(`daemon 启动 v${options.version}`)
+  logger.info(`daemon 启动 v${options.version}`) // i18n-ignore: 仅进日志
 
   const clients = new Map<number, ClientSession>()
   // 每个 agent 的 codex.recv 必须带上自己的 agent（缺省等同 codex），否则客户端无法分流。
@@ -262,7 +262,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   const shutdown = (reason: string): void => {
     if (shuttingDown) return
     shuttingDown = true
-    logger.info(`daemon 退出: ${reason}`)
+    logger.info(`daemon 退出: ${reason}`) // i18n-ignore: 仅进日志
     clearInterval(idleTimer)
     for (const host of allHosts) host.shutdown()
     terminalManager().shutdown()
@@ -322,12 +322,12 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
                 },
               })
           if (!check.ok) {
-            if (origin === 'direct') logger.warn(`直连 ${peer ?? '?'} 握手失败: ${check.message}`)
+            if (origin === 'direct') logger.warn(`直连 ${peer ?? '?'} 握手失败: ${check.message}`) // i18n-ignore: 仅进日志
             fail(session, check.code, check.message)
             return
           }
           if (grantId) session.grantId = grantId
-          if (origin === 'direct') logger.info(`直连 ${peer ?? '?'} 已接入（授权 ${grantId ?? '?'}）`)
+          if (origin === 'direct') logger.info(`直连 ${peer ?? '?'} 已接入（授权 ${grantId ?? '?'}）`) // i18n-ignore: 仅进日志
           session.hello = true
           session.conn.send({
             t: 'welcome',
@@ -353,7 +353,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
           try {
             cleanup()
           } catch (err) {
-            logger.warn(`连接清理失败: ${describe(err)}`)
+            logger.warn(`连接清理失败: ${describe(err)}`) // i18n-ignore: 仅进日志
           }
         }
       },

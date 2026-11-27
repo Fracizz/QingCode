@@ -171,6 +171,7 @@ export default function App() {
       }
       void connect(id).then(() => {
         const info = useTargets.getState().states[id]
+        // i18n-ignore: 匹配 backend 发来的原始错误文本，两种语言下都是中文
         if (info?.state === 'error' && /auth|认证|密码|password|口令|passphrase/i.test(info.detail ?? '')) {
           setCredentialTarget(target)
         }

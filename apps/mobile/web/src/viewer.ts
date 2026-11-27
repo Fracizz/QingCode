@@ -1,4 +1,5 @@
 // 只读文件 / 差异查看的纯逻辑：fs.read 结果归一化、分段续读、行号、统一 diff 着色。
+import { t } from '@qn/codex-client'
 import { isImagePath } from './fileLinks'
 import { errorCode, friendlyError } from './state'
 
@@ -160,15 +161,15 @@ export function diffRows(text: string, maxRows = MAX_DIFF_ROWS): { rows: DiffRow
 export function viewerError(err: unknown, fallback: string): string {
   switch (errorCode(err)) {
     case 'not_found':
-      return '文件不存在或已被删除'
+      return t('文件不存在或已被删除')
     case 'permission':
-      return '没有权限读取该文件'
+      return t('没有权限读取该文件')
     case 'not_repo':
-      return '该目录不在 Git 仓库中'
+      return t('该目录不在 Git 仓库中')
     case 'git_missing':
-      return '目标机上未安装 git'
+      return t('目标机上未安装 git')
     case 'forbidden':
-      return '电脑端版本过旧，暂不支持在手机上查看文件'
+      return t('电脑端版本过旧，暂不支持在手机上查看文件')
     default:
       return friendlyError(err, fallback)
   }

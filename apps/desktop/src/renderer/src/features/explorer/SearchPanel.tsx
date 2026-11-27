@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { t } from '@qn/codex-client'
 import { FeedbackRow } from '../../components/FeedbackRow'
 import { SearchField } from '../../components/SearchField'
 import { Checkbox, EmptyState, ErrorNote, Spinner } from '../../components/ui'
@@ -43,40 +44,40 @@ export function SearchPanel({
           <SearchField
             boxed
             className="flex-1"
-            label="搜索文件内容"
+            label={t('搜索文件内容')}
             value={query}
-            placeholder="搜索文件内容"
+            placeholder={t('搜索文件内容')}
             onChange={(event) => setQuery(event.target.value)}
           />
-          {search.searching && <Spinner label="搜索中…" />}
+          {search.searching && <Spinner label={t('搜索中…')} />}
         </div>
         <div className="flex items-center gap-3">
           <Checkbox checked={caseSensitive} onChange={setCaseSensitive}>
-            区分大小写
+            {t('区分大小写')}
           </Checkbox>
           <input
             className="qn-input min-w-0 flex-1 font-mono text-ui-sm"
             value={glob}
-            placeholder="glob 过滤，如 *.ts 或 src/**"
+            placeholder={t('glob 过滤，如 *.ts 或 src/**')}
             onChange={(event) => setGlob(event.target.value)}
           />
         </div>
       </div>
       <ErrorNote message={search.error} />
       <FeedbackRow
-        message={truncated ? '结果已截断，请缩小查询范围或使用 glob 过滤' : null}
+        message={truncated ? t('结果已截断，请缩小查询范围或使用 glob 过滤') : null}
         className="border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-ui-sm leading-5 text-qn-warn"
       />
       <div className="qn-scroll min-h-0 flex-1 overflow-y-auto">
         {groups.length === 0 && (
           <EmptyState>
             {query.trim() === ''
-              ? '输入关键字搜索项目内容'
+              ? t('输入关键字搜索项目内容')
               : search.searching
-                ? '搜索中…'
+                ? t('搜索中…')
                 : search.done
-                  ? '没有匹配结果'
-                  : '准备搜索…'}
+                  ? t('没有匹配结果')
+                  : t('准备搜索…')}
           </EmptyState>
         )}
         {groups.map((group) => (

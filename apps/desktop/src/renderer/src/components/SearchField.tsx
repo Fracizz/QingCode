@@ -1,5 +1,6 @@
 import type { ComponentPropsWithRef, ReactNode } from 'react'
 import { Search, X } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { cn } from '../lib/cn'
 
 export function SearchField({
@@ -38,7 +39,7 @@ export function SearchField({
       {onClear && (
         <button
           type="button"
-          aria-label="清空搜索"
+          aria-label={t('清空搜索')}
           className="absolute right-1.5 inline-flex size-6 items-center justify-center rounded-md text-qn-muted hover:bg-qn-hover hover:text-qn-text focus-visible:outline-1 focus-visible:outline-current"
           onClick={onClear}
         >

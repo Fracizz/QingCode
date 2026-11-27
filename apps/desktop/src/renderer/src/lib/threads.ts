@@ -1,4 +1,4 @@
-import { threadActivityFromStatus, type ThreadActivity } from '@qn/codex-client'
+import { getLocale, t, threadActivityFromStatus, type ThreadActivity } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { DEFAULT_AGENT } from './agents'
 
@@ -40,7 +40,7 @@ export function toThreadSummaries(
     const activity = threadActivityFromStatus(entry.status)
     summaries.push({
       id,
-      title: text(entry.name) || preview.split('\n')[0]?.trim() || '未命名会话',
+      title: text(entry.name) || preview.split('\n')[0]?.trim() || t('未命名会话'),
       preview: preview.length > PREVIEW_LENGTH ? `${preview.slice(0, PREVIEW_LENGTH)}…` : preview,
       cwd: text(entry.cwd),
       updatedAt: toTimestamp(entry.updatedAt ?? entry.recencyAt ?? entry.createdAt),
@@ -104,10 +104,29 @@ export function withLocalThreads(incoming: ThreadSummary[], local: readonly Thre
 export function formatTime(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return '—'
   const date = new Date(ms)
-  return date.toLocaleString('zh-CN', {
+  return date.toLocaleString(getLocale() === 'en' ? 'en-US' : 'zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+// 「标题 (n)」的后缀；分支与排队继承新开的会话会复制原标题，靠它区分。
+const COPY_SUFFIX = /^(.*?)\s*\((\d+)\)$/
+
+/**
+ * 分支会话的标题：去掉原标题已有的 (n) 后缀，取同名系列里最大编号 + 1。
+ * 原会话视为第 1 个，所以首个分支是「标题 (2)」。
+ */
+export function nextCopyTitle(source: string, existing: readonly string[]): string {
+  const trimmed = source.trim()
+  const base = trimmed.match(COPY_SUFFIX)?.[1]?.trim() || trimmed
+  let max = 1
+  for (const title of existing) {
+    const value = title.trim()
+    const match = value.match(COPY_SUFFIX)
+    if (match && match[1]?.trim() === base) max = Math.max(max, Number(match[2]))
+  }
+  return `${base} (${max + 1})`
 }

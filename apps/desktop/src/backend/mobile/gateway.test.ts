@@ -44,7 +44,7 @@ const PAIR_CODE = 'Pair.Code!'
 const LOCAL_TARGET = { id: 'local' as const, kind: 'local' as const, name: '本机' }
 const APP_SETTINGS: AppSettings = {
   general: {
-    ...defaultAppSettings().general, autoConnectLast: false, defaultAgent: 'claude', globalAccessMode: 'restricted',
+    ...defaultAppSettings().general, autoConnectLast: false, defaultAgent: 'claude', globalAccessMode: 'auto',
   },
   agents: {
     local: {
@@ -315,7 +315,7 @@ describe('手机网关纯逻辑', () => {
     const result = mobileAgentsFromSettings(APP_SETTINGS)
     expect(result).toEqual({
       defaultAgent: 'claude',
-      globalAccessMode: 'restricted',
+      globalAccessMode: 'auto',
       agents: {
         local: { codex: { enabled: true }, claude: { enabled: true }, pi: { enabled: false } },
         'ssh-93': { claude: { enabled: false } },
@@ -493,8 +493,8 @@ describe('手机网关 HTTPS 集成', () => {
     expect(turn.status).toBe(200)
     expect(lastCodexSend).toEqual({ targetId: 'local', msg: {
       id: expect.any(String), method: 'turn/start', params: {
-        threadId: 'thread', input: [], approvalPolicy: 'never',
-        sandboxPolicy: { type: 'readOnly', networkAccess: false }, qingcodeAccessOverride: true,
+        threadId: 'thread', input: [], approvalPolicy: 'on-request', approvalsReviewer: 'auto_review',
+        sandboxPolicy: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, qingcodeAccessOverride: true,
       },
     } })
     const forwarded = lastCodexSend
@@ -531,19 +531,20 @@ describe('手机网关 HTTPS 集成', () => {
         approvalPolicy: 'on-request', sandboxPolicy: { type: 'dangerFullAccess' },
       } } },
     })
-    const readOnly = await requestJson('/rpc', 'POST', turnRequest('codex', 'readOnly'), token)
-    expect(readOnly.status).toBe(200)
+    const codexAuto = await requestJson('/rpc', 'POST', turnRequest('codex', 'auto'), token)
+    expect(codexAuto.status).toBe(200)
     expect(lastCodexSend).toEqual({ targetId: 'local', agent: 'codex', msg: {
       id: expect.any(String), method: 'turn/start', params: {
         threadId: 'thread', input: [], model: 'test-model',
-        approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly', networkAccess: false }, qingcodeAccessOverride: true,
+        approvalPolicy: 'on-request', approvalsReviewer: 'auto_review',
+        sandboxPolicy: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, qingcodeAccessOverride: true,
       },
     } })
-    const claudeTurn = await requestJson('/rpc', 'POST', turnRequest('claude', 'plan'), token)
+    const claudeTurn = await requestJson('/rpc', 'POST', turnRequest('claude', 'fullAccess'), token)
     expect(claudeTurn.status).toBe(200)
     expect(lastCodexSend).toEqual({ targetId: 'local', agent: 'claude', msg: {
       id: expect.any(String), method: 'turn/start',
-      params: { threadId: 'thread', input: [], model: 'test-model', claudePermissionMode: 'plan' },
+      params: { threadId: 'thread', input: [], model: 'test-model', claudePermissionMode: 'bypassPermissions' },
     } })
     const claudeAuto = await requestJson('/rpc', 'POST', turnRequest('claude', 'auto'), token)
     expect(claudeAuto.status).toBe(200)
@@ -559,15 +560,15 @@ describe('手机网关 HTTPS 集成', () => {
     const staleAccess = await requestJson('/rpc', 'POST', inheritedTurn('codex', 'default'), token)
     expect(staleAccess.status).toBe(409)
     expect(lastCodexSend).toBe(forwardedTurn)
-    for (const [agent, mode] of [['pi', 'fullAccess'], ['claude', 'readOnly'], ['codex', 'auto'], ['codex', 'invalid']] as const) {
+    for (const [agent, mode] of [['pi', 'fullAccess'], ['claude', 'plan'], ['codex', 'readOnly'], ['codex', 'invalid']] as const) {
       const rejected = await requestJson('/rpc', 'POST', turnRequest(agent, mode), token)
       expect(rejected.status).toBe(400)
       expect(lastCodexSend).toBe(forwardedTurn)
     }
-    expect((await requestJson('/rpc', 'POST', inheritedTurn('codex', 'readOnly'), token)).status).toBe(200)
-    expect(lastCodexSend).toMatchObject({ msg: { params: { sandboxPolicy: { type: 'readOnly', networkAccess: false } } } })
-    expect((await requestJson('/rpc', 'POST', inheritedTurn('claude', 'plan'), token)).status).toBe(200)
-    expect(lastCodexSend).toMatchObject({ msg: { params: { claudePermissionMode: 'plan' } } })
+    expect((await requestJson('/rpc', 'POST', inheritedTurn('codex', 'auto'), token)).status).toBe(200)
+    expect(lastCodexSend).toMatchObject({ msg: { params: { approvalsReviewer: 'auto_review', sandboxPolicy: { type: 'workspaceWrite' } } } })
+    expect((await requestJson('/rpc', 'POST', inheritedTurn('claude', 'auto'), token)).status).toBe(200)
+    expect(lastCodexSend).toMatchObject({ msg: { params: { claudePermissionMode: 'auto' } } })
     const defaultTurn = turnRequest('codex', 'default')
     expect((await requestJson('/rpc', 'POST', {
       ...defaultTurn, params: { ...defaultTurn.params, inheritAccess: false },
@@ -654,7 +655,7 @@ describe('手机网关 HTTPS 集成', () => {
     }
     try {
       const result = await requestJson('/rpc', 'POST', { method: 'mobile.turn.start', params: {
-        targetId: 'local', agent: 'codex', accessMode: 'readOnly', replyViaHttp: true,
+        targetId: 'local', agent: 'codex', accessMode: 'auto', replyViaHttp: true,
         msg: { id: 'turn-request', method: 'turn/start', params: { threadId: 'thread', input: [] } },
       } }, token)
       expect(result.status).toBe(200)
@@ -717,7 +718,7 @@ describe('手机网关 HTTPS 集成', () => {
     const request = async (token: string, method: 'codex.send' | 'mobile.turn.start') => {
       const params = method === 'codex.send'
         ? { targetId: 'local', msg: { id: 'c1', method: 'thread/read' } }
-        : { targetId: 'local', agent: 'codex', accessMode: 'readOnly', msg: {
+        : { targetId: 'local', agent: 'codex', accessMode: 'auto', msg: {
           id: 'c1', method: 'turn/start', params: { threadId: 'thread', input: [] },
         } }
       expect((await requestJson('/rpc', 'POST', { method, params }, token)).status).toBe(200)

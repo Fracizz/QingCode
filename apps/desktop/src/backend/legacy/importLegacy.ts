@@ -87,7 +87,7 @@ export async function importLegacyData(
 ): Promise<LegacyImportResult> {
   const d: LegacyDeps = { ...defaultDeps(), ...deps }
   const dbPath = resolvePath(params.path)
-  if (!(await d.dbExists(dbPath))) throw new Error('旧版数据库不存在：' + dbPath)
+  if (!(await d.dbExists(dbPath))) throw new Error(`旧版数据库不存在：${dbPath}`)
   const snapshot = await d.readDb(dbPath)
 
   const targets = await readTargets(d.userData)

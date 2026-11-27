@@ -10,6 +10,7 @@ import {
   type UIEvent,
 } from 'react'
 import { Check, MessageSquarePlus, PanelRightOpen, X } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import {
   captureSelection,
   clearDomSelection,
@@ -205,7 +206,7 @@ export function SelectionLayer({
                   clearDomSelection(root)
                 })}
               >
-                <MessageSquarePlus size={13} /> 添加到对话
+                <MessageSquarePlus size={13} /> {t('添加到对话')}
               </button>
               {showSideAction && (
                 <button
@@ -214,7 +215,7 @@ export function SelectionLayer({
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={openSide}
                 >
-                  <PanelRightOpen size={13} /> 在侧边聊天中提问
+                  <PanelRightOpen size={13} /> {t('在侧边聊天中提问')}
                 </button>
               )}
             </>
@@ -223,13 +224,13 @@ export function SelectionLayer({
               <input
                 autoFocus
                 className="qn-input h-7 w-52 select-text px-2.5 py-0 text-ui-sm"
-                placeholder="添加可选评论…"
+                placeholder={t('添加可选评论…')}
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}
                 onKeyDown={commentKeyDown}
               />
               <IconButton
-                label="确认注释（Enter）"
+                label={t('确认注释（Enter）')}
                 className="h-7 w-7 text-qn-ok"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={confirm}
@@ -237,7 +238,7 @@ export function SelectionLayer({
                 <Check size={14} />
               </IconButton>
               <IconButton
-                label="取消（Esc）"
+                label={t('取消（Esc）')}
                 className="h-7 w-7"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => dismiss()}

@@ -1,3 +1,4 @@
+import { t, translateMessage } from '@qn/codex-client'
 import { create } from 'zustand'
 import type {
   DirectTarget,
@@ -119,7 +120,7 @@ export const useTargets = create<TargetsState>((set, get) => ({
       const targets = await call('targets.list')
       set({ targets, loaded: true, error: null })
     } catch (err) {
-      set({ error: friendlyError(err, '加载目标列表失败') })
+      set({ error: friendlyError(err, t('加载目标列表失败')) })
     }
   },
 
@@ -200,16 +201,19 @@ export const useTargets = create<TargetsState>((set, get) => ({
     const attempt = { startup }
     connecting.set(id, attempt)
     set((s) => ({
-      states: { ...s.states, [id]: { id, state: 'connecting', detail: '正在连接…' } },
+      states: { ...s.states, [id]: { id, state: 'connecting', detail: t('正在连接…') } },
       connectErrors: omitKey(s.connectErrors, id),
     }))
     try {
       await call('target.connect', { id, ...(credentials ?? {}), ...(startup ? { startup } : {}) })
     } catch (err) {
       if (connecting.get(id) !== attempt) return
-      const message = friendlyError(err, '连接失败')
+      const message = friendlyError(err, t('连接失败'))
+      // detail 与后端事件一样保留原文，认证失败等判断依赖它；展示端再翻译。
+      const raw = err instanceof Error ? err.message : ''
+      const detail = raw && message === translateMessage(raw) ? raw : message
       set((s) => ({
-        states: { ...s.states, [id]: { id, state: 'error', detail: message } },
+        states: { ...s.states, [id]: { id, state: 'error', detail } },
         connectErrors: { ...s.connectErrors, [id]: message },
       }))
     } finally {
@@ -221,7 +225,7 @@ export const useTargets = create<TargetsState>((set, get) => ({
     try {
       await call('target.forceUpdate', { id })
     } catch (err) {
-      set({ notice: friendlyError(err, '强制更新 Server 失败') })
+      set({ notice: friendlyError(err, t('强制更新 Server 失败')) })
     }
   },
 
@@ -231,18 +235,18 @@ export const useTargets = create<TargetsState>((set, get) => ({
       await call('target.disconnect', { id })
       if (!connecting.has(id)) set((s) => ({ states: { ...s.states, [id]: { id, state: 'idle' } } }))
     } catch (err) {
-      set({ notice: friendlyError(err, '断开连接失败') })
+      set({ notice: friendlyError(err, t('断开连接失败')) })
     }
   },
 
   forgetSecret: async (id) => {
     try {
       await call('target.forgetSecret', { id })
-      set({ notice: '已删除本机保存的密码/口令' })
+      set({ notice: t('已删除本机保存的密码/口令') })
       // 刷新"已保存密码"标记，下次连接重新弹框。
       void get().load()
     } catch (err) {
-      set({ notice: friendlyError(err, '忘记已保存的密码失败') })
+      set({ notice: friendlyError(err, t('忘记已保存的密码失败')) })
     }
   },
 
@@ -250,9 +254,9 @@ export const useTargets = create<TargetsState>((set, get) => ({
     set((s) => ({ prompts: s.prompts.filter((item) => item.promptId !== promptId) }))
     try {
       await call('hostKey.respond', { promptId, accept })
-      if (!accept) set({ notice: '已拒绝该主机指纹，连接已取消' })
+      if (!accept) set({ notice: t('已拒绝该主机指纹，连接已取消') })
     } catch (err) {
-      set({ notice: friendlyError(err, '回应主机指纹失败') })
+      set({ notice: friendlyError(err, t('回应主机指纹失败')) })
     }
   },
 

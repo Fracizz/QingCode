@@ -18,6 +18,7 @@ import {
   Plus,
   RotateCcw,
 } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { ListOption } from '../../components/ListOption'
 import { LoadingIcon, RefreshIcon } from '../../components/LoadingIcon'
 import { SearchField } from '../../components/SearchField'
@@ -239,15 +240,15 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             <SearchField
               autoFocus
               className="shrink-0 border-b border-qn-border px-3 py-2"
-              label="搜索分支"
-              placeholder="搜索分支"
+              label={t('搜索分支')}
+              placeholder={t('搜索分支')}
               value={branchQuery}
               onChange={(event) => setBranchQuery(event.target.value)}
             />
             <div className="qn-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1" role="listbox">
-              <div className="px-2.5 py-1 text-ui-xs text-qn-dim">本地分支</div>
+              <div className="px-2.5 py-1 text-ui-xs text-qn-dim">{t('本地分支')}</div>
               {localBranches.length === 0 && (
-                <div className="px-2.5 py-1.5 text-ui-sm text-qn-dim">无匹配分支</div>
+                <div className="px-2.5 py-1.5 text-ui-sm text-qn-dim">{t('无匹配分支')}</div>
               )}
               {localBranches.map((branch) => (
                 <ListOption
@@ -260,9 +261,9 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
                   {branch.name === current && <Check size={13} className="shrink-0 text-qn-brand" />}
                 </ListOption>
               ))}
-              <div className="mt-1 border-t border-qn-border px-2.5 py-1 text-ui-xs text-qn-dim">远端分支</div>
+              <div className="mt-1 border-t border-qn-border px-2.5 py-1 text-ui-xs text-qn-dim">{t('远端分支')}</div>
               {remoteBranches.length === 0 && (
-                <div className="px-2.5 py-1.5 text-ui-sm text-qn-dim">无匹配分支</div>
+                <div className="px-2.5 py-1.5 text-ui-sm text-qn-dim">{t('无匹配分支')}</div>
               )}
               {remoteBranches.map((branch) => (
                 <ListOption
@@ -276,11 +277,11 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
               ))}
             </div>
             <div className="shrink-0 border-t border-qn-border p-2">
-              <div className="mb-1 text-ui-xs text-qn-dim">新建分支（基于当前 HEAD）</div>
+              <div className="mb-1 text-ui-xs text-qn-dim">{t('新建分支（基于当前 HEAD）')}</div>
               <div className="flex gap-1.5">
                 <input
                   className="qn-input h-7 py-0 text-ui-sm"
-                  placeholder="分支名"
+                  placeholder={t('分支名')}
                   value={newBranch}
                   onChange={(event) => setNewBranch(event.target.value)}
                   onKeyDown={(event) => {
@@ -293,7 +294,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
                   disabled={!newBranch.trim() || busy}
                   onClick={() => void createBranch()}
                 >
-                  新建
+                  {t('新建')}
                 </button>
               </div>
             </div>
@@ -309,16 +310,16 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
         )}
 
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
-          <IconButton label="抓取远端更新（fetch）" className="h-7 w-7" disabled={busy || !status} onClick={() => void fetch(targetId, cwd)}>
+          <IconButton label={t('抓取远端更新（fetch）')} className="h-7 w-7" disabled={busy || !status} onClick={() => void fetch(targetId, cwd)}>
             <Download size={14} />
           </IconButton>
-          <IconButton label={`拉取（pull）${ahead || behind ? ` · ${aheadBehindText(ahead, behind)}` : ''}`} className="h-7 w-7" disabled={busy || !status} onClick={() => void pull(targetId, cwd)}>
+          <IconButton label={ahead || behind ? t('拉取（pull） · {status}', { status: aheadBehindText(ahead, behind) }) : t('拉取（pull）')} className="h-7 w-7" disabled={busy || !status} onClick={() => void pull(targetId, cwd)}>
             <ArrowDown size={14} />
           </IconButton>
-          <IconButton label={`推送（push）${ahead || behind ? ` · ${aheadBehindText(ahead, behind)}` : ''}`} className="h-7 w-7" disabled={busy || !status} onClick={() => void push(targetId, cwd)}>
+          <IconButton label={ahead || behind ? t('推送（push） · {status}', { status: aheadBehindText(ahead, behind) }) : t('推送（push）')} className="h-7 w-7" disabled={busy || !status} onClick={() => void push(targetId, cwd)}>
             <ArrowUp size={14} />
           </IconButton>
-          <IconButton label="刷新" className="h-7 w-7" disabled={state.loading} onClick={() => void refresh(targetId, cwd)}>
+          <IconButton label={t('刷新')} className="h-7 w-7" disabled={state.loading} onClick={() => void refresh(targetId, cwd)}>
             <RefreshIcon loading={state.loading} />
           </IconButton>
         </div>
@@ -336,19 +337,19 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
         <div className="min-h-0 flex-1 overflow-y-auto">
           <EmptyState>
             {state.errorCode === 'git_missing'
-              ? '未找到 git：请在目标机器安装 Git 后点击刷新。'
-              : '当前目录不是 Git 仓库。请切换到仓库内目录，或先在远端初始化仓库。'}
+              ? t('未找到 git：请在目标机器安装 Git 后点击刷新。')
+              : t('当前目录不是 Git 仓库。请切换到仓库内目录，或先在远端初始化仓库。')}
           </EmptyState>
         </div>
       ) : (
         <TabsRoot defaultValue="changes" className="flex min-h-0 flex-1 flex-col">
           <TabsList className="shrink-0 border-b border-qn-border px-2 py-1">
             <TabsTrigger value="changes" className="flex items-center gap-1.5">
-              <Diff size={13} /> 变更
+              <Diff size={13} /> {t('变更')}
               {total > 0 && <Badge tone="accent">{total}</Badge>}
             </TabsTrigger>
             <TabsTrigger value="history" className="flex items-center gap-1.5">
-              <History size={13} /> 历史
+              <History size={13} /> {t('历史')}
             </TabsTrigger>
           </TabsList>
 
@@ -361,9 +362,9 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             />
 
             <div className="qn-scroll min-h-0 flex-1 overflow-y-auto py-1" onScroll={menu ? closeMenu : undefined}>
-              {state.loading && !status && <Spinner label="读取 Git 状态…" />}
+              {state.loading && !status && <Spinner label={t('读取 Git 状态…')} />}
               {!state.loading && total === 0 && status && (
-                <EmptyState>工作区干净，没有待提交的改动。</EmptyState>
+                <EmptyState>{t('工作区干净，没有待提交的改动。')}</EmptyState>
               )}
               {gitGroups.map((group) => {
                 const files = groups[group.key]
@@ -411,7 +412,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
               setMenu(null)
             }}
           >
-            <FileText size={13} className="text-qn-muted" /> 打开文件
+            <FileText size={13} className="text-qn-muted" /> {t('打开文件')}
           </button>
           <button
             type="button"
@@ -421,7 +422,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
               setMenu(null)
             }}
           >
-            <Copy size={13} className="text-qn-muted" /> 复制路径
+            <Copy size={13} className="text-qn-muted" /> {t('复制路径')}
           </button>
           <button
             type="button"
@@ -431,24 +432,24 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
               setMenu(null)
             }}
           >
-            <Diff size={13} className="text-qn-muted" /> 查看差异
+            <Diff size={13} className="text-qn-muted" /> {t('查看差异')}
           </button>
         </div>
       )}
 
       {discardFiles && (
         <Modal
-          title="放弃更改？"
+          title={t('放弃更改？')}
           description={
             discardFiles.some(isUntracked)
-              ? '未跟踪文件将被删除，且不可恢复'
-              : '此操作不可撤销'
+              ? t('未跟踪文件将被删除，且不可恢复')
+              : t('此操作不可撤销')
           }
           onClose={() => setDiscardFiles(null)}
           footer={
             <div className="flex justify-end gap-2">
               <button type="button" className="qn-button-subtle" onClick={() => setDiscardFiles(null)}>
-                取消
+                {t('取消')}
               </button>
               <button
                 type="button"
@@ -456,7 +457,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
                 disabled={busy}
                 onClick={confirmDiscard}
               >
-                <RotateCcw size={14} /> 确认放弃
+                <RotateCcw size={14} /> {t('确认放弃')}
               </button>
             </div>
           }
@@ -465,7 +466,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             {discardPrompt(discardFiles)}
           </pre>
           <div className="mt-3 flex items-center gap-1.5 text-ui-sm text-qn-danger">
-            <CircleAlert size={13} /> 放弃前请确认没有需要保留的改动
+            <CircleAlert size={13} /> {t('放弃前请确认没有需要保留的改动')}
           </div>
         </Modal>
       )}
@@ -503,7 +504,7 @@ function CommitBox({
     <div className="shrink-0 border-b border-qn-border px-2 py-2">
       <textarea
         className="qn-input min-h-[64px] resize-none text-ui-sm"
-        placeholder={`提交信息（Ctrl+Enter 提交${amend ? '，修改上次提交' : ''}）`}
+        placeholder={amend ? t('提交信息（Ctrl+Enter 提交，修改上次提交）') : t('提交信息（Ctrl+Enter 提交）')}
         value={message}
         disabled={busy}
         onChange={(event) => setMessage(event.target.value)}
@@ -520,7 +521,7 @@ function CommitBox({
       />
       <div className="mt-1.5 flex items-center gap-2">
         <Checkbox checked={amend} onChange={setAmend} disabled={busy}>
-          修改上次提交
+          {t('修改上次提交')}
         </Checkbox>
         <button
           type="button"
@@ -533,7 +534,7 @@ function CommitBox({
           ) : (
             <GitCommitHorizontal size={13} />
           )}
-          提交
+          {t('提交')}
         </button>
       </div>
       {check.error && <div className="mt-1 text-ui-xs text-qn-danger">{check.error}</div>}
@@ -576,12 +577,12 @@ function FileGroup({
         <Badge>{files.length}</Badge>
         <div className="ml-auto flex items-center gap-0.5">
           {groupKey !== 'staged' && (
-            <IconButton label={`全部暂存${label}`} className="h-6 w-6" disabled={busy} onClick={onStageAll}>
+            <IconButton label={t('全部暂存{group}', { group: label })} className="h-6 w-6" disabled={busy} onClick={onStageAll}>
               <Plus size={13} />
             </IconButton>
           )}
           {groupKey === 'staged' && (
-            <IconButton label="全部取消暂存" className="h-6 w-6" disabled={busy} onClick={onUnstageAll}>
+            <IconButton label={t('全部取消暂存')} className="h-6 w-6" disabled={busy} onClick={onUnstageAll}>
               <Minus size={13} />
             </IconButton>
           )}
@@ -596,7 +597,7 @@ function FileGroup({
           className="mx-2 my-1 flex w-[calc(100%-1rem)] items-center justify-center rounded-lg px-2 py-1 text-ui-sm text-qn-muted hover:bg-qn-hover"
           onClick={() => setLimit((value) => value + GROUP_PAGE * 5)}
         >
-          还有 {rest} 个文件，继续显示
+          {t('还有 {count} 个文件，继续显示', { count: rest })}
         </button>
       )}
     </section>
@@ -625,7 +626,7 @@ const FileRow = memo(function FileRow({
         type="button"
         className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent"
         onClick={() => onOpen(file, group)}
-        title="查看差异"
+        title={t('查看差异')}
       >
         <span
           className={cn('w-4 shrink-0 text-center font-mono text-ui-sm', toneClass[info.tone])}
@@ -637,16 +638,16 @@ const FileRow = memo(function FileRow({
       </button>
       <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex group-focus-within:flex">
         {group !== 'staged' && (
-          <IconButton label="暂存" className="h-6 w-6" disabled={busy} onClick={() => onStage(file)}>
+          <IconButton label={t('暂存')} className="h-6 w-6" disabled={busy} onClick={() => onStage(file)}>
             <Plus size={12} />
           </IconButton>
         )}
         {group === 'staged' && (
-          <IconButton label="取消暂存" className="h-6 w-6" disabled={busy} onClick={() => onUnstage(file)}>
+          <IconButton label={t('取消暂存')} className="h-6 w-6" disabled={busy} onClick={() => onUnstage(file)}>
             <Minus size={12} />
           </IconButton>
         )}
-        <IconButton label="放弃更改" danger className="h-6 w-6" disabled={busy} onClick={() => onDiscard(file)}>
+        <IconButton label={t('放弃更改')} danger className="h-6 w-6" disabled={busy} onClick={() => onDiscard(file)}>
           <RotateCcw size={12} />
         </IconButton>
       </span>

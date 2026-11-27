@@ -1,6 +1,8 @@
 // 文件树的纯逻辑：状态变换、排序、扁平化、路径运算与错误文案。
 // 不引入 React / backend，便于在 Node 下单测，也便于总管按同一模型合并 fs.watch。
 
+import { t, translateMessage } from '@qn/codex-client'
+
 export type ExplorerEntryKind = 'dir' | 'file' | 'symlink'
 export type ExplorerEntry = { name: string; kind: ExplorerEntryKind }
 export type PathStyle = 'posix' | 'windows'
@@ -278,24 +280,24 @@ export function visibleRows(
   const walk = (dir: string, depth: number, ancestors: Set<string>): void => {
     const dirState = state.dirs[dir]
     if (!dirState) {
-      rows.push(placeholder(dir, depth, '尚未加载', 'idle'))
+      rows.push(placeholder(dir, depth, t('尚未加载'), 'idle'))
       return
     }
     if (dirState.status === 'loading') {
-      rows.push(placeholder(dir, depth, '加载中…', 'loading'))
+      rows.push(placeholder(dir, depth, t('加载中…'), 'loading'))
       return
     }
     if (dirState.status === 'error') {
-      rows.push(placeholder(dir, depth, `加载失败：${dirState.message}`, 'error'))
+      rows.push(placeholder(dir, depth, t('加载失败：{message}', { message: translateMessage(dirState.message) }), 'error'))
       return
     }
     const shown = filterEntries(dirState.entries, state.showHidden)
     if (shown.length === 0) {
-      rows.push(placeholder(dir, depth, '（空目录）', 'empty'))
+      rows.push(placeholder(dir, depth, t('（空目录）'), 'empty'))
       return
     }
     if (dirState.truncated) {
-      rows.push(placeholder(dir, depth, '仅显示前 2000 项', 'truncated'))
+      rows.push(placeholder(dir, depth, t('仅显示前 2000 项'), 'truncated'))
     }
     for (const entry of shown) {
       const path = joinPath(dir, entry.name, style)
@@ -409,44 +411,44 @@ export function dirsToRefresh(
 
 /** 返回中文错误原因，null 表示可用；Windows 风格额外禁用 NTFS 保留字符。 */
 export function validateEntryName(name: string, style: PathStyle): string | null {
-  if (name.trim() === '') return '名称不能为空'
-  if (/[\\/]/.test(name)) return '名称不能包含路径分隔符 / 或 \\'
-  if (name === '.' || name === '..') return '名称不能是 . 或 ..'
-  if (style === 'windows' && /[<>:"/|?*]/.test(name)) return '名称不能包含 < > : " | ? *'
-  if (/[\u0000-\u001f]/.test(name)) return '名称不能包含控制字符'
+  if (name.trim() === '') return t('名称不能为空')
+  if (/[\\/]/.test(name)) return t('名称不能包含路径分隔符 / 或 \\')
+  if (name === '.' || name === '..') return t('名称不能是 . 或 ..')
+  if (style === 'windows' && /[<>:"/|?*]/.test(name)) return t('名称不能包含 < > : " | ? *')
+  if (/[\u0000-\u001f]/.test(name)) return t('名称不能包含控制字符')
   return null
 }
 
 const ERROR_TEXT: Record<string, string> = {
-  params: '参数无效',
-  invalid_params: '参数无效',
-  not_found: '文件或目录不存在',
-  exists: '同名文件或目录已存在',
-  not_empty: '目录非空，请勾选「连同目录内容一起删除」',
-  conflict: '文件已被外部修改，请刷新后重试',
-  too_large: '内容过大，无法处理',
-  permission: '没有权限执行此操作',
-  forbidden: '没有权限执行此操作',
-  not_repo: '该目录不是 Git 仓库',
-  git_missing: '目标上没有安装 git',
-  auth_required: '需要认证，请先在目标上配置凭据',
-  git_failed: 'git 命令执行失败',
-  internal: '服务端内部错误',
-  unknown_method: '目标服务端版本过旧，不支持此操作',
-  not_implemented: '后端功能尚未接入，当前版本暂不可用',
-  not_ready: '目标尚未连接就绪',
-  port_replaced: '通信通道已重建，请重试',
-  auth: '认证失败',
-  protocol: '协议版本不匹配，请更新两端程序',
+  params: t('参数无效'),
+  invalid_params: t('参数无效'),
+  not_found: t('文件或目录不存在'),
+  exists: t('同名文件或目录已存在'),
+  not_empty: t('目录非空，请勾选「连同目录内容一起删除」'),
+  conflict: t('文件已被外部修改，请刷新后重试'),
+  too_large: t('内容过大，无法处理'),
+  permission: t('没有权限执行此操作'),
+  forbidden: t('没有权限执行此操作'),
+  not_repo: t('该目录不是 Git 仓库'),
+  git_missing: t('目标上没有安装 git'),
+  auth_required: t('需要认证，请先在目标上配置凭据'),
+  git_failed: t('git 命令执行失败'),
+  internal: t('服务端内部错误'),
+  unknown_method: t('目标服务端版本过旧，不支持此操作'),
+  not_implemented: t('后端功能尚未接入，当前版本暂不可用'),
+  not_ready: t('目标尚未连接就绪'),
+  port_replaced: t('通信通道已重建，请重试'),
+  auth: t('认证失败'),
+  protocol: t('协议版本不匹配，请更新两端程序'),
 }
 
 /** server 的 WorkspaceErrorCode / backend 错误码 → 中文短句。 */
 export function workspaceErrorMessage(code: string, raw = ''): string {
-  return ERROR_TEXT[code] ?? (raw || '操作失败')
+  return ERROR_TEXT[code] ?? (translateMessage(raw) || t('操作失败'))
 }
 
 /** 组件统一用它把异常转成可展示文案；不打印 token 与凭据。 */
-export function describeWorkspaceError(err: unknown, fallback = '操作失败'): string {
+export function describeWorkspaceError(err: unknown, fallback = t('操作失败')): string {
   const record = isRecord(err) ? err : {}
   const code = typeof record.code === 'string' || typeof record.code === 'number'
     ? String(record.code)
@@ -459,6 +461,6 @@ export function describeWorkspaceError(err: unknown, fallback = '操作失败'):
         : typeof record.message === 'string'
           ? record.message
           : ''
-  const detail = code ? workspaceErrorMessage(code, raw) : raw || '未知错误'
-  return `${fallback}：${detail}`
+  const detail = code ? workspaceErrorMessage(code, raw) : translateMessage(raw) || t('未知错误')
+  return t('{fallback}：{detail}', { fallback, detail })
 }

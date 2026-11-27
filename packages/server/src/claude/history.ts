@@ -83,6 +83,23 @@ function syntheticApiError(message: Record<string, unknown>): string | undefined
 }
 
 /**
+ * 会话最近一次回复实际用的模型：从后往前找主会话的 assistant 消息。
+ * 跳过子 agent（parent_tool_use_id / isSidechain）和 API 失败时写入的 `<synthetic>` 占位消息。
+ * 推理强度 SDK 历史接口不提供，不在这里猜。
+ */
+export function lastReplyModel(messages: unknown[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const entry = asRecord(messages[index])
+    if (!entry || entry.isSidechain === true || scalarText(entry.parent_tool_use_id)) continue
+    const message = asRecord(entry.message ?? messages[index])
+    if (!message || scalarText(message.role) !== 'assistant') continue
+    const model = scalarText(message.model)
+    if (model && model !== '<synthetic>') return model
+  }
+  return null
+}
+
+/**
  * 按用户消息切分 turns：每条带文本的用户消息开启新 turn，
  * tool_result 与 assistant 消息归属当前 turn；item 映射复用 items.ts。
  */

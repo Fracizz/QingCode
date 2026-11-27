@@ -1,4 +1,4 @@
-import { accessOptions, resolveAccessMode, type AccessSelection } from '@qn/codex-client'
+import { accessOptions, resolveAccessMode, type AccessSelection, t, translateMessage } from '@qn/codex-client'
 import { GitBranch, ListOrdered, MessageSquarePlus, Pencil, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { UNCONFIRMED_QUEUED_SEND } from '../queuedSends'
@@ -6,8 +6,8 @@ import { selectedAccessPreference, selectedQueuedSends, useApp, type QueuedThrea
 import { Badge, Button, Dialog, Note } from './ui'
 
 const newChatActions = [
-  { mode: 'start', label: '新会话开始', Icon: MessageSquarePlus },
-  { mode: 'continue', label: '新会话继续', Icon: GitBranch },
+  { mode: 'start', label: t('新会话开始'), Icon: MessageSquarePlus },
+  { mode: 'continue', label: t('新会话继续'), Icon: GitBranch },
 ] as const
 
 export function QueuedMessages({ running, canSteer }: { running: boolean; canSteer: boolean }) {
@@ -66,7 +66,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
       if (await sendInNewThread(destination.id, destination.mode)) setDestination(null)
       else {
         unlock.current = beginEdit(destination.id)
-        setMoveError(useApp.getState().error ?? '暂时无法在新会话发送，请重试。')
+        setMoveError(useApp.getState().error ?? t('暂时无法在新会话发送，请重试。'))
       }
     } finally {
       setMoving(false)
@@ -89,37 +89,37 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
   const edited = queue.find((item) => item.id === edit?.id)
   const movingMessage = queue.find((item) => item.id === destination?.id)
   const continuing = destination?.mode === 'continue'
-  const destinationTitle = continuing ? '新会话继续' : '新会话开始'
+  const destinationTitle = continuing ? t('新会话继续') : t('新会话开始')
   const destinationError = moveError ?? (movingMessage?.error === UNCONFIRMED_QUEUED_SEND ? movingMessage.error : null)
   const accessLabel = (selection?: AccessSelection) => {
     const mode = resolveAccessMode(agent, globalAccessMode, selection)
     return mode !== 'default' ? accessOptions[agent].find((option) => option.mode === mode)?.label : undefined
   }
   return (
-    <section className="shrink-0 border-t border-qn-border bg-qn-panel px-3" aria-label="发送队列">
+    <section className="shrink-0 border-t border-qn-border bg-qn-panel px-3" aria-label={t('发送队列')}>
       <details className="qn-details" open>
         <summary>
           <ListOrdered size={16} className="mr-1.5 shrink-0" aria-hidden />
-          <span className="min-w-0 flex-1 truncate">{queue.length} 条消息排队</span>
-          {first?.error && <Badge tone="warn">已暂停</Badge>}
-          {!first?.error && !connected && <Badge tone="warn">等待重连</Badge>}
+          <span className="min-w-0 flex-1 truncate">{queue.length === 1 ? t('1 条消息排队') : t('{count} 条消息排队', { count: queue.length })}</span>
+          {first?.error && <Badge tone="warn">{t('已暂停')}</Badge>}
+          {!first?.error && !connected && <Badge tone="warn">{t('等待重连')}</Badge>}
         </summary>
         {first?.error && (
           <div className="mb-1 flex items-center gap-2 text-xs text-qn-warn">
-            <span className="min-w-0 flex-1 wrap-anywhere">{first.error}</span>
-            <Button variant="ghost" className="shrink-0 px-2 text-xs" disabled={!connected || running || first.sending || first.saving} onClick={() => void retry()}>继续发送</Button>
+            <span className="min-w-0 flex-1 wrap-anywhere">{translateMessage(first.error)}</span>
+            <Button variant="ghost" className="shrink-0 px-2 text-xs" disabled={!connected || running || first.sending || first.saving} onClick={() => void retry()}>{t('继续发送')}</Button>
           </div>
         )}
-        <ul className="qn-scroll qn-queue-list mb-2 max-h-[min(26dvh,9rem)] overflow-y-auto" aria-label="待发送的消息">
+        <ul className="qn-scroll qn-queue-list mb-2 max-h-[min(26dvh,9rem)] overflow-y-auto" aria-label={t('待发送的消息')}>
           {queue.map((message, index) => (
             <li key={message.id} className="flex items-center gap-2 border-t border-qn-border text-sm">
               <div className="min-w-0 flex-1">
-                <p className="truncate">{message.text.trim() || '附件或引用'}</p>
+                <p className="truncate">{message.text.trim() || t('附件或引用')}</p>
                 {accessLabel(accessPreference ?? message.accessMode) && (
                   <span className="text-xs text-qn-warn">{accessLabel(accessPreference ?? message.accessMode)}</span>
                 )}
               </div>
-              {message.sending || message.saving ? <Badge>{message.saving ? '保存中' : '发送中'}</Badge> : (
+              {message.sending || message.saving ? <Badge>{message.saving ? t('保存中') : t('发送中')}</Badge> : (
                 <div className="flex shrink-0 items-center">
                   {newChatActions.map(({ mode, label, Icon }) => (
                     <Button key={mode} variant="ghost" className="qn-icon-button"
@@ -129,9 +129,9 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
                   ))}
                   {running && canSteer && (
                     <Button variant="ghost" className="shrink-0 px-2 text-xs" disabled={!connected}
-                      onClick={() => void steer(message.id)}>引导</Button>
+                      onClick={() => void steer(message.id)}>{t('引导')}</Button>
                   )}
-                  <Button variant="ghost" className="qn-icon-button" aria-label="重新编辑" title="重新编辑" onClick={() => {
+                  <Button variant="ghost" className="qn-icon-button" aria-label={t('重新编辑')} title={t('重新编辑')} onClick={() => {
                     if (unlock.current) return
                     const release = beginEdit(message.id)
                     if (!release) return
@@ -139,7 +139,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
                     setEditError(false)
                     setEdit({ id: message.id, text: message.text })
                   }}><Pencil size={16} aria-hidden /></Button>
-                  <Button variant="ghost" className="qn-icon-button" aria-label={`移除排队消息 ${index + 1}`} onClick={() => remove(message.id)}>
+                  <Button variant="ghost" className="qn-icon-button" aria-label={t('移除排队消息 {index}', { index: index + 1 })} onClick={() => remove(message.id)}>
                     <X size={16} aria-hidden />
                   </Button>
                 </div>
@@ -149,15 +149,15 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
         </ul>
       </details>
       {edit && edited && (
-        <Dialog title="重新编辑排队消息" onClose={() => { if (!saving) closeEditor() }}>
+        <Dialog title={t('重新编辑排队消息')} onClose={() => { if (!saving) closeEditor() }}>
           <form onSubmit={(event) => { event.preventDefault(); void submitEdit() }}>
-            <textarea className="qn-input w-full resize-y" aria-label="排队消息正文" rows={4} value={edit.text}
+            <textarea className="qn-input w-full resize-y" aria-label={t('排队消息正文')} rows={4} value={edit.text}
               onChange={(event) => setEdit({ ...edit, text: event.target.value })} disabled={saving} />
-            {editError && <Note tone="error" message="无法保存修改，请检查消息大小或手机存储后重试。" />}
+            {editError && <Note tone="error" message={t('无法保存修改，请检查消息大小或手机存储后重试。')} />}
             <div className="mt-2 flex justify-end gap-2">
-              <Button type="button" disabled={saving} onClick={closeEditor}>取消</Button>
+              <Button type="button" disabled={saving} onClick={closeEditor}>{t('取消')}</Button>
               <Button type="submit" variant="primary" disabled={saving || edit.text === edited.text ||
-                !(edit.text.trim() || edited.attachments.length || edited.annotations.length)}>保存</Button>
+                !(edit.text.trim() || edited.attachments.length || edited.annotations.length)}>{t('保存')}</Button>
             </div>
           </form>
         </Dialog>
@@ -166,23 +166,23 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
         <Dialog title={destinationTitle} onClose={closeDestination}>
           <p className="mb-2 text-sm text-qn-muted">
             {continuing
-              ? canContinue ? '继承已结束轮次的上下文，在新会话里发送这条消息。' : '当前仅 Codex 支持继承会话上下文。'
-              : '从空白会话开始，用这条消息作为第一条消息。'}
+              ? canContinue ? t('继承已结束轮次的上下文，在新会话里发送这条消息。') : t('当前仅 Codex 支持继承会话上下文。')
+              : t('从空白会话开始，用这条消息作为第一条消息。')}
           </p>
           {movingMessage ? (
             <p className="mb-3 max-h-24 overflow-auto whitespace-pre-wrap break-words text-sm">
-              {movingMessage.text.trim() || '附件或引用'}
+              {movingMessage.text.trim() || t('附件或引用')}
             </p>
-          ) : <Note message="这条消息已离开队列。" />}
+          ) : <Note message={t('这条消息已离开队列。')} />}
           {movingMessage && accessLabel(accessPreference ?? movingMessage.accessMode) !== accessLabel('inherit') && (
-            <Note message="新会话将继承权限总控。" tone="warn" />
+            <Note message={t('新会话将继承权限总控。')} tone="warn" />
           )}
           {destinationError && <Note message={destinationError} tone="error" />}
-          {!connected && <Note message="连接电脑后可发送。" tone="warn" />}
+          {!connected && <Note message={t('连接电脑后可发送。')} tone="warn" />}
           <div className="mt-2 flex justify-end gap-2">
-            <Button disabled={moving} onClick={closeDestination}>取消</Button>
+            <Button disabled={moving} onClick={closeDestination}>{t('取消')}</Button>
             <Button variant="primary" disabled={!movingMessage || moving || !connected || (continuing && !canContinue)}
-              onClick={() => void submitDestination()}>{moving ? '正在发送…' : '在新会话发送'}</Button>
+              onClick={() => void submitDestination()}>{moving ? t('正在发送…') : t('在新会话发送')}</Button>
           </div>
         </Dialog>
       )}

@@ -1,5 +1,7 @@
+import { t, translateMessage } from '@qn/codex-client'
 import { useEffect, useRef, useState } from 'react'
 import { agentLabel, threadKey } from '../agents'
+import { pageName } from '../names'
 import { targetAgents, useApp } from '../store'
 import { Button, Empty, Header, Loading, Note } from './ui'
 import { ProjectTools } from './ProjectTools'
@@ -46,13 +48,13 @@ export function ThreadsPage() {
     <>
       <Header
         className="qn-threads-header"
-        title={project?.name || '会话'}
-        subtitle={project && (targets.find((target) => target.id === project.targetId)?.name ?? '会话')}
+        title={project?.name || pageName('sessions')}
+        subtitle={project && (targets.find((target) => target.id === project.targetId)?.name ?? pageName('sessions'))}
         onBack={goBack}
         right={
           <>
             {project && <ProjectTools project={project} compact />}
-            <Button variant="ghost" className="qn-header-icon" onClick={() => void refreshThreads()} disabled={loading} aria-label="刷新会话">
+            <Button variant="ghost" className="qn-header-icon" onClick={() => void refreshThreads()} disabled={loading} aria-label={t('刷新会话')}>
               <WorkspaceIcon name="refresh" />
             </Button>
           </>
@@ -62,24 +64,24 @@ export function ThreadsPage() {
         {error && <Note message={error} tone="error" onClose={clearError} />}
         {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
         {threadsError ? (
-          <Note message={threadsError} tone="error" actionLabel="重试" onAction={() => void refreshThreads()} />
+          <Note message={threadsError} tone="error" actionLabel={t('重试')} onAction={() => void refreshThreads()} />
         ) : (
           agents
             .filter((agent) => agentErrors[agent])
             .map((agent) => (
               <Note
                 key={agent}
-                message={`${agentLabel(agent)}：${agentErrors[agent] ?? ''}`}
+                message={t('{name}：{message}', { name: agentLabel(agent), message: translateMessage(agentErrors[agent] ?? '') })}
                 tone="warn"
-                actionLabel="重试"
+                actionLabel={t('重试')}
                 onAction={() => void refreshThreads()}
               />
             ))
         )}
-        {threads.length > 0 && <WorkspaceSearch label="搜索会话" query={query} onChange={setQuery} />}
-        {(loading || !settled) && threads.length === 0 && !threadsError && <Loading text="正在读取会话…" />}
+        {threads.length > 0 && <WorkspaceSearch label={t('搜索会话')} query={query} onChange={setQuery} />}
+        {(loading || !settled) && threads.length === 0 && !threadsError && <Loading text={t('正在读取会话…')} />}
         {settled && !loading && shown.length === 0 && !threadsError && (
-          <Empty>{query ? '没有匹配的会话。' : '还没有会话。点「新建会话」开始。'}</Empty>
+          <Empty>{query ? t('没有匹配的会话。') : t('还没有会话。点「新建会话」开始。')}</Empty>
         )}
         {shown.length > 0 && (
           <div className="qn-list-group mt-3">

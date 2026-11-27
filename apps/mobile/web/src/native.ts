@@ -1,8 +1,11 @@
 // T12 原生桥：request 同步返回 ack，真正结果 / 事件经 window.__qnNativeCallback 异步回传。
+import { t, type LocalePreference } from '@qn/codex-client'
 import type { GatewayEvent } from './types'
 
 export interface QnNativeLike {
   request(json: string): string
+  /** 旧版 APK 没有该方法。 */
+  setLocale?(preference: string): void
 }
 
 export type NativePort = QnNativeLike
@@ -35,7 +38,7 @@ export function toCallbackMessage(value: unknown): NativeCallbackMessage | null 
   if (typeof value.id === 'number' && typeof value.ok === 'boolean') {
     if (value.ok === true) return { id: value.id, ok: true, result: value.result }
     const code = typeof value.code === 'string' ? value.code : undefined
-    const error = typeof value.error === 'string' ? value.error : '请求失败'
+    const error = typeof value.error === 'string' ? value.error : t('请求失败')
     return { id: value.id, ok: false, error, ...(code ? { code } : {}) }
   }
   if (typeof value.stream === 'string' && isRecord(value.event)) {
@@ -120,7 +123,8 @@ type Pending = {
 
 export class NativeClient {
   private readonly pending = new Map<number, Pending>()
-  private nextId = 1
+  // 切换语言会重载页面，编号按时间起步，避免旧页面请求的迟到回包匹配到新请求。
+  private nextId = (Date.now() % 1_000_000) * 1_000 + 1
   private readonly off: () => void
 
   constructor(
@@ -138,7 +142,7 @@ export class NativeClient {
       if (timeoutMs > 0) {
         pending.timer = setTimeout(() => {
           if (this.pending.delete(id)) {
-            reject(new NativeRequestError('请求超时，请检查电脑是否在线', 'timeout'))
+            reject(new NativeRequestError(t('请求超时，请检查电脑是否在线'), 'timeout'))
           }
         }, timeoutMs)
       }
@@ -151,7 +155,7 @@ export class NativeClient {
         return
       }
       if (ack && !ack.queued) {
-        this.fail(id, new NativeRequestError(ack.error ?? '原生桥拒绝请求', 'native'))
+        this.fail(id, new NativeRequestError(ack.error ?? t('原生桥拒绝请求'), 'native'))
       }
     })
   }
@@ -166,7 +170,7 @@ export class NativeClient {
     this.off()
     for (const pending of this.pending.values()) {
       if (pending.timer) clearTimeout(pending.timer)
-      pending.reject(new NativeRequestError('原生桥已关闭', 'closed'))
+      pending.reject(new NativeRequestError(t('原生桥已关闭'), 'closed'))
     }
     this.pending.clear()
   }
@@ -209,4 +213,16 @@ export function installWindowCallbacks(hub: NativeCallbacks): () => void {
 export function getWindowNativePort(): NativePort | null {
   if (typeof window === 'undefined') return null
   return window.QnNative ?? null
+}
+
+/** 让原生层的通知、Toast 跟随应用内语言；浏览器预览与旧版 APK 直接跳过。 */
+export function setNativeLocale(preference: LocalePreference): void {
+  const port = getWindowNativePort()
+  if (typeof port?.setLocale !== 'function') return
+  try {
+    // 注入对象的方法必须带对象调用。
+    port.setLocale(preference)
+  } catch {
+    // 原生层设置失败不影响页面语言。
+  }
 }

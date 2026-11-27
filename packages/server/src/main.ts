@@ -8,6 +8,7 @@ import { VERSION } from './version'
 import { runClaudeHistoryWorker } from './claude/sessionReader'
 
 const USAGE = [
+  // i18n-ignore: 命令行用法说明，只在终端打印
   '用法: qn-server.cjs version',
   '  | ensure [--state-dir D] [--replace | --force-replace]',
   '  | daemon [--state-dir D]',

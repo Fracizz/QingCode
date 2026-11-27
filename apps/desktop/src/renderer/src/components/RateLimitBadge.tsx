@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import {
+  t,
+  translateMessage,
   compactText,
   formatReset,
   remainingQuotaPercent,
@@ -52,7 +54,7 @@ function WindowRow({
       <div className="flex items-center justify-between">
         <span>{label}</span>
         <span className={`font-mono ${percentClass(value.usedPercent)}`}>
-          剩余 {Math.round(remaining)}%
+          {t('剩余 {percent}%', { percent: Math.round(remaining) })}
         </span>
       </div>
       <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-qn-fg/10">
@@ -89,7 +91,7 @@ function Body({
   return (
     <div className="w-80 p-3 text-ui">
       <div className="mb-2 flex items-center justify-between">
-        <span className="font-semibold">{agentLabel(agent)} 额度</span>
+        <span className="font-semibold">{`${agentLabel(agent)} ${t('额度')}`}</span>
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -97,7 +99,7 @@ function Body({
             disabled={entry?.loading === true}
             onClick={() => void refresh(targetId, agent)}
           >
-            <RefreshIcon size={12} loading={entry?.loading} /> 刷新
+            <RefreshIcon size={12} loading={entry?.loading} /> {t('刷新')}
           </button>
         </div>
       </div>
@@ -106,7 +108,7 @@ function Body({
         <div className="space-y-2">
           <div className="rounded-lg border border-qn-border/70 p-2">
             <div className="flex items-center justify-between">
-              <span>最近限额事件</span>
+              <span>{t('最近限额事件')}</span>
               <span className={percentClass(snapshot?.primary?.usedPercent ?? 0)}>
                 {claudeRateLimitStatus(snapshot)}
               </span>
@@ -119,9 +121,9 @@ function Body({
           </div>
           <div className="rounded-lg border border-qn-border/70 p-2">
             <div className="flex items-center justify-between">
-              <span>{threadId ? '本会话累计费用' : '累计费用'}</span>
+              <span>{threadId ? t('本会话累计费用') : t('累计费用')}</span>
               <span className="font-mono">
-                ≈{formatCost(sumCost(entry?.costByThread, threadId))}（估算）
+                {t('≈{cost}（估算）', { cost: formatCost(sumCost(entry?.costByThread, threadId)) })}
               </span>
             </div>
             <div className="mt-1 text-ui-sm text-qn-muted">{CLAUDE_RATE_LIMIT_NOTE}</div>
@@ -131,10 +133,10 @@ function Body({
         <>
           {entry?.account && (
             <div className="mb-2 space-y-0.5 rounded-lg bg-qn-inset p-2 text-ui-sm text-qn-muted">
-              <div>套餐：{entry.account.planType ?? '未知'}</div>
-              {entry.account.email && <div className="truncate">账号：{entry.account.email}</div>}
+              <div>{t('套餐：{plan}', { plan: entry.account.planType ?? t('未知') })}</div>
+              {entry.account.email && <div className="truncate">{t('账号：{email}', { email: entry.account.email })}</div>}
               {entry.account.workspaceName && (
-                <div className="truncate">工作区：{entry.account.workspaceName}</div>
+                <div className="truncate">{t('工作区：{name}', { name: entry.account.workspaceName })}</div>
               )}
             </div>
           )}
@@ -158,27 +160,31 @@ function Body({
             </div>
           ) : (
             <div className="rounded-lg border border-qn-border/70 p-3 text-center text-qn-muted">
-              暂无额度数据
+              {t('暂无额度数据')}
             </div>
           )}
 
           {snapshot?.credits?.hasCredits && (
             <div className="mt-2 text-ui-sm text-qn-muted">
-              积分：{snapshot.credits.unlimited ? '不限量' : (snapshot.credits.balance ?? '有余额')}
+              {t('积分：{balance}', {
+                balance: snapshot.credits.unlimited ? t('不限量') : (snapshot.credits.balance ?? t('有余额')),
+              })}
             </div>
           )}
           {(snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true) && (
             <div className="mt-2 text-ui-sm text-qn-danger">
-              已达额度上限{snapshot.rateLimitReachedType ? `（${snapshot.rateLimitReachedType}）` : ''}
+              {snapshot.rateLimitReachedType
+                ? t('已达额度上限（{type}）', { type: snapshot.rateLimitReachedType })
+                : t('已达额度上限')}
             </div>
           )}
         </>
       )}
-      {entry?.error && <div className="mt-2 text-ui-sm text-qn-danger">{entry.error}</div>}
+      {entry?.error && <div className="mt-2 text-ui-sm text-qn-danger">{translateMessage(entry.error)}</div>}
 
       <div className="mt-3 flex items-center justify-between border-t border-qn-border pt-2 text-ui-sm text-qn-muted">
         <span>{updatedAtText(entry?.updatedAt, now)}</span>
-        <span>窗口可见时每 {RATE_LIMIT_REFRESH_MINUTES} 分钟刷新</span>
+        <span>{t('窗口可见时每 {minutes} 分钟刷新', { minutes: RATE_LIMIT_REFRESH_MINUTES })}</span>
       </div>
     </div>
   )
@@ -228,7 +234,7 @@ export function RateLimitBadge({
         <button
           type="button"
           className={`flex h-6 items-center gap-1.5 rounded-md border border-qn-border-strong bg-qn-fg/[0.03] px-2 text-ui-sm leading-4 hover:bg-qn-hover data-[state=open]:bg-qn-hover ${severityTextClass(level)}`}
-          aria-label={`查看 ${agentLabel(agent)} 额度详情`}
+          aria-label={t('查看 {agent} 额度详情', { agent: agentLabel(agent) })}
         >
           {remaining !== null && <ProgressRing percent={remaining} size={13} />}
           {prefix && <span className="max-w-[8rem] truncate text-qn-text/85">{prefix}</span>}

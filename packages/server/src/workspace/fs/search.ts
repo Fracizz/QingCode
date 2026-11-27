@@ -320,7 +320,7 @@ async function runNodeSearch(
       if (range.size > MAX_SEARCH_FILE_BYTES || looksBinary(range.data)) return false
       chunk = range.data
     } catch {
-      deps.ctx.log('fs.search 跳过不可读文件')
+      deps.ctx.log('fs.search 跳过不可读文件') // i18n-ignore: 仅进日志
       return false
     }
     const lines = chunk.toString('utf8').split(/\r?\n/)
@@ -349,7 +349,7 @@ async function runNodeSearch(
     try {
       entries = await fsp.readdir(dir, { withFileTypes: true })
     } catch {
-      deps.ctx.log('fs.search 跳过不可读目录')
+      deps.ctx.log('fs.search 跳过不可读目录') // i18n-ignore: 仅进日志
       return false
     }
     const rules = await loadIgnoreRules(dir, inherited, params, deps)
@@ -396,7 +396,7 @@ async function loadIgnoreRules(
     return [...inherited, ...parseIgnore(content, base)]
   } catch (err) {
     // 大多数目录没有 .gitignore，ENOENT 属于正常情况，不刷日志。
-    if (nodeErrorCode(err) !== 'ENOENT') deps.ctx.log('fs.search 跳过不可读的 .gitignore')
+    if (nodeErrorCode(err) !== 'ENOENT') deps.ctx.log('fs.search 跳过不可读的 .gitignore') // i18n-ignore: 仅进日志
     return [...inherited]
   }
 }

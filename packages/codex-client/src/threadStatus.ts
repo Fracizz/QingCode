@@ -1,3 +1,4 @@
+import { t } from '../../protocol/src/i18n'
 import type { ThreadView } from './conversation'
 
 export type ThreadOutcome = 'completed' | 'failed' | 'interrupted'
@@ -5,14 +6,14 @@ export type ThreadActivity = ThreadOutcome | 'idle' | 'running' | 'pending' | 'i
 export type SessionStatus = ThreadActivity | 'unread'
 
 export const sessionStatusLabels: Record<SessionStatus, string> = {
-  idle: '空闲',
-  running: '运行中',
-  pending: '待审批',
-  input: '待输入',
-  completed: '已完成',
-  failed: '失败',
-  interrupted: '已中断',
-  unread: '有新结果',
+  idle: t('空闲'),
+  running: t('运行中'),
+  pending: t('待审批'),
+  input: t('待输入'),
+  completed: t('已完成'),
+  failed: t('失败'),
+  interrupted: t('已中断'),
+  unread: t('有新结果'),
 }
 
 const runtimeActivity: Record<ThreadView['status'], ThreadActivity> = {

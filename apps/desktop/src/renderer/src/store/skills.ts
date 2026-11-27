@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { listSkills, type CodexRpcLike } from '@qn/codex-client'
+import { listSkills, t, translateMessage, type CodexRpcLike } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { sessionKey } from '../lib/agents'
 import type { SlashItem } from '../lib/attachments'
@@ -16,7 +16,7 @@ export function skillsKey(targetId: string, agent: AgentKind, cwd: string | null
   return JSON.stringify([sessionKey(targetId, agent), cwd, directory])
 }
 
-const SCOPE_LABEL: Record<string, string> = { user: '用户', repo: '项目', system: '系统', admin: '管理员' }
+const SCOPE_LABEL: Record<string, string> = { user: t('用户'), repo: t('项目'), system: t('系统'), admin: t('管理员') }
 
 export const useSkills = create<SkillsState>((set, get) => ({
   lists: {},
@@ -41,7 +41,7 @@ export const useSkills = create<SkillsState>((set, get) => ({
       finish({ items, loading: false, error: null })
     } catch (err) {
       // 旧版 Codex / 桥接不支持 skills/list 时只是没有技能可选，不算错误打扰用户。
-      const error = err instanceof Error ? err.message : '加载技能失败'
+      const error = err instanceof Error ? translateMessage(err.message) : t('加载技能失败')
       finish({ items: [], loading: false, error })
     }
   },

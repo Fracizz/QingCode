@@ -1,0 +1,97 @@
+// 键为中文原文，值为英文。
+export default {
+  // 访问权限
+  '请求批准': 'Ask for approval',
+  '按 Agent 自身配置，需要时询问你': "Follows the Agent's own settings and asks you when needed",
+  '替我批准': 'Approve for me',
+  'Codex 自动审查并决定是否批准': 'Codex reviews requests and decides whether to approve',
+  '完全访问': 'Full access',
+  '关闭沙箱和审批': 'No sandbox, no approvals',
+  'Agent 将能够访问本会话所在主机上的文件、运行命令并访问网络，无需逐次审批。':
+    "The Agent will be able to access files, run commands and use the network on this session's host without asking for approval.",
+  '分类器自动审批，无法判断时询问': 'A classifier approves requests and asks you when unsure',
+  '跳过审批，工具直接执行': 'Skip approvals and run tools directly',
+  'Agent 的工具将按 Claude 的跳过审批模式运行，无需逐次确认。':
+    "The Agent's tools will run in Claude's bypass-permissions mode without asking for confirmation.",
+
+  // 会话历史
+  '已取消打开会话': 'Opening the session was cancelled',
+  '返回的会话与所选会话不一致，请重试': 'The returned session does not match the selected one. Try again',
+  '会话历史分页未前进，请重试': 'Session history paging stalled. Try again',
+  '已取消加载会话历史': 'Loading session history was cancelled',
+  '会话条目分页未前进，请重试': 'Session item paging stalled. Try again',
+
+  // 对话与审批
+  '正在压缩会话…': 'Compacting session…',
+  '已压缩会话上下文': 'Session context compacted',
+  '原因: {reason}': 'Reason: {reason}',
+  '命令需要确认': 'Command needs confirmation',
+  '文件改动需要确认': 'File changes need confirmation',
+  '权限需要确认': 'Permissions need confirmation',
+  '需要用户处理': 'Your action is required',
+  '命令执行审批': 'Command approval',
+  '文件改动审批': 'File change approval',
+  '权限申请': 'Permission request',
+  '其他请求': 'Other request',
+
+  // 推理强度说明
+  '不做额外推理，响应最快': 'No extra reasoning, fastest responses',
+  '几乎不推理，适合简单改动': 'Barely any reasoning, good for simple edits',
+  '推理较少，响应快': 'Light reasoning, quick responses',
+  '速度与推理深度均衡，适合大多数任务': 'Balances speed and reasoning depth for most tasks',
+  '推理更深入，适合复杂问题': 'Deeper reasoning for complex problems',
+  '推理非常深入，耗时更长': 'Very deep reasoning, takes longer',
+  '尽可能深入推理，耗时与额度消耗明显增加': 'Maximum reasoning, noticeably more time and quota',
+  '最深推理，最慢、最耗额度': 'Deepest reasoning, slowest and most quota-intensive',
+
+  // 额度
+  '未知窗口': 'Unknown window',
+  '5 小时': '5 hours',
+  '每周': 'Weekly',
+  '额度': 'Quota',
+  '周': 'wk',
+  '今天': 'today',
+  '明天': 'tomorrow',
+  '昨天': 'yesterday',
+  '重置时间未知': 'Reset time unknown',
+  '重置时间已过（{when}）': 'Reset time passed ({when})',
+  '{countdown}后重置（{when}）': 'Resets in {countdown} ({when})',
+  '暂无额度数据': 'No quota data',
+  '剩余 {text}': 'Left: {text}',
+
+  // 会话状态
+  '空闲': 'Idle',
+  '运行中': 'Running',
+  '待审批': 'Needs approval',
+  '待输入': 'Needs input',
+  '已完成': 'Completed',
+  '失败': 'Failed',
+  '已中断': 'Interrupted',
+  '有新结果': 'New results',
+
+  // 子代理
+  '子代理': 'Subagent',
+  '子代理 {index}': 'Subagent {index}',
+  '子代理协作': 'Subagent collaboration',
+  '委派给子代理': 'Delegate to subagent',
+  '启动子代理': 'Start subagent',
+  '向子代理发送消息': 'Message subagent',
+  '恢复子代理': 'Resume subagent',
+  '继续子代理任务': 'Continue subagent task',
+  '等待子代理': 'Wait for subagent',
+  '关闭子代理': 'Close subagent',
+  '中断子代理': 'Interrupt subagent',
+  '列出子代理': 'List subagents',
+  '与子代理交互': 'Subagent interaction',
+  '子代理中断': 'Subagent interrupted',
+  '子代理完成': 'Subagent completed',
+  '调用中': 'Calling',
+  '调用已返回': 'Call returned',
+  '调用失败': 'Call failed',
+  '调用已中断': 'Call interrupted',
+  '已启动': 'Started',
+  '已交互': 'Interacted',
+  '等待启动': 'Waiting to start',
+  '已关闭': 'Closed',
+  '未找到': 'Not found',
+} satisfies Record<string, string>

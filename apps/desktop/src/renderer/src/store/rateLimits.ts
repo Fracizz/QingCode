@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import { create } from 'zustand'
 import {
   applyRateLimitsUpdate,
@@ -98,9 +99,9 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
         const accountInfo = account.status === 'fulfilled' ? pickAccount(account.value) : null
         const error =
           limits.status === 'rejected'
-            ? friendlyError(limits.reason, '读取额度失败')
+            ? friendlyError(limits.reason, t('读取额度失败'))
             : account.status === 'rejected' && snapshot === null
-              ? friendlyError(account.reason, '读取账号失败')
+              ? friendlyError(account.reason, t('读取账号失败'))
               : null
         const changes: Partial<TargetRateLimits> = { loading: false, error }
         if (snapshot) changes.snapshot = snapshot
@@ -108,7 +109,7 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
         if (snapshot || accountInfo) changes.updatedAt = Date.now()
         patch(targetId, agent, changes)
       } catch (err) {
-        patch(targetId, agent, { loading: false, error: friendlyError(err, '读取额度失败') })
+        patch(targetId, agent, { loading: false, error: friendlyError(err, t('读取额度失败')) })
       } finally {
         inFlight.delete(key)
       }

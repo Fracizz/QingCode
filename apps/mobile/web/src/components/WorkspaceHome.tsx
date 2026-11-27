@@ -1,7 +1,8 @@
-import { sessionStatusLabels, type SessionStatus } from '@qn/codex-client'
+import { sessionStatusLabels, type SessionStatus, t, translateMessage } from '@qn/codex-client'
 import { Archive, Check, ChevronDown, ChevronRight, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { sessionKey } from '../agents'
+import { pageName } from '../names'
 import { useApp } from '../store'
 import type { Project, Target } from '../types'
 import {
@@ -34,9 +35,9 @@ import { PullToRefresh } from './PullToRefresh'
 import { SortableList } from './SortableList'
 
 const tabs: { id: WorkspaceTab; title: string }[] = [
-  { id: 'sessions', title: '会话' },
-  { id: 'projects', title: '项目' },
-  { id: 'connections', title: '连接' },
+  { id: 'sessions', title: pageName('sessions') },
+  { id: 'projects', title: pageName('projects') },
+  { id: 'connections', title: pageName('connections') },
 ]
 
 const statusTone: Record<SessionStatus, 'muted' | 'accent' | 'warn' | 'danger'> = {
@@ -80,7 +81,7 @@ export function WorkspaceNav({ onScrollTop }: { onScrollTop: () => void }) {
     if (page === 'connections') useApp.setState({ page: 'workspace' })
   }
   return (
-    <nav className="qn-nav" aria-label="工作台">
+    <nav className="qn-nav" aria-label={t('工作台')}>
       {tabs.map(({ id, title }) => (
         <button type="button" key={id} className="qn-nav-button" aria-current={id === tab ? 'page' : undefined}
           onClick={(event) => navigate(id, event.detail > 0)}>
@@ -103,13 +104,14 @@ export function WorkspaceSearch({
     <div className="qn-search">
       <WorkspaceIcon name="search" />
       <input type="search" value={query} aria-label={label} placeholder={label} onChange={(event) => onChange(event.target.value)} />
-      {query && <button type="button" aria-label="清空搜索" onClick={() => onChange('')}><X size={17} /></button>}
+      {query && <button type="button" aria-label={t('清空搜索')} onClick={() => onChange('')}><X size={17} /></button>}
     </div>
   )
 }
 
 export function ProjectOrigin({ target }: { target?: Target }) {
-  const name = target?.kind === 'ssh' ? `远端 · ${target.name}` : target?.kind === 'direct' ? `直连 · ${target.name}` : target?.name ?? '目标已移除'
+  const name = target?.kind === 'ssh' ? t('远端 · {name}', { name: target.name })
+    : target?.kind === 'direct' ? t('直连 · {name}', { name: target.name }) : target?.name ?? t('目标已移除')
   return <span className="qn-origin" title={target?.kind === 'local' ? undefined : target?.host}>{name}</span>
 }
 
@@ -120,7 +122,6 @@ export function WorkspaceThreadRow({
   onOpen: () => void
   selected?: boolean
 }) {
-  const view = useApp((s) => s.sessions[sessionKey(thread.targetId, thread.agent)]?.state.threads[thread.id])
   const desktopId = useApp((s) => s.activeId)
   const opening = useApp(({ openingThread }) => openingThread?.desktopId === desktopId
     && openingThread.targetId === thread.targetId && openingThread.agent === thread.agent && openingThread.threadId === thread.id)
@@ -130,7 +131,9 @@ export function WorkspaceThreadRow({
   const unread = useWorkspace((s) => desktopId ? s.threads[desktopId]?.find((item) =>
     item.id === thread.id && item.agent === thread.agent && item.targetId === thread.targetId && item.projectId === thread.projectId,
   )?.unread : undefined)
-  const status = recentThreadStatus({ ...thread, unread: unread ?? thread.unread }, view)
+  // 只订阅派生出的状态字符串：订阅整个线程视图时，流式增量每次都会让这一行重渲染。
+  const status = useApp((s) => recentThreadStatus({ ...thread, unread: unread ?? thread.unread },
+    s.sessions[sessionKey(thread.targetId, thread.agent)]?.state.threads[thread.id]))
   const preview = threadPreviewLine(thread.title, thread.preview)
   const row = useRef<HTMLDivElement>(null)
   const gesture = useRef<{ id: number; x: number; y: number; axis: ReturnType<typeof threadSwipeAxis> } | null>(null)
@@ -247,7 +250,7 @@ export function WorkspaceThreadRow({
     try {
       await archiveConversation(thread.targetId, thread)
     } catch (err) {
-      setArchiveError(`归档失败。${friendlyError(err, '请重试')}`)
+      setArchiveError(t('归档失败。{message}', { message: translateMessage(friendlyError(err, t('请重试'))) }))
     } finally {
       archivePending.current = false
       setArchiving(false)
@@ -271,7 +274,7 @@ export function WorkspaceThreadRow({
       }
       setMenu(null)
     } catch (err) {
-      setRenameError(friendlyError(err, '重命名失败'))
+      setRenameError(friendlyError(err, t('重命名失败')))
     } finally {
       setRenaming(false)
     }
@@ -302,7 +305,7 @@ export function WorkspaceThreadRow({
             <span className="qn-row-copy">
               <span className="qn-list-primary qn-thread-title">
                 <span className="truncate">{thread.title}</span>
-                {preference?.pinned && <Pin size={13} className="inline shrink-0 text-qn-muted" aria-label="已置顶" />}
+                {preference?.pinned && <Pin size={13} className="inline shrink-0 text-qn-muted" aria-label={t('已置顶')} />}
               </span>
               {preview && <span className="qn-subtitle block">{preview}</span>}
               <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -312,7 +315,7 @@ export function WorkspaceThreadRow({
             </span>
             {/* 空闲、已完成、已中断是常态，不再逐行挂徽标；只标出需要注意的状态。 */}
             {opening ? (
-              <span className="qn-row-status text-qn-accent" role="status"><LoadingIcon />打开中…</span>
+              <span className="qn-row-status text-qn-accent" role="status"><LoadingIcon />{t('打开中…')}</span>
             ) : status === 'running' ? (
               <span className="qn-row-status text-qn-accent"><LoadingIcon role="img" aria-hidden />{sessionStatusLabels[status]}</span>
             ) : status === 'unread' ? (
@@ -320,7 +323,7 @@ export function WorkspaceThreadRow({
             ) : QUIET_STATUS.has(status) ? null : <Badge tone={statusTone[status]}>{sessionStatusLabels[status]}</Badge>}
           </button>
           <button type="button" className="qn-thread-archive" style={{ width: ARCHIVE_ACTION_WIDTH }}
-            aria-label={`归档 ${thread.title}${thread.agent === 'codex' ? '' : '（仅此手机）'}`}
+            aria-label={thread.agent === 'codex' ? t('归档 {title}', { title: thread.title }) : t('归档 {title}（仅此手机）', { title: thread.title })}
             aria-disabled={archiving} aria-busy={archiving} onFocus={() => setRevealedDesktop(desktopId)}
             onPointerDown={startArchiveTouch} onPointerMove={trackArchiveTouch} onPointerUp={finishArchiveTouch}
             onPointerCancel={(event) => trackArchiveTouch(event, true)}
@@ -328,31 +331,31 @@ export function WorkspaceThreadRow({
             onClick={(event) => {
               if (!archiveTouch.current || event.detail === 0) void archive()
             }}>
-            {archiving ? '归档中…' : '归档'}
-            {thread.agent !== 'codex' && !archiving && <small>仅此手机</small>}
+            {archiving ? t('归档中…') : t('归档')}
+            {thread.agent !== 'codex' && !archiving && <small>{t('仅此手机')}</small>}
           </button>
         </div>
-        {desktopId && <Button variant="ghost" className="qn-list-action" aria-label={`${thread.title} 的会话操作`}
+        {desktopId && <Button variant="ghost" className="qn-list-action" aria-label={t('{title} 的会话操作', { title: thread.title })}
           aria-haspopup="dialog" onClick={() => { setRenameError(null); setMenu('actions') }}><Ellipsis size={18} aria-hidden /></Button>}
       </div>
       {archiveError && <p className="qn-thread-archive-error" role="alert">{archiveError}</p>}
       {menu && desktopId && (
-        <Dialog title={menu === 'rename' ? '重命名会话' : thread.title} onClose={() => { if (!renaming) setMenu(null) }}>
+        <Dialog title={menu === 'rename' ? t('重命名会话') : thread.title} onClose={() => { if (!renaming) setMenu(null) }}>
           {menu === 'actions' ? <>
             <SheetAction icon={preference?.pinned ? PinOff : Pin} onClick={() => {
               changeThreadPreference(desktopId, thread, { pinned: !preference?.pinned })
               setMenu(null)
-            }}>{preference?.pinned ? '取消置顶' : '置顶'}（仅此手机）</SheetAction>
+            }}>{preference?.pinned ? t('取消置顶（仅此手机）') : t('置顶（仅此手机）')}</SheetAction>
             <SheetAction icon={Pencil} onClick={() => { setName(thread.title); setMenu('rename') }}>
-              重命名{thread.agent !== 'codex' && '（仅此手机）'}
+              {thread.agent !== 'codex' ? t('重命名（仅此手机）') : t('重命名')}
             </SheetAction>
             <SheetAction icon={Archive} disabled={archiving} onClick={() => { setMenu(null); void archive() }}>
-              归档{thread.agent !== 'codex' && '（仅此手机）'}
+              {thread.agent !== 'codex' ? t('归档（仅此手机）') : t('归档')}
             </SheetAction>
           </> : <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); void rename() }}>
-            <input className="qn-input" aria-label="会话名称" value={name} onChange={(event) => setName(event.target.value)} disabled={renaming} />
+            <input className="qn-input" aria-label={t('会话名称')} value={name} onChange={(event) => setName(event.target.value)} disabled={renaming} />
             {renameError && <Note tone="error" message={renameError} />}
-            <Button variant="primary" type="submit" disabled={renaming || !name.trim()}>{renaming ? '保存中…' : '保存'}</Button>
+            <Button variant="primary" type="submit" disabled={renaming || !name.trim()}>{renaming ? t('保存中…') : t('保存')}</Button>
           </form>}
         </Dialog>
       )}
@@ -390,7 +393,7 @@ function WorkspaceThreadList({ threads, projectName, searching, onOpen }: {
   const olderThreadsId = useId()
   const preview = searching ? threads : threads.slice(0, THREAD_PREVIEW_LIMIT)
   const remaining = threads.length - preview.length
-  const label = expanded ? '收起' : `显示更多（${remaining} 条）`
+  const label = expanded ? t('收起') : t('显示更多（{count} 条）', { count: remaining })
   const renderRow = (thread: WorkspaceThread) => (
     <WorkspaceThreadRow key={workspaceThreadKey(thread)} thread={thread} onOpen={() => onOpen(thread)} />
   )
@@ -458,33 +461,33 @@ export function WorkspaceHome() {
   }
   return (
     <PullToRefresh className="qn-body qn-scroll qn-workspace qn-workspace-home qn-rise"
-      label={isSessions ? '会话' : '项目'} disabled={!desktopId || projectList?.loading} onRefresh={refresh}>
+      label={pageName(isSessions ? 'sessions' : 'projects')} disabled={!desktopId || projectList?.loading} onRefresh={refresh}>
       {repairReason && desktopId && (
-        <Note message={repairReason === 'fingerprint' ? '电脑证书已变化，请核对后重新配对。' : '电脑已撤销此设备的授权。'}
-          tone="error" actionLabel="重新配对" onAction={() => beginRepair(desktopId)} />
+        <Note message={repairReason === 'fingerprint' ? t('电脑证书已变化，请核对后重新配对。') : t('电脑已撤销此设备的授权。')}
+          tone="error" actionLabel={t('重新配对')} onAction={() => beginRepair(desktopId)} />
       )}
       {notice && <Note message={notice} tone="warn" />}
       {error && <Note message={error} tone="error" onClose={clearError} />}
       {connected && projectList?.error && !repairReason && (
-        <Note message="读取项目失败，请检查电脑和网络。" tone="error" actionLabel="重试" onAction={() => void refresh()} />
+        <Note message={t('读取项目失败，请检查电脑和网络。')} tone="error" actionLabel={t('重试')} onAction={() => void refresh()} />
       )}
-      {projectList?.loading && projects.length === 0 ? <Loading text="正在读取项目…" /> : (
+      {projectList?.loading && projects.length === 0 ? <Loading text={t('正在读取项目…')} /> : (
         <>
           {/* 新建会话从各项目分组标题的 + 进入，顶部不再放全局入口。 */}
-          <WorkspaceSearch label={isSessions ? '搜索会话或项目' : '搜索项目、主机或路径'} query={query} onChange={setQuery} />
+          <WorkspaceSearch label={isSessions ? t('搜索会话或项目') : t('搜索项目、主机或路径')} query={query} onChange={setQuery} />
           {!isSessions && (
             <>
               <button type="button" className="qn-row qn-project-filter"
                 aria-haspopup="dialog" aria-expanded={projectFilterOpen} onClick={() => setProjectFilterOpen(true)}>
                 <Monitor size={17} className="shrink-0 text-qn-muted" aria-hidden />
-                <span className="shrink-0 text-qn-muted">主机</span>
-                <span className="min-w-0 flex-1 truncate text-right">{selectedProjectTarget?.name ?? '全部主机'}</span>
+                <span className="shrink-0 text-qn-muted">{t('主机')}</span>
+                <span className="min-w-0 flex-1 truncate text-right">{selectedProjectTarget?.name ?? t('全部主机')}</span>
                 <ChevronDown size={16} className="shrink-0 text-qn-muted" aria-hidden />
               </button>
               {projectFilterOpen && (
-                <Dialog title="按主机筛选项目" onClose={() => setProjectFilterOpen(false)}>
+                <Dialog title={t('按主机筛选项目')} onClose={() => setProjectFilterOpen(false)}>
                   <div className="grid gap-1">
-                    {[{ id: null, name: '全部主机' }, ...targets].map(({ id, name }) => (
+                    {[{ id: null, name: t('全部主机') }, ...targets].map(({ id, name }) => (
                       <button type="button" key={id === null ? 'all' : `target:${id}`}
                         className="qn-row qn-project-filter-option" aria-pressed={id === activeProjectTarget}
                         onClick={() => { setProjectTargetId(id); setProjectFilterOpen(false) }}>
@@ -502,7 +505,7 @@ export function WorkspaceHome() {
               <section key={JSON.stringify([desktopId, project.targetId, project.id])} className="qn-workspace-group">
                 <div className="qn-group-heading">
                   <button type="button" className="qn-group-title" onClick={() => void showWorkspaceProject(project)}
-                    aria-label={`进入 ${project.name} 项目的会话`}>
+                    aria-label={t('进入 {name} 项目的会话', { name: project.name })}>
                     <h2 className="truncate">{project.name}</h2>
                     <ProjectOrigin target={targets.find((item) => item.id === project.targetId)} />
                     <ChevronRight size={15} className="shrink-0 text-qn-dim" aria-hidden />
@@ -515,8 +518,8 @@ export function WorkspaceHome() {
               </section>
             )) : (
               <Empty>
-                <p>{query ? '没有匹配的会话。' : '还没有最近访问的会话。'}</p>
-                <button type="button" className="qn-dashed-action qn-pressable" onClick={() => { setQuery(''); setTab('projects') }}>选择项目</button>
+                <p>{query ? t('没有匹配的会话。') : t('还没有最近访问的会话。')}</p>
+                <button type="button" className="qn-dashed-action qn-pressable" onClick={() => { setQuery(''); setTab('projects') }}>{t('选择项目')}</button>
               </Empty>
             )
           ) : (
@@ -526,20 +529,20 @@ export function WorkspaceHome() {
                   <h2><ProjectOrigin target={target} /></h2>
                 </div>
                 <SortableList items={rows} itemKey={(project) => project.id} disabled={searching || !desktopId}
-                  label={`${target.name} 的项目`} onMove={(from, to) => desktopId && placeWorkspaceProject(desktopId, rows, from, to)}>
+                  label={t('{name} 的项目', { name: target.name })} onMove={(from, to) => desktopId && placeWorkspaceProject(desktopId, rows, from, to)}>
                   {(project) => <WorkspaceProjectRow project={project} target={target} sortable={!searching && rows.length > 1}
                     onOpen={() => void showWorkspaceProject(project)} />}
                 </SortableList>
               </section>
             )) : (
               <Empty>
-                {searching ? '没有匹配的项目。' : activeProjectTarget === null ? '在目标中选择或添加项目。' : '此连接下暂无项目。'}
+                {searching ? t('没有匹配的项目。') : activeProjectTarget === null ? t('在目标中选择或添加项目。') : t('此连接下暂无项目。')}
               </Empty>
             )
           )}
           {(!isSessions || groups.length > 0) && (
             <button type="button" className="qn-text-action" onClick={isSessions ? () => { setQuery(''); setTab('projects') } : showTargets}>
-              {isSessions ? '从其他项目打开会话' : '管理目标与项目'}<ChevronRight size={15} aria-hidden />
+              {isSessions ? t('从其他项目打开会话') : t('管理目标与项目')}<ChevronRight size={15} aria-hidden />
             </button>
           )}
         </>

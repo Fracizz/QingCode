@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import type { RunOs, RunStartTask, RunTaskOverride, RunTaskType } from './types'
 
 // `.qingcode/run.json` 的解析、序列化、校验与自动发现（纯函数）。
@@ -10,11 +11,11 @@ export const RUN_OS: readonly RunOs[] = ['windows', 'linux', 'macos']
 export const RUN_CONFIG_RELATIVE_PATH = '.qingcode/run.json'
 
 export const TASK_TYPE_LABEL: Record<RunTaskType, string> = {
-  command: '命令',
+  command: t('命令'),
   ps1: 'PowerShell',
   bat: 'BAT',
   sh: 'sh',
-  script: '脚本',
+  script: t('脚本'),
 }
 
 export const OS_LABEL: Record<RunOs, string> = { windows: 'Windows', linux: 'Linux', macos: 'macOS' }
@@ -145,10 +146,10 @@ export function parseRunConfigFile(text: string): ParseResult {
   try {
     data = JSON.parse(trimmed)
   } catch (err) {
-    return { ok: false, error: `JSON 解析失败：${err instanceof Error ? err.message : String(err)}` }
+    return { ok: false, error: t('JSON 解析失败：{error}', { error: err instanceof Error ? err.message : String(err) }) }
   }
-  if (!isRecord(data)) return { ok: false, error: '顶层必须是对象' }
-  if (data.configs !== undefined && !Array.isArray(data.configs)) return { ok: false, error: 'configs 必须是数组' }
+  if (!isRecord(data)) return { ok: false, error: t('顶层必须是对象') }
+  if (data.configs !== undefined && !Array.isArray(data.configs)) return { ok: false, error: t('configs 必须是数组') }
   const configs: RunConfig[] = []
   const rawConfigs: unknown[] = []
   for (const item of (data.configs as unknown[] | undefined) ?? []) {
@@ -245,15 +246,15 @@ export function stripRedundantCdPrefix(target: string): string {
 export function resolveTask(task: RunTask, os: RunOs): ResolvedTask {
   const label = task.name || task.target || task.id
   if (typeof task.os === 'string' && task.os !== os) {
-    return { ok: false, reason: `「${label}」仅限 ${OS_LABEL[task.os]}` }
+    return { ok: false, reason: t('「{name}」仅限 {os}', { name: label, os: OS_LABEL[task.os] }) }
   }
   const override = typeof task.os === 'object' ? task.os[os] : undefined
   const type = override?.type ?? task.type
   let target = (override?.target ?? task.target).trim()
   const cwd = (override?.cwd !== undefined ? override.cwd : task.cwd)?.trim()
   const env = task.env || override?.env ? { ...task.env, ...override?.env } : undefined
-  if (!target) return { ok: false, reason: `「${label}」未配置 ${OS_LABEL[os]} 下的命令` }
-  if (type === 'bat' && os !== 'windows') return { ok: false, reason: `「${label}」是 BAT 任务，不能在 ${OS_LABEL[os]} 上运行` }
+  if (!target) return { ok: false, reason: t('「{name}」未配置 {os} 下的命令', { name: label, os: OS_LABEL[os] }) }
+  if (type === 'bat' && os !== 'windows') return { ok: false, reason: t('「{name}」是 BAT 任务，不能在 {os} 上运行', { name: label, os: OS_LABEL[os] }) }
   if (type === 'command' && cwd) target = stripRedundantCdPrefix(target) || target
   const resolved: RunStartTask = { type, target }
   if (cwd) resolved.cwd = cwd
@@ -280,12 +281,12 @@ export function runKey(configId: string, taskId: string): string {
 }
 
 export function taskLabel(config: RunConfig, task: RunTask): string {
-  const name = task.name?.trim() || task.target || '任务'
+  const name = task.name?.trim() || task.target || t('任务')
   return config.tasks.length > 1 ? `${config.name} · ${name}` : config.name || name
 }
 
 export function taskOverview(config: RunConfig): string {
-  if (config.tasks.length === 0) return '无任务'
+  if (config.tasks.length === 0) return t('无任务')
   return config.tasks
     .map((task) => {
       const name = task.name ? `${task.name}: ` : ''
@@ -305,7 +306,7 @@ export function createTask(partial: Partial<Omit<RunTask, 'id'>> = {}): RunTask 
   return { id: newId(), type: 'command', target: '', ...partial }
 }
 
-export function createConfig(existing: RunConfig[], name = '新配置'): RunConfig {
+export function createConfig(existing: RunConfig[], name = t('新配置')): RunConfig {
   return { id: newId(), name: uniqueName(existing, name), tasks: [createTask()] }
 }
 
@@ -322,7 +323,7 @@ export function duplicateConfig(existing: RunConfig[], config: RunConfig): RunCo
   return {
     ...structuredClone(config),
     id: newId(),
-    name: uniqueName(existing, `${config.name} 副本`),
+    name: uniqueName(existing, t('{name} 副本', { name: config.name })),
     tasks: config.tasks.map((task) => ({ ...structuredClone(task), id: newId() })),
   }
 }
@@ -440,29 +441,29 @@ export function emptyTaskDraft(): TaskDraft {
 export function validateDraft(draft: ConfigDraft, others: RunConfig[]): string[] {
   const errors: string[] = []
   const name = draft.name.trim()
-  if (!name) errors.push('请填写配置名称')
+  if (!name) errors.push(t('请填写配置名称'))
   // 旧版 CLI 按名称定位配置，重名会导致 `qingcode run start <name>` 报歧义。
-  else if (others.some((config) => config.id !== draft.id && config.name === name)) errors.push(`已有同名配置「${name}」`)
-  if (draft.tasks.length === 0) errors.push('至少需要一个任务')
+  else if (others.some((config) => config.id !== draft.id && config.name === name)) errors.push(t('已有同名配置「{name}」', { name }))
+  if (draft.tasks.length === 0) errors.push(t('至少需要一个任务'))
   draft.tasks.forEach((task, index) => {
-    const label = task.name.trim() || `任务 ${index + 1}`
+    const label = task.name.trim() || t('任务 {index}', { index: index + 1 })
     const overrideTarget = Object.values(task.overrides ?? {}).some((o) => o?.target?.trim())
     if (!task.target.trim() && !overrideTarget) {
-      errors.push(`${label}：请填写${task.type === 'command' ? '命令' : '脚本路径'}`)
+      errors.push(task.type === 'command' ? t('{label}：请填写命令', { label }) : t('{label}：请填写脚本路径', { label }))
     }
-    if (task.type !== 'command' && /[\r\n]/.test(task.target)) errors.push(`${label}：脚本路径不能换行`)
+    if (task.type !== 'command' && /[\r\n]/.test(task.target)) errors.push(t('{label}：脚本路径不能换行', { label }))
     if (task.type === 'bat' && task.restriction !== 'all' && task.restriction !== 'windows') {
-      errors.push(`${label}：BAT 任务只能在 Windows 上运行`)
+      errors.push(t('{label}：BAT 任务只能在 Windows 上运行', { label }))
     }
     const keys = new Set<string>()
     for (const row of task.env) {
       const key = row.key.trim()
       if (!key) {
-        if (row.value) errors.push(`${label}：环境变量名不能为空`)
+        if (row.value) errors.push(t('{label}：环境变量名不能为空', { label }))
         continue
       }
-      if (key.includes('=') || /\s/.test(key)) errors.push(`${label}：环境变量名「${key}」无效`)
-      if (keys.has(key)) errors.push(`${label}：环境变量「${key}」重复`)
+      if (key.includes('=') || /\s/.test(key)) errors.push(t('{label}：环境变量名「{key}」无效', { label, key }))
+      if (keys.has(key)) errors.push(t('{label}：环境变量「{key}」重复', { label, key }))
       keys.add(key)
     }
   })
@@ -516,21 +517,21 @@ export function discoverPackageScripts(
   try {
     const parsed: unknown = JSON.parse(text.replace(/^\uFEFF/, ''))
     if (isRecord(parsed)) manifest = parsed
-    else warnings.push({ source, message: 'package.json 必须是 JSON 对象' })
+    else warnings.push({ source, message: t('package.json 必须是 JSON 对象') })
   } catch {
-    warnings.push({ source, message: 'package.json 解析失败' })
+    warnings.push({ source, message: t('package.json 解析失败') })
   }
   const manager = detectPackageManager(options.fileNames, manifest) ?? options.inherited ?? 'npm'
   const tasks: DiscoveredTask[] = []
   const scripts = manifest?.scripts
   if (!isRecord(scripts)) return { tasks, warnings, manager }
   const entries = Object.entries(scripts)
-  if (entries.length > 100) warnings.push({ source, message: '脚本过多，只取前 100 个' })
+  if (entries.length > 100) warnings.push({ source, message: t('脚本过多，只取前 100 个') })
   for (const [name, script] of entries.slice(0, 100)) {
     if (typeof script !== 'string' || !script.trim()) continue
     // 只接受可安全拼进命令行的脚本名，避免替用户猜引号。
     if (!/^[A-Za-z0-9][A-Za-z0-9:._/-]*$/.test(name)) {
-      warnings.push({ source, message: `脚本名无法安全生成命令：${name}` })
+      warnings.push({ source, message: t('脚本名无法安全生成命令：{name}', { name }) })
       continue
     }
     tasks.push({

@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('qn', {
   smokeDone: (): void => ipcRenderer.send('app:smokeDone'),
   requestPort: (): void => ipcRenderer.send('backend-port-request'),
   setTheme: (theme: string): void => ipcRenderer.send('app:setTheme', theme),
+  setLocale: (locale: 'zh' | 'en'): void => ipcRenderer.send('app:setLocale', locale),
   isSmoke,
   // 自绘标题栏需要按平台给系统窗口按钮留位（Windows 在右、macOS 在左）。
   platform: process.platform,

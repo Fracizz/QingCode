@@ -1,4 +1,4 @@
-import type { RateLimitSnapshot } from '@qn/codex-client'
+import { t, type RateLimitSnapshot } from '@qn/codex-client'
 
 export type ClaudeCostEvent = { threadId: string; usd: number; estimated: boolean }
 
@@ -48,25 +48,25 @@ export function formatCost(usd: number): string {
   return `$${Number(usd.toFixed(2))}`
 }
 
-export const CLAUDE_RATE_LIMIT_NOTE = 'Claude 只在接近/触发限额时上报'
+export const CLAUDE_RATE_LIMIT_NOTE = t('Claude 只在接近/触发限额时上报')
 
 export function claudeRateLimitStatus(snapshot: RateLimitSnapshot | null): string {
-  if (snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true) return '已达额度上限'
+  if (snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true) return t('已达额度上限')
   const percent = snapshot?.primary?.usedPercent
   if (typeof percent === 'number' && Number.isFinite(percent)) {
-    return `利用率 ${Math.round(percent)}%（本次限额事件）`
+    return t('利用率 {percent}%（本次限额事件）', { percent: Math.round(percent) })
   }
-  return '暂无限额事件'
+  return t('暂无限额事件')
 }
 
 export function claudeCompactText(snapshot: RateLimitSnapshot | null, costUsd: number): string {
   const percent = snapshot?.primary?.usedPercent
   const limit =
     snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true
-      ? '已达上限'
+      ? t('已达上限')
       : typeof percent === 'number' && Number.isFinite(percent)
-        ? `限额 ${Math.round(percent)}%`
-        : '暂无限额事件'
-  const cost = costUsd > 0 ? `≈${formatCost(costUsd)}（估算）` : ''
+        ? t('限额 {percent}%', { percent: Math.round(percent) })
+        : t('暂无限额事件')
+  const cost = costUsd > 0 ? t('≈{cost}（估算）', { cost: formatCost(costUsd) }) : ''
   return cost ? `${limit} · ${cost}` : limit
 }

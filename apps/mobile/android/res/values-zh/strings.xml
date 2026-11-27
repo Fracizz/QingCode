@@ -1,0 +1,6 @@
+<resources>
+    <string name="desktop_connection_channel">电脑连接</string>
+    <string name="desktop_connection_title">QingCode 正在后台保持电脑连接</string>
+    <string name="install_confirm_unavailable">无法打开系统安装确认，请回到应用重试</string>
+    <string name="install_rejected">Android 拒绝安装此更新</string>
+</resources>

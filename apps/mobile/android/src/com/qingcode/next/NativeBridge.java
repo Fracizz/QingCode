@@ -42,6 +42,7 @@ public final class NativeBridge {
     boolean backgroundConnectionEnabled();
     void setBackgroundConnectionEnabled(boolean enabled);
     void setDesktopConnectionActive(boolean active);
+    void refreshLanguage();
   }
 
   private static final ThreadFactory THREAD_FACTORY = new ThreadFactory() {
@@ -159,6 +160,14 @@ public final class NativeBridge {
       return ack(requestId, false, "应用已关闭");
     }
     return ack(requestId, true, null);
+  }
+
+  /** 同步保存界面语言偏好；取值不是 system / zh / en 时忽略。 */
+  @JavascriptInterface
+  public void setLocale(String preference) {
+    if (closed.get() || !LanguageRules.validPreference(preference)) return;
+    NativeLocale.save(appContext, preference);
+    callback.refreshLanguage();
   }
 
   void close() {

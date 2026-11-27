@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import type { ItemView, ThreadView, TurnMeta } from '@qn/codex-client'
 
 /** 子代理单独显示，便于从消息流直接查看。 */
@@ -63,11 +64,16 @@ export function toolSummary(items: readonly ToolItem[]): string {
   const failed = items.filter((item) => toolStatus(item) === 'failed').length
   const running = items.some((item) => toolStatus(item) === 'running')
   const parts: string[] = []
-  if (commands) parts.push(`${running ? '正在运行' : '已运行'} ${commands} 条命令`)
-  if (files) parts.push(`改动 ${files} 个文件`)
-  if (others) parts.push(`${others} 个其它步骤`)
-  if (failed) parts.push(`${failed} 个失败`)
-  return parts.join(' · ') || `${items.length} 个步骤`
+  if (commands) {
+    const one = commands === 1
+    parts.push(running
+      ? (one ? t('正在运行 1 条命令') : t('正在运行 {count} 条命令', { count: commands }))
+      : (one ? t('已运行 1 条命令') : t('已运行 {count} 条命令', { count: commands })))
+  }
+  if (files) parts.push(files === 1 ? t('改动 1 个文件') : t('改动 {count} 个文件', { count: files }))
+  if (others) parts.push(others === 1 ? t('1 个其它步骤') : t('{count} 个其它步骤', { count: others }))
+  if (failed) parts.push(t('{count} 个失败', { count: failed }))
+  return parts.join(' · ') || (items.length === 1 ? t('1 个步骤') : t('{count} 个步骤', { count: items.length }))
 }
 
 /** 手机消息流只保留对话本身、文件改动、子代理和上下文压缩提示。 */
@@ -111,18 +117,18 @@ export function interruptedTurnPositions(items: readonly ItemView[], shown: read
 
 /** 根据本轮最新一步推断回复阶段，命令被隐藏后仍让用户知道在忙什么。 */
 export function replyPhase(items: readonly ItemView[], activeIds: readonly string[] | undefined): string {
-  if (!activeIds?.length) return '正在思考'
+  if (!activeIds?.length) return t('正在思考')
   const ids = new Set(activeIds)
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]!
     if (!ids.has(item.id) || item.kind === 'user') continue
-    if (item.kind === 'agent') return item.streaming ? '正在回复' : '正在思考'
-    if (item.kind === 'command') return '正在执行命令'
-    if (item.kind === 'fileChange') return '正在修改文件'
-    if (item.kind === 'reasoning') return '正在思考'
-    return '正在处理'
+    if (item.kind === 'agent') return item.streaming ? t('正在回复') : t('正在思考')
+    if (item.kind === 'command') return t('正在执行命令')
+    if (item.kind === 'fileChange') return t('正在修改文件')
+    if (item.kind === 'reasoning') return t('正在思考')
+    return t('正在处理')
   }
-  return '正在思考'
+  return t('正在思考')
 }
 
 /**

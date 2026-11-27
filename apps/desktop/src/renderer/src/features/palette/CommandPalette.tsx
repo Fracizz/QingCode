@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Command, History } from 'lucide-react'
 import { Dialog, VisuallyHidden } from 'radix-ui'
+import { t } from '@qn/codex-client'
 import { DialogFrame } from '../../components/DialogFrame'
 import { ListOption } from '../../components/ListOption'
 import { SearchField } from '../../components/SearchField'
@@ -45,7 +46,7 @@ function ShortcutKeys({ shortcut }: { shortcut: string }) {
   const label = formatShortcut(shortcut)
   if (!label) return null
   return (
-    <span className="flex shrink-0 items-center gap-1" aria-label={`快捷键 ${label}`}>
+    <span className="flex shrink-0 items-center gap-1" aria-label={t('快捷键 {keys}', { keys: label })}>
       {label.split(' ').map((chord, ci) => (
         <span key={ci} className="flex items-center gap-0.5">
           {chord.split(/\+(?!$)/).map((key, ki) => (
@@ -131,16 +132,16 @@ function PaletteBody({ onError, registry }: Required<Pick<CommandPaletteProps, '
       className="qn-pop max-h-[min(520px,70vh)] w-full max-w-[640px] rounded-xl"
     >
       <VisuallyHidden.Root>
-        <Dialog.Title>命令面板</Dialog.Title>
+        <Dialog.Title>{t('命令面板')}</Dialog.Title>
       </VisuallyHidden.Root>
       <SearchField
         autoFocus
-        label="搜索命令"
+        label={t('搜索命令')}
         icon={<Command size={15} className="text-qn-muted" />}
         className="shrink-0 border-b border-qn-border px-3 py-2.5"
         inputClassName="text-ui-md"
         value={query}
-        placeholder="输入命令名称"
+        placeholder={t('输入命令名称')}
         role="combobox"
         aria-expanded
         aria-controls="qn-palette-list"
@@ -153,18 +154,18 @@ function PaletteBody({ onError, registry }: Required<Pick<CommandPaletteProps, '
       <ErrorNote
         message={error}
         variant="inline"
-        closeLabel="关闭错误提示"
+        closeLabel={t('关闭错误提示')}
         onClose={() => useCommandPalette.getState().clearError()}
       />
       <div
         ref={listRef}
         id="qn-palette-list"
         role="listbox"
-        aria-label="命令"
+        aria-label={t('命令')}
         className="qn-scroll min-h-0 flex-1 overflow-y-auto p-1"
       >
         {ranked.length === 0 && (
-          <EmptyState>没有匹配的命令</EmptyState>
+          <EmptyState>{t('没有匹配的命令')}</EmptyState>
         )}
         {ranked.map((item, index) => (
           <ListOption
@@ -198,7 +199,7 @@ function PaletteBody({ onError, registry }: Required<Pick<CommandPaletteProps, '
             {item.recent && index === 0 && !normalizeQuery(query) && (
               <span className="flex shrink-0 items-center gap-1 text-ui-xs text-qn-dim">
                 <History size={11} />
-                最近使用
+                {t('最近使用')}
               </span>
             )}
             {item.command.shortcut && <ShortcutKeys shortcut={item.command.shortcut} />}
@@ -206,8 +207,8 @@ function PaletteBody({ onError, registry }: Required<Pick<CommandPaletteProps, '
         ))}
       </div>
       <div className="flex shrink-0 items-center justify-between gap-3 border-t border-qn-border px-3 py-1.5 text-ui-xs text-qn-dim">
-        <span>↑↓ 选择 · PageUp/PageDown 翻页 · Enter 执行 · Esc 关闭</span>
-        <span>{ranked.length} 条命令</span>
+        <span>{t('↑↓ 选择 · PageUp/PageDown 翻页 · Enter 执行 · Esc 关闭')}</span>
+        <span>{t('{count} 条命令', { count: ranked.length })}</span>
       </div>
     </DialogFrame>
   )

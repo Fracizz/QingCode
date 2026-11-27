@@ -1,4 +1,5 @@
 import type { FsReadResult } from '@qn/protocol'
+import { t, translateMessage } from '@qn/codex-client'
 import type { OpenRequest } from '../workspace/openers'
 import { basename, dirname, fileKind } from './fileLinks'
 import { applyDiskText, type Eol } from './editModel'
@@ -55,13 +56,13 @@ export type Tab = {
 export function diffModeLabel(mode: DiffMode, commit?: string): string {
   switch (mode) {
     case 'staged':
-      return '暂存区对比'
+      return t('暂存区对比')
     case 'commit':
-      return commit ? `提交 ${commit.slice(0, 7)}` : '提交对比'
+      return commit ? t('提交 {hash}', { hash: commit.slice(0, 7) }) : t('提交对比')
     case 'text':
-      return '本轮改动'
+      return t('本轮改动')
     default:
-      return '与 HEAD 对比'
+      return t('与 HEAD 对比')
   }
 }
 
@@ -186,23 +187,23 @@ export function mergeRead(tab: Tab, result: FsReadResult, append: boolean): Tab 
 }
 
 const ERROR_TEXT: Record<string, string> = {
-  not_found: '文件不存在',
-  permission: '没有权限读取该文件',
-  too_large: '文件过大，无法完整读取',
-  conflict: '文件已被外部修改，请刷新',
-  params: '路径参数无效',
-  exists: '目标已存在',
-  not_empty: '目录非空',
-  not_repo: '当前目录不是 Git 仓库',
-  git_missing: '目标机器上未安装 git',
-  git_failed: 'git 命令执行失败',
-  auth_required: '远端需要认证，请在远端配置 ssh-agent 或凭据助手',
-  not_connected: '目标尚未连接，请先连接',
-  unknown_method: 'server 不支持该操作，请升级到新版本',
-  method: 'server 不支持该操作，请升级到新版本',
-  not_implemented: '后端功能尚未接入，当前版本暂不可用',
-  invalid_params: '请求参数无效',
-  internal: '操作失败',
+  not_found: t('文件不存在'),
+  permission: t('没有权限读取该文件'),
+  too_large: t('文件过大，无法完整读取'),
+  conflict: t('文件已被外部修改，请刷新'),
+  params: t('路径参数无效'),
+  exists: t('目标已存在'),
+  not_empty: t('目录非空'),
+  not_repo: t('当前目录不是 Git 仓库'),
+  git_missing: t('目标机器上未安装 git'),
+  git_failed: t('git 命令执行失败'),
+  auth_required: t('远端需要认证，请在远端配置 ssh-agent 或凭据助手'),
+  not_connected: t('目标尚未连接，请先连接'),
+  unknown_method: t('server 不支持该操作，请升级到新版本'),
+  method: t('server 不支持该操作，请升级到新版本'),
+  not_implemented: t('后端功能尚未接入，当前版本暂不可用'),
+  invalid_params: t('请求参数无效'),
+  internal: t('操作失败'),
 }
 
 export function errorCodeOf(err: unknown): string {
@@ -214,18 +215,18 @@ export function errorCodeOf(err: unknown): string {
 }
 
 /** 错误码优先给固定中文文案；未知错误才附带后端原始信息（截断，避免刷屏）。 */
-export function errorMessage(err: unknown, fallback = '操作失败'): string {
+export function errorMessage(err: unknown, fallback = t('操作失败')): string {
   const code = errorCodeOf(err)
   const mapped = ERROR_TEXT[code]
   if (mapped) {
     if (code === 'git_failed') {
       const detail = err instanceof Error ? err.message : ''
-      return detail ? `${mapped}：${detail.slice(0, 200)}` : mapped
+      return detail ? t('{fallback}：{detail}', { fallback: mapped, detail: translateMessage(detail).slice(0, 200) }) : mapped
     }
     return mapped
   }
   const detail = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
-  return detail ? `${fallback}：${detail.slice(0, 200)}` : fallback
+  return detail ? t('{fallback}：{detail}', { fallback, detail: translateMessage(detail).slice(0, 200) }) : fallback
 }
 
 export function failedTab(tab: Tab, err: unknown, fallback: string): Tab {
@@ -274,6 +275,6 @@ export function pathWatchKey(path: string): string {
 /** 续读后改口显示已加载量，避免大文件提示与实际内容不符。 */
 export function loadedLabel(loadedBytes: number): string {
   const limit = 2 * 1024 * 1024
-  if (!Number.isFinite(loadedBytes) || loadedBytes <= limit) return '仅显示前 2 MiB'
-  return `已加载 ${(loadedBytes / (1024 * 1024)).toFixed(1)} MiB`
+  if (!Number.isFinite(loadedBytes) || loadedBytes <= limit) return t('仅显示前 2 MiB')
+  return t('已加载 {size} MiB', { size: (loadedBytes / (1024 * 1024)).toFixed(1) })
 }

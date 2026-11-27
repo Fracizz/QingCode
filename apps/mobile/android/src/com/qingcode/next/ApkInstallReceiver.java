@@ -22,9 +22,13 @@ public final class ApkInstallReceiver extends BroadcastReceiver {
           // 返回到应用前台时可以再次请求安装。
         }
       }
-      Toast.makeText(context, "无法打开系统安装确认，请回到应用重试", Toast.LENGTH_LONG).show();
+      showToast(context, R.string.install_confirm_unavailable);
     } else if (status != PackageInstaller.STATUS_SUCCESS && status != PackageInstaller.STATUS_FAILURE_ABORTED) {
-      Toast.makeText(context, "Android 拒绝安装此更新", Toast.LENGTH_LONG).show();
+      showToast(context, R.string.install_rejected);
     }
+  }
+
+  private static void showToast(Context context, int message) {
+    Toast.makeText(context, NativeLocale.string(context, message), Toast.LENGTH_LONG).show();
   }
 }

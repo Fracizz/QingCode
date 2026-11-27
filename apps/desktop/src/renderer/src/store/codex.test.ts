@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { DRAFT_THREAD_ID } from '@qn/codex-client'
+import { DRAFT_THREAD_ID, STREAM_FLUSH_MS } from '@qn/codex-client'
 import { defaultAppSettings } from '../features/settings/settingsModel'
 import { useSettings } from '../features/settings/settingsStore'
 import { sessionKey } from '../lib/agents'
@@ -667,6 +667,30 @@ describe('打开历史会话', () => {
       expect(useCodex.getState().openingThread).toBeNull()
       expect(useCodex.getState().error).toContain('打开会话超时')
       expect(useCodex.getState().currentThreadId).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('流式增量合并', () => {
+  it('增量先缓冲再合并写入，其他通知到达前先冲刷，顺序不变', async () => {
+    await useCodex.getState().ensureOpen('local')
+    vi.useFakeTimers()
+    try {
+      const delta = (text: string) => emitRecv({
+        method: 'item/agentMessage/delta',
+        params: { threadId: 'th', turnId: 'tu', itemId: 'a1', delta: text },
+      })
+      delta('你')
+      delta('好')
+      expect(viewItems('th')).toEqual([])
+      vi.advanceTimersByTime(STREAM_FLUSH_MS)
+      expect(viewItems('th')).toMatchObject([{ kind: 'agent', text: '你好', streaming: true }])
+
+      delta('！')
+      emitRecv({ method: 'turn/completed', params: { threadId: 'th', turn: { id: 'tu', status: 'completed', items: [] } } })
+      expect(viewItems('th')).toMatchObject([{ kind: 'agent', text: '你好！' }])
     } finally {
       vi.useRealTimers()
     }

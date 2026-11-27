@@ -1,5 +1,5 @@
 // 模型与推理强度的纯逻辑：model/list 归一化、偏好解析、turn/start 覆盖项。移植自桌面 lib/models.ts + store/models.ts。
-import { localizeModelDescription, type TurnOverrides } from '@qn/codex-client'
+import { localizeModelDescription, type TurnOverrides, getLocale, t, translateMessage } from '@qn/codex-client'
 import type { AgentKind } from './types'
 
 export type ModelOption = {
@@ -75,20 +75,22 @@ export function visibleModels(models: readonly ModelOption[], selected?: string 
   const term = query.trim().toLowerCase()
   if (!term) return visible
   return visible.filter((model) =>
-    [model.displayName, model.model, model.description, localizeModelDescription(model.description)].some((value) => value.toLowerCase().includes(term)),
+    [translateMessage(model.displayName), model.model, model.description, localizeModelDescription(model.description)].some((value) => value.toLowerCase().includes(term)),
   )
 }
 
 const EFFORT_LABELS: Record<string, string> = {
-  none: '关闭',
-  off: '关闭',
-  minimal: '最低',
-  low: '低',
-  medium: '中',
-  high: '高',
-  xhigh: '超高',
-  max: '极高',
-  ultra: '极致',
+  // i18n-ignore: 同一原文在关闭按钮上译作 Close，这里按语言单独取值
+  none: getLocale() === 'en' ? 'Off' : '关闭',
+  // i18n-ignore: 同上
+  off: getLocale() === 'en' ? 'Off' : '关闭',
+  minimal: t('最低'),
+  low: t('低'),
+  medium: t('中'),
+  high: t('高'),
+  xhigh: t('超高'),
+  max: t('极高'),
+  ultra: t('极致'),
 }
 
 export { effortHint } from '@qn/codex-client'
@@ -130,7 +132,8 @@ export function resolveSelection(models: readonly ModelOption[], prefs: ModelPre
 
 export function triggerLabel(selection: ResolvedSelection): string {
   if (!selection.model) return ''
-  return [selection.model.displayName, effortLabel(selection.effort)].filter(Boolean).join(' · ')
+  // Claude 的默认模型名由 daemon 以中文给出。
+  return [translateMessage(selection.model.displayName), effortLabel(selection.effort)].filter(Boolean).join(' · ')
 }
 
 /**

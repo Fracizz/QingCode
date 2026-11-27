@@ -1,5 +1,6 @@
 import { Eye, EyeOff } from 'lucide-react'
 import { useState, type ComponentPropsWithoutRef } from 'react'
+import { t } from '@qn/codex-client'
 import { cn } from '../lib/cn'
 
 /** 密码/口令输入框：右侧眼睛图标切换明文显示；默认隐藏，组件卸载即恢复隐藏。 */
@@ -11,8 +12,8 @@ export function PasswordInput({ className, ...props }: Omit<ComponentPropsWithou
       <button
         type="button"
         tabIndex={-1}
-        aria-label={visible ? '隐藏密码' : '显示密码'}
-        title={visible ? '隐藏密码' : '显示密码'}
+        aria-label={visible ? t('隐藏密码') : t('显示密码')}
+        title={visible ? t('隐藏密码') : t('显示密码')}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => setVisible((value) => !value)}
         className="absolute inset-y-0 right-1 my-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-qn-muted hover:bg-qn-hover hover:text-qn-text"

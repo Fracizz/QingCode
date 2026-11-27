@@ -1,5 +1,7 @@
 // 目录浏览是纯路径字符串运算：Windows 与 POSIX 都可能来自远端，统一按分隔符推断。
 
+import { t } from '@qn/codex-client'
+
 export type FsEntry = { name: string; kind: string }
 export type FsListResult = { path: string; entries: FsEntry[] }
 export type PathHistory = { entries: string[]; index: number }
@@ -51,7 +53,7 @@ export function baseName(path: string): string {
 }
 
 export function defaultProjectName(path: string): string {
-  return baseName(path) || path.trim() || '未命名项目'
+  return baseName(path) || path.trim() || t('未命名项目')
 }
 
 export function parseFsList(value: unknown): FsListResult {

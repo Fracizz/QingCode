@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Check, ChevronRight, CircleAlert, Copy } from 'lucide-react'
+import { t, translateMessage } from '@qn/codex-client'
 import { copyText } from '../lib/clipboard'
 import { describeTurnError, splitLinks } from '../lib/turnError'
 
@@ -34,7 +35,7 @@ export function TurnErrorNote({ error, compact = false }: { error: string; compa
           </div>
           {view.detail && (
             <p className={`mt-1 whitespace-pre-wrap break-words text-qn-text/80 ${compact ? 'line-clamp-4' : ''}`}>
-              {splitLinks(view.detail).map((seg, i) =>
+              {splitLinks(translateMessage(view.detail)).map((seg, i) =>
                 seg.kind === 'link' ? (
                   <a
                     key={i}
@@ -60,12 +61,12 @@ export function TurnErrorNote({ error, compact = false }: { error: string; compa
                 onClick={() => setShowRaw((v) => !v)}
               >
                 <ChevronRight size={12} className={showRaw ? 'rotate-90 transition-transform' : 'transition-transform'} />
-                原始错误
+                {t('原始错误')}
               </button>
             )}
             <button type="button" className="inline-flex items-center gap-1 hover:text-qn-text" onClick={() => void copy()}>
               {copied ? <Check size={12} /> : <Copy size={12} />}
-              {copied ? '已复制' : '复制错误'}
+              {copied ? t('已复制') : t('复制错误')}
             </button>
           </div>
           {hasRaw && showRaw && (

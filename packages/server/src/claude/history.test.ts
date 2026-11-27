@@ -3,8 +3,7 @@ import {
   msToSeconds,
   sessionInfoToMeta,
   sessionMessagesToThread,
-  threadListResponse,
-} from './history'
+  threadListResponse, lastReplyModel } from './history'
 import type { Json, SessionMeta } from './v2'
 
 const meta: SessionMeta = { id: 'sess-1', cwd: '/work', createdAt: 100, updatedAt: 200 }
@@ -192,5 +191,18 @@ describe('getSessionMessages → v2 Thread/turns/items', () => {
 
   it('非法条目被跳过', () => {
     expect(sessionMessagesToThread(meta, [null, 1, 'x', {}]).items).toEqual([])
+  })
+})
+
+describe('lastReplyModel', () => {
+  it('取主会话最近一条真实回复的模型，跳过子 agent 与 synthetic 占位', () => {
+    expect(lastReplyModel([
+      { message: { role: 'assistant', model: 'claude-sonnet-5-5' } },
+      { message: { role: 'user', content: 'x' } },
+      { message: { role: 'assistant', model: 'claude-haiku-5' }, parent_tool_use_id: 'tool-1' },
+      { message: { role: 'assistant', model: 'claude-haiku-5' }, isSidechain: true },
+      { message: { role: 'assistant', model: '<synthetic>' } },
+    ])).toBe('claude-sonnet-5-5')
+    expect(lastReplyModel([{ message: { role: 'user', content: 'x' } }])).toBeNull()
   })
 })

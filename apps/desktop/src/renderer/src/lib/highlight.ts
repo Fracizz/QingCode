@@ -60,6 +60,9 @@ export function langFromClassName(className: string | null | undefined): string 
 /** 超长代码块（日志、生成文件）不做高亮，避免卡住渲染线程。 */
 export const HIGHLIGHT_MAX_CHARS = 60_000
 
+// 深色/灰色用 dark，浅色用 light；一次着色同时拿到两套颜色，切主题只换 CSS 变量。
+export const CODE_THEMES = { dark: 'github-dark-default', light: 'github-light-default' } as const
+
 export function shouldHighlight(code: string, lang: string | null): lang is string {
   return lang !== null && code.length <= HIGHLIGHT_MAX_CHARS
 }

@@ -1,5 +1,8 @@
 <resources>
-    <string name="app_name">QingCode Next</string>
-    <string name="desktop_connection_channel">电脑连接</string>
-    <string name="desktop_connection_title">QingCode 正在后台保持电脑连接</string>
+    <!-- 默认资源为英文，非中文语言都回退到这里；中文在 values-zh。 -->
+    <string name="app_name" translatable="false">QingCode Next</string>
+    <string name="desktop_connection_channel">Computer connection</string>
+    <string name="desktop_connection_title">QingCode is staying connected to your computer</string>
+    <string name="install_confirm_unavailable">Cannot open the system install confirmation. Return to the app and try again</string>
+    <string name="install_rejected">Android refused to install this update</string>
 </resources>

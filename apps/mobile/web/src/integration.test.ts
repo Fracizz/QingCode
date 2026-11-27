@@ -290,13 +290,13 @@ describe('模拟网关全链路', () => {
     })
     // turn 完成后的后台刷新不重试打不开的 pi，但保留它的提示。
     expect(state().agentErrors.pi).toContain('pi')
-    state().setAccessMode('readOnly')
-    expect(selectedAccessMode(state())).toBe('readOnly')
+    state().setAccessMode('auto')
+    expect(selectedAccessMode(state())).toBe('auto')
     const callAccessRpc = gateway.rpc.bind(gateway)
     const accessRpc = vi.spyOn(gateway, 'rpc')
     await expect(state().send('仅检查项目')).resolves.toBe(true)
     expect(accessRpc).toHaveBeenCalledWith(edited, 'mobile.turn.start', {
-      targetId: 'local', agent: 'codex', accessMode: 'readOnly', replyViaHttp: true, msg: expect.objectContaining({
+      targetId: 'local', agent: 'codex', accessMode: 'auto', replyViaHttp: true, msg: expect.objectContaining({
         method: 'turn/start', params: {
           threadId, model: 'gpt-5.5-mini', effort: 'minimal',
           input: [{ type: 'text', text: '仅检查项目', text_elements: [] }],
@@ -309,7 +309,8 @@ describe('模拟网关全链路', () => {
     await state().newThread('claude')
     expect(state().selectedAgent).toBe('claude')
     expect(selectedAccessMode(state())).toBe('default')
-    state().setAccessMode('readOnly')
+    // 已移除的旧档位被忽略。
+    state().setAccessMode('plan' as never)
     expect(selectedAccessMode(state())).toBe('default')
     await state().loadModels('local', 'claude')
     await state().send('审查一下', [], true)
@@ -326,7 +327,7 @@ describe('模拟网关全链路', () => {
     expect(state().claudeRateLimits.local?.primary?.usedPercent).toBe(81)
 
     await state().openThread(threadId!, 'codex')
-    expect(selectedAccessMode(state())).toBe('readOnly')
+    expect(selectedAccessMode(state())).toBe('auto')
     state().setAccessMode('default')
     await expect(state().send('按默认权限继续')).resolves.toBe(true)
     expect(accessRpc.mock.calls.filter(([, method]) => method === 'mobile.turn.start')).toHaveLength(1)
@@ -334,8 +335,8 @@ describe('模拟网关全链路', () => {
       msg: expect.objectContaining({ method: 'turn/start', params: expect.objectContaining({ threadId }) }),
     }))
     await vi.waitFor(() => expect(state().sessions['codex:local']?.state.threads[threadId!]?.status).toBe('idle'))
-    port.setGlobalAccessMode('restricted')
-    await vi.waitFor(() => expect(state().agentSettings?.globalAccessMode).toBe('restricted'))
+    port.setGlobalAccessMode('auto')
+    await vi.waitFor(() => expect(state().agentSettings?.globalAccessMode).toBe('auto'))
     expect(selectedAccessMode(state())).toBe('default')
     await expect(state().send('继续使用 Agent 默认权限')).resolves.toBe(true)
     expect(accessRpc).toHaveBeenCalledWith(edited, 'mobile.turn.start', expect.objectContaining({
@@ -344,23 +345,23 @@ describe('模拟网关全链路', () => {
     expect(port.lastTurnParams).not.toHaveProperty('sandboxPolicy')
     await vi.waitFor(() => expect(state().sessions['codex:local']?.state.threads[threadId!]?.status).toBe('idle'))
     state().setAccessMode('inherit')
-    expect(selectedAccessMode(state())).toBe('readOnly')
+    expect(selectedAccessMode(state())).toBe('auto')
     await expect(state().send('按总控权限继续')).resolves.toBe(true)
     expect(accessRpc).toHaveBeenCalledWith(edited, 'mobile.turn.start', expect.objectContaining({
-      targetId: 'local', agent: 'codex', inheritAccess: true, accessMode: 'readOnly',
+      targetId: 'local', agent: 'codex', inheritAccess: true, accessMode: 'auto',
     }))
-    expect(port.lastTurnParams?.sandboxPolicy).toEqual({ type: 'readOnly', networkAccess: false })
+    expect(port.lastTurnParams).toMatchObject({ approvalsReviewer: 'auto_review', sandboxPolicy: { type: 'workspaceWrite' } })
     await vi.waitFor(() => expect(state().sessions['codex:local']?.state.threads[threadId!]?.status).toBe('idle'))
     useApp.setState({ agentSettings: null, legacyAgentSettings: false })
     accessRpc.mockImplementation((connection, method, ...params) => method === 'mobile.agents'
       ? Promise.reject(new Error('暂时无法读取电脑设置')) : callAccessRpc(connection, method, ...params))
     await state().loadAgentSettings()
     await expect(state().send('权限设置暂不可读')).resolves.toBe(true)
-    expect(port.lastTurnParams?.sandboxPolicy).toEqual({ type: 'readOnly', networkAccess: false })
+    expect(port.lastTurnParams).toMatchObject({ approvalsReviewer: 'auto_review', sandboxPolicy: { type: 'workspaceWrite' } })
     accessRpc.mockImplementation(callAccessRpc)
     await state().loadAgentSettings()
     await state().openThread(claudeThread!, 'claude')
-    expect(selectedAccessMode(state())).toBe('plan')
+    expect(selectedAccessMode(state())).toBe('auto')
     accessRpc.mockRestore()
 
     // 只读查看：文本分段续读、行号定位，差异优先 git.diff，失败回退到卡片 diff。
@@ -1011,8 +1012,8 @@ describe('模拟网关全链路', () => {
     }
     try {
       await openChat()
-      state().setAccessMode('readOnly')
-      expect(selectedAccessMode(state())).toBe('readOnly')
+      state().setAccessMode('auto')
+      expect(selectedAccessMode(state())).toBe('auto')
       await expect(state().send('第一轮')).resolves.toBe(true)
       await expect(state().send('等待发送的消息')).resolves.toBe(true)
       expect(selectedQueuedSends(state())?.[0]?.accessMode).toBeUndefined()
@@ -1022,13 +1023,13 @@ describe('模拟网关全链路', () => {
       expect(selectedQueuedSends(state())).toBeUndefined()
       controller.stop()
       await openChat()
-      expect(selectedAccessMode(state())).toBe('readOnly')
+      expect(selectedAccessMode(state())).toBe('auto')
       expect(selectedQueuedSends(state())?.[0]?.error).toContain('队列已暂停')
       await vi.waitFor(() => expect(state().sessions['codex:local']?.state.threads['t-demo']?.status).toBe('idle'))
 
       const queueKey = JSON.stringify([conn.id, 'local', 'codex', 't-demo'])
       useApp.setState(({ queuedSends }) => ({
-        queuedSends: { ...queuedSends, [queueKey]: queuedSends[queueKey]!.map((item) => ({ ...item, accessMode: 'readOnly' })) },
+        queuedSends: { ...queuedSends, [queueKey]: queuedSends[queueKey]!.map((item) => ({ ...item, accessMode: 'auto' })) },
       }))
       state().setAccessMode('default')
       const preference = accessPreferenceKey({ desktopId: conn.id, targetId: 'local', agent: 'codex', threadId: 't-demo' }, conn.fp)

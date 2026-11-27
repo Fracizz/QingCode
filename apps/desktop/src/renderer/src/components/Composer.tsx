@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { accessOptions, resolveAccessMode } from '@qn/codex-client'
-import { ArrowUp, ChevronDown, CircleAlert, FileText, ImageOff, Paperclip, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
+import { t, translateMessage, accessOptions, resolveAccessMode } from '@qn/codex-client'
+import { ArrowUp, CircleAlert,FileText, ImageOff, Paperclip, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
 import {
@@ -40,7 +40,7 @@ import { cn } from '../lib/cn'
 import type { SendMode } from '../store/codex'
 import { ListOption } from './ListOption'
 import { LoadingIcon } from './LoadingIcon'
-import { Menu, MenuContent, MenuItem, MenuTrigger, Tip } from './primitives'
+import { Tip } from './primitives'
 import { EmptyState, ErrorNote, IconButton } from './ui'
 
 /** 输入框最高占视口 40%，再长就内部滚动，不把消息区挤没。 */
@@ -208,7 +208,9 @@ export function Composer({
   const blocked = attach?.blockedReason ?? imageBlock
   const shortcut = sendKey === 'ctrlEnter' ? 'Ctrl+Enter' : 'Enter'
   const newlineShortcut = sendKey === 'ctrlEnter' ? 'Enter' : 'Shift+Enter'
-  const sendHint = running ? `排队（${shortcut}）· 本轮结束后发送` : `发送（${shortcut}）· 换行（${newlineShortcut}）`
+  const sendHint = running
+    ? t('排队（{shortcut}）· 本轮结束后发送', { shortcut })
+    : t('发送（{shortcut}）· 换行（{newline}）', { shortcut, newline: newlineShortcut })
   const canSend = !disabled && !sending && !blocked && (value.trim() !== '' || hasAttachmentsOrSkills || annotationCount > 0)
 
   const submit = (mode: SendMode = 'queue') => {
@@ -374,13 +376,13 @@ export function Composer({
                 {toolsDisabled ? (
                   <>
                     <ShieldOff size={13} className="shrink-0" aria-hidden />
-                    <span>此侧聊已禁用工具</span>
+                    <span>{t('此侧聊已禁用工具')}</span>
                   </>
                 ) : (
                   <>
                     <ShieldAlert size={13} className="shrink-0" aria-hidden />
-                    <span className="font-medium">无审批</span>
-                    <span className="text-qn-muted">· 工具直接执行</span>
+                    <span className="font-medium">{t('无审批')}</span>
+                    <span className="text-qn-muted">{t('· 工具直接执行')}</span>
                   </>
                 )}
               </span>
@@ -388,10 +390,10 @@ export function Composer({
             {attach && !imageSupport.allowed && (
               <span className="inline-flex min-w-0 items-center gap-1.5 text-qn-muted">
                 <ImageOff size={12} className="shrink-0" aria-hidden />
-                {imageSupport.reason}，图片附件已禁用
+                {t('{reason}，图片附件已禁用', { reason: translateMessage(imageSupport.reason ?? '') })}
               </span>
             )}
-            {imageBlock && imageSupport.allowed && <span className="text-qn-warn">{imageBlock}</span>}
+            {imageBlock && imageSupport.allowed && <span className="text-qn-warn">{translateMessage(imageBlock)}</span>}
           </div>
         )}
         <div
@@ -417,7 +419,7 @@ export function Composer({
                   <button
                     type="button"
                     className="inline-flex size-5 shrink-0 items-center justify-center rounded-md hover:bg-qn-brand/20"
-                    aria-label={`移除技能 ${skill.name}`}
+                    aria-label={t('移除技能 {name}', { name: skill.name })}
                     onClick={() => slash.onSkillsChange(slash.skills.filter((item) => item.name !== skill.name))}
                   >
                     <X size={12} />
@@ -440,9 +442,11 @@ export function Composer({
             aria-label={placeholder ?? agentPlaceholder(agent)}
             placeholder={
               placeholder ?? (disabled
-                ? '请先连接目标'
+                ? t('请先连接目标')
                 : slash
-                  ? `${agentPlaceholder(agent)}，输入 / 使用命令和技能${targetId && root ? '，@ 引用文件' : ''}`
+                  ? targetId && root
+                    ? t('{placeholder}，输入 / 使用命令和技能，@ 引用文件', { placeholder: agentPlaceholder(agent) })
+                    : t('{placeholder}，输入 / 使用命令和技能', { placeholder: agentPlaceholder(agent) })
                   : agentPlaceholder(agent))
             }
             onChange={(event) => {
@@ -466,11 +470,11 @@ export function Composer({
           <div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1 whitespace-nowrap">
             {attach && (
               <>
-                <Tip label={imageSupport.allowed ? '添加图片或文件（也可粘贴、拖入）' : `${imageSupport.reason}，只能添加文件`}>
+                <Tip label={imageSupport.allowed ? t('添加图片或文件（也可粘贴、拖入）') : t('{reason}，只能添加文件', { reason: translateMessage(imageSupport.reason ?? '') })}>
                   <button
                     type="button"
                     className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
-                    aria-label="添加附件"
+                    aria-label={t('添加附件')}
                     disabled={disabled}
                     onClick={() => fileRef.current?.click()}
                   >
@@ -504,47 +508,39 @@ export function Composer({
               />
             )}
             {compact && inheritedMode !== 'default' && (
-              <span className="text-ui-sm text-qn-warn">继承总控 · {accessOptions[agent].find((option) => option.mode === inheritedMode)?.label}</span>
+              <span className="text-ui-sm text-qn-warn">{t('总控 · {mode}', { mode: accessOptions[agent].find((option) => option.mode === inheritedMode)?.label ?? '' })}</span>
             )}
             {trailing}
-            {running && (
-              <IconButton label="停止运行" className="size-7.5" disabled={sending} onClick={onInterrupt}>
-                <Square size={12} fill="currentColor" />
-              </IconButton>
-            )}
-            <div className="ml-auto flex shrink-0 items-center gap-0.5">
-              <Tip label={blocked ?? sendHint}>
+            <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-1">
+              {running && (
+                // 与发送钮同为圆形，形成“停止 / 发送”一组；描边保证在输入框底色上可辨识。
+                <IconButton
+                  label={t('停止运行')}
+                  className="rounded-full border border-qn-border-strong text-qn-text hover:border-qn-outline-hover"
+                  disabled={sending}
+                  onClick={onInterrupt}
+                >
+                  <Square size={10} fill="currentColor" strokeWidth={0} />
+                </IconButton>
+              )}
+              <Tip label={blocked ? translateMessage(blocked) : sendHint}>
                 <span className="inline-flex">
                   <button
                     type="button"
-                    className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-qn-text px-2 text-ui-sm font-medium text-qn-bg hover:bg-qn-text/90 disabled:bg-qn-fg/15 disabled:text-qn-dim disabled:opacity-100"
+                    className={cn(
+                      'inline-flex h-8 items-center justify-center gap-1 overflow-hidden rounded-full text-ui-sm font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-accent',
+                      running ? 'pl-2.5 pr-3' : 'w-8',
+                      canSend ? 'bg-qn-text text-qn-bg hover:bg-qn-text/90' : 'bg-qn-fg/12 text-qn-dim',
+                    )}
                     disabled={!canSend}
-                    aria-label={running ? '排队' : '发送'}
+                    aria-label={running ? t('排队') : t('发送')}
                     onClick={() => submit()}
                   >
                     <ArrowUp size={16} strokeWidth={2.2} />
-                    {running && <span className="pr-0.5">排队</span>}
+                    {running && <span>{t('排队')}</span>}
                   </button>
                 </span>
               </Tip>
-              {running && (
-                <Menu>
-                  <MenuTrigger asChild>
-                    <IconButton label="发送方式" size="sm" disabled={!canSend}>
-                      <ChevronDown size={14} />
-                    </IconButton>
-                  </MenuTrigger>
-                  <MenuContent side="top" align="end">
-                    <MenuItem hint="默认 · 本轮结束后发送" onSelect={() => submit('queue')}>排队</MenuItem>
-                    <MenuItem
-                      disabled={agent !== 'codex'}
-                      hint={agent === 'codex' ? '补充到当前一轮' : '当前 Agent 不支持'}
-                      onSelect={() => submit('steer')}
-                    >引导</MenuItem>
-                    <MenuItem hint="中断当前一轮后发送" onSelect={() => submit('immediate')}>立即发送</MenuItem>
-                  </MenuContent>
-                </Menu>
-              )}
             </div>
           </div>
         </div>
@@ -572,7 +568,7 @@ function AttachmentChip({
     <button
       type="button"
       className="absolute -right-1.5 -top-1.5 hidden h-5 w-5 items-center justify-center rounded-full border border-qn-border-strong bg-qn-elevated text-qn-muted shadow hover:text-qn-text group-hover/att:flex"
-      aria-label={`移除 ${item.name}`}
+      aria-label={`${t('移除')} ${item.name}`}
       onClick={onRemove}
     >
       <X size={12} />
@@ -581,11 +577,11 @@ function AttachmentChip({
   const status =
     item.status === 'uploading' || item.status === 'pending' ? (
       <span className="flex items-center gap-1 text-qn-muted">
-        <LoadingIcon size={11} /> 上传中
+        <LoadingIcon size={11} /> {t('上传中')}
       </span>
     ) : item.status === 'error' ? (
       <span className="flex min-w-0 items-center gap-1 text-qn-danger">
-        <CircleAlert size={11} className="shrink-0" /> <span className="truncate">{item.error ?? '上传失败'}</span>
+        <CircleAlert size={11} className="shrink-0" /> <span className="truncate">{item.error ? translateMessage(item.error) : t('上传失败')}</span>
       </span>
     ) : (
       <span className="text-qn-dim">{formatBytes(item.size)}</span>
@@ -624,10 +620,10 @@ function SlashMenu({
   onChoose: (item: SlashItem) => void
 }) {
   return (
-    <Suggestions label="命令与技能" active={active} confirmHint="确认" listClassName="space-y-0.5">
+    <Suggestions label={t('命令与技能')} active={active} confirmHint={t('确认')} listClassName="space-y-0.5">
       {items.length === 0 && (
         <EmptyState className="py-3 leading-5">
-          {loading ? '正在加载技能…' : '没有匹配的命令或技能'}
+          {loading ? t('正在加载技能…') : t('没有匹配的命令或技能')}
         </EmptyState>
       )}
       {items.map((item, index) => (

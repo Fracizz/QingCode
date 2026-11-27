@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
 import { ArrowUp, ChevronLeft, ChevronRight, Folder } from 'lucide-react'
+import { t, translateMessage } from '@qn/codex-client'
 import { call } from '../lib/backend'
 import {
   canGoBack,
@@ -53,7 +54,7 @@ export function DirectoryPicker({
         setSelected(null)
       } catch (err) {
         setEntries([])
-        setError(`${friendlyError(err, '读取目录失败')}；可直接输入完整路径`)
+        setError(t('{error}；可直接输入完整路径', { error: translateMessage(friendlyError(err, t('读取目录失败'))) }))
       } finally {
         setLoading(false)
       }
@@ -74,10 +75,10 @@ export function DirectoryPicker({
         setHistory(initHistory(path))
         setInput(path)
         if (path) await loadDir(path)
-        else setError('未取得主目录，请直接输入完整路径')
+        else setError(t('未取得主目录，请直接输入完整路径'))
       } catch (err) {
         if (!cancelled) {
-          setError(`${friendlyError(err, '获取主目录失败')}；可直接输入完整路径`)
+          setError(t('{error}；可直接输入完整路径', { error: translateMessage(friendlyError(err, t('获取主目录失败'))) }))
         }
       }
     })()
@@ -89,7 +90,7 @@ export function DirectoryPicker({
   const goTo = (raw: string) => {
     const path = normalizePath(raw)
     if (!path) {
-      setError('请输入目录路径')
+      setError(t('请输入目录路径'))
       return
     }
     setHistory((value) => navigateTo(value, path))
@@ -117,17 +118,17 @@ export function DirectoryPicker({
 
   return (
     <Modal
-      title="选择项目目录"
+      title={t('选择项目目录')}
       width="max-w-2xl"
       onClose={onClose}
       footer={
         <div className="flex items-center justify-between gap-3">
           <span className="min-w-0 truncate font-mono text-ui-sm text-qn-muted">
-            {currentPath(history) || input || '（未选择）'}
+            {currentPath(history) || input || t('（未选择）')}
           </span>
           <div className="flex shrink-0 gap-2">
             <button className="qn-button-subtle" type="button" onClick={onClose}>
-              取消
+              {t('取消')}
             </button>
             <button
               className="qn-button"
@@ -135,7 +136,7 @@ export function DirectoryPicker({
               disabled={!input.trim() && !currentPath(history)}
               onClick={() => onConfirm(input.trim() || currentPath(history))}
             >
-              选择当前目录
+              {t('选择当前目录')}
             </button>
           </div>
         </div>
@@ -146,30 +147,30 @@ export function DirectoryPicker({
           <input
             className="qn-input min-w-0 flex-1 font-mono"
             value={input}
-            placeholder="目录绝对路径，例如 /home/user/repo"
+            placeholder={t('目录绝对路径，例如 /home/user/repo')}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={onPathKeyDown}
           />
           <button className="qn-button-subtle shrink-0" type="button" onClick={() => goTo(input)}>
-            转到
+            {t('转到')}
           </button>
         </div>
         <div className="flex items-center gap-1">
-          <IconButton label="后退" disabled={!canGoBack(history)} onClick={() => move(goBack(history))}>
+          <IconButton label={t('后退')} disabled={!canGoBack(history)} onClick={() => move(goBack(history))}>
             <ChevronLeft size={15} />
           </IconButton>
-          <IconButton label="前进" disabled={!canGoForward(history)} onClick={() => move(goForward(history))}>
+          <IconButton label={t('前进')} disabled={!canGoForward(history)} onClick={() => move(goForward(history))}>
             <ChevronRight size={15} />
           </IconButton>
-          <IconButton label="上级目录" disabled={!currentPath(history)} onClick={() => move(goUp(history))}>
+          <IconButton label={t('上级目录')} disabled={!currentPath(history)} onClick={() => move(goUp(history))}>
             <ArrowUp size={15} />
           </IconButton>
-          {loading && <Spinner label="读取目录…" />}
+          {loading && <Spinner label={t('读取目录…')} />}
         </div>
         <ErrorNote message={error} onClose={() => setError(null)} />
         <div className="qn-scroll h-64 space-y-0.5 overflow-y-auto rounded-lg border border-qn-border bg-qn-inset p-1">
           {directories.length === 0 && !loading && (
-            <EmptyState>没有子目录，可返回上级或输入完整路径。</EmptyState>
+            <EmptyState>{t('没有子目录，可返回上级或输入完整路径。')}</EmptyState>
           )}
           {directories.map((entry) => (
             <button
@@ -183,11 +184,11 @@ export function DirectoryPicker({
             >
               <Folder size={13} className="shrink-0 text-amber-300" />
               <span className="truncate">{entry.name}</span>
-              {entry.kind === 'symlink' && <span className="text-ui-xs text-qn-muted">链接</span>}
+              {entry.kind === 'symlink' && <span className="text-ui-xs text-qn-muted">{t('链接')}</span>}
             </button>
           ))}
         </div>
-        <p className="text-ui-sm text-qn-muted">单击选中、双击进入目录；也可直接在上方输入路径。</p>
+        <p className="text-ui-sm text-qn-muted">{t('单击选中、双击进入目录；也可直接在上方输入路径。')}</p>
       </div>
     </Modal>
   )

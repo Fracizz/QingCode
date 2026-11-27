@@ -523,13 +523,19 @@ export function mapPiEvent(event: unknown, ctx: MapContext, inputState: MapState
 }
 
 /** pi 会话线程：字段名补齐为 v2，但归属标为 pi，不冒充 codex/claude。 */
-export function piThread(meta: SessionMeta, turns: Json[] = []): Json {
+/** config 为会话最近一次的模型（provider/id）与思考档位，供客户端恢复该会话的选择。 */
+export function piThread(
+  meta: SessionMeta,
+  turns: Json[] = [],
+  config: { model: string | null; thinkingLevel: string | null } = { model: null, thinkingLevel: null },
+): Json {
   return {
     ...buildThread(meta, turns),
     modelProvider: 'pi',
     cliVersion: 'pi-rpc',
     source: { custom: 'pi-rpc' },
-    model: null,
+    model: config.model,
+    reasoningEffort: config.thinkingLevel,
   }
 }
 

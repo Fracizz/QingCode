@@ -1,4 +1,4 @@
-import { sessionStatus } from '@qn/codex-client'
+import { t, sessionStatus } from '@qn/codex-client'
 import { Check, FileText, FolderGit2, ListTree, MessageCircleMore, MoreHorizontal, PanelRightOpen, RotateCw, SquarePen, Terminal } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useFiles } from '../../features/files'
@@ -18,8 +18,8 @@ import { SessionStatusBadge } from './SessionStatusBadge'
 import { DOCK_TOOLS } from './WorkspaceDock'
 
 const CHAT_WIDTH_OPTIONS = [
-  { value: 'default', label: '默认' },
-  { value: 'wide', label: '宽屏' },
+  { value: 'default', label: t('默认') },
+  { value: 'wide', label: t('宽屏') },
 ] as const
 
 /** 主区顶栏（参考 Codex）：当前会话标题 + 所在项目，右侧会话级操作。 */
@@ -51,11 +51,11 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
   const localName = useThreadPrefs((s) => targetId && key ? s.byTarget[targetId]?.names[key] : undefined)
   const project = projects.find((item) => item.id === projectId && item.targetId === targetId && item.path === cwd)
   const thread = threads.find((item) => item.id === threadId && item.agent === agent)
-  const title = localName ?? thread?.title ?? (threadId ? '未命名会话' : '新会话')
-  const listLabel = threadId ? '在侧栏定位当前会话' : '打开项目会话列表'
+  const title = localName ?? thread?.title ?? (threadId ? t('未命名会话') : t('新会话'))
+  const listLabel = threadId ? t('在侧栏定位当前会话') : t('打开项目会话列表')
 
-  const sideStatus = side?.expired ? '已结束'
-    : sideView?.pendingApprovals.length ? '待审批' : sideView?.status === 'running' ? '运行中' : null
+  const sideStatus = side?.expired ? t('侧聊已结束')
+    : sideView?.pendingApprovals.length ? t('侧聊待审批') : sideView?.status === 'running' ? t('侧聊运行中') : null
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 px-4 text-ui-md">
@@ -63,7 +63,7 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
         <Tip label={listLabel} side="bottom" align="start">
           <button
             type="button"
-            aria-label={`${listLabel}：${title}`}
+            aria-label={t('{label}：{title}', { label: listLabel, title })}
             className="-ml-1.5 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left font-medium text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
             onClick={() => {
               useProjects.getState().setExpanded(project, true)
@@ -91,9 +91,9 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
       {subagents}
       {threadId && (
         <>
-          {sideStatus && <span role="status" className="text-ui-sm text-qn-muted">侧聊{sideStatus}</span>}
+          {sideStatus && <span role="status" className="text-ui-sm text-qn-muted">{sideStatus}</span>}
           <IconButton
-            label="侧边对话"
+            label={t('侧边对话')}
             tooltipSide="bottom"
             aria-expanded={!!side?.open}
             onClick={() => useCodex.getState().openSideChat(side ? undefined : sideChatExcerpt(view?.items ?? []))}
@@ -104,7 +104,7 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
       )}
       {fileTabs > 0 && (
         <IconButton
-          label={filesOpen ? '收起文件面板' : '打开文件面板'}
+          label={filesOpen ? t('收起文件面板') : t('打开文件面板')}
           tooltipSide="bottom"
           onClick={() => useFiles.getState().setOpen(!filesOpen)}
           className={filesOpen ? 'bg-qn-active text-qn-text' : undefined}
@@ -115,7 +115,7 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
       {DOCK_TOOLS.map((tool) => (
         <IconButton
           key={tool.id}
-          label={`${tool.label}（${tool.hint}）`}
+          label={t('{label}（{hint}）', { label: tool.label, hint: tool.hint })}
           tooltipSide="bottom"
           onClick={() => useDock.getState().toggleTool(tool.id)}
           className={dockTool === tool.id ? 'bg-qn-active text-qn-text' : undefined}
@@ -124,7 +124,7 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
         </IconButton>
       ))}
       <IconButton
-        label={`终端（${TERMINAL_SHORTCUT}）`}
+        label={t('终端（{shortcut}）', { shortcut: TERMINAL_SHORTCUT })}
         tooltipSide="bottom"
         aria-expanded={terminalOpen}
         className={terminalOpen ? 'bg-qn-active text-qn-text' : undefined}
@@ -134,21 +134,21 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
       </IconButton>
       <Menu>
         <MenuTrigger asChild>
-          <IconButton label="会话操作" tooltipSide="bottom">
+          <IconButton label={t('会话操作')} tooltipSide="bottom">
             <MoreHorizontal size={16} />
           </IconButton>
         </MenuTrigger>
         <MenuContent align="end">
           <MenuItem icon={<SquarePen size={14} />} hint="Ctrl N" onSelect={() => startDraft()}>
-            新会话
+            {t('新会话')}
           </MenuItem>
           <MenuSeparator />
           <MenuItem icon={<RotateCw size={14} />} onSelect={() => void refreshThreads()}>
-            刷新会话列表
+            {t('刷新会话列表')}
           </MenuItem>
           <MenuSeparator />
-          <MenuGroup aria-label="聊天宽度">
-            <MenuLabel>聊天宽度</MenuLabel>
+          <MenuGroup aria-label={t('聊天宽度')}>
+            <MenuLabel>{t('聊天宽度')}</MenuLabel>
             {CHAT_WIDTH_OPTIONS.map(({ value, label }) => (
               <MenuItem
                 key={value}

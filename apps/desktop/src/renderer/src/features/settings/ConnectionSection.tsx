@@ -1,17 +1,19 @@
 import { useEffect } from 'react'
 import { Pencil, Trash2 } from 'lucide-react'
+import { t } from '@qn/codex-client'
+import { targetDisplayName } from '../../components/targetName'
 import type { SshTarget, Target } from '../../../../shared/backendApi'
 import { EmptyState } from '../../components/ui'
 import { useTargets } from '../../store/targets'
 
 function kindLabel(target: Target): string {
-  if (target.kind === 'local') return '本机'
+  if (target.kind === 'local') return t('本机')
   if (target.kind === 'ssh') return 'SSH'
-  return '直连'
+  return t('直连')
 }
 
 function addressOf(target: Target): string {
-  if (target.kind === 'local') return '本机进程'
+  if (target.kind === 'local') return t('本机进程')
   return `${target.host}:${target.port}`
 }
 
@@ -32,7 +34,7 @@ export function ConnectionSection({
   }, [loaded, load])
 
   if (targets.length === 0) {
-    return <EmptyState>正在读取已保存的连接…</EmptyState>
+    return <EmptyState>{t('正在读取已保存的连接…')}</EmptyState>
   }
 
   return (
@@ -44,7 +46,7 @@ export function ConnectionSection({
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="truncate text-ui text-qn-text">{target.name}</span>
+              <span className="truncate text-ui text-qn-text">{targetDisplayName(target)}</span>
               <span className="rounded-md bg-qn-fg/[0.06] px-1.5 text-ui-xs leading-5 text-qn-muted">
                 {kindLabel(target)}
               </span>
@@ -57,7 +59,7 @@ export function ConnectionSection({
               className="qn-button-subtle flex shrink-0 items-center gap-1 px-2.5 py-1 text-ui-sm"
               onClick={() => onEditTarget(target)}
             >
-              <Pencil size={13} /> 编辑
+              <Pencil size={13} /> {t('编辑')}
             </button>
           )}
           {target.kind !== 'local' && onRemoveTarget && (
@@ -66,7 +68,7 @@ export function ConnectionSection({
               className="qn-button-subtle flex shrink-0 items-center gap-1 px-2.5 py-1 text-ui-sm text-qn-danger"
               onClick={() => onRemoveTarget(target.id)}
             >
-              <Trash2 size={13} /> 删除
+              <Trash2 size={13} /> {t('删除')}
             </button>
           )}
         </li>

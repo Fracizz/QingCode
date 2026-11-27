@@ -1,10 +1,12 @@
 import { FolderOpen, MessageSquare, PanelLeft } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { windowControlsSide } from '../../lib/layout'
 import { useCodex } from '../../store/codex'
 import { useTargets } from '../../store/targets'
 import { useDock } from '../../store/dock'
 import { useUi } from '../../store/ui'
 import { RateLimitBadge } from '../RateLimitBadge'
+import { targetDisplayName } from '../targetName'
 import { IconButton } from '../ui'
 import { Logo } from './Logo'
 
@@ -32,7 +34,7 @@ export function TitleBar({ showWorkspace = true }: { showWorkspace?: boolean }) 
       {side === 'left' && <div className="qn-traffic-spacer" />}
       {showWorkspace && (
         <IconButton
-          label={collapsed ? '展开侧栏 (Ctrl+B)' : '收起侧栏 (Ctrl+B)'}
+          label={collapsed ? t('展开侧栏 (Ctrl+B)') : t('收起侧栏 (Ctrl+B)')}
           className="h-7 w-7"
           aria-pressed={!collapsed}
           onClick={toggleSidebar}
@@ -47,7 +49,7 @@ export function TitleBar({ showWorkspace = true }: { showWorkspace?: boolean }) 
       </div>
 
       {showWorkspace && (
-        <nav aria-label="工作视图" className="ml-4 flex gap-0.5 rounded-md bg-qn-sidebar p-0.5" data-no-drag>
+        <nav aria-label={t('工作视图')} className="ml-4 flex gap-0.5 rounded-md bg-qn-sidebar p-0.5" data-no-drag>
           {(['chat', 'files'] as const).map((mode) => (
             <button
               key={mode}
@@ -57,7 +59,7 @@ export function TitleBar({ showWorkspace = true }: { showWorkspace?: boolean }) 
               onClick={() => useDock.getState().toggleView(mode)}
             >
               {mode === 'chat' ? <MessageSquare size={13} /> : <FolderOpen size={13} />}
-              {mode === 'chat' ? '对话' : '文件'}
+              {mode === 'chat' ? t('对话') : t('文件')}
             </button>
           ))}
         </nav>
@@ -66,7 +68,7 @@ export function TitleBar({ showWorkspace = true }: { showWorkspace?: boolean }) 
 
       {showWorkspace && (
         <div className="flex shrink-0 items-center pr-2" data-no-drag>
-          <RateLimitBadge targetId={selectedId} agent={agent} threadId={threadId} prefix={target?.name} />
+          <RateLimitBadge targetId={selectedId} agent={agent} threadId={threadId} prefix={target ? targetDisplayName(target) : undefined} />
         </div>
       )}
 

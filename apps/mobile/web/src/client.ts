@@ -1,4 +1,5 @@
 // 手机网关调用适配：把 §9.2 的 /rpc、/pair、/probe、/events 映射到 T12 原生桥方法。
+import { t } from '@qn/codex-client'
 import { createMockPort } from './mock'
 import {
   getWindowNativePort,
@@ -32,7 +33,7 @@ export function unwrapRpcResult(value: unknown): unknown {
       (typeof detail?.message === 'string' ? detail.message : null) ??
       (typeof value.error === 'string' ? value.error : null) ??
       (typeof value.message === 'string' ? value.message : null) ??
-      '电脑拒绝了请求'
+      t('电脑拒绝了请求')
     const code = typeof detail?.code === 'string' ? detail.code : 'server'
     throw new NativeRequestError(message, code)
   }
@@ -110,7 +111,7 @@ export class GatewayClient implements Gateway {
   async openEvents(conn: Connection): Promise<string> {
     const result = await this.native.call<unknown>('events.open', connectionParams(conn))
     if (typeof result !== 'string' || result === '') {
-      throw new NativeRequestError('事件流建立失败', 'events')
+      throw new NativeRequestError(t('事件流建立失败'), 'events')
     }
     return result
   }
@@ -157,7 +158,7 @@ export function getGateway(): Gateway {
 export function callDevice<T>(method: string, params?: unknown, timeoutMs?: number): Promise<T> {
   const gateway = getGateway()
   if (!(gateway instanceof GatewayClient)) {
-    return Promise.reject(new NativeRequestError('此功能需要 Android 应用', 'native_unavailable'))
+    return Promise.reject(new NativeRequestError(t('此功能需要 Android 应用'), 'native_unavailable'))
   }
   return gateway.device<T>(method, params, timeoutMs)
 }

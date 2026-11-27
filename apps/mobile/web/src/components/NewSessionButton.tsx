@@ -1,3 +1,4 @@
+import { t, translateMessage } from '@qn/codex-client'
 import { ChevronRight, Plus } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { agentLabel, sessionKey } from '../agents'
@@ -19,7 +20,7 @@ export function NewSessionButton({ project, projects, iconOnly, primary, classNa
   const activeId = useApp((s) => s.activeId)
   const connected = useApp((s) => s.eventsConnected)
   const selected = project ?? chosen
-  const label = project ? `在 ${project.name} 新建会话` : '新建会话'
+  const label = project ? t('在 {name} 新建会话', { name: project.name }) : t('新建会话')
 
   return (
     <>
@@ -29,14 +30,14 @@ export function NewSessionButton({ project, projects, iconOnly, primary, classNa
           setOpenFor(activeId)
           void useApp.getState().loadAgentSettings()
         }}>
-        <Plus size={iconOnly ? 19 : 17} strokeWidth={1.75} aria-hidden />{!iconOnly && '新建会话'}
+        <Plus size={iconOnly ? 19 : 17} strokeWidth={1.75} aria-hidden />{!iconOnly && t('新建会话')}
       </Button>
       {openFor && openFor === activeId && (selected ? (
         <AgentPicker key={selected.id} project={selected} onClose={() => setOpenFor(null)}
           onBack={!project && (projects?.length ?? 0) > 1 ? () => setChosen(undefined) : undefined}
           onCreated={() => { setOpenFor(null); onCreated?.() }} />
       ) : (
-        <Dialog title="选择会话项目" onClose={() => setOpenFor(null)}>
+        <Dialog title={t('选择会话项目')} onClose={() => setOpenFor(null)}>
           <ProjectChoices projects={projects ?? []} onPick={setChosen} />
         </Dialog>
       ))}
@@ -53,7 +54,7 @@ function ProjectChoices({ projects, onPick }: { projects: readonly Project[]; on
   return (
     <>
       <input type="search" className="qn-input mb-2" value={query} onChange={(event) => setQuery(event.target.value)}
-        placeholder="搜索项目" aria-label="搜索项目" />
+        placeholder={t('搜索项目')} aria-label={t('搜索项目')} />
       <div className="qn-list-group">
         {shown.map((project) => (
           <button key={project.id} type="button" className="qn-row qn-list-row w-full text-left" onClick={() => onPick(project)}>
@@ -65,7 +66,7 @@ function ProjectChoices({ projects, onPick }: { projects: readonly Project[]; on
           </button>
         ))}
       </div>
-      {shown.length === 0 && <p className="py-3 text-sm text-qn-muted">没有匹配的项目。</p>}
+      {shown.length === 0 && <p className="py-3 text-sm text-qn-muted">{t('没有匹配的项目。')}</p>}
     </>
   )
 }
@@ -101,7 +102,7 @@ function AgentPicker({ project, onClose, onBack, onCreated }: {
     setError(undefined)
     try {
       if (await app.newThread(agent, workspaceProject(project, app.activeId))) onCreated()
-      else setError(useApp.getState().error ?? '无法新建会话，请重试。')
+      else setError(useApp.getState().error ?? t('无法新建会话，请重试。'))
     } finally {
       creatingRef.current = false
       setCreating(false)
@@ -109,20 +110,20 @@ function AgentPicker({ project, onClose, onBack, onCreated }: {
   }
 
   return (
-    <Dialog title="新建会话" onClose={() => { if (!creatingRef.current) onClose() }}>
+    <Dialog title={t('新建会话')} onClose={() => { if (!creatingRef.current) onClose() }}>
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="min-w-0 break-words text-sm text-qn-muted">{[target?.name, project.name].filter(Boolean).join(' · ')}</p>
-        {onBack && <Button variant="ghost" className="shrink-0" disabled={creating} onClick={onBack}>更换项目</Button>}
+        {onBack && <Button variant="ghost" className="shrink-0" disabled={creating} onClick={onBack}>{t('更换项目')}</Button>}
       </div>
       {!connected && connectionWarning && <Note message={connectionWarning} tone="warn" />}
-      {connected && connecting && <Loading text="正在连接项目目标…" />}
+      {connected && connecting && <Loading text={t('正在连接项目目标…')} />}
       {targetError && needsTarget && <Note message={targetError} tone="error" />}
       {error && <Note message={error} tone="error" />}
       {connected && target && !connecting && (needsTarget || (error && targetState !== 'ready')) && (
-        <Button className="my-2 w-full" onClick={() => { setError(undefined); requestConnect(targetId) }}>连接目标</Button>
+        <Button className="my-2 w-full" onClick={() => { setError(undefined); requestConnect(targetId) }}>{t('连接目标')}</Button>
       )}
-      {creating && <Loading text="正在新建会话…" />}
-      {agents.length === 0 && <Note message="请在电脑端为这个目标启用至少一个 Agent。" />}
+      {creating && <Loading text={t('正在新建会话…')} />}
+      {agents.length === 0 && <Note message={t('请在电脑端为这个目标启用至少一个 Agent。')} />}
       <div className="qn-list-group">
         {agents.map((agent) => {
           const reason = sessions[sessionKey(targetId, agent)]?.openError
@@ -130,9 +131,9 @@ function AgentPicker({ project, onClose, onBack, onCreated }: {
             <button key={agent} type="button" className="qn-row qn-list-row w-full text-left"
               disabled={!connected || connecting || needsTarget || creating} onClick={() => void create(agent)}>
               <span className="qn-row-copy">
-                <span className="qn-list-primary">{agentLabel(agent)} {agent === preferred && <span className="text-xs text-qn-muted">默认</span>}</span>
-                {reason && <span className="qn-subtitle block">{reason}</span>}
-                {agent === 'pi' && !reason && <span className="qn-subtitle block">工具直接执行</span>}
+                <span className="qn-list-primary">{agentLabel(agent)} {agent === preferred && <span className="text-xs text-qn-muted">{t('默认')}</span>}</span>
+                {reason && <span className="qn-subtitle block">{translateMessage(reason)}</span>}
+                {agent === 'pi' && !reason && <span className="qn-subtitle block">{t('工具直接执行')}</span>}
               </span>
               <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />
             </button>

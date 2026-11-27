@@ -75,7 +75,7 @@ export async function fsWatch(
 
   const unique = dedupePaths(paths)
   if (unique.length > MAX_WATCH_PATHS) {
-    ctx.log(`fs.watch 路径数 ${unique.length} 超过上限 ${MAX_WATCH_PATHS}，已截断`)
+    ctx.log(`fs.watch 路径数 ${unique.length} 超过上限 ${MAX_WATCH_PATHS}，已截断`) // i18n-ignore: 仅进日志
   }
   const targets = unique.slice(0, MAX_WATCH_PATHS)
   // 并发判类型：500 个路径逐个 await stat 会让 fs.watch 迟迟不返回。
@@ -95,7 +95,7 @@ export async function fsWatch(
     const isDir = dirFlags[index]
     if (isDir === null || isDir === undefined) {
       // 不存在的路径不监听：fs.watch 只会报错并占用一个 watcher。
-      ctx.log('fs.watch 跳过不存在的路径')
+      ctx.log('fs.watch 跳过不存在的路径') // i18n-ignore: 仅进日志
       continue
     }
     // 已被上层递归监听覆盖的路径不必再开一个句柄。
@@ -116,13 +116,13 @@ export async function fsWatch(
         }, DEBOUNCE_MS)
       })
       created.watcher.on('error', () => {
-        ctx.log('fs.watch 监听出错，已关闭该监听')
+        ctx.log('fs.watch 监听出错，已关闭该监听') // i18n-ignore: 仅进日志
         created.watcher.close()
       })
       state.watchers.push(created.watcher)
       if (created.recursive) recursiveRoots.push(target)
     } catch (err) {
-      ctx.log(`fs.watch 无法监听: ${err instanceof Error ? err.message : String(err)}`)
+      ctx.log(`fs.watch 无法监听: ${err instanceof Error ? err.message : String(err)}`) // i18n-ignore: 仅进日志
     }
   }
   return {}

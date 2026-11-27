@@ -5,9 +5,9 @@ import { create } from 'zustand'
 import { listModels, type CodexRpcLike } from '@qn/codex-client'
 import type { AgentKind } from '../../../../shared/backendApi'
 import { sessionKey } from '../../lib/agents'
-import { EMPTY_PREFS, resolveSelection } from '../../lib/models'
+import { resolveSelection } from '../../lib/models'
 import { useCodex } from '../../store/codex'
-import { useModels } from '../../store/models'
+import { prefsFor, useModels } from '../../store/models'
 import { imageSupportFor, modalityTable, type ImageSupport, type ModalityTable } from './images'
 
 type Entry = { table: ModalityTable; stamp: number }
@@ -40,11 +40,11 @@ const useModalities = create<ModalityState>((set, get) => ({
  * 会话打开后取一次 model/list；模型选择器刷新列表（loadedAt 变化）时跟着重取。
  * 只在已打开的会话上调用官方 model/list，不为探测能力单独拉起 Agent。
  */
-export function useImageSupport(targetId: string | null, agent: AgentKind, enabled: boolean): ImageSupport {
+export function useImageSupport(targetId: string | null, agent: AgentKind, enabled: boolean, threadId: string | null = null): ImageSupport {
   const key = targetId ? sessionKey(targetId, agent) : ''
   const session = useCodex((s) => (key ? s.sessions[key] : undefined))
   const list = useModels((s) => (key ? s.lists[key] : undefined))
-  const prefs = useModels((s) => s.prefs[agent] ?? EMPTY_PREFS)
+  const prefs = useModels((s) => prefsFor(s, targetId, agent, threadId))
   const entry = useModalities((s) => (key ? s.entries[key] : undefined))
   const load = useModalities((s) => s.load)
 

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { GitBranch, GitCommit, GitStatusResult } from '@qn/protocol'
+import { t } from '@qn/codex-client'
 import { serverCall } from '../workspace/serverCall'
 import {
   branchesStale,
@@ -247,7 +248,7 @@ export const useGit = create<GitStore>((set, get) => {
             return next
           })
         } catch (err) {
-          patch(key, { historyError: describeGitError(err, '读取提交历史失败').message })
+          patch(key, { historyError: describeGitError(err, t('读取提交历史失败')).message })
         }
       })().finally(() => {
         refreshing.delete(key)
@@ -275,7 +276,7 @@ export const useGit = create<GitStore>((set, get) => {
           logLoading: false,
         }))
       } catch (err) {
-        patch(key, { logLoading: false, historyError: describeGitError(err, '加载更多提交失败').message })
+        patch(key, { logLoading: false, historyError: describeGitError(err, t('加载更多提交失败')).message })
       } finally {
         paging.delete(key)
       }

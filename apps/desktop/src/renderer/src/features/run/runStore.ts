@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import type { FsChangedEvt } from '@qn/protocol'
+import { t, translateMessage } from '@qn/codex-client'
 import { BackendCallError, onBackendRestart } from '../../lib/backend'
 import { friendlyError } from '../../lib/errors'
 import { useTargets } from '../../store/targets'
@@ -56,9 +57,9 @@ export const scopeKey = (targetId: string, cwd: string): string => `${targetId}\
 
 function describeRunError(err: unknown, fallback: string): string {
   if (err instanceof BackendCallError && (err.code === 'method' || err.code === 'unknown_method')) {
-    return `${fallback}：目标上的 server 版本过旧，不支持运行配置，请重新连接以更新`
+    return t('{fallback}：目标上的 server 版本过旧，不支持运行配置，请重新连接以更新', { fallback })
   }
-  return friendlyError(err, fallback)
+  return translateMessage(friendlyError(err, fallback))
 }
 
 const inits = new Map<string, Promise<void>>()
@@ -96,7 +97,7 @@ export const useRunStore = create<RunStore>((set, get) => {
           patchTarget(targetId, { platform: result.platform, runs, loading: false, loaded: true, error: null })
           await Promise.all(result.runs.map((run) => fetchOutput(targetId, run.runId)))
         } catch (err) {
-          patchTarget(targetId, { loading: false, loaded: true, error: describeRunError(err, '读取运行状态失败') })
+          patchTarget(targetId, { loading: false, loaded: true, error: describeRunError(err, t('读取运行状态失败')) })
         }
       })().finally(() => inits.delete(targetId))
       inits.set(targetId, task)
@@ -150,7 +151,7 @@ export const useRunStore = create<RunStore>((set, get) => {
         const data = await loadRunConfigs(targetId, cwd)
         patchScope(key, { data, loading: false, error: null })
       } catch (err) {
-        patchScope(key, { loading: false, error: friendlyError(err, '读取运行配置失败') })
+        patchScope(key, { loading: false, error: translateMessage(friendlyError(err, t('读取运行配置失败'))) })
       }
     },
 
@@ -158,8 +159,8 @@ export const useRunStore = create<RunStore>((set, get) => {
       const key = scopeKey(targetId, cwd)
       const scope = get().scopes[key]
       const data = scope?.data
-      if (!data) throw new Error('运行配置尚未加载')
-      if (data.error) throw new Error('run.json 格式错误，请先手动修复后再保存')
+      if (!data) throw new Error(t('运行配置尚未加载'))
+      if (data.error) throw new Error(t('run.json 格式错误，请先手动修复后再保存'))
       patchScope(key, { saving: true })
       try {
         const file = { ...data.file, configs }
@@ -179,9 +180,9 @@ export const useRunStore = create<RunStore>((set, get) => {
         patchScope(key, { saving: false })
         if (err instanceof BackendCallError && err.code === 'conflict') {
           void get().loadConfigs(targetId, cwd)
-          throw new Error('run.json 已被外部修改，已重新加载，请重试')
+          throw new Error(t('run.json 已被外部修改，已重新加载，请重试'))
         }
-        throw new Error(friendlyError(err, '保存运行配置失败'))
+        throw new Error(translateMessage(friendlyError(err, t('保存运行配置失败'))))
       }
     },
   }

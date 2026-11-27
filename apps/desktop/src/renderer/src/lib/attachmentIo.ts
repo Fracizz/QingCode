@@ -1,5 +1,6 @@
 // 附件 IO：读图片并按需压缩、把文件上传到目标机。纯逻辑在 lib/attachments.ts。
 
+import { t } from '@qn/codex-client'
 import { serverCall } from '../features/workspace/serverCall'
 import { call } from './backend'
 import { dirname, IMAGE_MAX_EDGE, MAX_IMAGE_BYTES, uploadPath } from './attachments'
@@ -8,7 +9,7 @@ function readAsDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error ?? new Error('读取文件失败'))
+    reader.onerror = () => reject(reader.error ?? new Error(t('读取文件失败')))
     reader.readAsDataURL(blob)
   })
 }
@@ -30,7 +31,7 @@ export async function readImage(file: File): Promise<{ dataUrl: string; size: nu
   const tooWide = bitmap ? Math.max(bitmap.width, bitmap.height) > IMAGE_MAX_EDGE : false
   if (!bitmap || (!tooLarge && !tooWide)) {
     bitmap?.close()
-    if (tooLarge) throw new Error(`图片超过 ${MAX_IMAGE_BYTES / 1024 / 1024} MB，且无法压缩`)
+    if (tooLarge) throw new Error(t('图片超过 {size} MB，且无法压缩', { size: MAX_IMAGE_BYTES / 1024 / 1024 }))
     return { dataUrl: original, size: file.size }
   }
   const scale = Math.min(1, IMAGE_MAX_EDGE / Math.max(bitmap.width, bitmap.height))
@@ -44,7 +45,7 @@ export async function readImage(file: File): Promise<{ dataUrl: string; size: nu
     const size = dataUrlBytes(dataUrl)
     if (size <= MAX_IMAGE_BYTES) return { dataUrl, size }
   }
-  throw new Error('图片压缩后仍然过大')
+  throw new Error(t('图片压缩后仍然过大'))
 }
 
 const homes = new Map<string, Promise<string>>()
@@ -55,7 +56,7 @@ function targetHome(targetId: string): Promise<string> {
   if (!home) {
     home = call('server.req', { targetId, method: 'fs.home', params: {} }).then((result) => {
       const path = (result as { path?: unknown } | null)?.path
-      if (typeof path !== 'string' || !path) throw new Error('无法获取目标机 home 目录')
+      if (typeof path !== 'string' || !path) throw new Error(t('无法获取目标机 home 目录'))
       return path
     })
     home.catch(() => homes.delete(targetId))

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { useDock } from '../../store/dock'
 import type { FsReadParams, FsWriteParams } from '@qn/protocol'
+import { t } from '@qn/codex-client'
 import { onServerEvt, serverCall } from '../workspace/serverCall'
 import { subscribeOpen, type OpenRequest } from '../workspace/openers'
 import { dirname, fileKind } from './fileLinks'
@@ -183,7 +184,7 @@ function startRead(id: string, append: boolean): void {
       const current = useFiles.getState().tabs.find((item) => item.id === id)
       if (!current || current.revision !== revision) return
       useFiles.setState({
-        tabs: useFiles.getState().tabs.map((item) => (item.id === id ? failedTab(item, err, '读取文件失败') : item)),
+        tabs: useFiles.getState().tabs.map((item) => (item.id === id ? failedTab(item, err, t('读取文件失败')) : item)),
       })
     }
   })()
@@ -230,13 +231,13 @@ function startDiff(id: string): void {
           status: 'ready',
           busy: false,
           diff: tab.sourceDiff,
-          notice: errorMessage(err, '读取差异失败'),
+          notice: errorMessage(err, t('读取差异失败')),
           errorCode: code,
         })
         return
       }
       useFiles.setState({
-        tabs: useFiles.getState().tabs.map((item) => (item.id === id ? failedTab(item, err, '读取差异失败') : item)),
+        tabs: useFiles.getState().tabs.map((item) => (item.id === id ? failedTab(item, err, t('读取差异失败')) : item)),
       })
     }
   })()
@@ -272,7 +273,7 @@ async function saveTab(id: string, options: SaveOptions = {}): Promise<boolean> 
       await openConflict(id)
       return false
     }
-    patchTab(id, markSaveFailed(current, errorMessage(err, '保存失败')))
+    patchTab(id, markSaveFailed(current, errorMessage(err, t('保存失败'))))
     return false
   }
 }
@@ -290,7 +291,7 @@ async function openConflict(id: string): Promise<void> {
     // 读不到磁盘内容时仍可覆盖 / 重新加载，对比入口按无磁盘文本处理。
   }
   useFiles.setState({
-    prompt: { kind: 'conflict', id, message: '文件在打开后被其他程序修改，直接保存会覆盖这些改动。', diskText, diskMtimeMs },
+    prompt: { kind: 'conflict', id, message: t('文件在打开后被其他程序修改，直接保存会覆盖这些改动。'), diskText, diskMtimeMs },
   })
 }
 

@@ -65,6 +65,7 @@ export async function runDirect(args: CliArgs): Promise<unknown> {
       parseListen(listen)
       writeConfig(files, { listen, allowPublic: args.allowPublic === true })
       const status = await reloadDaemon(args.stateDir)
+      // i18n-ignore: 按实际取值在词典登记整句
       if (!status.listening) throw new Error(`直连监听失败: ${status.error ?? '未知原因'}`)
       return status
     }

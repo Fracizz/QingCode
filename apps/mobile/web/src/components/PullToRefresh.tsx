@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import { ArrowDown } from 'lucide-react'
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react'
 import { LoadingIcon, Note } from './ui'
@@ -107,14 +108,14 @@ export function PullToRefresh({
   return (
     <div className="qn-pull-refresh">
       <main ref={main} className={`${className} qn-pull-scroll`} aria-label={label} aria-busy={refreshing}>
-        {failed && <Note message="刷新失败，请重试。" tone="error" onClose={() => setFailed(false)} />}
+        {failed && <Note message={t('刷新失败，请重试。')} tone="error" onClose={() => setFailed(false)} />}
         {children}
       </main>
       {(distance > 0 || refreshing) && (
         <div className="qn-pull-indicator" role="status"
           style={{ transform: `translate(-50%, ${refreshing ? REFRESH_DISTANCE : distance}px)` }}>
           {refreshing ? <LoadingIcon /> : <ArrowDown size={14} aria-hidden />}
-          {refreshing ? '正在刷新…' : distance >= REFRESH_DISTANCE ? '松手刷新' : '下拉刷新'}
+          {refreshing ? t('正在刷新…') : distance >= REFRESH_DISTANCE ? t('松手刷新') : t('下拉刷新')}
         </div>
       )}
     </div>

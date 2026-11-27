@@ -1,5 +1,6 @@
 // 手机连接面板的校验与展示纯逻辑；规则与 backend/mobile/link.ts、settings.ts 保持一致。
 // 后端会再次校验，这里只做即时反馈，避免渲染层反向依赖 backend 目录。
+import { t, translateMessage } from '@qn/codex-client'
 import type { MobileSettings, MobileSettingsInput } from '../../../shared/backendApi'
 
 export type SettingsDraft = {
@@ -151,15 +152,15 @@ export function buildSettingsPatch(
   settings: MobileSettings
 ): PatchResult {
   const port = parsePort(draft.port)
-  if (port === null) return { ok: false, error: '端口需为 1–65535 的整数' }
+  if (port === null) return { ok: false, error: t('端口需为 1–65535 的整数') }
   if (draft.password && !isValidPairingCode(draft.password)) {
-    return { ok: false, error: '配对密码需为 6–20 位且不含空白字符' }
+    return { ok: false, error: t('配对密码需为 6–20 位且不含空白字符') }
   }
   const addresses: string[] = []
   for (const raw of draft.publicAddresses) {
     const normalized = normalizePublicAddress(raw)
     if (normalized === null) {
-      return { ok: false, error: `对外地址「${raw}」无效，需填 host:port` }
+      return { ok: false, error: t('对外地址「{address}」无效，需填 host:port', { address: raw }) }
     }
     if (!addresses.includes(normalized)) addresses.push(normalized)
   }
@@ -187,12 +188,12 @@ export function formatDeviceTime(timestamp: number): string {
 }
 
 export function gatewayStatus(settings: MobileSettings | null): GatewayStatus {
-  if (!settings) return { label: '加载中', tone: 'muted', detail: '正在读取手机连接设置…' }
-  if (settings.error) return { label: '启动失败', tone: 'danger', detail: settings.error }
-  if (!settings.enabled) return { label: '已停用', tone: 'muted', detail: '启用后手机才能连接这台电脑。' }
-  if (settings.running) return { label: '运行中', tone: 'ok', detail: '' }
+  if (!settings) return { label: t('加载中'), tone: 'muted', detail: t('正在读取手机连接设置…') }
+  if (settings.error) return { label: t('启动失败'), tone: 'danger', detail: translateMessage(settings.error) }
+  if (!settings.enabled) return { label: t('已停用'), tone: 'muted', detail: t('启用后手机才能连接这台电脑。') }
+  if (settings.running) return { label: t('运行中'), tone: 'ok', detail: '' }
   if (!settings.hasPassword) {
-    return { label: '待设置密码', tone: 'warn', detail: '请先设置 6–20 位配对密码。' }
+    return { label: t('待设置密码'), tone: 'warn', detail: t('请先设置 6–20 位配对密码。') }
   }
-  return { label: '未运行', tone: 'danger', detail: '网关未监听，请检查端口后重试启动。' }
+  return { label: t('未运行'), tone: 'danger', detail: t('网关未监听，请检查端口后重试启动。') }
 }

@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
 import { ContextMenu, DropdownMenu, Popover, Select as RadixSelect, Tabs, Tooltip } from 'radix-ui'
+import { t } from '@qn/codex-client'
 import { cn } from '../lib/cn'
 
 /*
@@ -182,7 +183,7 @@ export function Select({
   onValueChange,
   options,
   groups,
-  placeholder = '请选择',
+  placeholder = t('请选择'),
   disabled,
   className,
   'aria-label': ariaLabel,

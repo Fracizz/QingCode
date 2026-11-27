@@ -6,31 +6,24 @@ describe('会话访问模式', () => {
   const draft = { ...session, threadId: null }
 
   it('会话默认继承总控，显式选择可覆盖并恢复继承', () => {
-    expect(getAccessMode(emptyAccessMemory, draft, 'restricted')).toBe('readOnly')
-    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'claude' }, 'restricted')).toBe('plan')
-    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'pi' }, 'restricted')).toBe('default')
-    const override = rememberAccessMode(emptyAccessMemory, session, 'default')
-    expect(getAccessMode(override, session, 'restricted')).toBe('default')
-    expect(getAccessMode(rememberAccessMode(override, session, 'inherit'), session, 'restricted')).toBe('readOnly')
-  })
-
-  it('总控为完全访问时，Codex 关闭沙箱、Claude 跳过审批，显式选择仍优先', () => {
-    expect(getAccessMode(emptyAccessMemory, draft, 'fullAccess')).toBe('fullAccess')
-    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'claude' }, 'fullAccess')).toBe('bypassPermissions')
-    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'pi' }, 'fullAccess')).toBe('default')
-    expect(getAccessMode(rememberAccessMode(emptyAccessMemory, session, 'readOnly'), session, 'fullAccess')).toBe('readOnly')
-  })
-
-  it('总控为自动时，Claude 使用自动模式，Codex 与 pi 沿用 Agent 默认', () => {
-    const claude = { ...session, agent: 'claude' } as const
-    expect(getAccessMode(emptyAccessMemory, claude, 'auto')).toBe('auto')
-    expect(turnAccessOverride('claude', 'auto')).toEqual({ claudePermissionMode: 'auto' })
-    expect(getAccessMode(emptyAccessMemory, draft, 'auto')).toBe('default')
+    expect(getAccessMode(emptyAccessMemory, draft, 'auto')).toBe('auto')
+    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'claude' }, 'auto')).toBe('auto')
     expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'pi' }, 'auto')).toBe('default')
-    expect(getAccessMode(rememberAccessMode(emptyAccessMemory, claude, 'auto'), claude)).toBe('auto')
-    // Codex 没有该档位，会话级选择被忽略。
-    expect(getAccessMode(rememberAccessMode(emptyAccessMemory, session, 'auto'), session)).toBe('default')
-    expect(turnAccessOverride('codex', 'auto')).toBeNull()
+    const override = rememberAccessMode(emptyAccessMemory, session, 'default')
+    expect(getAccessMode(override, session, 'auto')).toBe('default')
+    expect(getAccessMode(rememberAccessMode(override, session, 'inherit'), session, 'auto')).toBe('auto')
+  })
+
+  it('总控为完全访问时各 Agent 统一为完全访问，显式选择仍优先', () => {
+    expect(getAccessMode(emptyAccessMemory, draft, 'fullAccess')).toBe('fullAccess')
+    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'claude' }, 'fullAccess')).toBe('fullAccess')
+    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'pi' }, 'fullAccess')).toBe('default')
+    expect(getAccessMode(rememberAccessMode(emptyAccessMemory, session, 'auto'), session, 'fullAccess')).toBe('auto')
+  })
+
+  it('拒绝已移除的旧档位', () => {
+    const legacy = rememberAccessMode(emptyAccessMemory, session, 'readOnly' as never)
+    expect(legacy).toBe(emptyAccessMemory)
   })
 
   it('在草稿转会话后保留选择，新草稿、其他目标和其他会话使用默认权限', () => {
@@ -49,15 +42,19 @@ describe('会话访问模式', () => {
 
   it('仅发送对应 Agent 原生支持的权限覆盖', () => {
     expect(turnAccessOverride('codex', 'default')).toBeNull()
-    expect(turnAccessOverride('codex', 'readOnly')).toEqual({
-      approvalPolicy: 'never',
-      sandboxPolicy: { type: 'readOnly', networkAccess: false },
+    expect(turnAccessOverride('codex', 'auto')).toEqual({
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'auto_review',
+      sandboxPolicy: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false },
       qingcodeAccessOverride: true,
     })
-    expect(turnAccessOverride('codex', 'fullAccess')).toMatchObject({ sandboxPolicy: { type: 'dangerFullAccess' } })
-    expect(turnAccessOverride('claude', 'plan')).toEqual({ claudePermissionMode: 'plan' })
+    expect(turnAccessOverride('codex', 'fullAccess')).toEqual({
+      approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'dangerFullAccess' }, qingcodeAccessOverride: true,
+    })
+    expect(turnAccessOverride('claude', 'auto')).toEqual({ claudePermissionMode: 'auto' })
+    expect(turnAccessOverride('claude', 'fullAccess')).toEqual({ claudePermissionMode: 'bypassPermissions' })
     expect(turnAccessOverride('claude', 'default')).toBeNull()
-    expect(turnAccessOverride('claude', 'fullAccess')).toBeNull()
-    expect(turnAccessOverride('pi', 'readOnly')).toBeNull()
+    expect(turnAccessOverride('claude', 'plan')).toBeNull()
+    expect(turnAccessOverride('pi', 'fullAccess')).toBeNull()
   })
 })

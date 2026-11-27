@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import { create } from 'zustand'
 import type { Project } from '../../../shared/backendApi'
 import { call } from '../lib/backend'
@@ -38,6 +39,8 @@ type ProjectsState = {
   select: (project: Project) => Promise<void>
   setExpanded: (project: Project, expanded: boolean) => void
   setShowAllThreads: (id: string, showAll: boolean) => void
+  /** 收起某个目标下所有项目的会话列表。 */
+  collapseAll: (targetId: string) => void
   add: (targetId: string, path: string) => Promise<Project | null>
   remove: (id: string) => Promise<void>
   rename: (project: Project, name: string) => Promise<void>
@@ -239,7 +242,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
           updateList(state, targetId, () => ({
             projects: [],
             loading: false,
-            error: friendlyError(err, '加载项目失败'),
+            error: friendlyError(err, t('加载项目失败')),
           })),
         )
       }
@@ -286,7 +289,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
         })
         replaceProject(saved, (value, item) => ({ ...item, lastOpenedAt: value.lastOpenedAt }))
       } catch (err) {
-        setError(project.targetId, friendlyError(err, '刷新项目时间失败'))
+        setError(project.targetId, friendlyError(err, t('刷新项目时间失败')))
       }
     },
 
@@ -306,6 +309,14 @@ export const useProjects = create<ProjectsState>((set, get) => {
       set({ fullThreadLists: next })
     },
 
+    collapseAll: (targetId) => {
+      const { treeByTarget } = get()
+      // 分组折叠时项目树可能还没加载过，回退读本机记录。
+      const tree = treeByTarget.get(targetId) ?? readTree(targetId)
+      if (!tree?.expandedIds.length) return
+      set({ treeByTarget: rememberTree(treeByTarget, targetId, { ...tree, expandedIds: [] }) })
+    },
+
     add: async (targetId, path) => {
       try {
         const project = await call('projects.save', { targetId, path })
@@ -313,7 +324,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
         await get().select(project)
         return project
       } catch (err) {
-        setError(targetId, friendlyError(err, '添加项目失败'))
+        setError(targetId, friendlyError(err, t('添加项目失败')))
         return null
       }
     },
@@ -330,7 +341,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
           useCodex.getState().setContext(targetId, null)
         }
       } catch (err) {
-        if (targetId) setError(targetId, friendlyError(err, '删除项目失败'))
+        if (targetId) setError(targetId, friendlyError(err, t('删除项目失败')))
       }
     },
 
@@ -346,7 +357,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
         })
         replaceProject(saved, (value) => value)
       } catch (err) {
-        setError(project.targetId, friendlyError(err, '重命名项目失败'))
+        setError(project.targetId, friendlyError(err, t('重命名项目失败')))
       }
     },
 

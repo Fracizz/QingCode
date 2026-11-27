@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import type { RunConfig } from './runConfigModel'
 import type { RunInfo } from './types'
 
@@ -42,8 +43,8 @@ export function configStatus(config: RunConfig, runs: RunInfo[], stopped: Record
 }
 
 export function runStatusText(run: RunInfo, stopped = false): string {
-  if (isRunning(run)) return run.pid ? `运行中 · PID ${run.pid}` : '运行中'
-  if (stopped) return '已停止'
-  if (run.exitCode === null || run.exitCode === undefined) return run.signal ? `已终止（${run.signal}）` : '已终止'
-  return `已退出（${run.exitCode}）`
+  if (isRunning(run)) return run.pid ? t('运行中 · PID {pid}', { pid: run.pid }) : t('运行中')
+  if (stopped) return t('已停止')
+  if (run.exitCode === null || run.exitCode === undefined) return run.signal ? t('已终止（{signal}）', { signal: run.signal }) : t('已终止')
+  return t('已退出（{code}）', { code: run.exitCode })
 }

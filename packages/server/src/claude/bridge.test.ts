@@ -145,21 +145,21 @@ function note(h: Harness, method: string): Json {
 }
 
 describe('ClaudeBridge 端到端（假 query 工厂）', () => {
-  it('元数据跳过历史读取，分页从最近轮次回读并复用 SDK 快照', async () => {
+  it('元数据预读一次历史以回报会话模型，分页从最近轮次回读并复用同一份 SDK 快照', async () => {
     const readMessages = vi.fn(async () => [0, 1, 2].flatMap((index) => [
       { message: { id: `u${index}`, role: 'user', content: [{ type: 'text', text: `问题 ${index}` }] } },
-      { message: { id: `a${index}`, role: 'assistant', content: [{ type: 'text', text: `回答 ${index}` }] } },
+      { message: { id: `a${index}`, role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: `回答 ${index}` }] } },
     ]))
     const h = harness({ getSessionMessages: readMessages })
     await h.bridge.open({})
     const threadId = 'old-1'
     request(h, 'metadata', 'thread/resume', { threadId, excludeTurns: true })
     expect((await response(h, 'metadata')).result).toMatchObject({
-      thread: { id: threadId, historyMode: 'paginated', turns: [] },
+      thread: { id: threadId, historyMode: 'paginated', turns: [], model: 'claude-opus-5-5', reasoningEffort: null },
     })
     request(h, 'read-metadata', 'thread/read', { threadId, includeTurns: false })
-    expect((await response(h, 'read-metadata')).result).toMatchObject({ thread: { turns: [] } })
-    expect(readMessages).not.toHaveBeenCalled()
+    expect((await response(h, 'read-metadata')).result).toMatchObject({ thread: { turns: [], model: 'claude-opus-5-5' } })
+    expect(readMessages).toHaveBeenCalledTimes(1)
 
     const params = { threadId, sortDirection: 'desc', limit: 1, itemsView: 'full' }
     request(h, 'latest', 'thread/turns/list', params)

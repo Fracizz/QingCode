@@ -1,5 +1,5 @@
-import { isActiveThread, sessionStatus, sessionStatusLabels, type SessionStatus, type ThreadView } from '@qn/codex-client'
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentProps, type ReactNode } from 'react'
+import { t, isActiveThread, sessionStatus, sessionStatusLabels, type SessionStatus } from '@qn/codex-client'
+import { memo, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentProps, type ReactNode } from 'react'
 import { ContextMenu } from 'radix-ui'
 import {
   Archive,
@@ -18,7 +18,7 @@ import {
   ShieldAlert,
   Trash2,
 } from 'lucide-react'
-import { agentLabel, DEFAULT_AGENT } from '../../lib/agents'
+import { agentLabel, DEFAULT_AGENT, sessionKey } from '../../lib/agents'
 import { copyText } from '../../lib/clipboard'
 import { cn } from '../../lib/cn'
 import { formatTime, threadKey, threadPreviewText, type ThreadSummary } from '../../lib/threads'
@@ -73,7 +73,7 @@ function ThreadPreview({ thread, statusLabel }: { thread: ThreadSummary; statusL
         <span>{agentLabel(thread.agent)}</span>
         <span aria-hidden="true">·</span>
         <span>{statusLabel}</span>
-        {thread.updatedAt > 0 && <span className="ml-auto">更新于 {formatTime(thread.updatedAt)}</span>}
+        {thread.updatedAt > 0 && <span className="ml-auto">{t('更新于 {time}', { time: formatTime(thread.updatedAt) })}</span>}
       </span>
     </>
   )
@@ -95,20 +95,21 @@ function onMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
   item.click()
 }
 
-/** 侧栏会话行：点击打开；悬停显示置顶/归档；右键菜单提供重命名、置顶、未读、分支、复制、归档、删除。 */
-export function ThreadRow({
+/**
+ * 侧栏会话行：点击打开；悬停显示置顶/归档；右键菜单提供重命名、置顶、未读、分支、复制、归档、删除。
+ * memo + 只订阅派生出的状态字符串：流式增量只改条目文本，状态不变时行不重渲染。
+ */
+export const ThreadRow = memo(function ThreadRow({
   thread,
   targetId,
   now,
   current,
-  view,
   onActivate,
 }: {
   thread: ThreadSummary
   targetId: string
   now: number
   current: boolean
-  view?: ThreadView
   onActivate: () => void
 }) {
   const openThread = useCodex((s) => s.openThread)
@@ -127,8 +128,9 @@ export function ThreadRow({
 
   const pinned = prefs?.pinned[key] !== undefined
   const unread = prefs?.unread[key] === true && !current
-  const status = sessionStatus(view, thread.activity, unread)
-  const statusLabel = opening ? '正在打开会话' : sessionStatusLabels[status]
+  const status = useCodex((s) =>
+    sessionStatus(s.sessions[sessionKey(targetId, thread.agent)]?.state.threads[thread.id], thread.activity, unread))
+  const statusLabel = opening ? t('正在打开会话') : sessionStatusLabels[status]
   const running = isActiveThread(status)
   const showActions = status !== 'pending' && status !== 'input'
   // Claude 侧没有会话管理 RPC：重命名/归档退化为本机记录，分支与永久删除不可用。
@@ -189,7 +191,7 @@ export function ThreadRow({
         <input
           ref={inputRef}
           value={draft}
-          aria-label="会话名称"
+          aria-label={t('会话名称')}
           className="qn-input min-h-7 min-w-0 flex-1 px-1.5 py-0 text-[length:var(--qn-session-font-size)] leading-tight"
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => void commitRename()}
@@ -234,7 +236,7 @@ export function ThreadRow({
                 }}
               >
                 <span className={cn('min-w-0 flex-1 truncate', unread && 'text-qn-text')}>{thread.title}</span>
-                {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
+                {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label={t('已置顶')} />}
                 {thread.agent !== DEFAULT_AGENT && <AgentIcon agent={thread.agent} size={12} className="pointer-events-none" />}
                 {showActions && (
                   <span className="shrink-0 text-[length:var(--qn-session-detail-font-size)] text-qn-muted group-hover:hidden" aria-hidden="true">
@@ -246,14 +248,14 @@ export function ThreadRow({
             {showActions && (
               <span className="absolute inset-y-0 right-1 hidden items-center group-hover:flex" onClick={(e) => e.stopPropagation()}>
                 <IconButton
-                  label={pinned ? '取消置顶' : '置顶'}
+                  label={pinned ? t('取消置顶') : t('置顶')}
                   className="h-6 w-6"
                   onClick={() => setPinned(targetId, key, !pinned)}
                 >
                   {pinned ? <PinOff size={13} /> : <Pin size={13} />}
                 </IconButton>
                 {!running && (
-                  <IconButton label="归档" className="h-6 w-6" onClick={() => void archive()}>
+                  <IconButton label={t('归档')} className="h-6 w-6" onClick={() => void archive()}>
                     <Archive size={13} />
                   </IconButton>
                 )}
@@ -263,14 +265,14 @@ export function ThreadRow({
         </ContextMenu.Trigger>
         <ContextMenuContent className="min-w-52" onKeyDown={onMenuKeyDown}>
           <ShortcutItem icon={<Pencil size={14} />} hint="R" onSelect={beginRename}>
-            重命名
+            {t('重命名')}
           </ShortcutItem>
           <ShortcutItem
             icon={pinned ? <PinOff size={14} /> : <Pin size={14} />}
             hint="P"
             onSelect={() => setPinned(targetId, key, !pinned)}
           >
-            {pinned ? '取消置顶' : '置顶'}
+            {pinned ? t('取消置顶') : t('置顶')}
           </ShortcutItem>
           <ShortcutItem
             icon={unread ? <Eye size={14} /> : <EyeOff size={14} />}
@@ -278,7 +280,7 @@ export function ThreadRow({
             disabled={current}
             onSelect={() => setUnread(targetId, key, !unread)}
           >
-            {unread ? '标记为已读' : '标记为未读'}
+            {unread ? t('标记为已读') : t('标记为未读')}
           </ShortcutItem>
           <ContextMenuSeparator />
           <ShortcutItem
@@ -290,33 +292,33 @@ export function ThreadRow({
               void forkThread(thread.id, thread.agent)
             }}
           >
-            {native ? '创建聊天分支' : '创建聊天分支（Claude 暂不支持）'}
+            {native ? t('创建聊天分支') : t('创建聊天分支（Claude 暂不支持）')}
           </ShortcutItem>
           <ContextMenu.Sub>
             <ContextMenu.SubTrigger className={cn(menuItemClass, 'text-qn-text')}>
-              <MenuItemContent icon={<Copy size={14} />}>复制</MenuItemContent>
+              <MenuItemContent icon={<Copy size={14} />}>{t('复制')}</MenuItemContent>
               <ChevronRight size={14} className="shrink-0 text-qn-dim" />
             </ContextMenu.SubTrigger>
             <ContextMenu.Portal>
               <ContextMenu.SubContent sideOffset={6} className={cn(floatSurface, 'min-w-44 p-1')}>
                 <ShortcutItem icon={<Copy size={14} />} onSelect={() => void copyText(thread.title)}>
-                  复制标题
+                  {t('复制标题')}
                 </ShortcutItem>
                 <ShortcutItem icon={<Copy size={14} />} onSelect={() => void copyText(thread.id)}>
-                  复制会话 ID
+                  {t('复制会话 ID')}
                 </ShortcutItem>
                 <ShortcutItem icon={<Copy size={14} />} disabled={!thread.cwd} onSelect={() => void copyText(thread.cwd)}>
-                  复制工作目录
+                  {t('复制工作目录')}
                 </ShortcutItem>
                 <ShortcutItem icon={<Copy size={14} />} onSelect={() => void copyText(resumeCommand)}>
-                  复制恢复命令
+                  {t('复制恢复命令')}
                 </ShortcutItem>
               </ContextMenu.SubContent>
             </ContextMenu.Portal>
           </ContextMenu.Sub>
           <ContextMenuSeparator />
           <ShortcutItem icon={<Archive size={14} />} hint="A" disabled={running} onSelect={() => void archive()}>
-            归档
+            {t('归档')}
           </ShortcutItem>
           <ShortcutItem
             icon={<Trash2 size={14} />}
@@ -324,15 +326,15 @@ export function ThreadRow({
             disabled={!native || running}
             onSelect={() => setConfirmDelete(true)}
           >
-            永久删除
+            {t('永久删除')}
           </ShortcutItem>
         </ContextMenuContent>
       </ContextMenu.Root>
 
       {confirmDelete && (
         <Modal
-          title="永久删除会话？"
-          description={`「${thread.title}」及其全部记录将从 Codex 中删除，无法恢复。`}
+          title={t('永久删除会话？')}
+          description={t('「{title}」及其全部记录将从 Codex 中删除，无法恢复。', { title: thread.title })}
           onClose={() => setConfirmDelete(false)}
           width="max-w-md"
           footer={
@@ -342,7 +344,7 @@ export function ThreadRow({
                 className="qn-button-subtle"
                 onClick={() => setConfirmDelete(false)}
               >
-                取消
+                {t('取消')}
               </button>
               <button
                 type="button"
@@ -350,14 +352,14 @@ export function ThreadRow({
                 className="qn-button bg-qn-danger hover:bg-qn-danger"
                 onClick={() => void remove()}
               >
-                {deleting ? '删除中…' : '永久删除'}
+                {deleting ? t('删除中…') : t('永久删除')}
               </button>
             </div>
           }
         >
-          <p className="text-qn-muted">如只是不想在列表里看到它，可以改用「归档」。</p>
+          <p className="text-qn-muted">{t('如只是不想在列表里看到它，可以改用「归档」。')}</p>
         </Modal>
       )}
     </>
   )
-}
+})

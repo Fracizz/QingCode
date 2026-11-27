@@ -1,4 +1,4 @@
-import type { ItemView, ThreadView, TurnMeta } from '@qn/codex-client'
+import { getLocale, t, type ItemView, type ThreadView, type TurnMeta } from '@qn/codex-client'
 
 // 消息流分组（参考 Codex / Orca 的"已运行 3 条命令 · 1 个失败"）：
 // 连续的工具类条目（命令、文件改动、思考、其他）折叠成一行摘要，对话正文不被过程信息淹没。
@@ -153,7 +153,12 @@ export function formatStoppedDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000)
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor(seconds / 60) % 60
-  return `${hours ? `${hours}小时` : ''}${hours || minutes ? `${minutes}分` : ''}${seconds % 60}秒`
+  const en = getLocale() === 'en'
+  return [
+    hours ? `${hours}${en ? 'h' : '小时'}` : '', // i18n-ignore: 紧凑时长单位
+    hours || minutes ? `${minutes}${en ? 'm' : '分'}` : '', // i18n-ignore: 紧凑时长单位
+    `${seconds % 60}${en ? 's' : '秒'}`, // i18n-ignore: 紧凑时长单位
+  ].filter(Boolean).join(en ? ' ' : '')
 }
 
 const isTool = (item: ItemView): boolean =>
@@ -213,10 +218,12 @@ export function summarizeTools(items: ItemView[]): string {
     }
   }
   const parts: string[] = []
-  if (commands) parts.push(`已运行 ${commands} 条命令`)
-  if (failed) parts.push(`${failed} 个失败`)
-  if (files) parts.push(`编辑了 ${files} 个文件`)
-  if (thoughts && parts.length === 0) parts.push(`思考了 ${thoughts} 次`)
-  if (others) parts.push(`${others} 个其他步骤`)
-  return parts.join(' · ') || `${items.length} 个步骤`
+  // 单数单独成词条，英文才能用正确的单复数。
+  if (commands) parts.push(commands === 1 ? t('已运行 1 条命令') : t('已运行 {count} 条命令', { count: commands }))
+  if (failed) parts.push(t('{count} 个失败', { count: failed }))
+  if (files) parts.push(files === 1 ? t('编辑了 1 个文件') : t('编辑了 {count} 个文件', { count: files }))
+  if (thoughts && parts.length === 0) parts.push(thoughts === 1 ? t('思考了 1 次') : t('思考了 {count} 次', { count: thoughts }))
+  if (others) parts.push(others === 1 ? t('1 个其他步骤') : t('{count} 个其他步骤', { count: others }))
+  if (parts.length) return parts.join(' · ')
+  return items.length === 1 ? t('1 个步骤') : t('{count} 个步骤', { count: items.length })
 }

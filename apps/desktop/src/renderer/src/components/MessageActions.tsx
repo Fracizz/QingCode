@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Check, Copy, MoreHorizontal, Split } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { copyText } from '../lib/clipboard'
 import { markdownToPlainText } from '../lib/markdown'
 import { Menu, MenuContent, MenuItem, MenuTrigger } from './primitives'
@@ -17,28 +18,28 @@ export function MessageActions({
 
   const copy = async (value: string, label: string) => {
     const ok = await copyText(value)
-    setCopied(ok ? label : '复制失败')
+    setCopied(ok ? label : t('复制失败'))
     window.setTimeout(() => setCopied(null), 1600)
   }
 
   return (
     <div className="mt-1 flex h-7 items-center gap-0.5 text-ui-sm text-qn-muted opacity-0 transition-opacity group-hover/msg:opacity-100 has-[[data-state=open]]:opacity-100">
-      <IconButton label="复制 Markdown 原文" className="h-7 w-7" onClick={() => void copy(markdown, '已复制')}>
+      <IconButton label={t('复制 Markdown 原文')} className="h-7 w-7" onClick={() => void copy(markdown, t('已复制'))}>
         {copied ? <Check size={14} className="text-qn-ok" /> : <Copy size={14} />}
       </IconButton>
       <Menu>
         <MenuTrigger asChild>
-          <IconButton label="更多操作" className="h-7 w-7">
+          <IconButton label={t('更多操作')} className="h-7 w-7">
             <MoreHorizontal size={15} />
           </IconButton>
         </MenuTrigger>
         <MenuContent>
-          <MenuItem icon={<Copy size={14} />} onSelect={() => void copy(markdownToPlainText(markdown), '已复制纯文本')}>
-            复制为纯文本
+          <MenuItem icon={<Copy size={14} />} onSelect={() => void copy(markdownToPlainText(markdown), t('已复制纯文本'))}>
+            {t('复制为纯文本')}
           </MenuItem>
           {onFork && (
             <MenuItem icon={<Split size={14} />} onSelect={onFork}>
-              分支到新聊天
+              {t('分支到新聊天')}
             </MenuItem>
           )}
         </MenuContent>

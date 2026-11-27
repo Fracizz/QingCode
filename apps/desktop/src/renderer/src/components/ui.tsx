@@ -1,6 +1,7 @@
 import type { ComponentProps, ComponentPropsWithRef, ReactNode } from 'react'
 import { Check, X } from 'lucide-react'
 import { Checkbox as RadixCheckbox, Dialog } from 'radix-ui'
+import { t } from '@qn/codex-client'
 import { cn } from '../lib/cn'
 import { DialogFrame } from './DialogFrame'
 import { LoadingIcon } from './LoadingIcon'
@@ -120,7 +121,7 @@ export function Modal({
         </div>
         {onClose && (
           <Dialog.Close asChild>
-            <IconButton label="关闭" tooltip={false} className="-mr-2 -mt-1">
+            <IconButton label={t('关闭')} tooltip={false} className="-mr-2 -mt-1">
               <X size={16} />
             </IconButton>
           </Dialog.Close>

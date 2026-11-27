@@ -1,6 +1,7 @@
 import { Fragment, useMemo, type ComponentPropsWithoutRef, type ReactNode } from 'react'
 import { defaultUrlTransform } from 'react-markdown'
 import { FileText, GitCompareArrows } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { openDiff, openFile } from '../workspace/openers'
 import { cn } from '../../lib/cn'
 import { findPathsInText, parseFileHref, type PathMatch } from './fileLinks'
@@ -40,7 +41,7 @@ export function createMarkdownLink(getContext: () => LinkContext | null) {
         target="_blank"
         rel="noreferrer"
         className={anchorClass}
-        title={`打开文件 ${location.path}`}
+        title={t('打开文件 {path}', { path: location.path })}
         onClick={(event) => {
           onClick?.(event)
           if (event.defaultPrevented) return
@@ -94,7 +95,7 @@ export function PathText({
       <button
         key={`p-${match.start}-${match.end}`}
         type="button"
-        title={`打开文件 ${match.path}${match.line ? `:${match.line}` : ''}`}
+        title={t('打开文件 {path}', { path: `${match.path}${match.line ? `:${match.line}` : ''}` })}
         className="cursor-pointer rounded-sm text-qn-accent underline decoration-dotted underline-offset-2 hover:bg-qn-accent/10"
         onClick={(event) => {
           event.stopPropagation()
@@ -133,7 +134,7 @@ export function FileChangeActions({
     <span className={cn('inline-flex shrink-0 items-center gap-1', className)} onClick={(event) => event.stopPropagation()}>
       <button type="button" className={button} onClick={() => openFile({ targetId, path: absolute })}>
         <FileText size={12} />
-        打开文件
+        {t('打开文件')}
       </button>
       {cwd && (
         <button
@@ -142,7 +143,7 @@ export function FileChangeActions({
           onClick={() => openDiff({ targetId, cwd, path: absolute, mode: 'worktree', diff })}
         >
           <GitCompareArrows size={12} />
-          与 HEAD 对比
+          {t('与 HEAD 对比')}
         </button>
       )}
     </span>

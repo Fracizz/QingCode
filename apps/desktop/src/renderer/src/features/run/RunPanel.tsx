@@ -14,6 +14,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { t, translateMessage } from '@qn/codex-client'
 import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Modal, Spinner } from '../../components/ui'
 import { FeedbackRow } from '../../components/FeedbackRow'
 import { RefreshIcon } from '../../components/LoadingIcon'
@@ -53,10 +54,10 @@ const statusDot: Record<ConfigStatus, string> = {
 }
 
 const statusLabel: Record<ConfigStatus, string> = {
-  running: '运行中',
-  failed: '上次运行失败',
-  ok: '上次运行已结束',
-  idle: '未运行',
+  running: t('运行中'),
+  failed: t('上次运行失败'),
+  ok: t('上次运行已结束'),
+  idle: t('未运行'),
 }
 
 /** 目标系统未知时（run.list 失败）按路径形态猜，只用于自动发现里选 python 命令。 */
@@ -104,11 +105,11 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
   const startConfig = async (config: RunConfig): Promise<void> => {
     const platform = view.platform
     if (!platform) {
-      setError(view.runsError ?? '尚未取得目标系统信息，请稍后重试')
+      setError(view.runsError ?? t('尚未取得目标系统信息，请稍后重试'))
       return
     }
     const { runnable, skipped } = configTasksFor(config, platform)
-    setNotice(skipped.length > 0 ? `已跳过：${skipped.map((item) => item.reason).join('；')}` : null)
+    setNotice(skipped.length > 0 ? t('已跳过：{reasons}', { reasons: skipped.map((item) => item.reason).join(t('；')) }) : null)
     if (runnable.length === 0) return
     let first: string | null = null
     for (const { task, start } of runnable) {
@@ -121,7 +122,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
         })
         first ??= runId
       } catch (err) {
-        setError(`启动「${taskLabel(config, task)}」失败：${err instanceof Error ? err.message : String(err)}`)
+        setError(t('启动「{name}」失败：{error}', { name: taskLabel(config, task), error: translateMessage(err instanceof Error ? err.message : String(err)) }))
       }
     }
     if (first) setActiveRunId(first)
@@ -134,7 +135,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
     await Promise.all(
       running.map((run) =>
         stopRun(targetId, run.runId).catch((err: unknown) => {
-          setError(`停止失败：${err instanceof Error ? err.message : String(err)}`)
+          setError(t('停止失败：{error}', { error: translateMessage(err instanceof Error ? err.message : String(err)) }))
         }),
       ),
     )
@@ -151,7 +152,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
       else {
         const stopped = await stopConfig(config)
         if (stopped.length > 0 && !(await waitForRunsExit(targetId, stopped))) {
-          setError('等待旧进程退出超时，未重新启动')
+          setError(t('等待旧进程退出超时，未重新启动'))
           return
         }
         await startConfig(config)
@@ -173,7 +174,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
       await stopConfig(target)
       await persist(removeConfig(configs, target.id))
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(translateMessage(err instanceof Error ? err.message : String(err)))
     }
   }
 
@@ -181,7 +182,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
     try {
       await persist([...configs, duplicateConfig(configs, config)])
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(translateMessage(err instanceof Error ? err.message : String(err)))
     }
   }
 
@@ -190,11 +191,11 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-qn-panel text-qn-text">
       <div className="flex shrink-0 items-center gap-1 border-b border-qn-border px-2 py-2">
-        <span className="px-1 text-ui-sm font-medium">运行</span>
+        <span className="px-1 text-ui-sm font-medium">{t('运行')}</span>
         {view.platform && <Badge>{view.platform}</Badge>}
         <div className="ml-auto flex items-center gap-0.5">
           <IconButton
-            label="新建配置"
+            label={t('新建配置')}
             className="h-7 w-7"
             disabled={!canEdit}
             onClick={() => setEditing({ config: createConfig(configs), isNew: true })}
@@ -202,7 +203,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             <Plus size={14} />
           </IconButton>
           <IconButton
-            label="从项目中发现"
+            label={t('从项目中发现')}
             className="h-7 w-7"
             disabled={!canEdit}
             onClick={() => setDiscoverOpen((open) => !open)}
@@ -210,7 +211,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             <Search size={14} />
           </IconButton>
           <IconButton
-            label={`打开 ${RUN_CONFIG_RELATIVE_PATH}`}
+            label={t('打开 {path}', { path: RUN_CONFIG_RELATIVE_PATH })}
             className="h-7 w-7"
             disabled={view.configSource === 'none' || view.configSource === null}
             onClick={() =>
@@ -220,7 +221,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             <FileJson size={14} />
           </IconButton>
           <IconButton
-            label="刷新"
+            label={t('刷新')}
             className="h-7 w-7"
             onClick={() => {
               void init(targetId)
@@ -243,7 +244,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
         />
         {view.configSource === 'nestcode' && !view.configError && (
           <div className="rounded-lg bg-qn-fg/[0.04] px-3 py-2 text-ui-sm leading-5 text-qn-muted">
-            读取自旧版位置 .nestcode/run.json；保存后写入 {RUN_CONFIG_RELATIVE_PATH}。
+            {t('读取自旧版位置 .nestcode/run.json；保存后写入 {path}。', { path: RUN_CONFIG_RELATIVE_PATH })}
           </div>
         )}
       </div>
@@ -251,11 +252,11 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
       <div className="qn-scroll max-h-[45%] shrink-0 overflow-y-auto border-b border-qn-border p-1">
         {view.configs === null && view.configLoading ? (
           <div className="px-3 py-4">
-            <Spinner label="读取运行配置…" />
+            <Spinner label={t('读取运行配置…')} />
           </div>
         ) : configs.length === 0 && !discoverOpen ? (
           <EmptyState>
-            还没有运行配置。
+            {t('还没有运行配置。')}
             <div className="mt-2 flex justify-center gap-2">
               <button
                 type="button"
@@ -263,7 +264,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
                 disabled={!canEdit}
                 onClick={() => setEditing({ config: createConfig(configs), isNew: true })}
               >
-                新建配置
+                {t('新建配置')}
               </button>
               <button
                 type="button"
@@ -271,7 +272,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
                 disabled={!canEdit}
                 onClick={() => setDiscoverOpen(true)}
               >
-                从项目中发现
+                {t('从项目中发现')}
               </button>
             </div>
           </EmptyState>
@@ -290,32 +291,32 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
                   <StatusDot className={cn('size-2', statusDot[status])} />
                 </Tip>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-ui">{config.name || '（未命名）'}</div>
+                  <div className="truncate text-ui">{config.name || t('（未命名）')}</div>
                   <div className="truncate font-mono text-ui-xs text-qn-dim" title={taskOverview(config)}>
                     {taskOverview(config)}
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center">
                   {running ? (
-                    <IconButton label="停止" size="sm" danger disabled={isBusy} onClick={() => void act(config, 'stop')}>
+                    <IconButton label={t('停止')} size="sm" danger disabled={isBusy} onClick={() => void act(config, 'stop')}>
                       <Square size={13} />
                     </IconButton>
                   ) : (
-                    <IconButton label="启动" size="sm" disabled={isBusy || !view.platform} onClick={() => void act(config, 'start')}>
+                    <IconButton label={t('启动')} size="sm" disabled={isBusy || !view.platform} onClick={() => void act(config, 'start')}>
                       <Play size={13} />
                     </IconButton>
                   )}
-                  <IconButton label="重启" size="sm" disabled={isBusy || !view.platform} onClick={() => void act(config, 'restart')}>
+                  <IconButton label={t('重启')} size="sm" disabled={isBusy || !view.platform} onClick={() => void act(config, 'restart')}>
                     <RotateCcw size={13} />
                   </IconButton>
                   <div className="flex items-center opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-                    <IconButton label="编辑" size="sm" disabled={!canEdit} onClick={() => setEditing({ config, isNew: false })}>
+                    <IconButton label={t('编辑')} size="sm" disabled={!canEdit} onClick={() => setEditing({ config, isNew: false })}>
                       <Pencil size={13} />
                     </IconButton>
-                    <IconButton label="复制配置" size="sm" disabled={!canEdit} onClick={() => void duplicate(config)}>
+                    <IconButton label={t('复制配置')} size="sm" disabled={!canEdit} onClick={() => void duplicate(config)}>
                       <CopyPlus size={13} />
                     </IconButton>
-                    <IconButton label="删除" size="sm" danger disabled={!canEdit} onClick={() => setDeleting(config)}>
+                    <IconButton label={t('删除')} size="sm" danger disabled={!canEdit} onClick={() => setDeleting(config)}>
                       <Trash2 size={13} />
                     </IconButton>
                   </div>
@@ -362,20 +363,20 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
 
       {deleting && (
         <Modal
-          title={`删除运行配置「${deleting.name}」？`}
+          title={t('删除运行配置「{name}」？', { name: deleting.name })}
           description={
             runningOf(deleting).length > 0
-              ? '该配置有任务正在运行，删除时会先停止它们。'
-              : `将从 ${RUN_CONFIG_RELATIVE_PATH} 中移除，不可撤销。`
+              ? t('该配置有任务正在运行，删除时会先停止它们。')
+              : t('将从 {path} 中移除，不可撤销。', { path: RUN_CONFIG_RELATIVE_PATH })
           }
           onClose={() => setDeleting(null)}
           footer={
             <div className="flex justify-end gap-2">
               <button type="button" className="qn-button-subtle" onClick={() => setDeleting(null)}>
-                取消
+                {t('取消')}
               </button>
               <button type="button" className="qn-button flex items-center gap-1" onClick={() => void confirmDelete()}>
-                <Trash2 size={14} /> 删除
+                <Trash2 size={14} /> {t('删除')}
               </button>
             </div>
           }
@@ -420,7 +421,7 @@ function DiscoveryPanel({
         if (!cancelled) setResult(found)
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+        if (!cancelled) setError(translateMessage(err instanceof Error ? err.message : String(err)))
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -448,7 +449,7 @@ function DiscoveryPanel({
     try {
       await onImport(importDiscovered(configs, chosen, combined))
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(translateMessage(err instanceof Error ? err.message : String(err)))
     } finally {
       setSaving(false)
     }
@@ -457,16 +458,16 @@ function DiscoveryPanel({
   return (
     <div className="mt-1 flex flex-col gap-2 rounded-lg border border-qn-border bg-qn-bg/50 p-2">
       <div className="flex items-center gap-2">
-        <span className="flex-1 text-ui-sm text-qn-muted">从项目中发现（只生成建议，确认后才写入）</span>
-        <IconButton label="关闭" size="sm" onClick={onClose}>
+        <span className="flex-1 text-ui-sm text-qn-muted">{t('从项目中发现（只生成建议，确认后才写入）')}</span>
+        <IconButton label={t('关闭')} size="sm" onClick={onClose}>
           <X size={13} />
         </IconButton>
       </div>
       <ErrorNote message={error} onClose={() => setError(null)} />
       {loading ? (
-        <Spinner label="正在扫描 package.json、Makefile、Cargo.toml、pyproject…" />
+        <Spinner label={t('正在扫描 package.json、Makefile、Cargo.toml、pyproject…')} />
       ) : tasks.length === 0 ? (
-        <div className="px-1 py-2 text-ui-sm text-qn-dim">没有发现可用的脚本。</div>
+        <div className="px-1 py-2 text-ui-sm text-qn-dim">{t('没有发现可用的脚本。')}</div>
       ) : (
         <div className="flex flex-col gap-0.5">
           {tasks.map((task) => {
@@ -484,7 +485,7 @@ function DiscoveryPanel({
                 </div>
                 <div className="min-w-0 flex-1 pt-0.5 text-right">
                   <div className="truncate font-mono text-ui-xs text-qn-dim" title={`${task.source}\n${task.detail}`}>
-                    {imported ? '已添加' : task.task.target}
+                    {imported ? t('已添加') : task.task.target}
                   </div>
                 </div>
               </div>
@@ -494,11 +495,11 @@ function DiscoveryPanel({
       )}
       {(result?.warnings.length ?? 0) > 0 && (
         <details className="text-ui-xs text-qn-dim">
-          <summary className="cursor-pointer">{result!.warnings.length} 条提示</summary>
+          <summary className="cursor-pointer">{t('{count} 条提示', { count: result!.warnings.length })}</summary>
           <ul className="mt-1 list-disc pl-4">
             {result!.warnings.map((warning, index) => (
               <li key={index}>
-                {warning.source}：{warning.message}
+                {t('{source}：{message}', { source: warning.source, message: translateMessage(warning.message) })}
               </li>
             ))}
           </ul>
@@ -506,7 +507,7 @@ function DiscoveryPanel({
       )}
       <div className="flex items-center gap-2">
         <Checkbox checked={combined} onChange={setCombined} disabled={chosen.length < 2}>
-          <span className="text-ui-sm">合并为一个配置</span>
+          <span className="text-ui-sm">{t('合并为一个配置')}</span>
         </Checkbox>
         <button
           type="button"
@@ -514,7 +515,7 @@ function DiscoveryPanel({
           disabled={chosen.length === 0 || saving || disabled}
           onClick={() => void submit()}
         >
-          {saving ? '写入中…' : `添加选中（${chosen.length}）`}
+          {saving ? t('写入中…') : t('添加选中（{count}）', { count: chosen.length })}
         </button>
       </div>
     </div>
@@ -551,7 +552,7 @@ function RunOutputArea({
   if (tabs.length === 0 || !active) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <EmptyState>启动配置后，输出会显示在这里。</EmptyState>
+        <EmptyState>{t('启动配置后，输出会显示在这里。')}</EmptyState>
       </div>
     )
   }
@@ -592,7 +593,7 @@ function RunOutputArea({
                 <span className="truncate">{run.label}</span>
                 {!live && (
                   <IconButton
-                    label="关闭输出"
+                    label={t('关闭输出')}
                     size="sm"
                     tooltip={false}
                     className="size-4 rounded text-qn-dim"
@@ -611,21 +612,21 @@ function RunOutputArea({
         </div>
         <div className="flex shrink-0 items-center">
           <IconButton
-            label={autoScroll ? '自动滚动：开（点击暂停）' : '自动滚动：已暂停（点击恢复）'}
+            label={autoScroll ? t('自动滚动：开（点击暂停）') : t('自动滚动：已暂停（点击恢复）')}
             size="sm"
             className={autoScroll ? 'text-qn-accent' : ''}
             onClick={() => setAutoScroll((on) => !on)}
           >
             <ArrowDownToLine size={13} />
           </IconButton>
-          <IconButton label="清空输出" size="sm" onClick={() => clear(active.runId)}>
+          <IconButton label={t('清空输出')} size="sm" onClick={() => clear(active.runId)}>
             <Eraser size={13} />
           </IconButton>
-          <IconButton label={copied ? '已复制' : '复制全部输出'} size="sm" onClick={() => void copyAll()}>
+          <IconButton label={copied ? t('已复制') : t('复制全部输出')} size="sm" onClick={() => void copyAll()}>
             <Copy size={13} />
           </IconButton>
           {running && (
-            <IconButton label="停止" size="sm" danger onClick={() => onStop(active.runId)}>
+            <IconButton label={t('停止')} size="sm" danger onClick={() => onStop(active.runId)}>
               <Square size={13} />
             </IconButton>
           )}
@@ -647,7 +648,7 @@ function RunOutputArea({
           if (atBottom !== autoScroll) setAutoScroll(atBottom)
         }}
       >
-        {output?.dropped && <div className="text-qn-dim">… 更早的输出已丢弃（最多保留 5000 行）</div>}
+        {output?.dropped && <div className="text-qn-dim">{t('… 更早的输出已丢弃（最多保留 5000 行）')}</div>}
         <div className="whitespace-pre-wrap break-all text-qn-prose">
           {output?.lines.map((line) => (
             <div key={line.id}>

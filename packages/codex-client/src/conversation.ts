@@ -14,6 +14,7 @@ import type {
   Thread,
   UserInput,
 } from './codex-types'
+import { t, translateMessage } from '../../protocol/src/i18n'
 import type { ThreadHistoryCursor, ThreadHistoryPage } from './api'
 import { describeSubagentItem, subagentThreadMetadata, type SubagentItemView, type SubagentThreadMetadata } from './subagents'
 import { isActiveThread, isThreadOutcome, threadActivityFromStatus, type ThreadActivity, type ThreadOutcome } from './threadStatus'
@@ -33,6 +34,8 @@ export type ThreadView = {
   historyCursor?: ThreadHistoryCursor | null
   /** 每轮的结果、计时与所含条目，用于显示工作过程和停止提示。 */
   turns?: TurnMeta[]
+  /** Thread 上记录的模型与推理强度（Codex 为该会话最近一次的配置），用于恢复会话时的初始选择。 */
+  savedConfig?: { model: string; effort: string | null }
 }
 
 export type TurnMeta = {
@@ -519,7 +522,7 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
     case 'fileChange':
       return { kind: 'fileChange', id, changes: fileChanges(item.changes), status }
     case 'contextCompaction':
-      return { kind: 'other', id, type, status, summary: streaming ? '正在压缩会话…' : '已压缩会话上下文' }
+      return { kind: 'other', id, type, status, summary: streaming ? t('正在压缩会话…') : t('已压缩会话上下文') }
     default: {
       const subagent = describeSubagentItem(item, id)
       if (subagent) return subagent
@@ -822,6 +825,10 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   }
   const subagent = subagentThreadMetadata(raw) ?? previous?.subagent
   if (subagent) next.subagent = subagent
+  const savedConfig = typeof raw.model === 'string' && raw.model
+    ? { model: raw.model, effort: typeof raw.reasoningEffort === 'string' && raw.reasoningEffort ? raw.reasoningEffort : null }
+    : previous?.savedConfig
+  if (savedConfig) next.savedConfig = savedConfig
   if (previous?.tokenUsage !== undefined) next.tokenUsage = previous.tokenUsage
   if (turns.size || previous?.turns) next.turns = [...turns.values()]
   if (status === 'running') {
@@ -1132,33 +1139,33 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
 function commandDetail(params: JsonRecord): string {
   const command = commandText(params.command)
   const cwd = scalarText(params.cwd)
-  const reason = scalarText(params.reason)
+  const reason = translateMessage(scalarText(params.reason))
   return [
     command ? `$ ${command}` : '',
     cwd ? `cwd: ${cwd}` : '',
-    reason ? `原因: ${reason}` : '',
+    reason ? t('原因: {reason}', { reason }) : '',
   ]
     .filter(Boolean)
-    .join('\n') || '命令需要确认'
+    .join('\n') || t('命令需要确认')
 }
 
 function fileChangeDetail(params: JsonRecord): string {
   const fileChanges = asRecord(params.fileChanges)
   const paths = fileChanges ? Object.keys(fileChanges) : []
-  const reason = scalarText(params.reason)
+  const reason = translateMessage(scalarText(params.reason))
   const grantRoot = scalarText(params.grantRoot)
-  return [reason, ...paths, grantRoot].filter(Boolean).join('\n') || '文件改动需要确认'
+  return [reason, ...paths, grantRoot].filter(Boolean).join('\n') || t('文件改动需要确认')
 }
 
 function permissionsDetail(params: JsonRecord): string {
-  const reason = scalarText(params.reason)
+  const reason = translateMessage(scalarText(params.reason))
   const permissions = asRecord(params.permissions)
-  return [reason, permissions ? safeStringify(permissions) : ''].filter(Boolean).join('\n') || '权限需要确认'
+  return [reason, permissions ? safeStringify(permissions) : ''].filter(Boolean).join('\n') || t('权限需要确认')
 }
 
 function otherDetail(method: string, params: JsonRecord): string {
-  const reason = scalarText(params.reason) || scalarText(params.message)
-  return [method, reason].filter(Boolean).join('\n') || '需要用户处理'
+  const reason = translateMessage(scalarText(params.reason) || scalarText(params.message))
+  return [method, reason].filter(Boolean).join('\n') || t('需要用户处理')
 }
 
 export function applyServerRequest(s: ConversationState, r: ServerRequest): ConversationState {
@@ -1178,23 +1185,23 @@ export function applyServerRequest(s: ConversationState, r: ServerRequest): Conv
     case 'item/commandExecution/requestApproval':
     case 'execCommandApproval':
       kind = 'command'
-      title = '命令执行审批'
+      title = t('命令执行审批')
       detail = commandDetail(params)
       break
     case 'item/fileChange/requestApproval':
     case 'applyPatchApproval':
       kind = 'fileChange'
-      title = '文件改动审批'
+      title = t('文件改动审批')
       detail = fileChangeDetail(params)
       break
     case 'item/permissions/requestApproval':
       kind = 'permissions'
-      title = '权限申请'
+      title = t('权限申请')
       detail = permissionsDetail(params)
       break
     default:
       kind = 'other'
-      title = '其他请求'
+      title = t('其他请求')
       detail = otherDetail(method, params)
       break
   }
@@ -1261,6 +1268,7 @@ function grantedPermissions(value: unknown): GrantedPermissionProfile {
 function legacyDecision(decision: ApprovalDecision): ReviewDecision {
   if (decision === 'accept') return 'approved'
   if (decision === 'acceptForSession') return 'approved_for_session'
+  // i18n-ignore: 回给 Agent 的拒绝理由，进入模型上下文
   return { denied: { rejection: '用户拒绝该操作' } }
 }
 

@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { ContextMenu } from 'radix-ui'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { t } from '@qn/codex-client'
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '../../components/primitives'
 import { copyText } from '../../lib/clipboard'
 import { cn } from '../../lib/cn'
@@ -92,12 +93,12 @@ export function MarkdownPreview({ content, targetId, cwd, onViewSource }: {
           </ReactMarkdown>
         </div>
       </ContextMenu.Trigger>
-      <ContextMenuContent aria-label="Markdown 预览操作">
-        <ContextMenuItem disabled={!menu.selection} onSelect={() => void copyText(menu.selection)}>复制选中文字</ContextMenuItem>
-        {menu.href && <ContextMenuItem onSelect={() => void copyText(menu.href)}>复制链接地址</ContextMenuItem>}
-        <ContextMenuItem onSelect={() => void copyText(content)}>复制 Markdown 源码</ContextMenuItem>
+      <ContextMenuContent aria-label={t('Markdown 预览操作')}>
+        <ContextMenuItem disabled={!menu.selection} onSelect={() => void copyText(menu.selection)}>{t('复制选中文字')}</ContextMenuItem>
+        {menu.href && <ContextMenuItem onSelect={() => void copyText(menu.href)}>{t('复制链接地址')}</ContextMenuItem>}
+        <ContextMenuItem onSelect={() => void copyText(content)}>{t('复制 Markdown 源码')}</ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem onSelect={onViewSource}>查看源码</ContextMenuItem>
+        <ContextMenuItem onSelect={onViewSource}>{t('查看源码')}</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu.Root>
   )

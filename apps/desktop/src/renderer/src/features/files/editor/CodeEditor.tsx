@@ -2,6 +2,7 @@ import { useEffect, useRef, type RefObject } from 'react'
 import { LockKeyhole } from 'lucide-react'
 import { EditorView } from '@codemirror/view'
 import { Transaction } from '@codemirror/state'
+import { t } from '@qn/codex-client'
 import { useSetting } from '../../settings/settingsStore'
 import { cn } from '../../../lib/cn'
 import { readOnlyLabel, readOnlyReason } from '../editModel'
@@ -99,19 +100,19 @@ export function CodeEditor({ viewRef, tab, onChange, onSave, onLoadMore, classNa
       {readOnly && (
         <div className="pointer-events-none absolute right-3 top-2 inline-flex items-center gap-1 rounded-md bg-qn-panel/90 px-1.5 py-0.5 text-ui-xs text-qn-muted">
           <LockKeyhole size={11} />
-          只读 · {readOnlyLabel(reason)}
+          {t('只读 · {reason}', { reason: readOnlyLabel(reason) })}
         </div>
       )}
       {tab.truncated && (
         <div className="flex shrink-0 items-center justify-between gap-2 border-t border-qn-border px-3 py-1.5 text-ui-sm text-qn-muted">
-          <span>{loadedLabel(tab.loadedBytes)} · 只读</span>
+          <span>{t('{label} · 只读', { label: loadedLabel(tab.loadedBytes) })}</span>
           <button
             type="button"
             className="rounded-md px-2 py-0.5 text-qn-accent hover:bg-qn-hover disabled:opacity-50"
             disabled={tab.busy}
             onClick={onLoadMore}
           >
-            {tab.busy ? '加载中…' : '加载更多'}
+            {tab.busy ? t('加载中…') : t('加载更多')}
           </button>
         </div>
       )}

@@ -1,5 +1,6 @@
 // 进场页（index.html 里的 #qn-splash）的时序与 DOM 控制。纯函数在前，便于单测。
 
+import { t } from '@qn/codex-client'
 import { SPLASH_LEAVE_EVENT } from './theme'
 
 /** 入场动画最晚结束于约 1000ms（光标 400ms 延迟 + 420ms，再留一点品牌停留）。 */
@@ -17,10 +18,10 @@ export const SPLASH_READY_HOLD_MS = 260
 export type BootPhase = 'starting' | 'backend' | 'targets' | 'ready'
 
 const PHASE_TEXT: Record<BootPhase, string> = {
-  starting: '正在启动',
-  backend: '正在连接后台服务…',
-  targets: '正在加载连接与项目…',
-  ready: '准备就绪',
+  starting: t('正在启动'),
+  backend: t('正在连接后台服务…'),
+  targets: t('正在加载连接与项目…'),
+  ready: t('准备就绪'),
 }
 
 export function bootPhaseText(phase: BootPhase): string {
@@ -47,6 +48,16 @@ function splashElement(): HTMLElement | null {
 export function setSplashStatus(phase: BootPhase): void {
   const status = typeof document === 'undefined' ? null : document.getElementById('qn-splash-status')
   if (status) status.textContent = bootPhaseText(phase)
+}
+
+/** index.html 的静态文字是中文，脚本加载后按当前语言改写。 */
+export function localizeSplash(): void {
+  const splash = splashElement()
+  if (!splash) return
+  splash.setAttribute('aria-label', t('QingCode Next 正在启动'))
+  const tagline = splash.querySelector('.qn-splash__tagline')
+  if (tagline) tagline.textContent = t('远程 CODEX · CLAUDE · PI 编程工作台')
+  setSplashStatus('starting')
 }
 
 export function setSplashFooter(text: string): void {

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { KeyRound } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import type { SshTarget } from '../../../shared/backendApi'
 import { FormField } from './FormField'
 import { PasswordInput } from './PasswordInput'
@@ -25,7 +26,7 @@ export function CredentialDialog({
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (!isKey && !secret) {
-      setError('请输入密码')
+      setError(t('请输入密码'))
       return
     }
     onSubmit({
@@ -36,15 +37,15 @@ export function CredentialDialog({
 
   return (
     <Modal
-      title={`连接到 ${target.name}`}
+      title={t('连接到 {name}', { name: target.name })}
       onClose={onClose}
       footer={
         <div className="flex justify-end gap-2">
           <button className="qn-button-subtle" type="button" onClick={onClose}>
-            取消
+            {t('取消')}
           </button>
           <button className="qn-button" type="submit" form="credential-form">
-            连接
+            {t('连接')}
           </button>
         </div>
       }
@@ -54,13 +55,13 @@ export function CredentialDialog({
         <span className="truncate">{target.username}@{target.host}:{target.port}</span>
       </div>
       <form id="credential-form" className="space-y-3" onSubmit={submit}>
-        <FormField label={isKey ? '私钥口令（没有口令可留空）' : '密码'}>
+        <FormField label={isKey ? t('私钥口令（没有口令可留空）') : t('密码')}>
           {(control) => (
             <PasswordInput
               {...control}
               autoFocus
               value={secret}
-              placeholder={isKey ? '私钥口令' : 'SSH 密码'}
+              placeholder={isKey ? t('私钥口令') : t('SSH 密码')}
               onChange={(event) => {
                 setSecret(event.target.value)
                 setError(null)
@@ -69,7 +70,7 @@ export function CredentialDialog({
           )}
         </FormField>
         <Checkbox checked={remember} onChange={setRemember}>
-          记住密码 / 口令（用本机系统加密保存）
+          {t('记住密码 / 口令（用本机系统加密保存）')}
         </Checkbox>
         <ErrorNote message={error} onClose={() => setError(null)} />
       </form>

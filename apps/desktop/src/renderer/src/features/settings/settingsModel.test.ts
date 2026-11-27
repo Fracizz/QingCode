@@ -176,6 +176,13 @@ describe('filterSettings', () => {
     expect(filterSettings('agent codex').sections.map((s) => s.id)).toContain('agents')
   })
 
+  it('中文界面下也能用英文叫法搜到，语言项两种写法都可搜', () => {
+    expect(filterSettings('send shortcut').itemIds).toEqual(['sendKey'])
+    expect(filterSettings('terminal font').itemIds).toEqual(['terminalFontSize'])
+    expect(filterSettings('语言').itemIds).toEqual(['language'])
+    expect(filterSettings('language').itemIds).toEqual(['language'])
+  })
+
   it('无匹配时给出空结果', () => {
     const result = filterSettings('完全不存在的关键词')
     expect(result.empty).toBe(true)

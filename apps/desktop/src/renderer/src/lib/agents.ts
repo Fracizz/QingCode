@@ -1,3 +1,4 @@
+import { t, translateMessage } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 
 export const AGENTS: readonly AgentKind[] = ['codex', 'claude', 'pi'] as const
@@ -28,7 +29,7 @@ export function agentLabel(agent: AgentKind): string {
 }
 
 export function agentPlaceholder(agent: AgentKind): string {
-  return `和 ${agentLabel(agent)} 一起工作`
+  return t('和 {agent} 一起工作', { agent: agentLabel(agent) })
 }
 
 export type AgentAvailabilityState = 'unknown' | 'checking' | 'ready' | 'unavailable' | 'error'
@@ -68,13 +69,13 @@ export function classifyAgentOpenError(agent: AgentKind, err: unknown): AgentAva
   if (missing) {
     return {
       state: 'unavailable',
-      detail: raw || `未找到 ${agent}`,
+      detail: translateMessage(raw) || t('未找到 {agent}', { agent }),
     }
   }
   if (code === 'not_connected' || /未连接|连接中|deploying|connecting/i.test(raw)) {
-    return { state: 'unknown', detail: raw || '目标尚未连接' }
+    return { state: 'unknown', detail: translateMessage(raw) || t('目标尚未连接') }
   }
-  return { state: 'error', detail: raw || '打开失败' }
+  return { state: 'error', detail: translateMessage(raw) || t('打开失败') }
 }
 
 /** `chosen` 是用户为该连接指定的默认 Agent：只要没有确认它不可用就用它。 */
@@ -109,11 +110,11 @@ export function parseDefaultAgents(raw: string | null): Record<string, AgentKind
 
 export function availabilityReason(agent: AgentKind, status: AgentAvailability | undefined): string {
   const state = status?.state ?? 'unknown'
-  if (state === 'ready') return status?.version ? `已就绪 · ${status.version}` : '已就绪'
-  if (state === 'checking') return '检测中…'
-  if (state === 'unavailable') return status?.detail ?? `未找到 ${agent}`
-  if (state === 'error') return status?.detail ?? '打开失败'
-  return '等待连接后检测'
+  if (state === 'ready') return status?.version ? t('已就绪 · {version}', { version: status.version }) : t('已就绪')
+  if (state === 'checking') return t('检测中…')
+  if (state === 'unavailable') return status?.detail ?? t('未找到 {agent}', { agent })
+  if (state === 'error') return status?.detail ?? t('打开失败')
+  return t('等待连接后检测')
 }
 
 /**

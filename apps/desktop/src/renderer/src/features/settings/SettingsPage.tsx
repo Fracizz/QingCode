@@ -7,6 +7,7 @@ import {
   SlidersHorizontal,
   Smartphone,
 } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import type { SshTarget } from '../../../../shared/backendApi'
 import { cn } from '../../lib/cn'
 import { MobileSettings } from '../../components/MobileSettings'
@@ -119,19 +120,19 @@ export function SettingsPage({
           onClick={closeSettings}
         >
           <ArrowLeft size={15} aria-hidden="true" />
-          返回工作区
+          {t('返回工作区')}
         </button>
         <h1 id="settings-title" ref={titleRef} tabIndex={-1} className="text-lg font-semibold outline-none">
-          设置
+          {t('设置')}
         </h1>
         <div className="ml-auto text-qn-muted" role="status">
-          {loading ? <Spinner label="加载设置…" /> : saving ? <Spinner label="保存中…" /> : null}
+          {loading ? <Spinner label={t('加载设置…')} /> : saving ? <Spinner label={t('保存中…')} /> : null}
         </div>
         <SearchField
           boxed
           className="w-72 max-w-[40vw] shrink"
-          label="搜索设置"
-          placeholder="搜索设置…"
+          label={t('搜索设置')}
+          placeholder={t('搜索设置…')}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onClear={query ? () => setQuery('') : undefined}
@@ -140,7 +141,7 @@ export function SettingsPage({
 
       <div className="flex min-h-0 flex-1">
         <nav
-          aria-label="设置分类"
+          aria-label={t('设置分类')}
           className="qn-scroll w-48 shrink-0 space-y-1 overflow-y-auto border-r border-qn-border bg-qn-sidebar px-3 py-4"
         >
           {SETTINGS_SECTIONS.map((section) => {
@@ -178,7 +179,7 @@ export function SettingsPage({
           <div className="mx-auto max-w-5xl px-8 py-6">
             <ErrorNote message={error} onClose={dismissError} />
             {shown.length === 0 ? (
-              <EmptyState>没有匹配的设置项，试试别的关键词。</EmptyState>
+              <EmptyState>{t('没有匹配的设置项，试试别的关键词。')}</EmptyState>
             ) : (
               shown.map(({ id, itemIds }) => {
                 const section = SETTINGS_SECTIONS.find((item) => item.id === id)

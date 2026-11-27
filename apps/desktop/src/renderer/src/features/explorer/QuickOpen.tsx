@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import { File as FileIcon } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { ListOption } from '../../components/ListOption'
 import { SearchField } from '../../components/SearchField'
 import { EmptyState, ErrorNote, Modal, Spinner } from '../../components/ui'
@@ -75,16 +76,16 @@ export function QuickOpen({
   if (!open) return null
   return (
     <Modal
-      title="快速打开文件"
+      title={t('快速打开文件')}
       description={root}
       width="max-w-2xl"
       onClose={onClose}
       footer={
         <div className="flex items-center justify-between gap-3 text-ui-sm text-qn-muted">
-          <span>↑↓ 选择 · Enter 打开 · Esc 关闭</span>
+          <span>{t('↑↓ 选择 · Enter 打开 · Esc 关闭')}</span>
           <span className="flex items-center gap-2">
-            {search.searching && <Spinner label="搜索中…" />}
-            {search.truncated && <span className="text-qn-warn">结果已截断</span>}
+            {search.searching && <Spinner label={t('搜索中…')} />}
+            {search.truncated && <span className="text-qn-warn">{t('结果已截断')}</span>}
           </span>
         </div>
       }
@@ -93,21 +94,21 @@ export function QuickOpen({
         <SearchField
           autoFocus
           boxed
-          label="搜索文件名"
+          label={t('搜索文件名')}
           value={query}
-          placeholder="输入文件名，支持模糊匹配"
+          placeholder={t('输入文件名，支持模糊匹配')}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={onKeyDown}
         />
         <ErrorNote message={search.error} />
-        <div className="qn-scroll max-h-[360px] overflow-y-auto rounded-lg border border-qn-border bg-qn-inset" role="listbox" aria-label="匹配文件">
+        <div className="qn-scroll max-h-[360px] overflow-y-auto rounded-lg border border-qn-border bg-qn-inset" role="listbox" aria-label={t('匹配文件')}>
           {ranked.length === 0 && (
             <EmptyState>
               {query.trim() === ''
-                ? '输入文件名开始搜索'
+                ? t('输入文件名开始搜索')
                 : search.searching
-                  ? '搜索中…'
-                  : '未找到匹配文件'}
+                  ? t('搜索中…')
+                  : t('未找到匹配文件')}
             </EmptyState>
           )}
           {ranked.map((hit, index) => (

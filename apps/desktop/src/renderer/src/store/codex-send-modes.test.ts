@@ -102,7 +102,8 @@ describe('聊天发送方式', () => {
       method: 'item/agentMessage/delta',
       params: { threadId, turnId: 'active', itemId: 'old-reply', delta: '旧轮次的回复' },
     })
-    expect(items()).toMatchObject([{ kind: 'agent', text: '旧轮次的回复' }])
+    // 增量会合并延后写入，等冲刷后再断言。
+    await vi.waitFor(() => expect(items()).toMatchObject([{ kind: 'agent', text: '旧轮次的回复' }]))
     notifyTurn('turn/completed', 'active', 'interrupted')
     expect(await immediate).toBe(true)
     expect(items()).toMatchObject([{ kind: 'agent', text: '旧轮次的回复' }, { kind: 'user', text: '优先发送' }])

@@ -7,6 +7,7 @@ import {
   FileText,
   GitCommitHorizontal,
 } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { EmptyState, ErrorNote, IconButton, Spinner } from '../../components/ui'
 import { RefreshIcon } from '../../components/LoadingIcon'
 import { cn } from '../../lib/cn'
@@ -72,7 +73,7 @@ export function GitHistory({ targetId, cwd }: { targetId: string; cwd: string })
       try {
         await loadCommitFiles(targetId, cwd, hash)
       } catch (err) {
-        setFilesError(describeGitError(err, '读取提交文件失败').message)
+        setFilesError(describeGitError(err, t('读取提交文件失败')).message)
       }
     },
     [loadCommitFiles, targetId, cwd],
@@ -87,8 +88,8 @@ export function GitHistory({ targetId, cwd }: { targetId: string; cwd: string })
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between border-b border-qn-border px-2 py-1.5">
-        <span className="text-ui-sm text-qn-muted">提交历史</span>
-        <IconButton label="刷新历史" className="h-7 w-7" onClick={() => void refresh(targetId, cwd)}>
+        <span className="text-ui-sm text-qn-muted">{t('提交历史')}</span>
+        <IconButton label={t('刷新历史')} className="h-7 w-7" onClick={() => void refresh(targetId, cwd)}>
           <RefreshIcon size={13} loading={state.loading} />
         </IconButton>
       </div>
@@ -104,9 +105,9 @@ export function GitHistory({ targetId, cwd }: { targetId: string; cwd: string })
       </div>
 
       <div ref={listRef} className="qn-scroll min-h-0 flex-1 overflow-y-auto py-1" onScroll={onScroll}>
-        {state.loading && commits.length === 0 && <Spinner label="加载提交历史…" />}
+        {state.loading && commits.length === 0 && <Spinner label={t('加载提交历史…')} />}
         {!state.loading && commits.length === 0 && (
-          <EmptyState>暂无提交。初始化仓库并提交后可在此查看历史。</EmptyState>
+          <EmptyState>{t('暂无提交。初始化仓库并提交后可在此查看历史。')}</EmptyState>
         )}
         {commits.map((item) => {
           const open = expanded === item.hash
@@ -125,14 +126,14 @@ export function GitHistory({ targetId, cwd }: { targetId: string; cwd: string })
           )
         })}
 
-        {state.logLoading && <Spinner label="加载更多提交…" />}
+        {state.logLoading && <Spinner label={t('加载更多提交…')} />}
         {state.hasMore && !state.logLoading && (
           <button
             type="button"
             className="mx-2 my-1 flex items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-ui-sm text-qn-muted hover:bg-qn-hover"
             onClick={() => void loadMore(targetId, cwd)}
           >
-            <GitCommitHorizontal size={13} /> 加载更多
+            <GitCommitHorizontal size={13} /> {t('加载更多')}
           </button>
         )}
       </div>
@@ -183,9 +184,9 @@ const CommitRow = memo(function CommitRow({
 
       {open && (
         <div className="ml-5 border-l border-qn-border pl-2">
-          {!files && !failed && <Spinner label="加载提交文件…" />}
+          {!files && !failed && <Spinner label={t('加载提交文件…')} />}
           {files && files.length === 0 && (
-            <div className="px-1 py-1.5 text-ui-xs text-qn-dim">该提交没有文件变更</div>
+            <div className="px-1 py-1.5 text-ui-xs text-qn-dim">{t('该提交没有文件变更')}</div>
           )}
           {files?.map((file) => {
             const info = statusInfo(file.status)
@@ -194,7 +195,7 @@ const CommitRow = memo(function CommitRow({
                 key={file.path}
                 type="button"
                 className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-ui-xs outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
-                title={`查看 ${shortHash(item.hash)} 中的差异`}
+                title={t('查看 {hash} 中的差异', { hash: shortHash(item.hash) })}
                 onClick={() =>
                   openDiff({
                     targetId,

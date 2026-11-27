@@ -37,6 +37,7 @@ public final class PureLogicTest {
     verifyPairingLinks();
     verifyDownloadInputs();
     verifyUpdateUrl();
+    verifyLanguageRules();
     System.out.println("pure logic tests passed");
   }
 
@@ -95,6 +96,21 @@ public final class PureLogicTest {
     check(!NativeFileRules.matchingSigners(Set.of("A"), Set.of("A", "B")), "rejects new signer");
     check(!NativeFileRules.matchingSigners(Set.of("A", "B"), Set.of("A")), "rejects missing signer");
     check(!NativeFileRules.matchingSigners(Set.of(), Set.of()), "rejects unsigned packages");
+  }
+
+  private static void verifyLanguageRules() {
+    check(LanguageRules.validPreference("system") && LanguageRules.validPreference("zh")
+      && LanguageRules.validPreference("en"), "accepts language preferences");
+    check(!LanguageRules.validPreference(null) && !LanguageRules.validPreference("")
+      && !LanguageRules.validPreference("zh-CN"), "rejects other language preferences");
+    for (String tag : new String[] { "zh", "zh-CN", "zh-Hant-TW", "ZH_hk" }) {
+      check("zh".equals(LanguageRules.resolve("system", tag)), "follows Chinese system language " + tag);
+    }
+    for (String tag : new String[] { "en-US", "ja-JP", "zha", "", null }) {
+      check("en".equals(LanguageRules.resolve("system", tag)), "falls back to English for " + tag);
+    }
+    check("en".equals(LanguageRules.resolve("en", "zh-CN")), "English preference wins");
+    check("zh".equals(LanguageRules.resolve("zh", "en-US")), "Chinese preference wins");
   }
 
   private static void check(boolean condition, String name) {

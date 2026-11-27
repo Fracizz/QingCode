@@ -1,5 +1,5 @@
 // 多 Agent 纯逻辑：会话键、事件路由、启用状态、会话列表合并。思路移植自桌面 lib/agents.ts，不跨包 import。
-import { isGlobalAccessMode, type GlobalAccessMode } from '@qn/codex-client'
+import { isGlobalAccessMode, type GlobalAccessMode, t } from '@qn/codex-client'
 import type { ThreadSummary } from './state'
 import type { AgentKind } from './types'
 
@@ -26,7 +26,7 @@ export function agentLabel(agent: AgentKind): string {
 }
 
 export function agentPlaceholder(agent: AgentKind): string {
-  return `和 ${agentLabel(agent)} 一起工作`
+  return t('和 {agent} 一起工作', { agent: agentLabel(agent) })
 }
 
 /** 旧 server / 旧桌面的 codex.recv 不带 agent，按 Codex 处理。 */

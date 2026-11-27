@@ -140,7 +140,7 @@ export class DirectListener implements DirectAuthorizer {
       this.lastError = undefined
     } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err)
-      this.options.log(`直连监听失败: ${this.lastError}`)
+      this.options.log(`直连监听失败: ${this.lastError}`) // i18n-ignore: 仅进日志
     }
     return this.status()
   }
@@ -193,7 +193,7 @@ export class DirectListener implements DirectAuthorizer {
       const peer = normalizeRemoteAddress(raw.remoteAddress ?? '')
       const allowPublic = this.current?.allowPublic ?? false
       if (!isAllowedPeer(peer, allowPublic)) {
-        this.options.log(`直连拒绝公网来源 ${peer}（需要 --allow-public）`)
+        this.options.log(`直连拒绝公网来源 ${peer}（需要 --allow-public）`) // i18n-ignore: 仅进日志
         raw.destroy()
         return
       }
@@ -207,7 +207,7 @@ export class DirectListener implements DirectAuthorizer {
       socket.setKeepAlive(true, 30_000)
       this.options.onSocket(socket, peer)
     })
-    server.on('tlsClientError', (err) => this.options.log(`直连 TLS 握手失败: ${err.message}`))
+    server.on('tlsClientError', (err) => this.options.log(`直连 TLS 握手失败: ${err.message}`)) // i18n-ignore: 仅进日志
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
       server.listen(address.port, address.host, () => {
@@ -215,10 +215,10 @@ export class DirectListener implements DirectAuthorizer {
         resolve()
       })
     })
-    server.on('error', (err) => this.options.log(`直连监听错误: ${err.message}`))
+    server.on('error', (err) => this.options.log(`直连监听错误: ${err.message}`)) // i18n-ignore: 仅进日志
     this.server = server
     this.current = { listen: config.listen, allowPublic: config.allowPublic }
-    this.options.log(`直连监听 ${address.host}:${String(address.port)}，指纹 ${this.cert.fingerprint}`)
+    this.options.log(`直连监听 ${address.host}:${String(address.port)}，指纹 ${this.cert.fingerprint}`) // i18n-ignore: 仅进日志
   }
 
   private stop(): Promise<void> {

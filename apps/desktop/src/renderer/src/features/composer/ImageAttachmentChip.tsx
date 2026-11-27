@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { Check, Copy, X } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { Tip } from '../../components/primitives'
 import { IconButton } from '../../components/ui'
 import { formatBytes, type ImageAttachment } from '../../lib/attachments'
@@ -19,10 +20,10 @@ export function ImageAttachmentChip({
   const imageRef = useRef<HTMLImageElement>(null)
   const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'error'>('idle')
   const copyLabel = {
-    idle: '复制图片',
-    copying: '复制中…',
-    copied: '已复制图片',
-    error: '复制失败，重试',
+    idle: t('复制图片'),
+    copying: t('复制中…'),
+    copied: t('已复制图片'),
+    error: t('复制失败，重试'),
   }[copyState]
 
   const copyPreview = async () => {
@@ -41,7 +42,7 @@ export function ImageAttachmentChip({
       <Tip label={`${item.name} · ${problem ?? formatBytes(item.size)}`}>
         <button
           type="button"
-          aria-label={`查看图片 ${item.name}`}
+          aria-label={t('查看图片 {name}', { name: item.name })}
           aria-haspopup="dialog"
           className="flex min-w-0 cursor-zoom-in items-center gap-2 rounded-md text-left text-ui text-qn-accent focus-visible:outline-2 focus-visible:outline-qn-accent"
           onClick={() => {
@@ -53,12 +54,12 @@ export function ImageAttachmentChip({
           <span className="truncate underline underline-offset-2">{item.name}</span>
         </button>
       </Tip>
-      <IconButton label={`移除 ${item.name}`} size="sm" onClick={onRemove}>
+      <IconButton label={t('移除 {name}', { name: item.name })} size="sm" onClick={onRemove}>
         <X size={12} />
       </IconButton>
       <dialog
         ref={previewRef}
-        aria-label={`图片预览 ${item.name}`}
+        aria-label={t('图片预览 {name}', { name: item.name })}
         className="qn-no-drag fixed inset-0 m-0 h-dvh max-h-none w-dvw max-w-none place-items-center bg-transparent p-0 backdrop:bg-black/80 open:grid"
         onClick={(event) => {
           if (event.target === event.currentTarget) event.currentTarget.close()
@@ -67,7 +68,7 @@ export function ImageAttachmentChip({
         <div className="absolute right-3 top-3 flex items-center gap-2">
           <button
             type="button"
-            aria-label="复制图片"
+            aria-label={t('复制图片')}
             disabled={copyState === 'copying'}
             className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-qn-panel px-2.5 text-ui text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
             onClick={() => void copyPreview()}
@@ -77,7 +78,7 @@ export function ImageAttachmentChip({
           </button>
           <span className="sr-only" role="status">{copyState === 'idle' ? '' : copyLabel}</span>
           <IconButton
-            label="关闭图片预览"
+            label={t('关闭图片预览')}
             className="bg-qn-panel text-qn-text"
             tooltip={false}
             onClick={() => previewRef.current?.close()}

@@ -1,6 +1,7 @@
 import type { UserInput } from '@qn/codex-client'
 import { CornerDownRight, FileText, GitBranch, Image as ImageIcon, ListEnd, MessageSquarePlus, Pencil, Wand2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { t, translateMessage } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { isAbsolutePath, joinPath } from '../features/files/fileLinks'
 import { openFile } from '../features/workspace/openers'
@@ -15,13 +16,13 @@ function attachmentPreviews(input: readonly UserInput[], targetId: string, cwd: 
   let imageCount = 0
   return input.flatMap((entry, index) => {
     if (entry.type === 'image' && 'url' in entry && entry.url.startsWith('data:image/')) {
-      return <MessageImage key={index} src={entry.url} label={`图片 ${++imageCount}`} compact />
+      return <MessageImage key={index} src={entry.url} label={`${t('图片')} ${++imageCount}`} compact />
     }
     if (entry.type !== 'mention' && entry.type !== 'skill' && entry.type !== 'localImage' && entry.type !== 'localAudio') return []
 
     const Icon = entry.type === 'skill' ? Wand2 : entry.type === 'localImage' ? ImageIcon : FileText
     const name = 'name' in entry ? entry.name : basename(entry.path)
-    const label = `${entry.type === 'skill' ? '查看技能' : '打开附件'} ${name}`
+    const label = `${entry.type === 'skill' ? t('查看技能') : t('打开附件')} ${name}`
     const path = isAbsolutePath(entry.path) ? entry.path : cwd && entry.path.trim() ? joinPath(cwd, entry.path) : null
     return (
       <IconButton key={index} label={label} size="sm" disabled={!path}
@@ -34,8 +35,8 @@ function attachmentPreviews(input: readonly UserInput[], targetId: string, cwd: 
 }
 
 const newThreadActions = [
-  { mode: 'start', label: '新会话开始', Icon: MessageSquarePlus },
-  { mode: 'continue', label: '新会话继续', Icon: GitBranch },
+  { mode: 'start', label: t('新会话开始'), Icon: MessageSquarePlus },
+  { mode: 'continue', label: t('新会话继续'), Icon: GitBranch },
 ] as const
 
 export function SendQueue({
@@ -118,10 +119,10 @@ export function SendQueue({
   return (
     <div className={`shrink-0 ${compact ? 'px-3' : 'px-6'}`}>
       <section
-        aria-label="发送队列"
+        aria-label={t('发送队列')}
         className={`mx-auto rounded-xl border border-qn-border bg-qn-panel px-3 py-2 text-ui-sm ${contentWidthClassName}`}
       >
-        <div className="flex items-center gap-1.5 text-qn-muted"><ListEnd size={14} /> 排队消息（{pending.length}）</div>
+        <div className="flex items-center gap-1.5 text-qn-muted"><ListEnd size={14} /> {t('排队消息（{count}）', { count: pending.length })}</div>
         <ul className="qn-scroll mt-1 max-h-32 space-y-0.5 overflow-auto">
           {pending.map((item) => {
             const text = item.text.trim()
@@ -130,14 +131,14 @@ export function SendQueue({
               <li key={item.id} className="rounded-md bg-qn-elevated px-2">
                 <div className="flex min-h-7 items-center gap-1.5">
                   <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                    {(text || !attachments.length) && <span className="min-w-0 truncate">{text || '附件或技能'}</span>}
+                    {(text || !attachments.length) && <span className="min-w-0 truncate">{text || t('附件或技能')}</span>}
                     {attachments.length > 0 && (
                       <div className={`flex shrink-0 flex-wrap gap-1 py-0.5 ${text ? 'max-w-1/2' : 'max-w-full'}`}>
                         {attachments}
                       </div>
                     )}
                   </div>
-                  {item.sending && <span role="status" className="shrink-0 text-qn-muted">发送中…</span>}
+                  {item.sending && <span role="status" className="shrink-0 text-qn-muted">{t('发送中…')}</span>}
                   {item.error && (
                     <button
                       type="button"
@@ -145,17 +146,17 @@ export function SendQueue({
                       className="shrink-0 rounded px-1 text-qn-accent hover:underline disabled:opacity-40"
                       onClick={() => retry(chat)}
                     >
-                      继续发送
+                      {t('继续发送')}
                     </button>
                   )}
                   {!item.sending && canSteer && (
                     <button
                       type="button"
                       className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 text-qn-accent hover:underline"
-                      title="补充到当前一轮"
+                      title={t('补充到当前一轮')}
                       onClick={() => void steer(chat, item.id)}
                     >
-                      <CornerDownRight size={12} aria-hidden />引导
+                      <CornerDownRight size={12} aria-hidden />{t('引导')}
                     </button>
                   )}
                   {!item.sending && allowNewThread && newThreadActions.map(({ mode, label, Icon }) => (
@@ -166,17 +167,17 @@ export function SendQueue({
                     </IconButton>
                   ))}
                   {!item.sending && (
-                    <IconButton label="重新编辑" size="sm" onClick={() => {
+                    <IconButton label={t('重新编辑')} size="sm" onClick={() => {
                       if (holdItem(item.id)) setEdit({ id: item.id, text: item.text })
                     }}>
                       <Pencil size={13} />
                     </IconButton>
                   )}
-                  <IconButton label="移除排队消息" size="sm" disabled={item.sending} onClick={() => remove(chat, item.id)}>
+                  <IconButton label={t('移除排队消息')} size="sm" disabled={item.sending} onClick={() => remove(chat, item.id)}>
                     <X size={13} />
                   </IconButton>
                 </div>
-                {item.error && <div role="status" className="break-words pb-1 text-qn-warn">{item.error}</div>}
+                {item.error && <div role="status" className="break-words pb-1 text-qn-warn">{translateMessage(item.error)}</div>}
               </li>
             )
           })}
@@ -184,13 +185,13 @@ export function SendQueue({
       </section>
       {edit && (
         <Modal
-          title="重新编辑排队消息"
+          title={t('重新编辑排队消息')}
           onClose={closeEdit}
           footer={
             <div className="flex justify-end gap-2">
-              <button type="button" className="qn-button-subtle" onClick={closeEdit}>取消</button>
+              <button type="button" className="qn-button-subtle" onClick={closeEdit}>{t('取消')}</button>
               <button type="button" className="qn-button disabled:opacity-40" onClick={submitEdit}
-                disabled={!edited || edit.text === edited.text}>保存</button>
+                disabled={!edited || edit.text === edited.text}>{t('保存')}</button>
             </div>
           }
         >
@@ -198,7 +199,7 @@ export function SendQueue({
             <>
               <textarea
                 autoFocus
-                aria-label="排队消息正文"
+                aria-label={t('排队消息正文')}
                 className="qn-input qn-scroll min-h-28 resize-y"
                 value={edit.text}
                 onChange={(event) => setEdit({ id: edit.id, text: event.target.value })}
@@ -206,37 +207,37 @@ export function SendQueue({
                   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) submitEdit()
                 }}
               />
-              <p className="mt-1.5 text-ui-sm text-qn-muted">附件与技能保持不变。</p>
-              {edit.error && <p role="status" className="mt-1 text-ui-sm text-qn-warn">无法保存：消息为空或超过大小上限。</p>}
+              <p className="mt-1.5 text-ui-sm text-qn-muted">{t('附件与技能保持不变。')}</p>
+              {edit.error && <p role="status" className="mt-1 text-ui-sm text-qn-warn">{t('无法保存：消息为空或超过大小上限。')}</p>}
             </>
-          ) : <p className="text-qn-muted">这条消息已离开队列。</p>}
+          ) : <p className="text-qn-muted">{t('这条消息已离开队列。')}</p>}
         </Modal>
       )}
       {destination && (
         <Modal
-          title={continuing ? '新会话继续' : '新会话开始'}
+          title={continuing ? t('新会话继续') : t('新会话开始')}
           description={continuing
-            ? '继承最后一个已结束轮次的上下文，在新会话里发送这条消息。'
-            : '从空白会话开始，用这条消息作为第一条消息。'}
+            ? t('继承最后一个已结束轮次的上下文，在新会话里发送这条消息。')
+            : t('从空白会话开始，用这条消息作为第一条消息。')}
           onClose={closeDestination}
           footer={
             <div className="flex justify-end gap-2">
-              <button type="button" className="qn-button-subtle" disabled={moving} onClick={closeDestination}>取消</button>
+              <button type="button" className="qn-button-subtle" disabled={moving} onClick={closeDestination}>{t('取消')}</button>
               <button type="button" className="qn-button disabled:opacity-40" disabled={!moved || moving || destinationBlocked}
-                onClick={() => void submitDestination()}>{moving ? '正在发送…' : '在新会话发送'}</button>
+                onClick={() => void submitDestination()}>{moving ? t('正在发送…') : t('在新会话发送')}</button>
             </div>
           }
         >
           {moved ? (
             <p className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-inset p-2 text-ui-sm">
-              {moved.text.trim() || '附件或技能'}
+              {moved.text.trim() || t('附件或技能')}
             </p>
-          ) : <p className="text-qn-muted">这条消息已离开队列。</p>}
-          {continuing && !canContinue && <p role="status" className="mt-2 text-ui-sm text-qn-warn">当前仅 Codex 支持继承会话上下文。</p>}
+          ) : <p className="text-qn-muted">{t('这条消息已离开队列。')}</p>}
+          {continuing && !canContinue && <p role="status" className="mt-2 text-ui-sm text-qn-warn">{t('当前仅 Codex 支持继承会话上下文。')}</p>}
           {continuing && canContinue && !hasFinishedTurn && (
-            <p role="status" className="mt-2 text-ui-sm text-qn-warn">当前还没有已结束的一轮，可用「新会话开始」。</p>
+            <p role="status" className="mt-2 text-ui-sm text-qn-warn">{t('当前还没有已结束的一轮，可用「新会话开始」。')}</p>
           )}
-          <p className="mt-2 text-ui-sm text-qn-muted">新会话按权限总控运行，不继承本会话单独设置的访问模式。</p>
+          <p className="mt-2 text-ui-sm text-qn-muted">{t('新会话按权限总控运行，不继承本会话单独设置的访问模式。')}</p>
         </Modal>
       )}
     </div>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, Trash2 } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import {
   annotationExcerpt,
   annotationLabel,
@@ -33,7 +34,7 @@ export function AnnotationBar({
             {open ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
             {annotationLabel(annotations.length)}
           </span>
-          <span className="text-qn-muted">随下一条消息发送</span>
+          <span className="text-qn-muted">{t('随下一条消息发送')}</span>
         </button>
         {open && (
           <div className="qn-scroll max-h-40 space-y-2 overflow-y-auto px-3 pb-2 pt-1">
@@ -47,7 +48,7 @@ export function AnnotationBar({
                     <div className="mt-1 text-ui-sm">{annotation.comment}</div>
                   )}
                 </div>
-                <IconButton label="删除注释" size="sm" danger onClick={() => onRemove(annotation.id)}>
+                <IconButton label={t('删除注释')} size="sm" danger onClick={() => onRemove(annotation.id)}>
                   <Trash2 size={13} />
                 </IconButton>
               </div>

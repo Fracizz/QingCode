@@ -1,5 +1,6 @@
 import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 import { CircleAlert, RotateCw, X } from 'lucide-react'
+import { t, translateMessage } from '@qn/codex-client'
 import { cn } from '../lib/cn'
 
 function FeedbackAction({ className, ...props }: ComponentPropsWithoutRef<'button'>) {
@@ -20,7 +21,7 @@ export function FeedbackRow({
   icon,
   actions,
   onClose,
-  closeLabel = '关闭提示',
+  closeLabel = t('关闭提示'),
   role = 'status',
   className,
 }: {
@@ -42,7 +43,7 @@ export function FeedbackRow({
           {icon}
         </span>
       )}
-      <span role={role} className="min-w-0 flex-1 whitespace-pre-wrap wrap-anywhere">{message}</span>
+      <span role={role} className="min-w-0 flex-1 whitespace-pre-wrap wrap-anywhere">{translateMessage(message)}</span>
       {actions}
       {onClose && (
         <FeedbackAction onClick={onClose} aria-label={closeLabel}>
@@ -85,10 +86,10 @@ export function ErrorNote({
       actions={onRetry && (
         <FeedbackAction
           onClick={onRetry}
-          aria-label="重试"
+          aria-label={t('重试')}
           className={retryIcon ? undefined : 'underline underline-offset-2'}
         >
-          {retryIcon ? <RotateCw size={13} aria-hidden="true" /> : '重试'}
+          {retryIcon ? <RotateCw size={13} aria-hidden="true" /> : t('重试')}
         </FeedbackAction>
       )}
       onClose={onClose}

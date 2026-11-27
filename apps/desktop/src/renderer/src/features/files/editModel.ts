@@ -1,5 +1,6 @@
 // 编辑态纯逻辑：换行、dirty / 只读判定、标签状态迁移、冲突决策；不触碰 IO。
 
+import { t } from '@qn/codex-client'
 import { fileKind } from './fileLinks'
 import type { Tab } from './filesModel'
 
@@ -43,13 +44,13 @@ export function readOnlyReason(tab: Pick<Tab, 'kind' | 'path' | 'binary' | 'trun
 export function readOnlyLabel(reason: ReadOnlyReason): string {
   switch (reason) {
     case 'binary':
-      return '二进制文件只读'
+      return t('二进制文件只读')
     case 'image':
-      return '图片只读'
+      return t('图片只读')
     case 'truncated':
-      return '大文件尚未完整加载，只读'
+      return t('大文件尚未完整加载，只读')
     case 'diff':
-      return '差异视图只读'
+      return t('差异视图只读')
     default:
       return ''
   }

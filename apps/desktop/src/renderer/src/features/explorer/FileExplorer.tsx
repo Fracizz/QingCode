@@ -34,6 +34,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { t } from '@qn/codex-client'
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '../../components/primitives'
 import { Checkbox, ErrorNote, IconButton, Modal } from '../../components/ui'
 import { cn } from '../../lib/cn'
@@ -319,7 +320,7 @@ export function FileExplorer({
   }
 
   const copy = async (text: string): Promise<void> => {
-    showNotice((await copyToClipboard(text)) ? '已复制路径' : '复制失败')
+    showNotice((await copyToClipboard(text)) ? t('已复制路径') : t('复制失败'))
   }
 
   const confirmDelete = async (): Promise<void> => {
@@ -337,7 +338,7 @@ export function FileExplorer({
     }
     setDeleteTarget(null)
     setDeleteError(null)
-    showNotice('已删除')
+    showNotice(t('已删除'))
   }
 
   const start = Math.max(0, Math.floor(viewport.top / ROW_HEIGHT) - OVERSCAN)
@@ -368,7 +369,7 @@ export function FileExplorer({
             autoFocus
             className="qn-input h-[20px] min-w-0 flex-1 px-1.5 py-0 text-ui-sm"
             value={editing?.name ?? ''}
-            placeholder={row.draft.mode === 'create' ? (row.draft.kind === 'file' ? '新文件名' : '新文件夹名') : '新名称'}
+            placeholder={row.draft.mode === 'create' ? (row.draft.kind === 'file' ? t('新文件名') : t('新文件夹名')) : t('新名称')}
             onChange={(event) =>
               setEditing((value) => (value ? { ...value, name: event.target.value, error: null } : value))
             }
@@ -385,7 +386,7 @@ export function FileExplorer({
           />
           <button
             type="button"
-            aria-label="确认"
+            aria-label={t('确认')}
             className="shrink-0 rounded-md p-0.5 text-qn-ok hover:bg-qn-hover"
             onClick={() => void commitEditing()}
           >
@@ -393,7 +394,7 @@ export function FileExplorer({
           </button>
           <button
             type="button"
-            aria-label="取消"
+            aria-label={t('取消')}
             className="shrink-0 rounded-md p-0.5 text-qn-muted hover:bg-qn-hover"
             onClick={() => setEditing(null)}
           >
@@ -431,7 +432,7 @@ export function FileExplorer({
         {expandable ? (
           <button
             type="button"
-            aria-label={node.expanded ? '折叠' : '展开'}
+            aria-label={node.expanded ? t('折叠') : t('展开')}
             className="flex h-4 w-3 shrink-0 items-center justify-center rounded-sm text-qn-muted hover:text-qn-text"
             onClick={(event) => {
               event.stopPropagation()
@@ -446,7 +447,7 @@ export function FileExplorer({
         )}
         {entryIcon(node.name, node.kind, node.expanded)}
         <span className="min-w-0 flex-1 truncate">{node.name}</span>
-        {node.kind === 'symlink' && <span className="shrink-0 text-ui-2xs text-qn-dim">链接</span>}
+        {node.kind === 'symlink' && <span className="shrink-0 text-ui-2xs text-qn-dim">{t('链接')}</span>}
       </div>
     )
   }
@@ -454,14 +455,14 @@ export function FileExplorer({
   return (
     <div className={cn('flex min-h-0 flex-col bg-qn-sidebar text-qn-text', className)}>
       <div className="flex shrink-0 items-center gap-0.5 border-b border-qn-border px-2 py-1.5">
-        <IconButton label="刷新" onClick={() => void actions.refresh(targetId, root)}>
+        <IconButton label={t('刷新')} onClick={() => void actions.refresh(targetId, root)}>
           <RotateCw size={14} />
         </IconButton>
-        <IconButton label="折叠全部" onClick={() => actions.collapse(targetId, root)}>
+        <IconButton label={t('折叠全部')} onClick={() => actions.collapse(targetId, root)}>
           <ChevronsDownUp size={14} />
         </IconButton>
         <IconButton
-          label={tree.showHidden ? '隐藏隐藏文件' : '显示隐藏文件'}
+          label={tree.showHidden ? t('隐藏隐藏文件') : t('显示隐藏文件')}
           onClick={() => actions.setHidden(targetId, root, !tree.showHidden)}
         >
           {tree.showHidden ? <Eye size={14} /> : <EyeOff size={14} />}
@@ -484,7 +485,7 @@ export function FileExplorer({
             ref={containerRef}
             tabIndex={0}
             role="tree"
-            aria-label="文件树"
+            aria-label={t('文件树')}
             onScroll={(event) =>
               setViewport((value) => ({ ...value, top: event.currentTarget.scrollTop }))
             }
@@ -503,31 +504,31 @@ export function FileExplorer({
           mentionOnClose.current = null
           if (relative === null) return
           if (addProjectMention(targetId, root, relative)) event.preventDefault()
-          else showNotice('请先打开当前项目的对话')
+          else showNotice(t('请先打开当前项目的对话'))
         }}>
           {menuPath && menuTarget.current.kind !== 'placeholder' && (
             <ContextMenuItem icon={<MessageSquarePlus size={14} />} onSelect={() => {
               mentionOnClose.current = relativePath(root, menuPath, style)
             }}>
-              添加到对话
+              {t('添加到对话')}
             </ContextMenuItem>
           )}
           <ContextMenuItem
             icon={<FilePlus2 size={14} />}
             onSelect={() => beginCreate(menuTarget.current.dir, 'file')}
           >
-            新建文件
+            {t('新建文件')}
           </ContextMenuItem>
           <ContextMenuItem
             icon={<FolderPlus size={14} />}
             onSelect={() => beginCreate(menuTarget.current.dir, 'dir')}
           >
-            新建文件夹
+            {t('新建文件夹')}
           </ContextMenuItem>
           <ContextMenuSeparator />
           {targetId !== 'local' && menuPath && menuTarget.current.kind === 'file' && (
             <ContextMenuItem icon={<Download size={14} />} onSelect={() => void downloadProjectFile(targetId, root, menuPath)}>
-              下载到本机
+              {t('下载到本机')}
             </ContextMenuItem>
           )}
           <ContextMenuItem
@@ -538,7 +539,7 @@ export function FileExplorer({
               if (path) beginRename(path)
             }}
           >
-            重命名
+            {t('重命名')}
           </ContextMenuItem>
           <ContextMenuItem
             icon={<Trash2 size={14} />}
@@ -553,7 +554,7 @@ export function FileExplorer({
               }
             }}
           >
-            删除
+            {t('删除')}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem
@@ -564,7 +565,7 @@ export function FileExplorer({
               if (path) void copy(path)
             }}
           >
-            复制路径
+            {t('复制路径')}
           </ContextMenuItem>
           <ContextMenuItem
             icon={<Copy size={14} />}
@@ -574,43 +575,42 @@ export function FileExplorer({
               if (path) void copy(relativePath(root, path, style))
             }}
           >
-            复制相对路径
+            {t('复制相对路径')}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu.Root>
 
       {deleteTarget && (
         <Modal
-          title={deleteTarget.kind === 'file' ? '删除文件' : '删除文件夹'}
+          title={deleteTarget.kind === 'file' ? t('删除文件') : t('删除文件夹')}
           description={deleteTarget.path}
           onClose={() => setDeleteTarget(null)}
           footer={
             <div className="flex justify-end gap-2">
               <button className="qn-button-subtle" type="button" onClick={() => setDeleteTarget(null)}>
-                取消
+                {t('取消')}
               </button>
               <button
                 className="qn-button bg-qn-danger hover:bg-qn-danger"
                 type="button"
                 onClick={() => void confirmDelete()}
               >
-                删除
+                {t('删除')}
               </button>
             </div>
           }
         >
           <div className="space-y-3">
             <p className="leading-6">
-              确定删除「{baseName(deleteTarget.path)}」吗？此操作不可撤销。
+              {t('确定删除「{name}」吗？此操作不可撤销。', { name: baseName(deleteTarget.path) })}
             </p>
             {deleteTarget.kind !== 'file' && (
               <>
                 <p className="rounded-lg border border-qn-warn/30 bg-qn-warn/10 px-3 py-2 leading-6 text-qn-warn">
-                  这是目录。勾选下面的选项将使用 recursive:true 连同其中所有内容一起删除；
-                  不勾选且目录非空时服务端会拒绝删除。
+                  {t('这是目录。勾选下面的选项将使用 recursive:true 连同其中所有内容一起删除； 不勾选且目录非空时服务端会拒绝删除。')}
                 </p>
                 <Checkbox checked={recursive} onChange={setRecursive}>
-                  连同目录内所有内容一起删除
+                  {t('连同目录内所有内容一起删除')}
                 </Checkbox>
               </>
             )}

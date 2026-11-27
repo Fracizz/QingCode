@@ -126,8 +126,8 @@ export function buildConnectionInfo(info: PairingInfo): ConnectionInfo {
   const link = buildPairingLink(info)
   const text = [
     CONNECTION_INFO_TITLE,
-    `电脑：${info.name.trim() || '未命名电脑'}`,
-    `地址：${formatAddress(info.host, info.port)}`,
+    `电脑：${info.name.trim() || '未命名电脑'}`, // i18n-ignore: 整段连接信息按组合模板登记
+    `地址：${formatAddress(info.host, info.port)}`, // i18n-ignore: 整段连接信息按组合模板登记
     '在 QingCode Next 手机版「添加连接」中粘贴即可导入：',
     link,
   ].join('\n')

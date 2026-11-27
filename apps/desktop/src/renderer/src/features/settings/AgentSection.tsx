@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { WorkspaceMethods } from '@qn/protocol'
+import { t, translateMessage } from '@qn/codex-client'
 import type {
   AgentPrefs,
   SettingsAgentKind,
@@ -16,13 +17,14 @@ import {
   type SettingsAgentInfo,
 } from './settingsModel'
 import { useSettings } from './settingsStore'
+import { targetDisplayName } from '../../components/targetName'
 import { DeferredInput, FieldLabel, InfoBlock } from './fields'
 
 type ProbeResult = WorkspaceMethods['agent.probe']['result']
 type ProbeState = { busy: boolean; result?: ProbeResult; error?: string }
 
 function targetLabel(target: Target): string {
-  if (target.kind === 'local') return '本机'
+  if (target.kind === 'local') return t('本机')
   if (target.kind === 'ssh') return `${target.name} · ${target.username}@${target.host}:${target.port}`
   return `${target.name} · ${target.host}:${target.port}`
 }
@@ -57,7 +59,7 @@ function AgentRow({
       })
       setProbe({ busy: false, result })
     } catch (err) {
-      setProbe({ busy: false, error: friendlyError(err, '检测失败') })
+      setProbe({ busy: false, error: translateMessage(friendlyError(err, t('检测失败'))) })
     }
   }
 
@@ -66,20 +68,20 @@ function AgentRow({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="text-ui font-medium text-qn-text">{info.label}</span>
-          <Badge tone={prefs.enabled ? 'ok' : 'muted'}>{prefs.enabled ? '已启用' : '已停用'}</Badge>
+          <Badge tone={prefs.enabled ? 'ok' : 'muted'}>{prefs.enabled ? t('已启用') : t('已停用')}</Badge>
         </div>
         <Checkbox checked={prefs.enabled} onChange={(value) => onPatch({ enabled: value })}>
-          在新建会话里显示
+          {t('在新建会话里显示')}
         </Checkbox>
       </div>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div>
-          <FieldLabel>可执行文件路径（留空自动解析）</FieldLabel>
+          <FieldLabel>{t('可执行文件路径（留空自动解析）')}</FieldLabel>
           <DeferredInput
-            ariaLabel={`${info.label} 可执行文件路径`}
+            ariaLabel={t('{agent} 可执行文件路径', { agent: info.label })}
             value={pathDraft}
-            placeholder="留空 = PATH / 常见安装目录"
+            placeholder={t('留空 = PATH / 常见安装目录')}
             onCommit={(value) => {
               setPathDraft(value)
               onPatch({ path: value.trim() })
@@ -92,7 +94,7 @@ function AgentRow({
             <DeferredInput
               ariaLabel={`${info.label} ${info.configEnv}`}
               value={configDraft}
-              placeholder="留空 = 使用官方默认位置"
+              placeholder={t('留空 = 使用官方默认位置')}
               onCommit={(value) => {
                 setConfigDraft(value)
                 onPatch({ configDir: value.trim() })
@@ -110,31 +112,31 @@ function AgentRow({
           onClick={() => void detect()}
         >
           <RefreshIcon size={13} loading={probe.busy} />
-          检测
+          {t('检测')}
         </button>
-        {probe.busy && <Spinner label="正在运行 --version…" />}
+        {probe.busy && <Spinner label={t('正在运行 --version…')} />}
         {!probe.busy && probe.result?.found && (
           <span className="min-w-0 break-all text-ui-sm text-qn-ok">
-            已找到 {probe.result.version ? `· ${probe.result.version}` : '· 未返回版本号'} · {probe.result.path}
+            {t('已找到 · {version} · {path}', { version: probe.result.version || t('未返回版本号'), path: probe.result.path ?? '' })}
           </span>
         )}
         {!probe.busy && probe.result && !probe.result.found && (
           <span className="min-w-0 text-ui-sm text-qn-danger">
-            未找到：{probe.result.error ?? '未安装或路径不正确'}
+            {t('未找到：{reason}', { reason: probe.result.error != null ? translateMessage(probe.result.error) : t('未安装或路径不正确') })}
           </span>
         )}
         {!probe.busy && !probe.result && !connected && (
-          <span className="text-ui-sm text-qn-dim">连接后检测</span>
+          <span className="text-ui-sm text-qn-dim">{t('连接后检测')}</span>
         )}
       </div>
       {probe.error && <ErrorNote message={probe.error} onClose={() => setProbe({ busy: false })} />}
 
       {info.id === 'pi' && (
-        <p className="mt-2 text-ui-sm text-qn-warn">pi 不经审批直接执行工具。</p>
+        <p className="mt-2 text-ui-sm text-qn-warn">{t('pi 不经审批直接执行工具。')}</p>
       )}
       {info.configEnv && (
         <p className="mt-2 text-ui-sm leading-5 text-qn-dim">
-          只保存 {info.configEnv} 路径字符串，不读取其中内容，也不提供自动切换 / 轮换。
+          {t('只保存 {name} 路径字符串，不读取其中内容，也不提供自动切换 / 轮换。', { name: info.configEnv ?? '' })}
         </p>
       )}
     </div>
@@ -161,11 +163,11 @@ export function AgentSection({ visible }: { visible: (itemId: string) => boolean
   return (
     <div className="space-y-4">
       {visible('agents') && (
-        <InfoBlock title="登录说明（不检测凭据）">
+        <InfoBlock title={t('登录说明（不检测凭据）')}>
           <ul className="space-y-1.5">
             {SETTINGS_AGENT_INFO.map((info) => (
               <li key={info.id}>
-                <span className="text-qn-text">{info.label}：</span>
+                <span className="text-qn-text">{t('{label}：', { label: info.label })}</span>
                 {info.loginPrefix}{' '}
                 <code className="rounded-md bg-qn-fg/[0.06] px-1 py-0.5 font-mono text-ui-sm">
                   {info.loginCommand}
@@ -178,7 +180,7 @@ export function AgentSection({ visible }: { visible: (itemId: string) => boolean
             ))}
           </ul>
           <p className="mt-2 text-qn-dim">
-            检测只运行可执行文件的 --version，不会开启会话、不会消耗额度、不会读取登录凭据。
+            {t('检测只运行可执行文件的 --version，不会开启会话、不会消耗额度、不会读取登录凭据。')}
           </p>
         </InfoBlock>
       )}
@@ -190,9 +192,9 @@ export function AgentSection({ visible }: { visible: (itemId: string) => boolean
             return (
               <section key={target.id} className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-ui font-medium text-qn-text">{target.name}</h3>
+                  <h3 className="text-ui font-medium text-qn-text">{targetDisplayName(target)}</h3>
                   <span className="truncate text-ui-sm text-qn-dim">{targetLabel(target)}</span>
-                  {!connected && <Badge tone="muted">连接后检测</Badge>}
+                  {!connected && <Badge tone="muted">{t('连接后检测')}</Badge>}
                 </div>
                 <div className="space-y-2">
                   {SETTINGS_AGENT_INFO.map((info) => (
@@ -210,7 +212,7 @@ export function AgentSection({ visible }: { visible: (itemId: string) => boolean
             )
           })}
           {targets.length === 0 && (
-            <p className="text-ui-sm text-qn-dim">正在读取目标列表…</p>
+            <p className="text-ui-sm text-qn-dim">{t('正在读取目标列表…')}</p>
           )}
         </div>
       )}

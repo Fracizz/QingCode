@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { EditorView } from '@codemirror/view'
 import { MergeView, unifiedMergeView } from '@codemirror/merge'
+import { t } from '@qn/codex-client'
 import { Spinner } from '../../../components/ui'
 import { cn } from '../../../lib/cn'
 import { useSetting } from '../../settings/settingsStore'
@@ -102,7 +103,7 @@ export function MergeEditor({
       <div ref={hostRef} className="h-full min-h-0 overflow-hidden bg-qn-code" />
       {loading && (
         <div className="absolute inset-0 grid place-items-center bg-qn-code">
-          <Spinner label="加载差异…" />
+          <Spinner label={t('加载差异…')} />
         </div>
       )}
     </div>

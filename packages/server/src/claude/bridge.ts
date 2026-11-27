@@ -19,7 +19,7 @@ import { redact } from '../log'
 import { VERSION } from '../version'
 import { nativeAgentCwd } from '../workspace/paths'
 import { buildApprovalRequest, permissionResult } from './approval'
-import { sessionInfoToMeta, sessionMessagesToThread, threadListResponse } from './history'
+import { lastReplyModel, sessionInfoToMeta, sessionMessagesToThread, threadListResponse } from './history'
 import { HistoryPageCache, listHistoryItems, listHistoryTurns } from './historyPages'
 import { BridgeRpcError } from './errors'
 import { emptyMapState, mapSdkMessage, type MapState } from './items'
@@ -87,6 +87,8 @@ interface BridgeSession {
   idleTimer: ReturnType<typeof setTimeout> | null
   /** 当前 query 已生效的模型/推理强度；null 表示沿用 Claude 自身配置。 */
   settings: ClaudeSettings
+  /** 历史里最近一次回复的模型；读过历史后才有，用于没有显式覆盖时回报会话模型。 */
+  historyModel?: string | null
   permissionMode: PermissionMode
   allowsBypass: boolean
 }
@@ -222,7 +224,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     this.claude = resolved
     this.initializeResult = { userAgent: `claude-bridge/${resolved.version}` }
     this.opened = true
-    this.hub.log(`claude 桥已就绪 ${resolved.version}`)
+    this.hub.log(`claude 桥已就绪 ${resolved.version}`) // i18n-ignore: 仅进日志
     return { initialize: this.initializeResult, agentVersion: resolved.version }
   }
 
@@ -232,7 +234,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 
   protected sendToAgent(msg: Json): void {
     void this.dispatch(msg).catch((err: unknown) => {
-      this.hub.log(`claude 消息处理失败: ${redact(describe(err))}`)
+      this.hub.log(`claude 消息处理失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
     })
   }
 
@@ -248,7 +250,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       }
     }
     for (const pending of this.approvals.values()) {
-      pending.resolve({ behavior: 'deny', message: 'server 正在退出' })
+      pending.resolve({ behavior: 'deny', message: 'server 正在退出' }) // i18n-ignore: 回给模型的拒绝原因
     }
     this.approvals.clear()
     this.scopes.clear()
@@ -288,7 +290,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     } catch (err) {
       const code = err instanceof BridgeRpcError ? err.code : -32603
       const message = describe(err)
-      this.hub.log(`claude ${method} 失败: ${redact(message)}`)
+      this.hub.log(`claude ${method} 失败: ${redact(message)}`) // i18n-ignore: 仅进日志
       this.emit({ id, error: { code, message } })
     }
   }
@@ -355,12 +357,22 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         const metadataOnly = (method === 'thread/resume' && params.excludeTurns === true)
           || (method === 'thread/read' && params.includeTurns === false)
         const paged = method === 'thread/turns/list' || method === 'thread/items/list'
-        const config = threadModelConfig(session.settings)
-        if (metadataOnly) {
-          return { thread: { ...buildThread(session.meta, [], config), status: this.threadStatus(scope, threadId), historyMode: 'paginated' } }
+        const load = async () => {
+          const messages = await this.sessionReader(scope).getSessionMessages(threadId, { dir: session.meta.cwd })
+          session.historyModel = lastReplyModel(messages)
+          return sessionMessagesToThread(session.meta, messages).turns
         }
-        const load = async () => sessionMessagesToThread(session.meta,
-          await this.sessionReader(scope).getSessionMessages(threadId, { dir: session.meta.cwd }), config).turns
+        // 没有本进程的显式覆盖时，回报历史里最近一次回复的模型，客户端据此恢复该会话的选择。
+        const configOf = () => {
+          const config = threadModelConfig(session.settings)
+          return config.model ? config : { ...config, model: session.historyModel ?? null }
+        }
+        if (metadataOnly) {
+          if (!session.settings.model && session.historyModel === undefined && !session.meta.ephemeral) {
+            await scope.historyPages.read(threadId, false, load, true).catch(() => undefined)
+          }
+          return { thread: { ...buildThread(session.meta, [], configOf()), status: this.threadStatus(scope, threadId), historyMode: 'paginated' } }
+        }
         const saved = await (paged
           ? scope.historyPages.read(threadId, params.cursor != null || method === 'thread/items/list', load)
           : load())
@@ -369,7 +381,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         const turns = active ? [...saved, buildTurn(active, [], 'inProgress')] : saved
         if (method === 'thread/turns/list') return listHistoryTurns(threadId, turns, params)
         if (method === 'thread/items/list') return listHistoryItems(threadId, turns, params)
-        return { thread: { ...buildThread(session.meta, turns, config), status: this.threadStatus(scope, threadId) } }
+        return { thread: { ...buildThread(session.meta, turns, configOf()), status: this.threadStatus(scope, threadId) } }
       }
       case 'turn/start': {
         const threadId = scalarText(params.threadId)
@@ -391,7 +403,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         const session = scope.sessions.get(threadId)
         if (!session?.query) throw new BridgeRpcError(-32602, '没有运行中的 turn')
         await session.query.interrupt()
-        this.hub.log(`claude turn 已请求中断 (thread=${threadId})`)
+        this.hub.log(`claude turn 已请求中断 (thread=${threadId})`) // i18n-ignore: 仅进日志
         return {}
       }
       default:
@@ -428,7 +440,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       scope.realModels = list
       return list
     } catch (err) {
-      this.hub.log(`claude 模型表读取失败，回退别名列表: ${redact(describe(err))}`)
+      this.hub.log(`claude 模型表读取失败，回退别名列表: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
       return staticModelList()
     }
   }
@@ -444,7 +456,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         if (this.opened && list && !scope.realModels) scope.realModels = list
       })
       .catch((err: unknown) => {
-        this.hub.log(`claude 模型表读取失败: ${redact(describe(err))}`)
+        this.hub.log(`claude 模型表读取失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
       })
   }
 
@@ -458,7 +470,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         const commands = await query?.supportedCommands?.() ?? []
         return { cwd, skills: commands.flatMap(commandMetadata), errors: [] }
       } catch (err) {
-        this.hub.log(`claude 技能列表读取失败: ${redact(describe(err))}`)
+        this.hub.log(`claude 技能列表读取失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
         return { cwd, skills: [], errors: [] }
       }
     }))
@@ -475,21 +487,21 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     if ((changesModel && !query.setModel) || (changesEffort && !query.applyFlagSettings)) {
       throw new BridgeRpcError(-32603, '当前 Claude SDK 不支持在线切换所选模型或推理强度')
     }
-    let setting = '模型'
+    let setting = '模型' // i18n-ignore: 按实际取值在词典登记整句
     try {
       if (changesModel) {
         await query.setModel?.(next.model ?? undefined)
         // 模型与强度是两个独立调用，记下已成功的部分供下次重试或恢复默认。
         session.settings.model = next.model
       }
-      setting = '推理强度'
+      setting = '推理强度' // i18n-ignore: 按实际取值在词典登记整句
       if (changesEffort) {
         await query.applyFlagSettings?.({ effortLevel: next.effort })
         session.settings.effort = next.effort
       }
     } catch (err) {
-      this.hub.log(`claude 切换${setting}失败: ${redact(describe(err))}`)
-      throw new BridgeRpcError(-32603, `Claude 切换${setting}失败，消息未发送`)
+      this.hub.log(`claude 切换${setting}失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
+      throw new BridgeRpcError(-32603, `Claude 切换${setting}失败，消息未发送`) // i18n-ignore: 按实际取值在词典登记整句
     }
   }
 
@@ -617,7 +629,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       }
     } catch (err) {
       if (session.query === query) {
-        this.hub.log(`claude query 异常: ${redact(describe(err))}`)
+        this.hub.log(`claude query 异常: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
         this.finishTurn(session, 'failed', describe(err))
       }
     } finally {
@@ -712,7 +724,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       if (extra.signal) {
         extra.signal.addEventListener(
           'abort',
-          () => this.settleApproval(requestId, { behavior: 'deny', message: '请求已取消' }),
+          () => this.settleApproval(requestId, { behavior: 'deny', message: '请求已取消' }), // i18n-ignore: 回给模型的拒绝原因
           { once: true },
         )
       }

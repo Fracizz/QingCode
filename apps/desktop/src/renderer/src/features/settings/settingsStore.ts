@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { t, translateMessage } from '@qn/codex-client'
 import type {
   AppInfo,
   AppSettings,
@@ -67,7 +68,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
       applyAppearance(settings.general)
       set({ settings, appInfo, loaded: true, error: null })
     } catch (err) {
-      set({ error: friendlyError(err, '加载设置失败') })
+      set({ error: translateMessage(friendlyError(err, t('加载设置失败'))) })
     } finally {
       set({ loading: false })
     }
@@ -91,7 +92,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
         set({ settings })
       }
     } catch (err) {
-      const message = friendlyError(err, '保存设置失败')
+      const message = translateMessage(friendlyError(err, t('保存设置失败')))
       if (revision === currentRevision && !overlapping) {
         applyAppearance(previous.general)
         set({ settings: previous, error: message })

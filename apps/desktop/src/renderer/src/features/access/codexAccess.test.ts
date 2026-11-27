@@ -79,11 +79,11 @@ beforeEach(() => {
 describe('桌面会话访问模式和配置目录', () => {
   it('草稿的首条消息继承总控，排队消息使用发送时的设置', async () => {
     const settings = defaultAppSettings()
-    settings.general.globalAccessMode = 'restricted'
+    settings.general.globalAccessMode = 'auto'
     useSettings.setState({ settings })
     const { send } = useCodex.getState()
     expect(await send('开始对话')).toBe(true)
-    expect(sentTurns()[0]?.params).toMatchObject({ sandboxPolicy: { type: 'readOnly', networkAccess: false } })
+    expect(sentTurns()[0]?.params).toMatchObject({ approvalsReviewer: 'auto_review', sandboxPolicy: { type: 'workspaceWrite' } })
 
     expect(await send('排队消息')).toBe(true)
     useSettings.setState({ settings: defaultAppSettings() })

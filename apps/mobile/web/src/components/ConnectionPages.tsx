@@ -1,21 +1,23 @@
+import { readLocalePreference, saveLocalePreference, t, type LocalePreference } from '@qn/codex-client'
 import { Check, KeyRound, Pencil, Plus, Settings, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { callDevice, getGateway } from '../client'
 import { formatAddress, isValidPairingCode, normalizeFingerprint, parseAddress, parsePairingLink } from '../link'
-import { getWindowNativePort } from '../native'
+import { connectionName, pageName } from '../names'
+import { getWindowNativePort, setNativeLocale } from '../native'
 import { friendlyError } from '../state'
-import { useApp } from '../store'
+import { releaseEventStream, useApp } from '../store'
 import type { ConnectionStatus } from '../types'
 import { PullToRefresh } from './PullToRefresh'
 import { Badge, Button, Card, Dialog, Field, Header, Loading, Note, SheetAction, StatusDot } from './ui'
 import { WorkspaceIcon } from './WorkspaceHome'
 
 const stateText: Record<ConnectionStatus, string> = {
-  online: '在线',
-  offline: '离线',
-  mismatch: '证书已变化',
-  checking: '检测中…',
-  unknown: '待连接',
+  online: t('在线'),
+  offline: t('离线'),
+  mismatch: t('证书已变化'),
+  checking: t('检测中…'),
+  unknown: t('待连接'),
 }
 
 function statusTone(status: ConnectionStatus): 'ok' | 'warn' | 'danger' | 'muted' {
@@ -27,6 +29,13 @@ function statusTone(status: ConnectionStatus): 'ok' | 'warn' | 'danger' | 'muted
 
 type UpdateCheck = { available: boolean; versionName: string; versionCode: number; id?: string }
 const UPDATE_URL = 'mobile.updateUrl'
+
+function changeLanguage(preference: LocalePreference) {
+  saveLocalePreference(preference)
+  setNativeLocale(preference)
+  releaseEventStream()
+  window.location.reload()
+}
 
 function MobileSettings({ onClose }: { onClose: () => void }) {
   const [version, setVersion] = useState<string | null>(null)
@@ -49,7 +58,7 @@ function MobileSettings({ onClose }: { onClose: () => void }) {
         setOnline(result.online)
       }
     }).catch((err: unknown) => {
-      if (!cancelled) setError(friendlyError(err, '无法读取应用版本'))
+      if (!cancelled) setError(friendlyError(err, t('无法读取应用版本')))
     })
     void getGateway().storageGet(UPDATE_URL).then((value) => {
       if (!cancelled && value) setUrl(value)
@@ -64,7 +73,7 @@ function MobileSettings({ onClose }: { onClose: () => void }) {
       await callDevice<boolean>('background.set', { enabled })
       useApp.setState({ backgroundConnectionEnabled: enabled })
     } catch (err) {
-      setError(friendlyError(err, '无法保存后台连接设置'))
+      setError(friendlyError(err, t('无法保存后台连接设置')))
     } finally {
       setSavingBackground(false)
     }
@@ -79,7 +88,7 @@ function MobileSettings({ onClose }: { onClose: () => void }) {
       endpoint = new URL(url.trim())
       if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.hash) throw new Error()
     } catch {
-      setError('请输入 HTTPS APK 下载地址。')
+      setError(t('请输入 HTTPS APK 下载地址。'))
       return
     }
     setBusy('check')
@@ -87,9 +96,9 @@ function MobileSettings({ onClose }: { onClose: () => void }) {
       await getGateway().storageSet(UPDATE_URL, endpoint.href)
       const result = await callDevice<UpdateCheck>('updates.check', { url: endpoint.href }, 300_000)
       setCandidate(result)
-      if (!result.available) setNotice('当前已是此地址提供的最新版本。')
+      if (!result.available) setNotice(t('当前已是此地址提供的最新版本。'))
     } catch (err) {
-      setError(friendlyError(err, '检查更新失败'))
+      setError(friendlyError(err, t('检查更新失败')))
     } finally {
       setBusy(null)
     }
@@ -101,51 +110,61 @@ function MobileSettings({ onClose }: { onClose: () => void }) {
     setBusy('install')
     try {
       const result = await callDevice<{ started: boolean }>('updates.install', id ? { id } : {}, 300_000)
-      if (result.started) setNotice('在 Android 系统界面中确认安装。')
+      if (result.started) setNotice(t('在 Android 系统界面中确认安装。'))
     } catch (err) {
-      setError(friendlyError(err, '无法安装所选 APK'))
+      setError(friendlyError(err, t('无法安装所选 APK')))
     } finally {
       setBusy(null)
     }
   }
 
   return (
-    <Dialog title="应用设置" onClose={onClose}>
+    <Dialog title={t('应用设置')} onClose={onClose}>
       <p className="mb-3 text-sm">QingCode Next{version ? ` · ${version}` : ''}</p>
-      <p className="mb-4 text-xs text-qn-muted">QingCode Next 是第三方客户端，与 OpenAI、Anthropic 无隶属关系。Agent 用量计入你自己的账号。</p>
+      <p className="mb-4 text-xs text-qn-muted">{t('QingCode Next 是第三方客户端，与 OpenAI、Anthropic 无隶属关系。Agent 用量计入你自己的账号。')}</p>
       {error && <Note tone="error" message={error} />}
       {notice && <Note message={notice} />}
+      {/* i18n-ignore: 语言入口固定双语，看不懂当前语言时也能找到 */}
+      <Field label="语言 / Language">
+        <select className="qn-input" value={readLocalePreference()} disabled={busy !== null}
+          onChange={(event) => changeLanguage(event.target.value as LocalePreference)}>
+          <option value="system">{t('跟随系统')}</option>
+          {/* i18n-ignore: 语言名称始终用本语言书写 */}
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </Field>
       {native && (
         <label className="mb-3 flex min-h-11 items-center gap-3 text-sm">
           <input type="checkbox" role="switch" checked={background} disabled={savingBackground}
             onChange={(event) => void changeBackground(event.target.checked)} />
           <span>
-            <span className="block">后台保持连接</span>
-            <span className="block text-xs text-qn-muted">切到后台或锁屏后保持电脑连接，继续处理已排队消息。</span>
+            <span className="block">{t('后台保持连接')}</span>
+            <span className="block text-xs text-qn-muted">{t('切到后台或锁屏后保持电脑连接，继续处理已排队消息。')}</span>
           </span>
         </label>
       )}
       {online && (
         <>
-          <Field label="更新地址" hint="填写你信任的 HTTPS APK 下载地址。">
+          <Field label={t('更新地址')} hint={t('填写你信任的 HTTPS APK 下载地址。')}>
             <input className="qn-input" type="url" value={url} disabled={busy !== null}
               onChange={(event) => { setUrl(event.target.value); setCandidate(null) }}
               autoCapitalize="off" spellCheck={false} placeholder="https://…" />
           </Field>
           {candidate?.available && candidate.id ? (
             <Button className="mb-2 w-full" variant="primary" disabled={busy !== null} onClick={() => void install(candidate.id)}>
-              {busy === 'install' ? '正在检查安装包…' : `安装 ${candidate.versionName}`}
+              {busy === 'install' ? t('正在检查安装包…') : t('安装 {version}', { version: candidate.versionName })}
             </Button>
           ) : (
             <Button className="mb-2 w-full" variant="primary" disabled={busy !== null || !url.trim()} onClick={() => void check()}>
-              {busy === 'check' ? '正在下载并验证更新…' : '检查更新'}
+              {busy === 'check' ? t('正在下载并验证更新…') : t('检查更新')}
             </Button>
           )}
         </>
       )}
       {native && (
         <Button className="w-full" disabled={busy !== null} onClick={() => void install()}>
-          从本地 APK 更新
+          {t('从本地 APK 更新')}
         </Button>
       )}
     </Dialog>
@@ -187,17 +206,18 @@ export function ConnectionsPage() {
   return (
     <>
       <PullToRefresh className="qn-body qn-scroll qn-workspace qn-rise"
-        label="连接" disabled={booting || connections.length === 0} onRefresh={refreshStatuses}>
+        label={pageName('connections')} disabled={booting || connections.length === 0} onRefresh={refreshStatuses}>
         <header className="qn-workspace-title" data-connected={eventsConnected}>
           <div className="qn-workspace-context">
-            <span className="text-[13px]">{[connections.length ? `已配对 ${connections.length} 台电脑` : '尚未配对电脑', mock && '浏览器预览'].filter(Boolean).join(' · ')}</span>
+            <span className="text-[13px]">{[connections.length === 0 ? t('尚未配对电脑') : connections.length === 1 ? t('已配对 1 台电脑')
+              : t('已配对 {count} 台电脑', { count: connections.length }), mock && t('浏览器预览')].filter(Boolean).join(' · ')}</span>
             <div className="flex">
               {connections.length > 0 && (
-                <Button variant="ghost" className="qn-list-action" onClick={() => void refreshStatuses()} aria-label="刷新连接">
+                <Button variant="ghost" className="qn-list-action" onClick={() => void refreshStatuses()} aria-label={t('刷新连接')}>
                   <WorkspaceIcon name="refresh" />
                 </Button>
               )}
-              <Button variant="ghost" className="qn-list-action" onClick={() => setSettings(true)} aria-label="应用设置">
+              <Button variant="ghost" className="qn-list-action" onClick={() => setSettings(true)} aria-label={t('应用设置')}>
                 <Settings size={20} strokeWidth={1.75} />
               </Button>
             </div>
@@ -205,18 +225,18 @@ export function ConnectionsPage() {
         </header>
         {error && <Note message={error} tone="error" onClose={clearError} />}
         {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
-        {booting ? <Loading text="正在读取已保存的连接…" /> : connections.length === 0 ? (
+        {booting ? <Loading text={t('正在读取已保存的连接…')} /> : connections.length === 0 ? (
           <div className="qn-onboard">
             <h1 className="qn-hero-title">QingCode</h1>
-            <p className="qn-onboard-lead">在手机上继续电脑里的 Agent 会话</p>
+            <p className="qn-onboard-lead">{t('在手机上继续电脑里的 Agent 会话')}</p>
             <ol className="qn-onboard-steps">
-              <li><span>1</span>电脑端点侧栏底部「手机连接」并启用</li>
-              <li><span>2</span>复制连接信息，或用手机扫码</li>
-              <li><span>3</span>回到这里导入，输入配对密码</li>
+              <li><span>1</span>{t('电脑端点侧栏底部「手机连接」并启用')}</li>
+              <li><span>2</span>{t('复制连接信息，或用手机扫码')}</li>
+              <li><span>3</span>{t('回到这里导入，输入配对密码')}</li>
             </ol>
-            <Button variant="primary" className="w-full" onClick={addFromClipboard}>从剪贴板导入</Button>
+            <Button variant="primary" className="w-full" onClick={addFromClipboard}>{t('从剪贴板导入')}</Button>
             <button type="button" className="qn-dashed-action qn-pressable" onClick={openAddForm}>
-              <Plus size={17} aria-hidden />扫码或手动添加
+              <Plus size={17} aria-hidden />{t('扫码或手动添加')}
             </button>
           </div>
         ) : (
@@ -233,15 +253,15 @@ export function ConnectionsPage() {
                     <button type="button" className="qn-row-trigger" onClick={() => void activate(conn.id, 'targets')}>
                       <StatusDot tone={tone} />
                       <span className="qn-row-copy">
-                        <span className="qn-list-primary qn-clamp-2">{conn.name}</span>
-                        <span className="qn-subtitle block">{current ? '当前电脑 · ' : ''}{formatAddress(conn.host, conn.port)}</span>
+                        <span className="qn-list-primary qn-clamp-2">{connectionName(conn.name)}</span>
+                        <span className="qn-subtitle block">{current ? t('当前电脑 · ') : ''}{formatAddress(conn.host, conn.port)}</span>
                       </span>
                       <span className="flex shrink-0 flex-col items-end gap-1">
-                        <Badge tone={tone}>{repair ? '重新配对' : stateText[status]}</Badge>
-                        {latency != null && <span className="text-[11px] text-qn-muted tabular-nums" title="手机到电脑的 HTTPS 探测耗时">{latency} ms</span>}
+                        <Badge tone={tone}>{repair ? t('重新配对') : stateText[status]}</Badge>
+                        {latency != null && <span className="text-[11px] text-qn-muted tabular-nums" title={t('手机到电脑的 HTTPS 探测耗时')}>{latency} ms</span>}
                       </span>
                     </button>
-                    <Button variant="ghost" className="qn-list-action" onClick={() => setMenu(conn.id)} aria-label={`${conn.name} 的连接操作`}>
+                    <Button variant="ghost" className="qn-list-action" onClick={() => setMenu(conn.id)} aria-label={t('{name} 的连接操作', { name: connectionName(conn.name) })}>
                       <WorkspaceIcon name="more" />
                     </Button>
                   </div>
@@ -250,32 +270,32 @@ export function ConnectionsPage() {
             </div>
             {/* 已有连接时这里不是主操作：只留虚线入口，导入方式在添加页里选。 */}
             <button type="button" className="qn-dashed-action qn-pressable" onClick={openAddForm}>
-              <Plus size={17} aria-hidden />添加连接
+              <Plus size={17} aria-hidden />{t('添加连接')}
             </button>
           </>
         )}
       </PullToRefresh>
       {settings && <MobileSettings onClose={() => setSettings(false)} />}
       {selected && (
-        <Dialog title={selected.name} onClose={() => setMenu(null)}>
+        <Dialog title={connectionName(selected.name)} onClose={() => setMenu(null)}>
           <p className="mb-3 text-xs text-qn-muted">{formatAddress(selected.host, selected.port)}</p>
           <div className="grid">
-            <SheetAction icon={Pencil} onClick={() => { setMenu(null); openEditForm(selected.id) }}>编辑连接</SheetAction>
-            <SheetAction icon={KeyRound} onClick={() => { setMenu(null); beginRepair(selected.id) }}>重新配对</SheetAction>
-            <SheetAction icon={Trash2} danger onClick={() => { setMenu(null); setPendingDelete(selected.id) }}>删除连接</SheetAction>
+            <SheetAction icon={Pencil} onClick={() => { setMenu(null); openEditForm(selected.id) }}>{t('编辑连接')}</SheetAction>
+            <SheetAction icon={KeyRound} onClick={() => { setMenu(null); beginRepair(selected.id) }}>{t('重新配对')}</SheetAction>
+            <SheetAction icon={Trash2} danger onClick={() => { setMenu(null); setPendingDelete(selected.id) }}>{t('删除连接')}</SheetAction>
           </div>
         </Dialog>
       )}
       {pendingDelete && (
-        <Dialog title="删除连接" onClose={() => setPendingDelete(null)}>
-          <p className="mb-4 text-sm text-qn-muted">删除后需要重新配对才能访问这台电脑。</p>
+        <Dialog title={t('删除连接')} onClose={() => setPendingDelete(null)}>
+          <p className="mb-4 text-sm text-qn-muted">{t('删除后需要重新配对才能访问这台电脑。')}</p>
           <div className="flex gap-2">
-            <Button className="flex-1" onClick={() => setPendingDelete(null)}>取消</Button>
+            <Button className="flex-1" onClick={() => setPendingDelete(null)}>{t('取消')}</Button>
             <Button className="flex-1" variant="danger" onClick={() => {
               const id = pendingDelete
               setPendingDelete(null)
               void removeConnection(id)
-            }}>删除</Button>
+            }}>{t('删除')}</Button>
           </div>
         </Dialog>
       )}
@@ -300,7 +320,7 @@ export function ConnectionFormPage() {
   if (!form) return null
   const isEdit = form.mode === 'edit'
   const isRepair = form.mode === 'repair'
-  const title = isEdit ? '编辑连接' : isRepair ? '重新配对' : '添加连接'
+  const title = isEdit ? t('编辑连接') : isRepair ? t('重新配对') : t('添加连接')
   const imported = Boolean(normalizeFingerprint(form.draft.fp))
   const codeOk = isValidPairingCode(form.draft.code)
   const onHostBlur = () => {
@@ -319,14 +339,14 @@ export function ConnectionFormPage() {
       const link = await callDevice<string | null>('pair.scan', {}, 300_000)
       if (!link || requestForm !== useApp.getState().form) return
       if (!parsePairingLink(link)) {
-        setScanError('二维码里没有可用的 QingCode Next 配对链接。')
+        setScanError(t('二维码里没有可用的 QingCode Next 配对链接。'))
         return
       }
       setFormPaste(link)
       parsePaste()
       setReimport(false)
     } catch (err) {
-      setScanError(friendlyError(err, '扫码不可用，可用系统相机或粘贴连接信息。'))
+      setScanError(friendlyError(err, t('扫码不可用，可用系统相机或粘贴连接信息。')))
     } finally {
       setScanning(false)
     }
@@ -335,34 +355,34 @@ export function ConnectionFormPage() {
   return (
     <>
       <Header title={title}
-        subtitle={isEdit ? '修改名称或地址' : isRepair ? '请从同一台电脑复制新的连接信息' : '配对到自己的电脑'}
+        subtitle={isEdit ? t('修改名称或地址') : isRepair ? t('请从同一台电脑复制新的连接信息') : t('配对到自己的电脑')}
         onBack={form.saving ? undefined : closeForm} />
       <fieldset className="qn-body qn-scroll min-w-0" disabled={form.saving}>
         {!isEdit && imported && !reimport && (
           <div className="qn-imported mb-3">
             <Check size={16} className="shrink-0 text-qn-ok" aria-hidden />
-            <span className="min-w-0 flex-1">已读取地址与证书指纹</span>
-            <button type="button" className="qn-note-action" onClick={() => setReimport(true)}>重新导入</button>
+            <span className="min-w-0 flex-1">{t('已读取地址与证书指纹')}</span>
+            <button type="button" className="qn-note-action" onClick={() => setReimport(true)}>{t('重新导入')}</button>
           </div>
         )}
         {!isEdit && (!imported || reimport) && (
           <Card className="mb-3">
-            <p className="mb-3 text-sm">在电脑端「手机连接」复制连接信息，再在这里导入。</p>
+            <p className="mb-3 text-sm">{t('在电脑端「手机连接」复制连接信息，再在这里导入。')}</p>
             <Button className="w-full" onClick={() => { setScanError(null); setReimport(false); void pasteFromClipboard() }}>
-              从剪贴板导入
+              {t('从剪贴板导入')}
             </Button>
             {getWindowNativePort() && (
               <Button className="mt-2 w-full" disabled={scanning} onClick={() => void scan()}>
-                {scanning ? '正在扫码…' : '扫码导入'}
+                {scanning ? t('正在扫码…') : t('扫码导入')}
               </Button>
             )}
             <details className="qn-details mt-1">
-              <summary>手动粘贴</summary>
-              <Field label="连接信息">
-                <textarea className="qn-textarea" rows={3} value={form.paste} placeholder="粘贴电脑端复制的连接信息…"
+              <summary>{t('手动粘贴')}</summary>
+              <Field label={t('连接信息')}>
+                <textarea className="qn-textarea" rows={3} value={form.paste} placeholder={t('粘贴电脑端复制的连接信息…')}
                   onChange={(event) => setFormPaste(event.target.value)} />
               </Field>
-              <Button className="w-full" disabled={!form.paste.trim()} onClick={() => { setReimport(false); parsePaste() }}>导入信息</Button>
+              <Button className="w-full" disabled={!form.paste.trim()} onClick={() => { setReimport(false); parsePaste() }}>{t('导入信息')}</Button>
             </details>
             {scanError && <Note message={scanError} tone="warn" onClose={() => setScanError(null)} />}
           </Card>
@@ -370,49 +390,49 @@ export function ConnectionFormPage() {
 
         {(imported || isEdit) && (
           <Card>
-            <Field label="名称">
-              <input className="qn-input" value={form.draft.name} placeholder="例如：工作电脑"
+            <Field label={t('名称')}>
+              <input className="qn-input" value={connectionName(form.draft.name)} placeholder={t('例如：工作电脑')}
                 onChange={(event) => updateDraft('name', event.target.value)} />
             </Field>
             <p className="qn-subtitle qn-mono mb-1">{formatAddress(form.draft.host, Number(form.draft.port))}</p>
             <details className="qn-details" open={isEdit || undefined}>
-              <summary>地址、端口和证书指纹</summary>
-              <Field label="主机" hint="IPv4、IPv6 或域名，也可输入 host:port">
-                <input className="qn-input qn-mono" value={form.draft.host} placeholder="例如 frp.example.com:7001"
+              <summary>{t('地址、端口和证书指纹')}</summary>
+              <Field label={t('主机')} hint={t('IPv4、IPv6 或域名，也可输入 host:port')}>
+                <input className="qn-input qn-mono" value={form.draft.host} placeholder={t('例如 frp.example.com:7001')}
                   autoCapitalize="off" autoCorrect="off" spellCheck={false}
                   onChange={(event) => updateDraft('host', event.target.value)} onBlur={onHostBlur} />
               </Field>
-              <Field label="端口">
+              <Field label={t('端口')}>
                 <input className="qn-input qn-mono" inputMode="numeric" value={form.draft.port}
                   onChange={(event) => updateDraft('port', event.target.value)} />
               </Field>
-              <div className="qn-label">证书指纹</div>
+              <div className="qn-label">{t('证书指纹')}</div>
               <div className="qn-mono mb-3 rounded-xl border border-qn-border bg-black/20 p-2 text-xs">
-                {normalizeFingerprint(form.draft.fp) ?? '待导入'}
+                {normalizeFingerprint(form.draft.fp) ?? t('待导入')}
               </div>
             </details>
             {!isEdit && (
-              <Field label="配对密码" hint="只在配对时使用">
-                <input className="qn-input" type="password" value={form.draft.code} placeholder="电脑端设置的配对密码"
+              <Field label={t('配对密码')} hint={t('只在配对时使用')}>
+                <input className="qn-input" type="password" value={form.draft.code} placeholder={t('电脑端设置的配对密码')}
                   autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
                   onChange={(event) => updateDraft('code', event.target.value)} />
               </Field>
             )}
             {isEdit && (
               <details className="qn-details">
-                <summary>从新连接信息导入地址</summary>
-                <Field label="新连接信息">
+                <summary>{t('从新连接信息导入地址')}</summary>
+                <Field label={t('新连接信息')}>
                   <textarea className="qn-textarea" rows={2} value={form.paste}
                     onChange={(event) => setFormPaste(event.target.value)} />
                 </Field>
                 <div className="mb-3 flex flex-wrap gap-2">
-                  <Button className="flex-1" onClick={() => void pasteFromClipboard()}>从剪贴板导入</Button>
-                  <Button className="flex-1" disabled={!form.paste.trim()} onClick={parsePaste}>导入地址</Button>
+                  <Button className="flex-1" onClick={() => void pasteFromClipboard()}>{t('从剪贴板导入')}</Button>
+                  <Button className="flex-1" disabled={!form.paste.trim()} onClick={parsePaste}>{t('导入地址')}</Button>
                 </div>
               </details>
             )}
-            {form.probe && <Note message={`指纹核对通过 · ${form.probe.name || '电脑'}`} tone="ok" />}
-            {!isEdit && form.draft.code && !codeOk && <Note message="配对密码需要 6–20 位且不含空白字符。" tone="warn" />}
+            {form.probe && <Note message={t('指纹核对通过 · {name}', { name: form.probe.name || t('电脑') })} tone="ok" />}
+            {!isEdit && form.draft.code && !codeOk && <Note message={t('配对密码需要 6–20 位且不含空白字符。')} tone="warn" />}
           </Card>
         )}
         {form.error && <div className="mt-3"><Note message={form.error} tone="error" /></div>}
@@ -421,11 +441,11 @@ export function ConnectionFormPage() {
       {(imported || isEdit) && (
         <div className="qn-footer flex flex-wrap gap-2">
           <Button className="flex-1" disabled={form.testing || form.saving} onClick={() => void testConnection()}>
-            {form.testing ? '测试中…' : '测试连接'}
+            {form.testing ? t('测试中…') : t('测试连接')}
           </Button>
           <Button className="flex-1" variant="primary" disabled={form.testing || form.saving || Boolean(form.fpMismatch)}
             onClick={() => void (isEdit ? saveEdit() : pairAndSave())}>
-            {form.saving ? '保存中…' : isEdit ? '保存修改' : '配对并保存'}
+            {form.saving ? t('保存中…') : isEdit ? t('保存修改') : t('配对并保存')}
           </Button>
         </div>
       )}

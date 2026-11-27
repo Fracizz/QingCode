@@ -1240,14 +1240,16 @@ input[type="radio"] {
   font-size: 12.5px;
 }
 
+/* 与相邻的模型触发按钮同高、同内边距、同字号，两者在工具栏里共用一条基线。 */
 .qn-access-chip {
   gap: 4px;
-  min-width: 44px;
-  min-height: 44px;
-  padding: 0 6px;
-  border-radius: var(--radius-lg);
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: 999px;
   color: var(--color-qn-muted);
-  font-size: 12px;
+  font-size: 12.5px;
+  line-height: 1;
 }
 
 .qn-access-chip[data-tone="warn"] {

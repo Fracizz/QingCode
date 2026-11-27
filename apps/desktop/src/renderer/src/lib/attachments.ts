@@ -1,5 +1,6 @@
 // 输入框附件（图片 / 文件）与斜杠菜单的纯逻辑。IO（读文件、压缩、上传）在 lib/attachmentIo.ts。
 
+import { t } from '@qn/codex-client'
 import type { UserInput } from '@qn/codex-client'
 
 export const MAX_ATTACHMENTS = 8
@@ -148,9 +149,9 @@ export function buildUserInput(text: string, attachments: Attachment[], skills: 
 /** 还有文件在上传或上传失败时不能发送，避免消息里漏掉附件。 */
 export function attachmentsBlocking(attachments: Attachment[]): string | null {
   if (attachments.some((item) => item.kind === 'file' && (item.status === 'pending' || item.status === 'uploading'))) {
-    return '附件上传中…'
+    return t('附件上传中…')
   }
-  if (attachments.some((item) => item.kind === 'file' && item.status === 'error')) return '有附件上传失败，请移除后再发送'
+  if (attachments.some((item) => item.kind === 'file' && item.status === 'error')) return t('有附件上传失败，请移除后再发送')
   return null
 }
 

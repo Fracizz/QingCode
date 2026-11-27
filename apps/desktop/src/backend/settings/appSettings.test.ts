@@ -156,7 +156,7 @@ describe('mergeAppSettings', () => {
       },
     })
     const next = mergeAppSettings(current, {
-      general: { density: 'compact', globalAccessMode: 'restricted' },
+      general: { density: 'compact', globalAccessMode: 'auto' },
       agents: {
         local: { codex: { path: 'D:\\new\\codex.exe' } },
         'ssh-2': { pi: { enabled: true } },
@@ -167,7 +167,7 @@ describe('mergeAppSettings', () => {
       autoConnectLast: true,
       autoArchiveDays: 0,
       defaultAgent: 'claude',
-      globalAccessMode: 'restricted',
+      globalAccessMode: 'auto',
       density: 'compact',
       theme: 'dark',
       ...DEFAULT_FONT_SIZES,

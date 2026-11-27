@@ -1,5 +1,5 @@
 // 手机端状态纯逻辑：未知 JSON 的归一化、事件折叠、注释拼接。无 DOM / 网络依赖。
-import { approvalResponse, threadActivityFromStatus, type ApprovalDecision, type ApprovalView, type ThreadActivity, type UserInput } from '@qn/codex-client'
+import { approvalResponse, threadActivityFromStatus, type ApprovalDecision, type ApprovalView, type ThreadActivity, type UserInput, getLocale, t, translateMessage } from '@qn/codex-client'
 import { isValidHost, normalizeFingerprint, parsePort } from './link'
 import type { AgentKind, Connection, Project, SshAuth, Target, TargetState, TargetStateEvent } from './types'
 
@@ -15,7 +15,7 @@ const number = (value: unknown, fallback: number): number =>
 
 const TARGET_STATES: readonly TargetState[] = ['idle', 'connecting', 'deploying', 'ready', 'error']
 
-export const HOST_KEY_HINT = '请在电脑上确认主机指纹'
+export const HOST_KEY_HINT = t('请在电脑上确认主机指纹')
 
 export type ThreadSummary = {
   id: string
@@ -122,6 +122,7 @@ export function buildMobileTurnInput(agent: AgentKind, text: string, attachments
     }
   }
   const body = fileLines.length
+    // i18n-ignore: 发给模型的提示词
     ? [text, ['附件文件（请按需读取）：', ...fileLines].join('\n')].filter(Boolean).join('\n\n')
     : text
   return body ? [{ type: 'text', text: body, text_elements: [] }, ...extras] : extras
@@ -152,7 +153,8 @@ export function parseTargets(value: unknown): Target[] {
     if (!id) continue
     const name = text(entry.name) || id
     if (entry.kind === 'local' || id === 'local') {
-      targets.push({ id: 'local', kind: 'local', name })
+      // 本机目标名是电脑端常量；其他目标名由用户填写，原样显示。
+      targets.push({ id: 'local', kind: 'local', name: translateMessage(name) })
       continue
     }
     if (entry.kind === 'direct') {
@@ -284,7 +286,7 @@ export function friendlyError(err: unknown, fallback: string): string {
 export function agentOpenErrorText(label: string, err: unknown, fallback: string): string {
   const message = friendlyError(err, fallback)
   if (/agent 只能是/.test(message)) {
-    return `目标机上的 QingCode 服务是旧版本，还不支持 ${label}。等该目标的会话都结束后，在电脑上重新连接即可更新。`
+    return t('目标机上的 QingCode 服务是旧版本，还不支持 {label}。等该目标的会话都结束后，在电脑上重新连接即可更新。', { label })
   }
   return message
 }
@@ -300,7 +302,7 @@ export function isHostKeyError(err: unknown): boolean {
   return /hostkey|host_key|known_hosts|knownhosts|主机指纹|主机密钥|指纹变化|请在电脑上确认/i.test(source)
 }
 
-export function hostKeyMessage(err: unknown, fallback = '连接失败'): string {
+export function hostKeyMessage(err: unknown, fallback = t('连接失败')): string {
   return isHostKeyError(err) ? HOST_KEY_HINT : friendlyError(err, fallback)
 }
 
@@ -332,7 +334,7 @@ export function toThreadSummaries(value: unknown, agent: AgentKind = 'codex'): T
     const activity = threadActivityFromStatus(entry.status)
     summaries.push({
       id,
-      title: cleanThreadText(text(entry.name)) || preview.split('\n')[0]?.trim() || '未命名会话',
+      title: cleanThreadText(text(entry.name)) || preview.split('\n')[0]?.trim() || t('未命名会话'),
       preview: preview.length > 160 ? `${preview.slice(0, 160)}…` : preview,
       cwd: text(entry.cwd),
       updatedAt: toTimestamp(entry.updatedAt ?? entry.recencyAt ?? entry.createdAt),
@@ -367,7 +369,7 @@ export function formatTime(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return '—'
   const date = new Date(ms)
   if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleString(getLocale() === 'en' ? 'en-US' : 'zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
 /** §12 的引用格式：多行逐行加 "> "，评论可空，注释块与正文之间空一行。 */
@@ -393,10 +395,10 @@ export function formatQuotedMessage(annotations: readonly Annotation[], input: s
 export type TurnErrorView = { title: string; detail: string }
 
 const statusTitle = (status: number): string =>
-  status === 429 ? '已达用量上限或请求过多'
-    : status === 401 || status === 403 ? '模型服务认证失败或无权限'
-      : status >= 500 ? '模型服务暂时不可用'
-        : '模型服务拒绝了请求'
+  status === 429 ? t('已达用量上限或请求过多')
+    : status === 401 || status === 403 ? t('模型服务认证失败或无权限')
+      : status >= 500 ? t('模型服务暂时不可用')
+        : t('模型服务拒绝了请求')
 
 /**
  * 上游失败串常见形如 `429: {"message":"…"}`，原样显示是一大段 JSON。
@@ -406,9 +408,12 @@ export function formatTurnError(raw: string): TurnErrorView {
   const source = raw.trim()
   // Claude Code 的格式：`API Error: Request rejected (429) · 说明`
   const claude = /^API Error:[^(]*\(([45]\d\d)\)\s*(?:·\s*)?([\s\S]*)$/.exec(source)
-  if (claude) return { title: `${statusTitle(Number(claude[1]))}（${claude[1]}）`, detail: claude[2]!.trim() }
+  if (claude) {
+    const title = t('{title}（{status}）', { title: statusTitle(Number(claude[1])), status: claude[1]! })
+    return { title, detail: claude[2]!.trim() }
+  }
   const match = /^([45]\d\d)(?:\s*[:：]\s*|\s+)([\s\S]+)$/.exec(source)
-  if (!match) return { title: '本轮失败', detail: source }
+  if (!match) return { title: t('本轮失败'), detail: source }
   const status = Number(match[1])
   let detail = match[2]!.trim()
   try {
@@ -421,5 +426,5 @@ export function formatTurnError(raw: string): TurnErrorView {
   } catch {
     // 非 JSON 正文直接展示
   }
-  return { title: `${statusTitle(status)}（${status}）`, detail }
+  return { title: t('{title}（{status}）', { title: statusTitle(status), status }), detail }
 }

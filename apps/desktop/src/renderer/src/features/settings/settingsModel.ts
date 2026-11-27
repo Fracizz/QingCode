@@ -1,4 +1,4 @@
-import { isGlobalAccessMode } from '@qn/codex-client'
+import { getLocale, isGlobalAccessMode, t } from '@qn/codex-client'
 import type {
   AgentPrefs,
   AppSettings,
@@ -219,41 +219,41 @@ export const SETTINGS_AGENT_INFO: readonly SettingsAgentInfo[] = [
     id: 'codex',
     label: 'Codex',
     configEnv: 'CODEX_HOME',
-    loginPrefix: '在终端运行',
+    loginPrefix: t('在终端运行'),
     loginCommand: 'codex login',
-    loginSuffix: '完成登录。',
-    notes: ['认证由用户本人在官方程序里完成，QingCode Next 不保存任何凭据。'],
+    loginSuffix: t('完成登录。'),
+    notes: [t('认证由用户本人在官方程序里完成，QingCode Next 不保存任何凭据。')],
   },
   {
     id: 'claude',
     label: 'Claude',
     configEnv: 'CLAUDE_CONFIG_DIR',
-    loginPrefix: '在终端运行',
+    loginPrefix: t('在终端运行'),
     loginCommand: 'claude',
-    loginSuffix: '后输入 /login，或在 Claude 自身配置 API key / Bedrock / Vertex。',
+    loginSuffix: t('后输入 /login，或在 Claude 自身配置 API key / Bedrock / Vertex。'),
     notes: [
-      '订阅登录仅限本人自用，推荐 API key 路径。',
-      '认证由用户本人在官方程序里完成，QingCode Next 不保存任何凭据。',
+      t('订阅登录仅限本人自用，推荐 API key 路径。'),
+      t('认证由用户本人在官方程序里完成，QingCode Next 不保存任何凭据。'),
     ],
   },
   {
     id: 'pi',
     label: 'pi',
-    loginPrefix: '在终端运行',
+    loginPrefix: t('在终端运行'),
     loginCommand: 'pi',
-    loginSuffix: '完成提供方配置。',
-    notes: ['pi 不经审批直接执行工具。'],
+    loginSuffix: t('完成提供方配置。'),
+    notes: [t('pi 不经审批直接执行工具。')],
   },
 ]
 
 export const SEND_KEY_OPTIONS: ReadonlyArray<{ value: SettingsSendKey; label: string }> = [
-  { value: 'enter', label: 'Enter 发送（Shift+Enter 换行）' },
-  { value: 'ctrlEnter', label: 'Ctrl+Enter 发送（Enter 换行）' },
+  { value: 'enter', label: t('Enter 发送（Shift+Enter 换行）') },
+  { value: 'ctrlEnter', label: t('Ctrl+Enter 发送（Enter 换行）') },
 ]
 
 export const DENSITY_OPTIONS: ReadonlyArray<{ value: SettingsDensity; label: string }> = [
-  { value: 'comfortable', label: '舒适' },
-  { value: 'compact', label: '紧凑' },
+  { value: 'comfortable', label: t('舒适') },
+  { value: 'compact', label: t('紧凑') },
 ]
 
 export const FONT_SIZE_SETTINGS: ReadonlyArray<{
@@ -262,19 +262,19 @@ export const FONT_SIZE_SETTINGS: ReadonlyArray<{
   description: string
   keywords: readonly string[]
 }> = [
-  { id: 'chatFontSize', title: '对话字号', description: '用户消息、回复正文和推理摘要。', keywords: ['对话', '聊天', '消息', 'chat'] },
-  { id: 'composerFontSize', title: '输入框字号', description: '主对话和侧边聊天的消息输入框，以及编辑历史消息时的输入框。', keywords: ['输入框', '编辑消息', 'composer'] },
-  { id: 'editorFontSize', title: '文件与差异字号', description: '代码编辑器、文件预览和差异内容。', keywords: ['文件', '编辑器', '代码', '差异', 'editor', 'diff'] },
-  { id: 'terminalFontSize', title: '终端字号', description: '集成终端的命令输入和输出。', keywords: ['终端', '命令行', 'terminal'] },
-  { id: 'sidebarFontSize', title: '侧栏导航字号', description: '左侧的目标切换器、新会话、已归档会话和底部入口。', keywords: ['左侧', '侧栏', '导航', '目标', 'sidebar'] },
-  { id: 'projectFontSize', title: '项目字号', description: '左侧项目列表中的项目名称和重命名输入框。', keywords: ['左侧', '侧栏', '项目', 'project'] },
-  { id: 'sessionFontSize', title: '会话字号', description: '左侧会话列表中的会话标题、时间和重命名输入框，以及归档列表中的会话标题。', keywords: ['左侧', '侧栏', '会话', '历史', 'thread', 'session'] },
+  { id: 'chatFontSize', title: t('对话字号'), description: t('用户消息、回复正文和推理摘要。'), keywords: ['对话', '聊天', '消息', 'chat', '对话字号', 'chat font size', 'conversation', 'message'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  { id: 'composerFontSize', title: t('输入框字号'), description: t('主对话和侧边聊天的消息输入框，以及编辑历史消息时的输入框。'), keywords: ['输入框', '编辑消息', 'composer', '输入框字号', 'composer font size', 'input'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  { id: 'editorFontSize', title: t('文件与差异字号'), description: t('代码编辑器、文件预览和差异内容。'), keywords: ['文件', '编辑器', '代码', '差异', 'editor', 'diff', '文件与差异字号', 'file and diff font size', 'code'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  { id: 'terminalFontSize', title: t('终端字号'), description: t('集成终端的命令输入和输出。'), keywords: ['终端', '命令行', 'terminal', '终端字号', 'terminal font size'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  { id: 'sidebarFontSize', title: t('侧栏导航字号'), description: t('左侧的目标切换器、新会话、已归档会话和底部入口。'), keywords: ['左侧', '侧栏', '导航', '目标', 'sidebar', '侧栏导航字号', 'sidebar navigation font size', 'target'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  { id: 'projectFontSize', title: t('项目字号'), description: t('左侧项目列表中的项目名称和重命名输入框。'), keywords: ['左侧', '侧栏', '项目', 'project', '项目字号', 'project font size', 'sidebar'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  { id: 'sessionFontSize', title: t('会话字号'), description: t('左侧会话列表中的会话标题、时间和重命名输入框，以及归档列表中的会话标题。'), keywords: ['左侧', '侧栏', '会话', '历史', 'thread', 'session', '会话字号', 'session font size', 'sidebar', 'history'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
 ]
 
 export const THEME_OPTIONS: ReadonlyArray<{ value: SettingsTheme; label: string }> = [
-  { value: 'dark', label: '深色' },
-  { value: 'gray', label: '灰色' },
-  { value: 'light', label: '浅色' },
+  { value: 'dark', label: t('深色') },
+  { value: 'gray', label: t('灰色') },
+  { value: 'light', label: t('浅色') },
 ]
 
 export const DEFAULT_AGENT_OPTIONS: ReadonlyArray<{ value: SettingsAgentKind; label: string }> = [
@@ -283,18 +283,25 @@ export const DEFAULT_AGENT_OPTIONS: ReadonlyArray<{ value: SettingsAgentKind; la
   { value: 'pi', label: 'pi' },
 ]
 
+export const LANGUAGE_TITLE = '语言 / Language' // i18n-ignore: 双语标题，任何界面语言下都认得出
+
 export type SettingsSectionId = 'general' | 'agents' | 'connections' | 'mobile' | 'about'
+
+// i18n-ignore: 名词“连接”与连接按钮的动词同形，英文不同，不能共用词条
+export const CONNECTIONS_LABEL = getLocale() === 'en' ? 'Connections' : '连接'
 
 export const SETTINGS_SECTIONS: ReadonlyArray<{
   id: SettingsSectionId
   label: string
   description: string
+  /** 两种语言的分区名，供命令面板搜索 */
+  keywords: readonly string[]
 }> = [
-  { id: 'general', label: '通用', description: '发送、启动、界面与默认 Agent' },
-  { id: 'agents', label: 'Agent', description: '按目标启用、路径与官方配置目录' },
-  { id: 'connections', label: '连接', description: '已保存的本机与远程目标' },
-  { id: 'mobile', label: '手机连接', description: '手机网关、配对与证书' },
-  { id: 'about', label: '关于', description: '版本与第三方声明' },
+  { id: 'general', label: t('通用'), description: t('发送、启动、界面与默认 Agent'), keywords: ['通用', 'general'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  { id: 'agents', label: 'Agent', description: t('按目标启用、路径与官方配置目录'), keywords: ['agent'] },
+  { id: 'connections', label: CONNECTIONS_LABEL, description: t('已保存的本机与远程目标'), keywords: ['连接', 'connections'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  { id: 'mobile', label: t('手机连接'), description: t('手机网关、配对与证书'), keywords: ['手机连接', 'mobile'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  { id: 'about', label: t('关于'), description: t('版本与第三方声明'), keywords: ['关于', 'about'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
 ]
 
 export function isSettingsSection(value: unknown): value is SettingsSectionId {
@@ -312,77 +319,84 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   {
     id: 'sendKey',
     section: 'general',
-    title: '发送快捷键',
-    keywords: ['enter', 'ctrl+enter', 'shift+enter', '发送', '快捷键', 'send', 'key'],
+    title: t('发送快捷键'),
+    keywords: ['enter', 'ctrl+enter', 'shift+enter', '发送', '快捷键', 'send', 'key', '发送快捷键', 'send shortcut'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
   {
     id: 'autoConnectLast',
     section: 'general',
-    title: '启动时自动连接上次使用的目标',
-    keywords: ['启动', '自动连接', '目标', '开机', 'startup', 'reconnect'],
+    title: t('启动时自动连接上次使用的目标'),
+    keywords: ['启动', '自动连接', '目标', '开机', 'startup', 'reconnect', '启动时自动连接上次使用的目标', 'connect to the last target on startup', 'auto connect'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
   {
     id: 'defaultAgent',
     section: 'general',
-    title: '新会话默认 Agent',
-    keywords: ['默认', '新会话', 'codex', 'claude', 'pi', 'agent'],
+    title: t('新会话默认 Agent'),
+    keywords: ['默认', '新会话', 'codex', 'claude', 'pi', 'agent', '新会话默认 Agent', 'default agent for new sessions'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
   {
     id: 'autoArchiveDays',
     section: 'general',
-    title: '自动归档不活跃的会话',
-    keywords: ['归档', '会话管理', '聊天', '本机', 'archive'],
+    title: t('自动归档不活跃的会话'),
+    keywords: ['归档', '会话管理', '聊天', '本机', 'archive', '自动归档不活跃的会话', 'auto-archive inactive sessions', 'chat', 'local'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
   {
     id: 'globalAccessMode',
     section: 'general',
-    title: '权限总控',
-    keywords: ['权限', '总控', '继承', '访问模式', '只读', '计划模式', '自动', '完全访问', '跳过审批', 'permission', 'access'],
+    title: t('权限总控'),
+    keywords: ['权限', '总控', '继承', '访问模式', '请求批准', '替我批准', '自动', '完全访问', '跳过审批', 'permission', 'access', '权限总控', 'default permissions', 'access mode', 'ask for approval', 'approve for me', 'full access'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
   {
     id: 'density',
     section: 'general',
-    title: '界面密度',
-    keywords: ['密度', '舒适', '紧凑', '界面', 'density', 'compact'],
+    title: t('界面密度'),
+    keywords: ['密度', '舒适', '紧凑', '界面', 'density', 'compact', '界面密度', 'interface density', 'comfortable'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
   {
     id: 'theme',
     section: 'general',
-    title: '主题',
-    keywords: ['主题', '深色', '灰色', '浅色', '外观', '配色', 'theme', 'dark', 'gray', 'light'],
+    title: t('主题'),
+    keywords: ['主题', '深色', '灰色', '浅色', '外观', '配色', 'theme', 'dark', 'gray', 'light', 'appearance', 'color'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  },
+  {
+    id: 'language',
+    section: 'general',
+    title: LANGUAGE_TITLE,
+    keywords: ['语言', '中文', '英文', '国际化', '跟随系统', 'language', 'chinese', 'english', 'locale', 'system'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
   ...FONT_SIZE_SETTINGS.map(({ id, title, keywords }) => ({
     id,
     section: 'general' as const,
     title,
-    keywords: ['字体', '字体大小', '字号', 'font size', ...keywords],
+    keywords: ['字体', '字体大小', '字号', 'font size', ...keywords], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   })),
   {
     id: 'agents',
     section: 'agents',
-    title: 'Agent 可用性与路径',
+    title: t('Agent 可用性与路径'),
     keywords: [
-      'agent', 'codex', 'claude', 'pi', '启用', '可执行文件', '路径', '检测', '版本',
-      'codex_home', 'claude_config_dir', '登录', '凭据', '审批', 'probe',
+      'agent', 'codex', 'claude', 'pi', '启用', '可执行文件', '路径', '检测', '版本', // i18n-ignore: 搜索关键词，两种语言都要能匹配
+      'codex_home', 'claude_config_dir', '登录', '凭据', '审批', 'probe', // i18n-ignore: 搜索关键词，两种语言都要能匹配
+      'Agent 可用性与路径', 'agent availability and paths', 'enable', 'executable', 'version', 'sign in', 'credentials', 'approval', // i18n-ignore: 搜索关键词，两种语言都要能匹配
     ],
   },
   {
     id: 'connections',
     section: 'connections',
-    title: '已保存的连接',
-    keywords: ['连接', '目标', 'ssh', '主机', '编辑', '删除', '地址', 'connection', '直连'],
+    title: t('已保存的连接'),
+    keywords: ['连接', '目标', 'ssh', '主机', '编辑', '删除', '地址', 'connection', '直连', '已保存的连接', 'saved connections', 'target', 'host', 'edit', 'delete', 'address', 'direct'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
   {
     id: 'mobile',
     section: 'mobile',
-    title: '手机连接',
-    keywords: ['手机', '配对', '网关', '证书', '地址', 'frp', '设备', '密码', 'mobile'],
+    title: t('手机连接'),
+    keywords: ['手机', '配对', '网关', '证书', '地址', 'frp', '设备', '密码', 'mobile', '手机连接', 'pairing', 'gateway', 'certificate', 'address', 'device', 'password', 'phone'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
   {
     id: 'about',
     section: 'about',
-    title: '关于',
-    keywords: ['关于', '版本', '第三方', '开源', 'qingcode', 'openai', 'anthropic', 'about'],
+    title: t('关于'),
+    keywords: ['关于', '版本', '第三方', '开源', 'qingcode', 'openai', 'anthropic', 'about', 'version', 'third-party', 'open source'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
 ]
 

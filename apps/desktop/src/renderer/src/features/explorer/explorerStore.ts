@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import type { FsChangedEvt } from '@qn/protocol'
+import { t } from '@qn/codex-client'
 import { call } from '../../lib/backend'
 import { onServerEvt, serverCall } from '../workspace/serverCall'
 import {
@@ -151,7 +152,7 @@ export const useExplorer = create<ExplorerStore>((set, get) => {
       if (get().scopes[key]?.error) setScopeError(key, null)
     } catch (err) {
       if (seqByRequest.get(requestKey) !== seq) return
-      const message = describeWorkspaceError(err, '读取目录失败')
+      const message = describeWorkspaceError(err, t('读取目录失败'))
       changeTree(key, (tree) => setDirError(tree, path, message))
       setScopeError(key, message)
     }
@@ -229,7 +230,7 @@ export const useExplorer = create<ExplorerStore>((set, get) => {
       const problem = validateEntryName(name, style)
       if (problem) return problem
       const path = joinPath(parent, name, style)
-      const fallback = kind === 'file' ? '新建文件失败' : '新建文件夹失败'
+      const fallback = kind === 'file' ? t('新建文件失败') : t('新建文件夹失败')
       try {
         if (kind === 'file') await serverCall(targetId, 'fs.createFile', { path })
         else await serverCall(targetId, 'fs.mkdir', { path })
@@ -250,7 +251,7 @@ export const useExplorer = create<ExplorerStore>((set, get) => {
       try {
         await serverCall(targetId, 'fs.rename', { from, to })
       } catch (err) {
-        return describeWorkspaceError(err, '重命名失败')
+        return describeWorkspaceError(err, t('重命名失败'))
       }
       changeTree(explorerScopeKey(targetId, root), (tree) => pruneDirs(tree, from, style))
       await refresh(targetId, root, parent)
@@ -261,7 +262,7 @@ export const useExplorer = create<ExplorerStore>((set, get) => {
       try {
         await serverCall(targetId, 'fs.delete', { path, ...(recursive ? { recursive: true } : {}) })
       } catch (err) {
-        return describeWorkspaceError(err, '删除失败')
+        return describeWorkspaceError(err, t('删除失败'))
       }
       const style = detectPathStyle(root)
       changeTree(explorerScopeKey(targetId, root), (tree) => pruneDirs(tree, path, style))

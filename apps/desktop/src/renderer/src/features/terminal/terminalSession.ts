@@ -4,6 +4,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import type { TermDataEvt, TermErrorEvt, TermExitEvt, TermExitInfo, TermInfo, TermOutputChunk, TermResizedEvt } from '@qn/protocol'
+import { t, translateMessage } from '@qn/codex-client'
 import { DEFAULT_FONT_SIZES } from '../../../../shared/fontSizes'
 import { copyText } from '../../lib/clipboard'
 import { friendlyError } from '../../lib/errors'
@@ -124,17 +125,17 @@ export function mountTerminalSession(
     onStatus(status)
   }
 
-  const reportError = (err: unknown, fallback: string) => update({ error: friendlyError(err, fallback) })
+  const reportError = (err: unknown, fallback: string) => update({ error: translateMessage(friendlyError(err, fallback)) })
 
   const write = (bytes: Uint8Array) => {
     if (!status.writable || bytes.length === 0) return
     if (bytes.length > MAX_INPUT_BYTES) {
-      update({ error: '单次终端输入不能超过 1 MiB' })
+      update({ error: t('单次终端输入不能超过 1 MiB') })
       return
     }
     const connection = activeConnection
     void serverCall(targetId, 'term.write', { termId, data: encodeBytes(bytes) }).catch((err: unknown) => {
-      if (connection === activeConnection) reportError(err, '终端输入发送失败')
+      if (connection === activeConnection) reportError(err, t('终端输入发送失败'))
     })
   }
 
@@ -155,7 +156,7 @@ export function mountTerminalSession(
       void serverCall(targetId, 'term.resize', { termId, cols, rows }).then((result) => {
         if (connection === activeConnection) resize(result.cols, result.rows)
       }).catch((err: unknown) => {
-        if (connection === activeConnection) reportError(err, '调整终端尺寸失败')
+        if (connection === activeConnection) reportError(err, t('调整终端尺寸失败'))
       })
     }, 80)
   }
@@ -191,7 +192,7 @@ export function mountTerminalSession(
       if (!current()) return
       stopListening()
       update({ attaching: false, attachFailed: true })
-      reportError(err, '接回终端失败')
+      reportError(err, t('接回终端失败'))
     }
 
     update({ writable: false, attaching: true, attachFailed: false, error: null })
@@ -209,7 +210,7 @@ export function mountTerminalSession(
         resizeDuringAttach = dimensions
         if (!pending && !drawingSnapshot) resize(dimensions.cols, dimensions.rows)
       }),
-      onTerminalEvent<TermErrorEvt>('term.error', ({ message }) => update({ error: message })),
+      onTerminalEvent<TermErrorEvt>('term.error', ({ message }) => update({ error: translateMessage(message) })),
     ]
     void serverCall(targetId, 'term.attach', { termId, sinceSeq }).then((result) => {
       if (!current()) return
@@ -263,7 +264,7 @@ export function mountTerminalSession(
 
   const copy = async () => {
     const selection = terminal.getSelection()
-    if (selection && !await copyText(selection)) update({ error: '无法复制终端选中的内容' })
+    if (selection && !await copyText(selection)) update({ error: t('无法复制终端选中的内容') })
   }
 
   const paste = async () => {
@@ -276,7 +277,7 @@ export function mountTerminalSession(
         if (visible) terminal.focus()
       }
     } catch {
-      update({ error: '无法读取剪贴板，请使用系统粘贴' })
+      update({ error: t('无法读取剪贴板，请使用系统粘贴') })
     }
   }
 

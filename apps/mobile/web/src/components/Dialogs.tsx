@@ -1,3 +1,4 @@
+import { t } from '@qn/codex-client'
 import { ArrowUp, ChevronRight, Folder } from 'lucide-react'
 import { useState } from 'react'
 import { joinPath } from '../state'
@@ -14,12 +15,12 @@ export function CredentialDialog() {
 
   if (!prompt) return null
   return (
-    <Dialog title={`连接 ${prompt.name}`} onClose={cancel}>
+    <Dialog title={t('连接 {name}', { name: prompt.name })} onClose={cancel}>
       <p className="mb-3 text-xs text-qn-muted">
-        此目标使用密码认证。留空则使用电脑上已保存的密码；新主机指纹请在电脑端确认。
+        {t('此目标使用密码认证。留空则使用电脑上已保存的密码；新主机指纹请在电脑端确认。')}
       </p>
       <label className="qn-label" htmlFor="qn-password">
-        密码
+        {t('密码')}
       </label>
       <input
         id="qn-password"
@@ -31,11 +32,11 @@ export function CredentialDialog() {
       />
       <label className="mb-3 flex min-h-[44px] items-center gap-2 text-sm">
         <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
-        在电脑上记住此密码
+        {t('在电脑上记住此密码')}
       </label>
       <div className="flex gap-2">
         <Button className="flex-1" onClick={cancel}>
-          取消
+          {t('取消')}
         </Button>
         <Button
           className="flex-1"
@@ -45,7 +46,7 @@ export function CredentialDialog() {
             void submit(password, remember)
           }}
         >
-          连接
+          {t('连接')}
         </Button>
       </div>
     </Dialog>
@@ -60,13 +61,13 @@ export function DirectoryDialog() {
   if (!directory) return null
 
   return (
-    <Dialog title="添加项目" onClose={close}>
+    <Dialog title={t('添加项目')} onClose={close}>
       <div className="qn-mono mb-2 break-all rounded-lg border border-qn-border bg-black/20 p-2 text-[11px]">
-        {directory.path || '（正在读取主目录…）'}
+        {directory.path || t('（正在读取主目录…）')}
       </div>
       {directory.error && <Note message={directory.error} tone="error" />}
       {directory.loading ? (
-        <Loading text="读取目录…" />
+        <Loading text={t('读取目录…')} />
       ) : (
         <div className="qn-scroll mb-3 max-h-[45vh] overflow-y-auto">
           {directory.parent && (
@@ -75,11 +76,11 @@ export function DirectoryDialog() {
               className="qn-row border-b border-qn-border"
               onClick={() => void browse(directory.parent ?? '')}
             >
-              <ArrowUp size={16} className="text-qn-muted" aria-hidden /><span>上一级</span>
+              <ArrowUp size={16} className="text-qn-muted" aria-hidden /><span>{t('上一级')}</span>
             </button>
           )}
           {directory.entries.length === 0 && (
-            <div className="py-4 text-center text-xs text-qn-muted">此目录下没有子目录</div>
+            <div className="py-4 text-center text-xs text-qn-muted">{t('此目录下没有子目录')}</div>
           )}
           {directory.entries.map((entry) => (
             <button
@@ -97,7 +98,7 @@ export function DirectoryDialog() {
       )}
       <div className="flex gap-2">
         <Button className="flex-1" onClick={close}>
-          取消
+          {t('取消')}
         </Button>
         <Button
           className="flex-1"
@@ -105,7 +106,7 @@ export function DirectoryDialog() {
           disabled={!directory.path || directory.saving}
           onClick={() => void choose()}
         >
-          {directory.saving ? '保存中…' : '选择此目录'}
+          {directory.saving ? t('保存中…') : t('选择此目录')}
         </Button>
       </div>
     </Dialog>

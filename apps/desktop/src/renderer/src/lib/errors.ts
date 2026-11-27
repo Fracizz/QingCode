@@ -1,3 +1,4 @@
+import { t, translateMessage } from '@qn/codex-client'
 import { BackendCallError } from './backend'
 
 const rawMessage = (err: unknown): string => {
@@ -21,21 +22,22 @@ export function isActiveWriterError(err: unknown): boolean {
   return /thread \S+ already has an active writer\b/i.test(rawMessage(err))
 }
 
-export function friendlyError(err: unknown, fallback = '操作失败'): string {
-  if (isActiveWriterError(err)) return '会话被另一个 Codex 进程占用。请关闭原客户端中的会话，或退出原客户端后重试'
+export function friendlyError(err: unknown, fallback = t('操作失败')): string {
+  if (isActiveWriterError(err)) return t('会话被另一个 Codex 进程占用。请关闭原客户端中的会话，或退出原客户端后重试')
   const code = errorCode(err)
-  if (code === 'not_implemented') return `${fallback}：后端功能尚未接入，当前版本暂不可用`
-  if (code === 'unknown_method') return `${fallback}：后端不支持此操作，请升级到最新版本`
-  if (code === 'auth') return `${fallback}：认证失败，请检查用户名或凭据`
-  if (code === 'port_replaced') return `${fallback}：通信通道已重建，请重试`
-  if (code === 'protocol' || code === 'protocol_version') return `${fallback}：协议版本不匹配，请更新两端程序`
+  if (code === 'not_implemented') return t('{fallback}：后端功能尚未接入，当前版本暂不可用', { fallback })
+  if (code === 'unknown_method') return t('{fallback}：后端不支持此操作，请升级到最新版本', { fallback })
+  if (code === 'auth') return t('{fallback}：认证失败，请检查用户名或凭据', { fallback })
+  if (code === 'port_replaced') return t('{fallback}：通信通道已重建，请重试', { fallback })
+  if (code === 'protocol' || code === 'protocol_version') return t('{fallback}：协议版本不匹配，请更新两端程序', { fallback })
 
   const raw = rawMessage(err)
   if (!raw) return fallback
   if (/not_implemented|尚未实现|not implemented/i.test(raw)) {
-    return `${fallback}：后端功能尚未接入，当前版本暂不可用`
+    return t('{fallback}：后端功能尚未接入，当前版本暂不可用', { fallback })
   }
-  return raw
+  // 上面的判断都基于原始文本，只在返回展示时翻译。
+  return translateMessage(raw)
 }
 
 export function describeCodexOpenError(err: unknown, targetId: string): string {
@@ -45,10 +47,10 @@ export function describeCodexOpenError(err: unknown, targetId: string): string {
     /ENOENT|not found|未找到|找不到|spawn|login|未安装|未登录|exited/i.test(raw)
   if (codexMissing || /ENOENT|not found/i.test(raw)) {
     return targetId === 'local'
-      ? '本机未找到 codex，请先安装并 `codex login`'
-      : '远端未找到 codex，请确认已安装 codex-cli 并完成登录'
+      ? t('本机未找到 codex，请先安装并 `codex login`')
+      : t('远端未找到 codex，请确认已安装 codex-cli 并完成登录')
   }
-  return friendlyError(err, '打开 Codex 失败')
+  return friendlyError(err, t('打开 Codex 失败'))
 }
 
 export function jsonRpcErrorCode(err: unknown): number {

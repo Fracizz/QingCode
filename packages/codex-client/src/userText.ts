@@ -1,3 +1,4 @@
+// i18n-ignore: 写进发给模型的正文，也用于解析历史消息
 const ATTACHMENT_NOTE = '附件文件（请按需读取）：'
 const SKILL_PREFIX = /^\/([\w.:-]+)(?:\s+|$)/
 

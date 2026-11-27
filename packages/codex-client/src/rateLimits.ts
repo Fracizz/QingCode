@@ -1,4 +1,5 @@
 // 额度展示的纯逻辑：桌面端与手机端共用，输入允许是线上 JSON 的任意形状。
+import { getLocale, t } from '../../protocol/src/i18n'
 import type { RateLimitSnapshot, RateLimitWindow } from './codex-types'
 
 export type RateLimitSeverity = 'ok' | 'warn' | 'danger'
@@ -184,25 +185,31 @@ export function pickAccount(resp: unknown): AccountSummary | null {
   }
 }
 
+// 单位短语不进词典：同一单位在各处的英文写法不同，过短的模板还会误匹配 translateMessage。
+function durationText(count: string, chinese: string, english: string): string {
+  if (getLocale() !== 'en') return `${count} ${chinese}`
+  return `${count} ${english}${count === '1' ? '' : 's'}`
+}
+
 /** 按窗口时长命名；300 分钟与 10080 分钟沿用 Codex 桌面版的固定叫法。 */
 export function windowLabel(mins: number | null | undefined): string {
   const value = finite(mins)
-  if (value === null || value <= 0) return '未知窗口'
-  if (value === 300) return '5 小时'
-  if (value === 10080) return '每周'
-  if (value >= 1440 && value % 1440 === 0) return `${trimNumber(value / 1440)} 天`
-  if (value >= 60) return `${trimNumber(value / 60)} 小时`
-  return `${trimNumber(value)} 分钟`
+  if (value === null || value <= 0) return t('未知窗口')
+  if (value === 300) return t('5 小时')
+  if (value === 10080) return t('每周')
+  if (value >= 1440 && value % 1440 === 0) return durationText(trimNumber(value / 1440), '天', 'day') // i18n-ignore: 单位见 durationText
+  if (value >= 60) return durationText(trimNumber(value / 60), '小时', 'hour') // i18n-ignore: 单位见 durationText
+  return durationText(trimNumber(value), '分钟', 'minute') // i18n-ignore: 单位见 durationText
 }
 
 /** 徽标里的短名；时长缺省时按主/次窗口的常见含义回退。 */
 export function windowShortLabel(
   mins: number | null | undefined,
-  fallback = '额度',
+  fallback = t('额度'),
 ): string {
   const value = finite(mins)
   if (value === null || value <= 0) return fallback
-  if (value === 10080) return '周'
+  if (value === 10080) return t('周')
   if (value >= 1440 && value % 1440 === 0) return `${trimNumber(value / 1440)}d`
   if (value >= 60) return `${trimNumber(value / 60)}h`
   return `${trimNumber(value)}m`
@@ -242,15 +249,20 @@ export function remainingQuotaPercent(usedPercent: number): number {
 }
 
 function countdownText(diffSeconds: number): string {
-  if (diffSeconds < 60) return `${diffSeconds} 秒`
+  const en = getLocale() === 'en'
+  const second = en ? 's' : ' 秒' // i18n-ignore: 紧凑时长单位
+  const minute = en ? 'm' : ' 分' // i18n-ignore: 紧凑时长单位
+  const hour = en ? 'h' : ' 小时' // i18n-ignore: 紧凑时长单位
+  const day = en ? 'd' : ' 天' // i18n-ignore: 紧凑时长单位
+  if (diffSeconds < 60) return `${diffSeconds}${second}`
   const mins = Math.floor(diffSeconds / 60)
-  if (diffSeconds < 3600) return `${mins} 分`
+  if (diffSeconds < 3600) return `${mins}${minute}`
   const hours = Math.floor(diffSeconds / 3600)
   const restMins = Math.floor((diffSeconds % 3600) / 60)
-  if (diffSeconds < 86400) return restMins > 0 ? `${hours} 小时 ${restMins} 分` : `${hours} 小时`
+  if (diffSeconds < 86400) return restMins > 0 ? `${hours}${hour} ${restMins}${minute}` : `${hours}${hour}`
   const days = Math.floor(diffSeconds / 86400)
   const restHours = Math.floor((diffSeconds % 86400) / 3600)
-  return restHours > 0 ? `${days} 天 ${restHours} 小时` : `${days} 天`
+  return restHours > 0 ? `${days}${day} ${restHours}${hour}` : `${days}${day}`
 }
 
 function startOfDay(date: Date): number {
@@ -260,32 +272,33 @@ function startOfDay(date: Date): number {
 function dayText(target: Date, now: Date): string {
   // 按日历日比较而非 24 小时，跨过午夜仍应显示"明天"。
   const days = Math.round((startOfDay(target) - startOfDay(now)) / 86_400_000)
-  if (days === 0) return '今天'
-  if (days === 1) return '明天'
-  if (days === -1) return '昨天'
-  return `${target.getMonth() + 1}月${target.getDate()}日`
+  if (days === 0) return t('今天')
+  if (days === 1) return t('明天')
+  if (days === -1) return t('昨天')
+  if (getLocale() === 'en') return target.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return `${target.getMonth() + 1}月${target.getDate()}日` // i18n-ignore: 中文日期格式
 }
 
 /** resetsAt 为秒级时间戳；now 允许毫秒或秒，便于界面直接传 Date.now()。 */
 export function formatReset(resetsAt: number | null | undefined, now: number): string {
   const target = toSeconds(resetsAt)
   const current = toSeconds(now)
-  if (target === null || current === null) return '重置时间未知'
+  if (target === null || current === null) return t('重置时间未知')
   const targetDate = new Date(target * 1000)
   const nowDate = new Date(current * 1000)
-  if (Number.isNaN(targetDate.getTime()) || Number.isNaN(nowDate.getTime())) return '重置时间未知'
+  if (Number.isNaN(targetDate.getTime()) || Number.isNaN(nowDate.getTime())) return t('重置时间未知')
   const clock = `${pad2(targetDate.getHours())}:${pad2(targetDate.getMinutes())}`
   const when = `${dayText(targetDate, nowDate)} ${clock}`
   const diff = Math.round(target - current)
-  if (diff <= 0) return `重置时间已过（${when}）`
-  return `${countdownText(diff)}后重置（${when}）`
+  if (diff <= 0) return t('重置时间已过（{when}）', { when })
+  return t('{countdown}后重置（{when}）', { countdown: countdownText(diff), when })
 }
 
 export function compactText(
   snapshot: RateLimitSnapshot | null | undefined,
   mode: 'used' | 'remaining' = 'used',
 ): string {
-  if (!snapshot) return '暂无额度数据'
+  if (!snapshot) return t('暂无额度数据')
   const displayPercent = mode === 'remaining' ? remainingQuotaPercent : (used: number) => used
   const parts: string[] = []
   const primary = snapshot.primary
@@ -297,10 +310,10 @@ export function compactText(
   }
   if (secondary) {
     parts.push(
-      `${windowShortLabel(secondary.windowDurationMins, '周')} ${Math.round(displayPercent(secondary.usedPercent))}%`,
+      `${windowShortLabel(secondary.windowDurationMins, t('周'))} ${Math.round(displayPercent(secondary.usedPercent))}%`,
     )
   }
-  if (parts.length === 0) return '暂无额度数据'
+  if (parts.length === 0) return t('暂无额度数据')
   const text = parts.join(' · ')
-  return mode === 'remaining' ? `剩余 ${text}` : text
+  return mode === 'remaining' ? t('剩余 {text}', { text }) : text
 }

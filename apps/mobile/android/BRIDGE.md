@@ -27,6 +27,16 @@
 {"stream":"s1","closed":true,"error":"事件流 60 秒无数据，已断开"}
 ```
 
+## 界面语言
+
+`window.QnNative.setLocale(preference: string): void`
+
+直接同步调用，不经 `request`，没有异步回调。`preference` 取 `'system'`、`'zh'`、`'en'`，其他值忽略。原生层将偏好保存到 SharedPreferences，未设置时按 `system`；`system` 只看系统首选语言，中文（含繁体地区）开头显示中文，否则英文。页面在启动时和用户切换语言后调用。
+
+偏好决定原生层直接显示的文字：通知渠道名、常驻通知和安装结果 Toast，资源位于 `res/values`（英文，默认）与 `res/values-zh`。调用后立即更新已创建的渠道名和运行中的通知。系统选择器与安装确认界面由 Android 按系统语言显示。
+
+回传给页面的 `error` 与事件流提示始终为中文，由页面用 `translateMessage` 翻译。新增或修改提示时同步 `packages/codex-client/src/i18n/android.en.ts`，带变量的提示登记 `{name}` 模板键。电脑网关返回的错误正文原样透传。
+
 ## 方法
 
 | method | params | result |
