@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { pickClaudeSnapshot, pickSnapshot, type ClaudeRateLimitSnapshot } from '@qn/codex-client'
+import { pickAccountUsage, pickClaudeSnapshot, pickSnapshot, type ClaudeRateLimitSnapshot } from '@qn/codex-client'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   ensureOpen: vi.fn(),
   refreshRateLimits: vi.fn(),
   refreshClaudeRateLimits: vi.fn(),
+  refreshAccountUsage: vi.fn(),
 }))
 
 vi.mock('../store', () => ({
@@ -155,6 +156,49 @@ describe('手机目标额度展示', () => {
       await click('刷新')
       expect(state.ensureOpen).toHaveBeenCalledTimes(1)
       expect(state.refreshRateLimits).toHaveBeenCalledExactlyOnceWith('remote')
+    } finally {
+      await act(() => root.unmount())
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('Codex 详情展示账号总用量，模型弹层默认不展示', () => {
+    state.sessions['codex:local'] = { opened: true }
+    state.rateLimits.local = {
+      snapshot: null, account: null, updatedAt: null, loading: false, error: null,
+      usage: pickAccountUsage({
+        summary: { lifetimeTokens: 18_640_000, peakDailyTokens: 452_000, currentStreakDays: 5, longestStreakDays: 23 },
+        dailyUsageBuckets: [{ startDate: '2026-11-26', tokens: 100_000 }, { startDate: '2026-11-27', tokens: 20_000 }],
+      }),
+    }
+    const html = renderToStaticMarkup(<AgentQuota targetId="local" agent="codex" showUsage />)
+    expect(html).toContain('总用量')
+    expect(html).toContain('18.6M tokens')
+    expect(html).toContain('120K tokens')
+    expect(html).toContain('452K tokens')
+    expect(html).toContain('5 天（最长 23 天）')
+    expect(html).toContain('近 2 天每日用量：11-26 100K, 11-27 20K')
+    expect(renderToStaticMarkup(<AgentQuota targetId="local" agent="codex" />)).not.toContain('总用量')
+  })
+
+  it('Codex 会话打开后才读取总用量，刷新按钮同时刷新', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    try {
+      await act(() => root.render(<RateLimitDetails targetId="remote" available showUsage />))
+      expect(state.refreshAccountUsage).not.toHaveBeenCalled()
+      expect(host.textContent).toContain('打开 Codex 后可查看')
+
+      // 测试里的 useApp 不订阅变化，换 key 重新挂载来模拟会话打开后的重渲染。
+      state.sessions['codex:remote'] = { opened: true }
+      await act(() => root.render(<RateLimitDetails key="opened" targetId="remote" available showUsage />))
+      expect(state.refreshAccountUsage).toHaveBeenCalledExactlyOnceWith('remote')
+
+      const button = [...host.querySelectorAll('button')].find((item) => item.textContent === '刷新')
+      await act(() => button?.click())
+      expect(state.refreshRateLimits).toHaveBeenCalledExactlyOnceWith('remote')
+      expect(state.refreshAccountUsage).toHaveBeenCalledTimes(2)
     } finally {
       await act(() => root.unmount())
       vi.unstubAllGlobals()

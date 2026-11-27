@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { basename, imageDataUrl, isImagePath } from '../fileLinks'
 import { useApp } from '../store'
 import { diffRows, formatBytes, numberLines, viewKind, type DiffRow } from '../viewer'
-import { Badge, BottomClose, Button, Header, Loading, Note } from './ui'
+import { Badge, Button, Header, Loading, Note } from './ui'
 import { ZoomableImage } from './ZoomableImage'
 
 const DIFF_CLASS: Record<DiffRow['kind'], string> = {
@@ -144,7 +144,6 @@ export function FileViewer() {
           </>
         )}
       </div>
-      <BottomClose onClick={close} label={t('关闭文件')} />
     </div>
   )
 }

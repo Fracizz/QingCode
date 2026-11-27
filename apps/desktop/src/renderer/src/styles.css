@@ -596,26 +596,28 @@ body.qn-resizing webview {
 .qn-streaming:not(:has(> :is(p, h1, h2, h3, h4, h5, h6, ul, ol):last-child))::after {
   content: '';
   display: inline-block;
-  width: 1.05em;
+  /* 每格 0.5em、圆点直径约 0.25em，点间留出约一个点宽的间隔，避免挤在一起。 */
+  width: 1.5em;
   height: 0.35em;
-  margin-inline-start: 0.3em;
+  margin-inline-start: 0.35em;
   vertical-align: 0.12em;
   color: var(--color-qn-brand);
   background: radial-gradient(circle closest-side, currentColor 70%, transparent 100%) left center / calc(100% / 3) 100% repeat-x;
-  opacity: 0.65;
+  opacity: 0.6;
 
   @media (prefers-reduced-motion: no-preference) {
-    animation: qn-streaming-pulse 2.6s ease-in-out infinite;
+    /* 周期拉长、曲线更平缓，呼吸感更柔和。 */
+    animation: qn-streaming-pulse 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   }
 }
 
 @keyframes qn-streaming-pulse {
   0%, 100% {
-    opacity: 0.42;
+    opacity: 0.45;
   }
 
   50% {
-    opacity: 0.78;
+    opacity: 0.75;
   }
 }
 

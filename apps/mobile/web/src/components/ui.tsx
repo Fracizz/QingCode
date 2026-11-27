@@ -153,14 +153,14 @@ export function Dialog({
   children,
   onClose,
   placement = 'bottom',
-  closeAt = placement === 'full' ? 'bottom' : 'top',
+  closeAt = 'top',
 }: {
   title: string
   children: ReactNode
   onClose: () => void
   placement?: 'bottom' | 'left' | 'full'
-  /** 全屏弹层默认把关闭按钮放在底部拇指区；底部已有输入区的（如终端）传 top；内容自己摆放关闭按钮时传 none。 */
-  closeAt?: 'top' | 'bottom' | 'none'
+  /** 关闭按钮放在标题栏；手机靠返回手势关闭，不再在底部放大号关闭按钮。内容自己处理关闭时（如看图点空白关闭）传 none。 */
+  closeAt?: 'top' | 'none'
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const close = useRef(onClose)
@@ -219,20 +219,8 @@ export function Dialog({
           )}
         </div>
         {children}
-        {closeAt === 'bottom' && <BottomClose autoFocus onClick={onClose} />}
       </div>
     </dialog>
-  )
-}
-
-/** 手机单手操作时手在屏幕下方：全屏页面的关闭按钮放在底部居中。 */
-export function BottomClose({ onClick, autoFocus, label = t('关闭') }: { onClick: () => void; autoFocus?: boolean; label?: string }) {
-  return (
-    <div className="qn-bottom-close">
-      <Button autoFocus={autoFocus} className="qn-bottom-close-button" onClick={onClick} aria-label={label}>
-        <X size={22} strokeWidth={1.9} aria-hidden />
-      </Button>
-    </div>
   )
 }
 

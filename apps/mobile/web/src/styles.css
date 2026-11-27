@@ -14,7 +14,9 @@
   /* 可输入控件外框与对话输入框底色：对比度要求见 docs/design/contrast.md（强光下要能看清输入框边界）。 */
   --color-qn-outline: #7a7a7a;
   --color-qn-outline-hover: #858585;
-  --color-qn-composer: #2a2a2a;
+  --color-qn-composer: #262626;
+  /* 对话输入框只压在页面底色上，外框按页面底色取 3:1 下限即可，比通用输入外框柔和一档。 */
+  --color-qn-composer-outline: #686868;
   --color-qn-text: #f3f3f5;
   --color-qn-muted: #a1a1aa;
   --color-qn-dim: #8a8a8a;
@@ -84,6 +86,7 @@
   --color-qn-outline: #94959b;
   --color-qn-outline-hover: #acadb3;
   --color-qn-composer: #37383b;
+  --color-qn-composer-outline: #76777b;
   --color-qn-text: #ececec;
   --color-qn-muted: #b4b4b8;
   --color-qn-dim: #a0a0a5;
@@ -102,6 +105,7 @@
   --color-qn-outline: #777777;
   --color-qn-outline-hover: #555555;
   --color-qn-composer: #ffffff;
+  --color-qn-composer-outline: #8f8f8f;
   --color-qn-text: #1a1a1a;
   --color-qn-muted: #555555;
   --color-qn-dim: #666666;
@@ -454,6 +458,8 @@ input[type="radio"] {
   overflow: clip;
   color: var(--color-qn-text);
   background: transparent;
+  /* 弹层虽在顶层显示，CSS 仍继承 DOM 父级；输入区工具栏的 nowrap 会让弹层正文不换行而溢出屏幕。 */
+  white-space: normal;
 }
 
 .qn-dialog[open] {
@@ -506,8 +512,7 @@ input[type="radio"] {
 
 /* ===== 应用设置：参考旧版手机设置页，分组圆角卡片 + 行首线性图标，右侧当前值 / 开关 ===== */
 /* 设置页底色比分组卡片低一档，卡片才浮得起来。 */
-.qn-dialog[data-placement="full"] .qn-dialog-panel:has(> .qn-settings),
-.qn-dialog[data-placement="full"] .qn-dialog-panel:has(> .qn-settings) > .qn-bottom-close {
+.qn-dialog[data-placement="full"] .qn-dialog-panel:has(> .qn-settings) {
   background: var(--color-qn-bg);
 }
 
@@ -765,39 +770,6 @@ input[type="radio"] {
 }
 
 .qn-select-option[aria-checked="true"] svg { visibility: visible; }
-/* 底部关闭：圆形按钮居中，落在单手拇指能够到的区域。 */
-.qn-bottom-close {
-  display: flex;
-  flex-shrink: 0;
-  justify-content: center;
-  padding-top: 12px;
-}
-
-.qn-bottom-close-button {
-  width: 52px;
-  min-width: 52px;
-  height: 52px;
-  padding: 0;
-  border-radius: 999px;
-  border-color: var(--color-qn-border-strong);
-  background: var(--color-qn-raised);
-  box-shadow: var(--qn-elev-1);
-}
-
-/* 全屏弹层：内容少时关闭按钮沉到底部，内容长时滚动中也一直停在底部。 */
-.qn-dialog-panel > .qn-bottom-close {
-  position: sticky;
-  bottom: 0;
-  margin-top: auto;
-  padding-bottom: 4px;
-  background: var(--color-qn-panel);
-}
-
-.qn-viewer > .qn-bottom-close {
-  padding-bottom: 12px;
-  border-top: 1px solid var(--color-qn-border);
-  background: var(--color-qn-panel);
-}
 
 .qn-dialog-panel > :first-child {
   flex-shrink: 0;
@@ -1082,7 +1054,8 @@ input[type="radio"] {
 /* 底部导航照搬 rust 版 #dashboard-nav：选中项只在图标后放圆角指示块，切换时从中心横向展开并轻弹簧落定。 */
 .qn-nav {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
   gap: 4px;
   flex-shrink: 0;
   padding: 4px max(16px, calc((100% - 450px) / 2));
@@ -1478,10 +1451,6 @@ input[type="radio"] {
   font-weight: 600;
 }
 
-.qn-thread-archive small {
-  font-size: 11px;
-}
-
 .qn-thread-archive-error {
   padding: 4px 13px 8px;
   color: var(--color-qn-danger);
@@ -1612,10 +1581,10 @@ input[type="radio"] {
 }
 
 .qn-composer {
-  border: 1px solid var(--color-qn-outline);
-  border-radius: 18px;
+  border: 1px solid var(--color-qn-composer-outline);
+  border-radius: 24px;
   background: var(--color-qn-composer);
-  box-shadow: inset 0 1px 0 var(--qn-edge-top), 0 4px 16px rgb(0 0 0 / 22%);
+  box-shadow: inset 0 1px 0 var(--qn-edge-top), 0 6px 20px rgb(0 0 0 / 18%);
   transition: border-color var(--qn-motion-short) ease;
 }
 
@@ -1674,6 +1643,69 @@ input[type="radio"] {
   opacity: 0.5;
 }
 
+/* 已选技能：输入框内一排品牌色标签，退格可逐个删除。 */
+.qn-composer-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px 0;
+  list-style: none;
+}
+
+.qn-skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: min(14rem, 100%);
+  height: 28px;
+  padding-left: 8px;
+  border-radius: 8px;
+  background: var(--qn-accent-surface);
+  color: var(--color-qn-accent);
+  font-size: 13px;
+}
+
+/* 移除按钮触控区撑满标签高度，图标保持小号。 */
+.qn-skill-chip > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  place-items: center;
+  color: inherit;
+}
+
+.qn-skill-chip > button:disabled { opacity: 0.5; }
+
+/* 斜杠菜单：命令与技能同一列表，行首图标区分种类。 */
+.qn-slash-row {
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-qn-divider);
+  font-size: 14px;
+  text-align: left;
+}
+
+.qn-slash-row:last-child { border-bottom: 0; }
+
+.qn-slash-icon {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--qn-press);
+  color: var(--color-qn-muted);
+}
+
+.qn-slash-icon[data-kind="skill"] {
+  background: var(--qn-accent-surface);
+  color: var(--color-qn-accent);
+}
+
 .qn-composer:focus-within {
   border-color: var(--color-qn-outline-hover);
 }
@@ -1698,7 +1730,8 @@ input[type="radio"] {
   flex-wrap: wrap;
   align-items: center;
   gap: 2px;
-  padding: 0 2px 4px;
+  /* 左右 4px：图标按钮 36px 宽、图标 18px，图标左缘约落在 13px，与输入文字的 14px 内边距对齐。 */
+  padding: 0 4px 4px;
 }
 
 .qn-composer-tools {
@@ -1771,7 +1804,7 @@ input[type="radio"] {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   margin-inline-start: auto;
 }
 
@@ -1858,6 +1891,29 @@ input[type="radio"] {
 }
 
 .qn-sheet-action svg { color: var(--color-qn-muted); flex-shrink: 0; }
+
+/* 底部动作面板：动作行之间留细缝，按压态各自成块。 */
+.qn-sheet-actions {
+  display: grid;
+  gap: 2px;
+  margin: 0 -6px;
+}
+
+/* 面板顶部被操作对象的摘要：引用样式与动作区分开，最多三行。 */
+.qn-sheet-quote {
+  display: -webkit-box;
+  margin: -2px 0 12px;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--color-qn-border-strong);
+  color: var(--color-qn-muted);
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
 .qn-sheet-action:active { background: var(--qn-press); }
 .qn-sheet-action:disabled { opacity: 0.45; }
 .qn-sheet-action-danger, .qn-sheet-action-danger svg { color: var(--color-qn-danger); }
@@ -2441,4 +2497,323 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   font-size: 12.5px;
 }
 
+}
+
+/* ===== 用量页 ===== */
+.qn-usage-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px 0 12px;
+}
+
+.qn-usage-heading h1 {
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+
+.qn-usage-hosts {
+  display: grid;
+  gap: 12px;
+}
+
+/* 主机卡片：与列表卡片同一层级（底色 + 浅投影 + 1px 边缘高光），整卡可点。 */
+.qn-usage-host,
+.qn-usage-card {
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-card);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 24%), inset 0 1px 0 var(--qn-edge-top), inset 0 0 0 1px var(--qn-edge);
+}
+
+.qn-usage-host {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 14px 16px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.qn-usage-host-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.qn-usage-host-name {
+  display: block;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qn-usage-host-meters {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-qn-divider);
+}
+
+.qn-usage-host-empty {
+  padding-top: 12px;
+  border-top: 1px solid var(--color-qn-divider);
+  color: var(--color-qn-muted);
+  font-size: 13px;
+}
+
+.qn-usage-meter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.qn-usage-meter-name {
+  flex-shrink: 0;
+  width: 52px;
+  color: var(--color-qn-muted);
+}
+
+.qn-usage-meter-value {
+  flex-shrink: 0;
+  min-width: 76px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 详情页 */
+.qn-usage-detail {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 12px 16px 24px;
+}
+
+.qn-usage-card {
+  display: grid;
+  gap: 14px;
+  padding: 14px 14px 16px;
+}
+
+.qn-usage-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.qn-usage-card-head h2 {
+  font-size: 15px;
+  font-weight: 620;
+}
+
+.qn-usage-badge {
+  margin-left: auto;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-qn-accent) 14%, transparent);
+  color: var(--color-qn-accent);
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 22px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.qn-usage-badge[data-level="warn"] {
+  background: color-mix(in srgb, var(--color-qn-warn) 16%, transparent);
+  color: var(--color-qn-warn);
+}
+
+.qn-usage-badge[data-level="danger"] {
+  background: color-mix(in srgb, var(--color-qn-danger) 16%, transparent);
+  color: var(--color-qn-danger);
+}
+
+/* 额度窗口：内层用凹陷底色区分，圆角比卡片小 4px 保持同心。 */
+.qn-usage-window {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: calc(var(--qn-radius) - 4px);
+  background: var(--color-qn-field);
+}
+
+.qn-usage-window-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.qn-usage-window-label {
+  color: var(--color-qn-muted);
+  font-size: 13px;
+}
+
+.qn-usage-window-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  color: var(--color-qn-muted);
+  font-size: 12px;
+}
+
+.qn-usage-window-value strong {
+  color: var(--color-qn-text);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.qn-usage-bar {
+  height: 8px;
+  background: var(--color-qn-raised);
+}
+
+.qn-usage-window-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+  color: var(--color-qn-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.qn-usage-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.qn-usage-stat {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: calc(var(--qn-radius) - 4px);
+  background: var(--color-qn-field);
+}
+
+.qn-usage-stat dt {
+  overflow: hidden;
+  color: var(--color-qn-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qn-usage-stat dd {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.qn-usage-stat dd strong {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.qn-usage-stat dd span {
+  color: var(--color-qn-muted);
+  font-size: 12px;
+}
+
+.qn-usage-chart {
+  display: grid;
+  gap: 8px;
+}
+
+.qn-usage-chart figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--color-qn-muted);
+  font-size: 12px;
+}
+
+/* 单系列柱状图：细柱、顶部 4px 圆角贴基线，柱间留缝；点按的柱子保持实色，其余变淡。 */
+.qn-usage-bars {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 6px;
+  height: 88px;
+  border-bottom: 1px solid var(--color-qn-divider);
+}
+
+.qn-usage-bar-slot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 100%;
+}
+
+.qn-usage-bar-col {
+  width: min(100%, 22px);
+  border-radius: 4px 4px 0 0;
+  background: var(--color-qn-accent);
+  transition: opacity var(--qn-motion-short) ease;
+}
+
+.qn-usage-bar-col[data-empty] { background: var(--color-qn-border); }
+.qn-usage-bars:has([aria-pressed="true"]) .qn-usage-bar-slot:not([aria-pressed="true"]) .qn-usage-bar-col { opacity: 0.4; }
+
+.qn-usage-axis {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 6px;
+  color: var(--color-qn-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.qn-usage-axis [data-active] { color: var(--color-qn-text); font-weight: 600; }
+
+.qn-usage-rows {
+  display: grid;
+  font-size: 13px;
+}
+
+.qn-usage-rows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+}
+
+.qn-usage-rows > div + div { border-top: 1px solid var(--color-qn-divider); }
+.qn-usage-rows dt { flex-shrink: 0; color: var(--color-qn-muted); }
+.qn-usage-rows dd { min-width: 0; text-align: right; overflow-wrap: anywhere; }
+
+.qn-usage-empty {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  color: var(--color-qn-muted);
+  font-size: 13px;
+}
+
+.qn-usage-empty-text,
+.qn-usage-note {
+  color: var(--color-qn-muted);
+  font-size: 12px;
+}
+
+.qn-usage-error {
+  color: var(--color-qn-danger);
+  font-size: 12px;
 }

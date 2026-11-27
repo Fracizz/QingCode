@@ -10,7 +10,7 @@ import { draftKey, parseConnections, serializeConnections } from './state'
 import { displayedAccessMode, selectedAccessMode, selectedCompactionStarting, selectedQueuedSends, useApp } from './store'
 import { EventStreamController } from './transport'
 import type { ProbeResult, Project } from './types'
-import { openWorkspaceThread, showWorkspaceProject, useWorkspace } from './workspace'
+import { openWorkspaceThread, showWorkspaceProject, startWorkspaceObserver, useWorkspace } from './workspace'
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
@@ -283,7 +283,15 @@ describe('模拟网关全链路', () => {
     expect(view?.items.some((item) => item.kind === 'agent' && item.text.includes('模拟的'))).toBe(true)
     expect(view?.items.some((item) => item.kind === 'fileChange')).toBe(true)
     expect(state().rateLimits['local']?.snapshot?.primary?.usedPercent).toBeGreaterThan(0)
-    const port = (gateway as unknown as { native: { port: MockNativePort } }).native.port
+    // 总用量经 codex.send 读取；60 秒内重复刷新沿用缓存，不再请求。
+    await state().refreshAccountUsage('local')
+    const usage = state().rateLimits['local']
+    expect(usage?.usage?.lifetimeTokens).toBe(18_640_000)
+    expect(usage?.usage?.daily).toHaveLength(7)
+    const usageReadAt = usage?.usageUpdatedAt
+    await state().refreshAccountUsage('local')
+    expect(state().rateLimits['local']?.usageUpdatedAt).toBe(usageReadAt)
+    const port =(gateway as unknown as { native: { port: MockNativePort } }).native.port
     expect(port.lastTurnParams).toMatchObject({
       agent: 'codex', model: 'gpt-5.5-mini', effort: 'minimal',
       clientUserMessageId: expect.any(String),
@@ -520,7 +528,17 @@ describe('模拟网关全链路', () => {
     archiveRpc.mockRejectedValueOnce(new Error('模拟 Claude 归档失败'))
     await expect(state().archiveConversation('local', claudeConversation)).rejects.toThrow('模拟 Claude 归档失败')
     expect(state()).toMatchObject({ page: 'chat', selectedThreadId: claudeThread })
+    // 首页列表来自工作区缓存；Claude 归档没有本地标记，成功后需从缓存直接移除。
+    const cachedClaude = {
+      ...claudeConversation, targetId: 'local', projectId: 'p-local', cwd: '/srv/demo', title: 'Claude 会话', preview: '', updatedAt: 1,
+    }
+    const workspaceBefore = useWorkspace.getState().threads
+    useWorkspace.setState({ threads: { ...workspaceBefore, [edited.id]: [cachedClaude] } })
+    const stopWorkspace = startWorkspaceObserver()
     await state().archiveConversation('local', claudeConversation)
+    expect(useWorkspace.getState().threads[edited.id]?.some((item) => item.id === claudeThread)).toBe(false)
+    stopWorkspace()
+    useWorkspace.setState({ threads: workspaceBefore })
     expect(archiveRpc).toHaveBeenCalledWith(edited, 'codex.send', expect.objectContaining({
       agent: 'claude', msg: expect.objectContaining({ method: 'thread/archive', params: { threadId: claudeThread } }),
     }))

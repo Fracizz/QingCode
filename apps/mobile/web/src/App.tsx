@@ -8,6 +8,7 @@ import { FileViewer } from './components/FileViewer'
 import { ProjectsPage } from './components/ProjectsPage'
 import { TargetsPage } from './components/TargetsPage'
 import { ThreadsPage } from './components/ThreadsPage'
+import { UsageHome } from './components/UsagePage'
 import { WorkspaceHome, WorkspaceNav } from './components/WorkspaceHome'
 import { Note } from './components/ui'
 import { parsePairingLink } from './link'
@@ -114,7 +115,7 @@ export function App() {
       )}
       <div key={pageKey} ref={pageRef} className="qn-page" data-motion={nav.key === pageKey ? nav.motion : 'none'}>
         {page === 'connections' && <ConnectionsPage />}
-        {workspace && (tab === 'connections' ? <ConnectionsPage /> : <WorkspaceHome />)}
+        {workspace && (tab === 'connections' ? <ConnectionsPage /> : tab === 'usage' ? <UsageHome /> : <WorkspaceHome />)}
         {page === 'form' && <ConnectionFormPage />}
         {page === 'targets' && <TargetsPage />}
         {page === 'projects' && <ProjectsPage />}

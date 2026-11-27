@@ -75,6 +75,7 @@ Claude 订阅登录的灰区说明：Anthropic 允许"end user signing in to the
 - 手动压缩只在用户确认后执行。Codex 用公开的 [`thread/compact/start`](https://developers.openai.com/codex/app-server)，Claude 用 [Agent SDK 的 `/compact`](https://code.claude.com/docs/en/agent-sdk/agent-loop) 且须由 `supportedCommands()` 声明，pi 用官方 RPC `compact`（随安装包提供的 `docs/rpc-commands.md`）。压缩减少上下文占用，已用账号额度不会恢复。
 
 - 额度只读官方接口：Codex `account/rateLimits/read` + `account/rateLimits/updated`。Claude 默认使用 SDK 的 `rate_limit_event`：新版 CLI 每轮在该事件的 `unifiedWindows.five_hour/seven_day` 带利用率（SDK 公开类型尚未声明，缺失时退回顶层 `utilization`），按 5 小时和每周窗口显示；费用使用 `result.total_cost_usd`（标注"估算"）。个人自用可以主动配置官方 CLI 的 [`statusLine`](https://code.claude.com/docs/en/statusline#rate-limit-usage) 转发两个订阅窗口；对外分发仍遵守 §3.3。不抓取网页、不调用私有用量接口。
+- 账号总用量只读 Codex `account/usage/read`（不带 `threadId`，取 `summary` 与 `dailyUsageBuckets`）。该方法在 codex-cli 0.172.0 的 `generate-ts` 稳定面生成物中（`vendor/codex-protocol/ts/v2/GetAccountTokenUsage*.ts`），不需要 `experimentalApi`。截至 2026-11-27，官方 app-server README 未单列此方法（`account/rateLimits/read` 同样未单列），依据为官方生成的 schema。只在 Codex 会话已打开且用户打开额度详情或点刷新时读取，同一目标 60 秒内最多一次，不为此启动 Agent（R9）。Claude、pi 没有对应的官方接口，不提供总用量。
 - Codex `account/rateLimitResetCredit/consume`、`account/sendAddCreditsNudgeEmail` 等有副作用的账户方法：只能由用户显式点击触发，带确认框，禁止自动调用。
 - 刷新频率：界面可见时 ≥60 秒一次；不可见时停止。禁止为"保持在线""预热"发送空 turn 或心跳 prompt。
 - 触发限额（`usage_limit` / `rateLimitReachedType` 非空 / Claude 限额错误）时：**停止**、清晰告知重置时间；禁止自动重试风暴、禁止换号续跑。重试最多 1 次且需退避（≥ 官方给出的重置/`retry-after`）。
@@ -130,6 +131,7 @@ Claude 订阅登录的灰区说明：Anthropic 允许"end user signing in to the
 | Claude 使用目标机已装 `claude`，构建排除 SDK 原生二进制 | 合规（R5） |
 | Claude `permissionMode: 'default'`，产品代码无自动审批 / bypass | 合规 |
 | 额度来源 `account/rateLimits/read`、`rate_limit_event` | 合规 |
+| 手机端 Codex 总用量来源 `account/usage/read`（稳定面，用户打开详情时读取，60 秒节流） | 合规 |
 | 界面无 "Claude Code" 品牌字样 | 合规 |
 | Claude 走订阅登录 + Agent SDK | **灰区**，按 §3.3 闸门处理 |
 | 手机网关可被他人配对使用 | 需在配对流程与文案中限定为本人设备（R6） |

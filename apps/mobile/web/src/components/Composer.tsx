@@ -1,5 +1,5 @@
 import { chatCommandQuery, exactChatCommand, matchingChatCommands, t, translateMessage, type ChatCommandId, type UserInput } from '@qn/codex-client'
-import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, Square, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, Slash, Square, Wand2, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
 import { attachmentBytes, IMAGE_BYTES, insertFileMention, isDraftImage, MAX_IMAGES, mentionAt, type DraftImage } from '../composerLogic'
@@ -7,6 +7,7 @@ import { useMobilePreferences } from '../mobilePreferences'
 import { suggestFiles, type ProjectFile } from '../projectApi'
 import { friendlyError, type Annotation } from '../state'
 import type { SendMode } from '../store'
+import { matchingSkills, type SkillItem } from '../skills'
 import type { Project } from '../types'
 import { ImageThumbnail } from './ImageThumbnail'
 import { Button, Dialog, LoadingIcon, Note } from './ui'
@@ -31,15 +32,34 @@ export type ComposerProps = {
   onConfirmQuote: (quote: string, comment: string) => void
   onCancelQuote: () => void
   placeholder?: string
+  /** 左侧低频设置（访问模式、模型与推理强度）。 */
   toolbar?: ReactNode
+  /** 右侧紧挨添加图片和发送键的常看信息（如上下文占用环）。 */
+  trailing?: ReactNode
   canSteer: boolean
   steerHint?: string
   commands?: { run: (id: ChatCommandId) => void; unavailable: (id: ChatCommandId) => string | null }
+  /** 输入 / 时与对话命令一起列出的技能；选中后作为 skill 输入随消息发送。 */
+  skills?: readonly SkillItem[]
 }
+
+type SlashEntry = { kind: 'command'; id: ChatCommandId; name: string; description: string }
+  | { kind: 'skill'; skill: SkillItem }
 
 // 相册选择保留在当前应用进程中，避免将大段图片数据写进加密草稿。
 const photoDrafts = new Map<string, DraftImage[]>()
 const NO_IMAGES: DraftImage[] = []
+// 已选技能同样只留在内存草稿里，切换会话再回来仍在。
+const skillDrafts = new Map<string, SkillItem[]>()
+const NO_SKILLS: SkillItem[] = []
+// 技能名可含 : . _（如 plugin:skill），比对话命令的查询更宽。
+const SKILL_QUERY = /^\s*\/([\p{L}\p{N}_.:-]*)$/u
+
+function rememberSkills(key: string, skills: SkillItem[]) {
+  skillDrafts.delete(key)
+  if (skills.length > 0) skillDrafts.set(key, skills)
+  if (skillDrafts.size > 12) skillDrafts.delete(skillDrafts.keys().next().value ?? '')
+}
 
 function rememberImages(key: string, images: DraftImage[]) {
   photoDrafts.delete(key)
@@ -50,12 +70,13 @@ function rememberImages(key: string, images: DraftImage[]) {
 export function Composer({
   draftKey, text, onChangeText, onSend, onInterrupt, interrupting, running, sending, compacting, disabled, imageUnavailable,
   project, annotations, onUpdateAnnotation, onRemoveAnnotation, quoteDraft, onConfirmQuote,
-  onCancelQuote, placeholder = t('和 Codex 一起工作'), toolbar, canSteer, steerHint, commands,
+  onCancelQuote, placeholder = t('和 Codex 一起工作'), toolbar, trailing, canSteer, steerHint, commands, skills,
 }: ComposerProps) {
   const sendKey = useMobilePreferences((state) => state.sendKey)
   const [comment, setComment] = useState('')
   const [showAnnotations, setShowAnnotations] = useState(false)
   const [images, setImages] = useState(() => photoDrafts.get(draftKey) ?? NO_IMAGES)
+  const [pickedSkills, setPickedSkills] = useState(() => skillDrafts.get(draftKey) ?? NO_SKILLS)
   const [picking, setPicking] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [caret, setCaret] = useState<number | null>(null)
@@ -69,10 +90,19 @@ export function Composer({
   const mounted = useRef(true)
   const mention = project && caret !== null ? mentionAt(text, caret) : null
   const query = mention?.query
-  const commandQuery = commands && !disabled && !imeActive && caret === text.length ? chatCommandQuery(text) : undefined
-  const commandMatches = commandQuery === undefined ? [] : matchingChatCommands(commandQuery)
+  const slashOpen = !disabled && !imeActive && caret === text.length
+  const commandQuery = commands && slashOpen ? chatCommandQuery(text) : undefined
+  const skillQuery = skills?.length && slashOpen ? SKILL_QUERY.exec(text)?.[1] : undefined
+  const slashQuery = commandQuery ?? skillQuery
+  const commandMatches: SlashEntry[] = [
+    ...(commandQuery === undefined ? [] : matchingChatCommands(commandQuery)
+      .map(({ id, name, description }) => ({ kind: 'command' as const, id, name, description }))),
+    ...(skillQuery === undefined || !skills ? [] : matchingSkills(skills, skillQuery)
+      .filter((skill) => !pickedSkills.some((item) => item.name === skill.name))
+      .map((skill) => ({ kind: 'skill' as const, skill }))),
+  ]
 
-  useEffect(() => setActiveCommand(0), [commandQuery])
+  useEffect(() => setActiveCommand(0), [slashQuery])
   useEffect(() => {
     commandList.current?.children[activeCommand]?.scrollIntoView?.({ block: 'nearest' })
   }, [activeCommand])
@@ -104,6 +134,11 @@ export function Composer({
     }, 180)
     return () => { current = false; clearTimeout(timer) }
   }, [project, query])
+
+  function updateSkills(next: SkillItem[]) {
+    rememberSkills(draftKey, next)
+    if (mounted.current) setPickedSkills(next)
+  }
 
   function updateImages(next: DraftImage[]) {
     rememberImages(draftKey, next)
@@ -139,7 +174,7 @@ export function Composer({
   }
 
   const canSend = (!disabled && !sending && !compacting && !picking &&
-    (!imageUnavailable || images.length === 0) && Boolean(text.trim() || images.length || annotations.length))
+    (!imageUnavailable || images.length === 0) && Boolean(text.trim() || images.length || pickedSkills.length || annotations.length))
 
   async function submit(mode: SendMode = 'queue') {
     const command = exactChatCommand(text)
@@ -149,8 +184,23 @@ export function Composer({
     }
     if (!canSend || composing.current) return
     setCaret(null)
-    const attachments: UserInput[] = images.map((image) => ({ type: 'image', url: image.dataUrl }))
-    if (await onSend(text, attachments, mode)) updateImages([])
+    const attachments: UserInput[] = [
+      ...pickedSkills.map((skill): UserInput => ({ type: 'skill', name: skill.name, path: skill.path })),
+      ...images.map((image): UserInput => ({ type: 'image', url: image.dataUrl })),
+    ]
+    if (await onSend(text, attachments, mode)) {
+      updateImages([])
+      updateSkills([])
+    }
+  }
+
+  function chooseSlash(entry: SlashEntry) {
+    if (entry.kind === 'command') { chooseCommand(entry.id); return }
+    if (composing.current) return
+    updateSkills([...pickedSkills, entry.skill])
+    onChangeText('')
+    setCaret(null)
+    requestAnimationFrame(() => textarea.current?.focus())
   }
 
   function chooseCommand(id: ChatCommandId) {
@@ -162,7 +212,11 @@ export function Composer({
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.nativeEvent.isComposing || composing.current) return
-    if (commandQuery !== undefined) {
+    if (event.key === 'Backspace' && text === '' && pickedSkills.length > 0) {
+      updateSkills(pickedSkills.slice(0, -1))
+      return
+    }
+    if (slashQuery !== undefined) {
       if (event.key === 'Escape') {
         event.preventDefault()
         setCaret(null)
@@ -176,7 +230,7 @@ export function Composer({
       }
       if (commandMatches.length && !event.shiftKey && (event.key === 'Enter' || event.key === 'Tab')) {
         event.preventDefault()
-        if (!event.repeat) chooseCommand((commandMatches[activeCommand] ?? commandMatches[0]!).id)
+        if (!event.repeat) chooseSlash(commandMatches[activeCommand] ?? commandMatches[0]!)
         return
       }
     }
@@ -262,14 +316,20 @@ export function Composer({
       )}
       {commandMatches.length > 0 && (
         <div ref={commandList} role="group" aria-label={t('对话命令')}
-          className="absolute inset-x-3 bottom-full z-10 mb-1 max-h-48 overflow-y-auto rounded-xl border border-qn-border bg-qn-panel shadow-lg">
-          {commandMatches.map((command, index) => (
-            <button key={command.name} type="button" aria-current={index === activeCommand ? true : undefined}
-              className={`qn-row min-h-11 border-b border-qn-border px-3 text-left text-sm last:border-0 ${index === activeCommand ? 'bg-qn-hover' : ''}`}
-              onMouseDown={(event) => event.preventDefault()} onClick={() => chooseCommand(command.id)}>
-              <span className="min-w-0">
-                <span className="block">/{command.name}</span>
-                <span className="block text-xs text-qn-muted">{commands?.unavailable(command.id) ?? command.description}</span>
+          className="absolute inset-x-3 bottom-full z-10 mb-1 max-h-64 overflow-y-auto rounded-xl border border-qn-border bg-qn-panel shadow-lg">
+          {commandMatches.map((entry, index) => (
+            <button key={entry.kind === 'command' ? `command:${entry.name}` : `skill:${entry.skill.name}`} type="button"
+              aria-current={index === activeCommand ? true : undefined}
+              className={`qn-row qn-slash-row ${index === activeCommand ? 'bg-qn-hover' : ''}`}
+              onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSlash(entry)}>
+              <span className="qn-slash-icon" data-kind={entry.kind} aria-hidden>
+                {entry.kind === 'skill' ? <Wand2 size={14} /> : <Slash size={14} />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{entry.kind === 'command' ? `/${entry.name}` : entry.skill.name}</span>
+                <span className="block truncate text-xs text-qn-muted">
+                  {entry.kind === 'command' ? commands?.unavailable(entry.id) ?? entry.description : entry.skill.description || entry.skill.scope}
+                </span>
               </span>
             </button>
           ))}
@@ -285,6 +345,20 @@ export function Composer({
                 <ImageThumbnail src={image.dataUrl} alt={image.name} className="qn-composer-image-img" />
                 <button type="button" className="qn-composer-image-remove" disabled={sending || picking}
                   onClick={() => updateImages(images.filter((_, at) => at !== index))} aria-label={t('移除 {name}', { name: image.name })}>
+                  <X size={12} strokeWidth={2.5} aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {pickedSkills.length > 0 && (
+          <ul className="qn-composer-skills" aria-label={t('已选技能')}>
+            {pickedSkills.map((skill) => (
+              <li key={skill.name} className="qn-skill-chip">
+                <Wand2 size={13} aria-hidden />
+                <span className="truncate" title={skill.name}>{skill.name}</span>
+                <button type="button" disabled={sending} aria-label={t('移除技能 {name}', { name: skill.name })}
+                  onClick={() => updateSkills(pickedSkills.filter((item) => item.name !== skill.name))}>
                   <X size={12} strokeWidth={2.5} aria-hidden />
                 </button>
               </li>
@@ -308,14 +382,14 @@ export function Composer({
           onCompositionEnd={() => { composing.current = false; setImeActive(false) }}
         />
         <div className="qn-composer-toolbar">
-          <div className="qn-composer-tools">
+          <div className="qn-composer-tools">{toolbar}</div>
+          {/* 常用操作靠右、离拇指近：上下文环、添加图片、发送/停止；低频的访问模式与模型在左。 */}
+          <div className="qn-composer-actions">
+            {trailing}
             <Button variant="ghost" className="qn-icon-button" aria-label={t('添加图片')} title={imageUnavailable}
               onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
-              <ImagePlus size={19} strokeWidth={1.75} aria-hidden />
+              <ImagePlus size={18} strokeWidth={1.75} aria-hidden />
             </Button>
-            {toolbar}
-          </div>
-          <div className="qn-composer-actions">
             {/* 停止与发送共用一个位置（参考 Orca 手机版）：没有可发送内容时是停止键，一输入就换成发送键（排队）。 */}
             {running && !canSend && !sending && (
               <Button variant="danger" className="qn-stop-button" aria-label={interrupting ? t('正在中断') : t('停止运行')}

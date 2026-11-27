@@ -29,7 +29,7 @@ export function ContextUsage({ tokenUsage, estimatedCostUsd, compact, panel: con
         aria-haspopup="dialog" onClick={() => setPanel('usage')}>
         {/* 与电脑版输入区的上下文环一致；尚无窗口大小时显示空环，图标不随数据到达而变形。 */}
         <span className={`flex items-center ${color}`} aria-hidden>
-          {busy ? <LoadingIcon size={16} /> : <ProgressRing percent={percent} size={16} />}
+          {busy ? <LoadingIcon size={18} /> : <ProgressRing percent={percent} size={18} />}
         </span>
       </Button>
       {panel && (

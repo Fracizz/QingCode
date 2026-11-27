@@ -349,6 +349,32 @@ describe('result / rate_limit_event / turn 收尾', () => {
     expect(usage.estimated).toBe(true)
   })
 
+  it('每次主代理调用实时上报上下文占用，result 带上窗口并跨轮保留', () => {
+    const usage = (total: number) => ({ input_tokens: total - 100, output_tokens: 100, cache_read_input_tokens: 0 })
+    const assistant = (total: number, extra: Json = {}) => ({
+      type: 'assistant', message: { id: `msg-${total}`, content: [], usage: usage(total) }, ...extra,
+    })
+    let state = emptyMapState()
+    let result = mapSdkMessage(assistant(1000), ctx, state)
+    const live = result.notifications.find((note) => note.method === 'thread/tokenUsage/updated')?.params.tokenUsage as Json
+    expect((live.last as Json).totalTokens).toBe(1000)
+    expect(live.modelContextWindow).toBeNull()
+    state = result.state
+    // 子代理的调用和重复计数都不上报。
+    expect(methods(mapSdkMessage(assistant(5000, { parent_tool_use_id: 'tool-1' }), ctx, state).notifications)).toEqual([])
+    expect(methods(mapSdkMessage(assistant(1000), ctx, state).notifications)).toEqual([])
+    result = mapSdkMessage({
+      type: 'result', subtype: 'success', usage: usage(9000), total_cost_usd: 0.1,
+      modelUsage: { 'claude-haiku': { contextWindow: 100_000 }, 'claude-opus': { contextWindow: 200_000 } },
+    }, ctx, state)
+    const final = result.notifications.at(-1)?.params.tokenUsage as Json
+    expect((final.last as Json).totalTokens).toBe(1000)
+    expect((final.total as Json).totalTokens).toBe(9000)
+    expect(final.modelContextWindow).toBe(200_000)
+    const next = mapSdkMessage(assistant(2000), ctx, emptyMapState(undefined, result.state.contextWindow)).notifications
+    expect((next[0]?.params.tokenUsage as Json).modelContextWindow).toBe(200_000)
+  })
+
   it('error_during_execution → interrupted，其他 error → failed + error.message', () => {
     const interrupted = notes({ type: 'result', subtype: 'error_during_execution', errors: [] })
     expect((interrupted[0]?.params.turn as Json).status).toBe('interrupted')

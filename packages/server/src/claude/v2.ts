@@ -376,28 +376,35 @@ function sdkWindow(value: unknown, windowDurationMins: number | null, allowNullR
   return { usedPercent: Math.min(100, Math.round(utilization * 10_000) / 100), windowDurationMins, resetsAt }
 }
 
-/** result.usage 是每次 API 调用的 token 计数；成本按 SDK 的 total_cost_usd 估算值透传。 */
-export function tokenUsage(result: unknown): Json {
+/**
+ * result.usage 是本轮所有 API 调用的累计 token，放在 total；成本按 SDK 的 total_cost_usd 估算值透传。
+ * last 是最近一次调用的计数（即当前上下文占用），由调用方从 assistant 消息里记下；缺省时退回累计值。
+ */
+export function tokenUsage(result: unknown, context: { last?: Json | null; window?: number | null } = {}): Json {
   const record = asRecord(result)
-  const usage = asRecord(record?.usage) ?? {}
+  const breakdown = tokenBreakdown(asRecord(record?.usage) ?? {})
+  return {
+    total: breakdown,
+    last: context.last ?? breakdown,
+    // 没有可靠的最近一次调用计数时不给窗口：累计值跨多次调用，除以窗口会得出虚高的占用。
+    modelContextWindow: context.last ? context.window ?? null : null,
+    estimatedCostUsd: finite(record?.total_cost_usd) ?? 0,
+    estimated: true,
+  }
+}
+
+/** Anthropic usage 字段换成与 Codex 相同的 token 分项。 */
+export function tokenBreakdown(usage: Record<string, unknown>): Json & { totalTokens: number } {
   const input = finite(usage.input_tokens) ?? 0
   const output = finite(usage.output_tokens) ?? 0
   const cached = finite(usage.cache_read_input_tokens) ?? 0
   const cacheWrite = finite(usage.cache_creation_input_tokens) ?? 0
-  const total = input + output + cached + cacheWrite
-  const breakdown = {
-    totalTokens: total,
+  return {
+    totalTokens: input + output + cached + cacheWrite,
     inputTokens: input + cached + cacheWrite,
     cachedInputTokens: cached,
     cacheWriteInputTokens: cacheWrite,
     outputTokens: output,
     reasoningOutputTokens: 0,
-  }
-  return {
-    total: breakdown,
-    last: breakdown,
-    modelContextWindow: null,
-    estimatedCostUsd: finite(record?.total_cost_usd) ?? 0,
-    estimated: true,
   }
 }

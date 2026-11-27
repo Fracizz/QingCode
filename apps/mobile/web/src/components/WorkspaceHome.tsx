@@ -1,5 +1,5 @@
 import { sessionStatusLabels, type SessionStatus, t, translateMessage } from '@qn/codex-client'
-import { Archive, Check, ChevronDown, ChevronRight, Cloud, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, X } from 'lucide-react'
+import { Archive, ChartColumn, Check, ChevronDown, ChevronRight, Cloud, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { sessionKey } from '../agents'
 import { pageName } from '../names'
@@ -8,10 +8,9 @@ import type { Project, Target } from '../types'
 import {
   filterProjects,
   changeThreadPreference,
-  applyThreadOrder,
+  applyGroupOrder,
   groupWorkspaceThreads,
   isWorkspaceTabDoubleTap,
-  workspaceThreadOrder,
   openWorkspaceThread,
   orderWorkspaceProjects,
   pinnedFirst,
@@ -43,6 +42,7 @@ import { SortableList } from './SortableList'
 const tabs: { id: WorkspaceTab; title: string }[] = [
   { id: 'sessions', title: pageName('sessions') },
   { id: 'projects', title: pageName('projects') },
+  { id: 'usage', title: pageName('usage') },
   { id: 'connections', title: pageName('connections') },
 ]
 
@@ -57,6 +57,7 @@ const THREAD_PREVIEW_LIMIT = 5
 
 const workspaceIcons = {
   sessions: MessageCircleMore,
+  usage: ChartColumn,
   projects: Folder,
   connections: Monitor,
   search: Search,
@@ -64,36 +65,8 @@ const workspaceIcons = {
   more: Ellipsis,
 } as const
 
-/** 列表重排的稳定窗口（参考 Orca 手机版 SORT_SETTLE_MS）。 */
-export const SORT_SETTLE_MS = 3000
-
-// 进入对话再返回时首页会重新挂载，这里记住上次的稳定顺序，返回后列表保持离开时的样子。
-let lastSettled: { order: string[]; resetKey: string } | null = null
 // 每台电脑的项目分组顺序，本次运行内固定，避免项目随会话状态来回跳。
 const projectGroupOrders = new Map<string, string[]>()
-
-/** 顺序变化时先沿用旧顺序，SORT_SETTLE_MS 后一次换成最新顺序；resetKey 变化时立即生效。 */
-function useSettledOrder(fresh: string[], resetKey: string): string[] {
-  const [settled, setSettled] = useState<{ order: string[]; resetKey: string }>(() =>
-    lastSettled?.resetKey === resetKey ? lastSettled : { order: fresh, resetKey })
-  const latest = useRef(fresh)
-  latest.current = fresh
-  const freshKey = fresh.join('\n')
-  const settledKey = settled.order.join('\n')
-  const reset = settled.resetKey !== resetKey
-  useEffect(() => { if (!reset) lastSettled = settled }, [reset, settled])
-  useEffect(() => {
-    if (reset) {
-      setSettled({ order: latest.current, resetKey })
-      return
-    }
-    if (freshKey === settledKey) return
-    const timer = window.setTimeout(() => setSettled({ order: latest.current, resetKey }), SORT_SETTLE_MS)
-    return () => window.clearTimeout(timer)
-    // 依赖里只放「是否有差异」而不是 freshKey：同一窗口内的后续变化不重置计时，最多 3 秒就更新一次。
-  }, [reset, resetKey, settledKey, freshKey === settledKey])
-  return reset ? fresh : settled.order
-}
 
 export function WorkspaceIcon({ name }: { name: WorkspaceTab | 'search' | 'refresh' | 'more' }) {
   const Icon = workspaceIcons[name]
@@ -368,7 +341,7 @@ export function WorkspaceThreadRow({
             ) : QUIET_STATUS.has(status) ? null : <Badge tone={statusTone[status]}>{sessionStatusLabels[status]}</Badge>}
           </button>
           <button type="button" className="qn-thread-archive" style={{ width: ARCHIVE_ACTION_WIDTH }}
-            aria-label={thread.agent === 'codex' ? t('归档 {title}', { title: thread.title }) : t('归档 {title}（仅此手机）', { title: thread.title })}
+            aria-label={t('归档 {title}', { title: thread.title })}
             aria-disabled={archiving} aria-busy={archiving} onFocus={() => setRevealedDesktop(desktopId)}
             onPointerDown={startArchiveTouch} onPointerMove={trackArchiveTouch} onPointerUp={finishArchiveTouch}
             onPointerCancel={(event) => trackArchiveTouch(event, true)}
@@ -377,7 +350,6 @@ export function WorkspaceThreadRow({
               if (!archiveTouch.current || event.detail === 0) void archive()
             }}>
             {archiving ? t('归档中…') : t('归档')}
-            {thread.agent !== 'codex' && !archiving && <small>{t('仅此手机')}</small>}
           </button>
         </div>
         {desktopId && <Button variant="ghost" className="qn-list-action" aria-label={t('{title} 的会话操作', { title: thread.title })}
@@ -395,7 +367,7 @@ export function WorkspaceThreadRow({
               {thread.agent !== 'codex' ? t('重命名（仅此手机）') : t('重命名')}
             </SheetAction>
             <SheetAction icon={Archive} disabled={archiving} onClick={() => { setMenu(null); void archive() }}>
-              {thread.agent !== 'codex' ? t('归档（仅此手机）') : t('归档')}
+              {t('归档')}
             </SheetAction>
           </> : <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); void rename() }}>
             <input className="qn-input" aria-label={t('会话名称')} value={name} onChange={(event) => setName(event.target.value)} disabled={renaming} />
@@ -490,17 +462,10 @@ export function WorkspaceHome() {
       preferences?.projectOrders[target.id]), preferences?.pinnedProjects, workspaceProjectKey) }))
       .filter(({ rows }) => rows.length > 0)
   }, [projects, targets, query, activeProjectTarget, preferences])
-  // 对话页的实时状态（待审批、运行中）参与分档；只订阅拼好的状态串，流式增量不会让整页重渲染。
-  const statusKey = useApp((s) => threadList.map((thread) =>
-    recentThreadStatus(thread, s.sessions[sessionKey(thread.targetId, thread.agent)]?.state.threads[thread.id])).join(','))
-  const freshGroups = useMemo(() => {
-    const statuses = statusKey.split(',')
-    const byThread = new Map(threadList.map((thread, index) => [thread, statuses[index] as SessionStatus]))
-    return groupWorkspaceThreads(visibleWorkspaceThreads(threadList, desktopId, archived), projects, query, preferences,
-      (thread) => byThread.get(thread) ?? recentThreadStatus(thread))
-  }, [threadList, statusKey, desktopId, archived, projects, query, preferences])
-  // 换电脑或改搜索词是用户主动操作，立即按新顺序排；其余变化攒 3 秒再统一重排，避免列表来回跳。
-  const order = useSettledOrder(workspaceThreadOrder(freshGroups), JSON.stringify([desktopId, query]))
+  // 会话按创建时间固定排序，运行状态和新结果不再触发重排。
+  const freshGroups = useMemo(() =>
+    groupWorkspaceThreads(visibleWorkspaceThreads(threadList, desktopId, archived), projects, query, preferences),
+  [threadList, desktopId, archived, projects, query, preferences])
   // 项目分组位置固定：只有新项目插到最前，已有项目不随会话状态重排。
   const groupOrder = useMemo(() => {
     const key = desktopId ?? ''
@@ -509,7 +474,7 @@ export function WorkspaceHome() {
     // 置顶项目始终排在最前；取消置顶后回到原来的固定位置。
     return pinnedFirst(next, preferences?.pinnedProjects, (item) => item)
   }, [freshGroups, desktopId, preferences])
-  const groups = useMemo(() => applyThreadOrder(freshGroups, order, groupOrder), [freshGroups, order, groupOrder])
+  const groups = useMemo(() => applyGroupOrder(freshGroups, groupOrder), [freshGroups, groupOrder])
 
   const refresh = useCallback(async () => {
     if (desktopId) await Promise.all([loadTargets(), loadProjects(desktopId)])

@@ -1,5 +1,5 @@
 import { getLocale, t } from '@qn/codex-client'
-import { Archive, Ellipsis, FileText, Folder, Pin, PinOff, RotateCw, Terminal } from 'lucide-react'
+import { Archive, Ellipsis, FileText, Folder, Pin, PinOff, RotateCw, Terminal, type LucideIcon } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { callDevice } from '../client'
 import { getWindowNativePort, NativeRequestError } from '../native'
@@ -14,7 +14,21 @@ import { AgentTag, Button, Dialog, Empty, Loading, Note, SheetAction } from './u
 const CHUNK_BYTES = 256 * 1024
 const TerminalPanel = lazy(async () => ({ default: (await import('./TerminalPanel')).TerminalPanel }))
 
-export function ProjectTools({ project, compact = false, sortable = false }: { project: Project; compact?: boolean; sortable?: boolean }) {
+/** 由调用方追加到项目工具菜单末尾的操作；点击后先关菜单再执行，避免两层弹层叠在一起。 */
+export interface ProjectToolAction {
+  icon: LucideIcon
+  label: string
+  onClick: () => void
+}
+
+export function ProjectTools({ project, compact = false, sortable = false, className = 'qn-list-action', actions = [] }: {
+  project: Project
+  compact?: boolean
+  sortable?: boolean
+  /** 菜单按钮样式：列表行用默认值，页面顶栏传顶栏图标样式。 */
+  className?: string
+  actions?: readonly ProjectToolAction[]
+}) {
   const [tool, setTool] = useState<'files' | 'terminal' | 'menu' | 'archive' | null>(null)
   const desktopId = useApp((s) => s.activeId)
   const pinned = useWorkspacePreferences()?.pinnedProjects?.includes(workspaceProjectKey(project)) ?? false
@@ -25,7 +39,7 @@ export function ProjectTools({ project, compact = false, sortable = false }: { p
           <Folder size={19} strokeWidth={1.75} aria-hidden />
         </Button>
       )}
-      <Button variant="ghost" className="qn-list-action" onClick={() => setTool('menu')}
+      <Button variant="ghost" className={className} onClick={() => setTool('menu')}
         aria-label={t('{name} 的项目工具', { name: project.name })} aria-haspopup="dialog" title={t('项目工具')}>
         <Ellipsis size={19} strokeWidth={1.75} aria-hidden />
       </Button>
@@ -41,6 +55,9 @@ export function ProjectTools({ project, compact = false, sortable = false }: { p
             {compact && <SheetAction icon={Folder} onClick={() => setTool('files')}>{t('浏览项目文件')}</SheetAction>}
             <SheetAction icon={Terminal} onClick={() => setTool('terminal')}>{t('打开项目终端')}</SheetAction>
             <SheetAction icon={Archive} onClick={() => setTool('archive')}>{t('已归档会话')}</SheetAction>
+            {actions.map(({ icon, label, onClick }) => (
+              <SheetAction key={label} icon={icon} onClick={() => { setTool(null); onClick() }}>{label}</SheetAction>
+            ))}
           </div>
           {sortable && <p className="qn-hint mt-2">{t('长按项目行可拖动排序（仅此手机）')}</p>}
         </Dialog>
@@ -48,7 +65,7 @@ export function ProjectTools({ project, compact = false, sortable = false }: { p
       {tool === 'files' && <ProjectFileBrowser key={`${desktopId}:${project.id}`} desktopId={desktopId} project={project} onClose={() => setTool(null)} />}
       {tool === 'archive' && desktopId && <ArchivedConversations key={`${desktopId}:${project.id}`} desktopId={desktopId} project={project} onClose={() => setTool(null)} />}
       {tool === 'terminal' && (
-        <Dialog title={t('终端 · {name}', { name: project.name })} placement="full" closeAt="top" onClose={() => setTool(null)}>
+        <Dialog title={t('终端 · {name}', { name: project.name })} placement="full" onClose={() => setTool(null)}>
           <Suspense fallback={<p className="py-4 text-center text-sm text-qn-muted" role="status">{t('正在加载终端…')}</p>}>
             <TerminalPanel key={`${desktopId}:${project.id}`} project={project} />
           </Suspense>

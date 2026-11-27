@@ -755,7 +755,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       session.turnId = turnId
       if (!compact) session.turnMessageIds.set(turnId, messageId)
       session.compaction = compact
-      session.state = emptyMapState(session.state.taskNotifications)
+      session.state = emptyMapState(session.state.taskNotifications, session.state.contextWindow ?? null)
       for (const item of items) {
         session.state.items[scalarText(item.id)] = item
         session.state.order.push(scalarText(item.id))
@@ -918,7 +918,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const turnId = randomUUID()
     session.turnId = turnId
     session.compaction = false
-    session.state = emptyMapState(session.state.taskNotifications)
+    session.state = emptyMapState(session.state.taskNotifications, session.state.contextWindow ?? null)
     this.notify({ method: 'turn/started', params: {
       threadId: session.meta.id,
       turn: buildTurn(turnId, [], 'inProgress'),

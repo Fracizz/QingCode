@@ -1,13 +1,13 @@
-import { isActiveThread, isThreadOutcome, sessionStatus, t, type SessionStatus } from '@qn/codex-client'
+import { isActiveThread, isThreadOutcome, sessionStatus, t } from '@qn/codex-client'
 import { create } from 'zustand'
 import { archivedThreadKey, sessionKey } from './agents'
 import { getGateway } from './client'
 import { reorder } from './sortable'
-import { parseProjects, parseStoredRecord, type ThreadSummary } from './state'
-import { useApp } from './store'
+import { byCreatedAt, parseProjects, parseStoredRecord, type ThreadSummary } from './state'
+import { onThreadArchived, useApp } from './store'
 import type { AgentKind, Project, Target } from './types'
 
-export type WorkspaceTab = 'sessions' | 'projects' | 'connections'
+export type WorkspaceTab = 'sessions' | 'projects' | 'usage' | 'connections'
 type WorkspaceTabTap = { tab: WorkspaceTab; at: number }
 
 export function isWorkspaceTabDoubleTap(previous: WorkspaceTabTap | null, current: WorkspaceTabTap): boolean {
@@ -86,26 +86,14 @@ export function filterProjects(projects: Project[], targets: Target[], query: st
   })
 }
 
-/**
- * 会话按「需要关注程度」分档（参考 Orca 手机版 sort-stamps）：
- * 0 待审批 / 待输入 > 1 有新结果（未读） > 2 运行中 > 3 其余；看过的结果不再压过运行中的会话。
- */
-export function threadAttentionTier(status: SessionStatus, unread = false): number {
-  if (status === 'pending' || status === 'input') return 0
-  if (status === 'unread' || (unread && status !== 'running')) return 1
-  return status === 'running' ? 2 : 3
-}
-
+/** 会话固定按创建时间从新到旧排列（置顶除外），不随运行状态或新结果自动重排。 */
 export function groupWorkspaceThreads(
   threads: WorkspaceThread[], projects: Project[], query: string, preferences?: WorkspacePreferences,
-  /** 当前状态（含对话页实时状态）；省略时按列表缓存的状态计算。 */
-  statusOf: (thread: WorkspaceThread) => SessionStatus = (thread) => recentThreadStatus(thread),
 ): WorkspaceGroup[] {
   const needle = query.trim().toLocaleLowerCase()
   const groups = new Map<string, WorkspaceGroup>()
   const byId = new Map(projects.map((project) => [JSON.stringify([project.targetId, project.id]), project]))
-  const tier = new Map(threads.map((thread) => [thread, threadAttentionTier(statusOf(thread), thread.unread)]))
-  for (const entry of [...threads].sort((a, b) => tier.get(a)! - tier.get(b)! || b.updatedAt - a.updatedAt)) {
+  for (const entry of [...threads].sort(byCreatedAt)) {
     const title = preferences?.threads[preferenceKey(entry)]?.title
     const thread = title ? { ...entry, title } : entry
     const key = JSON.stringify([thread.targetId, thread.projectId])
@@ -118,11 +106,6 @@ export function groupWorkspaceThreads(
   }
   return [...groups.values()].map((group) => ({ ...group, threads: group.threads.sort((a, b) =>
     Number(Boolean(preferences?.threads[preferenceKey(b)]?.pinned)) - Number(Boolean(preferences?.threads[preferenceKey(a)]?.pinned))) }))
-}
-
-/** 把分组列表摊平成会话键序列，供 applyThreadOrder 稳定排序用。 */
-export function workspaceThreadOrder(groups: WorkspaceGroup[]): string[] {
-  return groups.flatMap((group) => group.threads.map(workspaceThreadKey))
 }
 
 export function workspaceProjectKey(project: Pick<Project, 'targetId' | 'id'>): string {
@@ -151,22 +134,12 @@ export function stickyGroupOrder(fresh: readonly string[], previous: readonly st
   return added.length ? [...added, ...previous] : [...previous]
 }
 
-/**
- * 按已稳定的顺序重排分组：状态频繁变化时列表不跟着跳，等一段时间后再统一换成最新顺序。
- * 不在旧顺序里的新会话排在最前；分组优先按 groupOrder 固定排序，未给出时按其中最靠前的会话排序。
- */
-export function applyThreadOrder(groups: WorkspaceGroup[], order: readonly string[], groupOrder?: readonly string[]): WorkspaceGroup[] {
-  const rank = new Map(order.map((key, index) => [key, index]))
-  const rankOf = (thread: WorkspaceThread) => rank.get(workspaceThreadKey(thread)) ?? -1
-  const sorted = order.length
-    ? groups.map((group) => ({ ...group, threads: [...group.threads].sort((a, b) => rankOf(a) - rankOf(b)) }))
-    : groups
-  if (groupOrder?.length) {
-    const groupRank = new Map(groupOrder.map((key, index) => [key, index]))
-    const groupRankOf = (group: WorkspaceGroup) => groupRank.get(workspaceGroupKey(group)) ?? -1
-    return [...sorted].sort((a, b) => groupRankOf(a) - groupRankOf(b))
-  }
-  return order.length ? [...sorted].sort((a, b) => rankOf(a.threads[0]!) - rankOf(b.threads[0]!)) : sorted
+/** 按 groupOrder 固定项目分组顺序；不在其中的分组排在最前。 */
+export function applyGroupOrder(groups: WorkspaceGroup[], groupOrder: readonly string[]): WorkspaceGroup[] {
+  if (!groupOrder.length) return groups
+  const groupRank = new Map(groupOrder.map((key, index) => [key, index]))
+  const groupRankOf = (group: WorkspaceGroup) => groupRank.get(workspaceGroupKey(group)) ?? -1
+  return [...groups].sort((a, b) => groupRankOf(a) - groupRankOf(b))
 }
 
 export function orderWorkspaceProjects(projects: Project[], ids: string[] = []): Project[] {
@@ -402,6 +375,17 @@ export function startWorkspaceObserver(): () => void {
   }
   if (typeof document !== 'undefined') document.addEventListener('visibilitychange', clearViewed)
 
+  // 缓存合并只增不减；Claude/pi 归档后手机没有本地标记，需在此直接移除，否则首页仍显示该会话。
+  const stopArchive = onThreadArchived((desktopId, targetId, archived) => {
+    const threads = useWorkspace.getState().threads[desktopId]
+    const matches = (item: WorkspaceThread) => item.targetId === targetId && item.agent === archived.agent && item.id === archived.id
+    if (!threads?.some(matches)) return
+    useWorkspace.setState((state) => ({
+      threads: { ...state.threads, [desktopId]: (state.threads[desktopId] ?? []).filter((item) => !matches(item)) },
+    }))
+    persistWorkspace()
+  })
+
   const unsubscribe = useApp.subscribe((now, before) => {
     if (now.connections !== before.connections) {
       // 重新配对换了证书指纹时，旧缓存可能属于另一台电脑，与草稿、队列一样不能带过去。
@@ -462,6 +446,7 @@ export function startWorkspaceObserver(): () => void {
   return () => {
     stop = true
     unsubscribe()
+    stopArchive()
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', clearViewed)
   }
 }

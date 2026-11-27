@@ -23,6 +23,8 @@ export type ThreadSummary = {
   preview: string
   cwd: string
   updatedAt: number
+  /** 创建时间（毫秒）；列表按它固定排序，不随会话活动跳动。旧缓存没有此字段时退回 updatedAt。 */
+  createdAt?: number
   activity?: ThreadActivity
   /** 会话所属 Agent；打开会话时必须用它对应的会话通道。 */
   agent: AgentKind
@@ -112,10 +114,13 @@ export function mobileApprovalReply(approval: ApprovalView, decision: MobileAppr
 }
 
 export function buildMobileTurnInput(agent: AgentKind, text: string, attachments: readonly UserInput[]): UserInput[] {
+  const skills: UserInput[] = []
   const extras: UserInput[] = []
   const fileLines: string[] = []
   for (const item of attachments) {
-    if (agent === 'codex' && item.type === 'mention' && !/^[a-z][a-z0-9+.-]*:\/\//i.test(item.path)) {
+    // 技能放在正文之前，与电脑版顺序一致；Claude / pi 的桥据此把它们拼成 /name 前缀。
+    if (item.type === 'skill') skills.push(item)
+    else if (agent === 'codex' && item.type === 'mention' && !/^[a-z][a-z0-9+.-]*:\/\//i.test(item.path)) {
       fileLines.push(`- ${item.name || item.path}: ${item.path}`)
     } else {
       extras.push(item)
@@ -125,7 +130,7 @@ export function buildMobileTurnInput(agent: AgentKind, text: string, attachments
     // i18n-ignore: 发给模型的提示词
     ? [text, ['附件文件（请按需读取）：', ...fileLines].join('\n')].filter(Boolean).join('\n\n')
     : text
-  return body ? [{ type: 'text', text: body, text_elements: [] }, ...extras] : extras
+  return [...skills, ...(body ? [{ type: 'text', text: body, text_elements: [] } satisfies UserInput] : []), ...extras]
 }
 
 export function toTimestamp(value: unknown): number {
@@ -347,12 +352,20 @@ export function toThreadSummaries(value: unknown, agent: AgentKind = 'codex'): T
       cwd: text(entry.cwd),
       // 排序优先用 recencyAt（Codex 专供排序的时间）：恢复会话也会刷新 updatedAt，点开一下就被顶到最上面。
       updatedAt: toTimestamp(entry.recencyAt ?? entry.updatedAt ?? entry.createdAt),
+      ...(toTimestamp(entry.createdAt) ? { createdAt: toTimestamp(entry.createdAt) } : {}),
       agent,
       ...(activity ? { activity } : {}),
     })
   }
-  return summaries.sort((a, b) => b.updatedAt - a.updatedAt)
+  return summaries.sort(byCreatedAt)
 }
+
+/** 会话创建时间；缺失时退回 updatedAt，保证旧缓存也能排序。 */
+export const threadCreatedAt = (thread: Pick<ThreadSummary, 'createdAt' | 'updatedAt'>) => thread.createdAt ?? thread.updatedAt
+
+/** 按创建时间从新到旧排列。 */
+export const byCreatedAt = (a: Pick<ThreadSummary, 'createdAt' | 'updatedAt'>, b: Pick<ThreadSummary, 'createdAt' | 'updatedAt'>) =>
+  threadCreatedAt(b) - threadCreatedAt(a)
 
 /** 目录浏览：Windows 与 POSIX 路径都要能回到上一级。 */
 export function parentPath(path: string): string | null {

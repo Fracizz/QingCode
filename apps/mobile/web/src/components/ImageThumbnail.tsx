@@ -1,6 +1,6 @@
 import { t } from '@qn/codex-client'
 import { useState } from 'react'
-import { BottomClose, Dialog } from './ui'
+import { Dialog } from './ui'
 import { ZoomableImage } from './ZoomableImage'
 
 type ImageThumbnailProps = {
@@ -29,7 +29,6 @@ export function ImageThumbnail({ src, alt, className, loading, externalHref }: I
               {externalHref && <a className="qn-button qn-button-ghost mt-2 text-qn-accent underline" href={externalHref} target="_blank" rel="noreferrer">{t('在浏览器中打开图片')}</a>}
             </div>
           )} />
-          <BottomClose autoFocus onClick={close} />
         </Dialog>
       )}
     </>

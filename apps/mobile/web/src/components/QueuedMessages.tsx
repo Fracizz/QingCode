@@ -1,10 +1,10 @@
 import { accessOptions, resolveAccessMode, type AccessSelection, t, translateMessage } from '@qn/codex-client'
-import { ChevronRight, GitBranch, ListOrdered, MessageSquarePlus, MoreHorizontal, Pencil, X } from 'lucide-react'
+import { GitBranch, ListOrdered, MessageSquarePlus, MoreHorizontal, Pencil, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { UNCONFIRMED_QUEUED_SEND } from '../queuedSends'
 import { selectedAccessPreference, selectedQueuedSends, useApp, type QueuedThreadMode } from '../store'
 import { MODE_ICONS } from './AccessModePicker'
-import { Badge, Button, Dialog, Note } from './ui'
+import { Badge, Button, Dialog, Note, SheetAction } from './ui'
 
 const newChatActions = [
   { mode: 'start', label: t('新会话开始'), Icon: MessageSquarePlus },
@@ -158,22 +158,13 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
       {/* 低频操作收进底部面板：一行只留引导、更多、移除，正文不再被挤成几个字。 */}
       {actionMessage && (
         <Dialog title={t('排队消息')} onClose={() => setActionsFor(null)}>
-          <p className="mb-3 line-clamp-3 whitespace-pre-wrap break-words text-sm text-qn-muted">{actionMessage.text.trim() || t('附件或引用')}</p>
-          <div className="qn-list-group">
+          <blockquote className="qn-sheet-quote">{actionMessage.text.trim() || t('附件或引用')}</blockquote>
+          {/* 与项目工具菜单同一套轻量动作行：操作项只是选择，不需要卡片套卡片和进入箭头。 */}
+          <div className="qn-sheet-actions">
             {newChatActions.map(({ mode, label, Icon }) => (
-              <button key={mode} type="button" className="qn-row qn-list-row w-full gap-3 text-left"
-                onClick={() => { setActionsFor(null); chooseDestination(actionMessage.id, mode) }}>
-                <Icon size={18} className="shrink-0 text-qn-muted" aria-hidden />
-                <span className="qn-list-primary min-w-0 flex-1">{label}</span>
-                <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />
-              </button>
+              <SheetAction key={mode} icon={Icon} onClick={() => { setActionsFor(null); chooseDestination(actionMessage.id, mode) }}>{label}</SheetAction>
             ))}
-            <button type="button" className="qn-row qn-list-row w-full gap-3 text-left"
-              onClick={() => { setActionsFor(null); startEdit(actionMessage.id, actionMessage.text) }}>
-              <Pencil size={18} className="shrink-0 text-qn-muted" aria-hidden />
-              <span className="qn-list-primary min-w-0 flex-1">{t('重新编辑')}</span>
-              <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />
-            </button>
+            <SheetAction icon={Pencil} onClick={() => { setActionsFor(null); startEdit(actionMessage.id, actionMessage.text) }}>{t('重新编辑')}</SheetAction>
           </div>
         </Dialog>
       )}

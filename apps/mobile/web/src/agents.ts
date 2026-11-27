@@ -1,6 +1,6 @@
 // 多 Agent 纯逻辑：会话键、事件路由、启用状态、会话列表合并。思路移植自桌面 lib/agents.ts，不跨包 import。
 import { isGlobalAccessMode, type GlobalAccessMode, t } from '@qn/codex-client'
-import type { ThreadSummary } from './state'
+import { byCreatedAt, type ThreadSummary } from './state'
 import type { AgentKind } from './types'
 
 type JsonRecord = Record<string, unknown>
@@ -97,12 +97,12 @@ export function pickDefaultAgent(
   return usable[0] ?? candidates[0] ?? DEFAULT_AGENT
 }
 
-/** 各 Agent 会话按更新时间降序合并；同时间按 Agent 名排序保证稳定。 */
+/** 各 Agent 会话按创建时间降序合并；同时间按 Agent 名排序保证稳定。 */
 export function mergeThreadSummaries(lists: readonly ThreadSummary[][]): ThreadSummary[] {
   return lists
     .flat()
     .slice()
-    .sort((a, b) => b.updatedAt - a.updatedAt || a.agent.localeCompare(b.agent))
+    .sort((a, b) => byCreatedAt(a, b) || a.agent.localeCompare(b.agent))
 }
 
 /** 不同 Agent 的会话 id 各自独立，列表 key 必须带 agent。 */

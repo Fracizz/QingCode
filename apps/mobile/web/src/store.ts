@@ -22,6 +22,7 @@ import {
   loadThread,
   openThreadHistory,
   pickAccount,
+  pickAccountUsage,
   pickClaudeSnapshot,
   pickSnapshot,
   prependThreadHistory,
@@ -37,6 +38,7 @@ import {
   type AccessMode,
   type AccessSelection,
   type AccountSummary,
+  type AccountUsage,
   type ClaudeRateLimitSnapshot,
   type ConversationState,
   type RateLimitSnapshot,
@@ -125,6 +127,7 @@ import {
 } from './transport'
 import { mobileTurnFits, queuedInput, QUEUE_STORAGE_KEY, restoreQueues, serializeQueues, UNCONFIRMED_QUEUED_SEND, type MobileTurnAccess, type QueuedSend } from './queuedSends'
 import { deliverTerminalEvent } from './terminalEvents'
+import { echoedSteerIds, withoutPendingSteers, withPendingSteer, type PendingSteer } from './pendingSteers'
 import type {
   AgentKind,
   Connection,
@@ -199,6 +202,11 @@ export type RateLimitEntry = {
   updatedAt: number | null
   loading: boolean
   error: string | null
+  /** Codex 账号级 token 总用量，仅在用户打开详情或点刷新时读取。 */
+  usage?: AccountUsage | null
+  usageLoading?: boolean
+  usageError?: string | null
+  usageUpdatedAt?: number | null
 }
 
 /** 一个目标上一个 Agent 的会话通道（键 = sessionKey(targetId, agent)）。 */
@@ -305,6 +313,8 @@ type AppState = {
   sending: boolean
   compactingThreads: Record<string, true>
   queuedSends: Record<string, QueuedSend[]>
+  /** 已发出、等待 Agent 回显的引导消息，按 sendKey 分组，仅存内存。 */
+  pendingSteers: Record<string, PendingSteer[]>
   backgroundConnectionEnabled: boolean
   error: string | null
   notice: string | null
@@ -360,6 +370,7 @@ type AppState = {
   beginQueuedEdit: (id: string) => ((resume?: boolean) => void) | null
   editQueuedSend: (id: string, text: string) => Promise<boolean>
   steerQueuedSend: (id: string) => Promise<boolean>
+  dropPendingSteers: (ids: string[]) => void
   sendQueuedInNewThread: (id: string, mode: QueuedThreadMode) => Promise<boolean>
   retryQueuedSend: () => Promise<void>
   interrupt: () => Promise<void>
@@ -368,6 +379,7 @@ type AppState = {
   setModelPrefs: (targetId: string, agent: AgentKind, prefs: ModelPrefs) => void
   refreshRateLimits: (targetId: string) => Promise<void>
   refreshClaudeRateLimits: (targetId: string) => Promise<boolean>
+  refreshAccountUsage: (targetId: string) => Promise<void>
   openFile: (location: FileLocation) => Promise<void>
   loadMoreFile: () => Promise<void>
   openDiff: (request: DiffRequest) => Promise<void>
@@ -426,6 +438,11 @@ function selectedSendAddress(state: AppState): SendAddress | null {
 export function selectedQueuedSends(state: AppState): QueuedSend[] | undefined {
   const address = selectedSendAddress(state)
   return address ? state.queuedSends[sendKey(address)] : undefined
+}
+
+export function selectedPendingSteers(state: AppState): PendingSteer[] | undefined {
+  const address = selectedSendAddress(state)
+  return address ? state.pendingSteers[sendKey(address)] : undefined
 }
 
 function accessPreference(state: AppState, address: SendAddress): AccessSelection | undefined {
@@ -529,6 +546,8 @@ let refreshToken = 0
 let viewerToken = 0
 const opening = new Map<string, Promise<boolean>>()
 const rateRefresh = new Map<string, Promise<void>>()
+const usageRefresh = new Map<string, Promise<void>>()
+const ACCOUNT_USAGE_MIN_INTERVAL_MS = 60_000
 const OPEN_THREAD_TIMEOUT_MS = 30_000
 /** 打开会话时等待事件流恢复的上限（整体仍受 OPEN_THREAD_TIMEOUT_MS 约束）。 */
 const EVENTS_WAIT_MS = 15_000
@@ -537,6 +556,18 @@ const EVENTS_UNAVAILABLE_MESSAGE = t('暂时无法连接电脑，正在自动重
 /** 页面重载前关闭原生层事件流，否则旧连接会一直留到应用退出。 */
 export function releaseEventStream(): void {
   controller?.stop()
+}
+
+type ArchiveListener = (desktopId: string, targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>) => void
+const archiveListeners = new Set<ArchiveListener>()
+
+/**
+ * 会话归档成功（本机操作或目标机通知）时回调。Claude/pi 的归档只记在目标机，
+ * 手机不再保留本地标记，首页缓存等派生列表需借此移除对应会话。
+ */
+export function onThreadArchived(listener: ArchiveListener): () => void {
+  archiveListeners.add(listener)
+  return () => { archiveListeners.delete(listener) }
 }
 
 export const useApp = create<AppState>((set, get) => {
@@ -734,6 +765,7 @@ export const useApp = create<AppState>((set, get) => {
     }
     updateQueue(sendKey({ desktopId, targetId, agent: thread.agent, threadId: thread.id }), () => [])
     forgetArchivedChat(desktopId, targetId, thread)
+    for (const listener of archiveListeners) listener(desktopId, targetId, thread)
   }
 
   /** 旧版只记在手机上的 Claude/pi 归档：补写到目标机后删掉本地记录，电脑端随之隐藏。 */
@@ -922,6 +954,20 @@ export const useApp = create<AppState>((set, get) => {
       }
       return remaining
     })
+  }
+
+  /** Claude / pi 要等真正消费输入才回显引导，先留本地占位；Codex 收到即回显，不需要。 */
+  function rememberPendingSteer(address: SendAddress, id: string, message: Pick<QueuedSend, 'text' | 'annotations' | 'attachments'>): void {
+    if (address.agent === 'codex') return
+    const items = get().sessions[sessionKey(address.targetId, address.agent)]?.state.threads[address.threadId]?.items ?? []
+    const steer: PendingSteer = {
+      id,
+      text: formatQuotedMessage(message.annotations, message.text),
+      attachments: message.attachments.length,
+      sentAt: Date.now(),
+    }
+    if (echoedSteerIds([steer], items).length > 0) return
+    set((state) => ({ pendingSteers: withPendingSteer(state.pendingSteers, sendKey(address), steer) }))
   }
 
   function pauseQueue(key: string, message: string): void {
@@ -1169,6 +1215,7 @@ export const useApp = create<AppState>((set, get) => {
     }
     opening.clear()
     rateRefresh.clear()
+    usageRefresh.clear()
     claudeCostPerTurn.clear()
     reconnectTask = null
     targetLinkEpochs.clear()
@@ -1300,18 +1347,19 @@ export const useApp = create<AppState>((set, get) => {
             session.loadedThreads.delete(params.threadId)
           }
         }
-        if (method === 'thread/archived' && typeof params?.threadId === 'string') {
-          session.resumedCodexThreads.delete(params.threadId)
-          session.loadedThreads.delete(params.threadId)
-          recordArchive(conn.id, targetId, { id: params.threadId, agent })
-        }
-        if (method === 'thread/unarchived' && get().selectedTargetId === targetId) {
-          void get().refreshThreads({ skipFailed: true })
-        }
         if (method === 'thread/name/updated' && typeof params?.threadName === 'string' && get().selectedTargetId === targetId) {
           const { threadId, threadName } = params
           set(({ threads }) => ({ threads: threads.map((item) => item.agent === agent && item.id === threadId ? { ...item, title: threadName } : item) }))
         }
+      }
+      // Claude/pi 的 server 同样发出归档通知，电脑端归档后手机也要随之隐藏。
+      if (method === 'thread/archived' && typeof params?.threadId === 'string') {
+        session.resumedCodexThreads.delete(params.threadId)
+        session.loadedThreads.delete(params.threadId)
+        recordArchive(conn.id, targetId, { id: params.threadId, agent })
+      }
+      if (method === 'thread/unarchived' && get().selectedTargetId === targetId) {
+        void get().refreshThreads({ skipFailed: true })
       }
       if (method === 'turn/completed') {
         const turn = isRecord(params?.turn) ? params.turn : null
@@ -1573,6 +1621,7 @@ export const useApp = create<AppState>((set, get) => {
     sending: false,
     compactingThreads: {},
     queuedSends: {},
+    pendingSteers: {},
     backgroundConnectionEnabled: true,
     error: null,
     notice: null,
@@ -3102,8 +3151,12 @@ export const useApp = create<AppState>((set, get) => {
           if (current?.status !== 'running' || current.activeTurnId !== expectedTurnId) {
             throw new Error(t('当前一轮已结束或切换，消息已保留'))
           }
-          await steerTurn(session.rpc, threadId, expectedTurnId, input, makeId())
-          if (epoch === desktopEpoch) clearSentDraft(sentDraftKey)
+          const steerId = makeId()
+          await steerTurn(session.rpc, threadId, expectedTurnId, input, steerId)
+          if (epoch === desktopEpoch) {
+            clearSentDraft(sentDraftKey)
+            rememberPendingSteer(address, steerId, message)
+          }
           return true
         }
         if (current?.status === 'running') {
@@ -3217,8 +3270,12 @@ export const useApp = create<AppState>((set, get) => {
         }
         // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
         if (queueLimited(address)) throw new Error('当前额度已用完，排队消息已保留')
-        await steerTurn(session.rpc, threadId, turnId, input, makeId())
-        if (epoch === desktopEpoch) void dropQueuedSend(key, id)
+        const steerId = makeId()
+        await steerTurn(session.rpc, threadId, turnId, input, steerId)
+        if (epoch === desktopEpoch) {
+          void dropQueuedSend(key, id)
+          rememberPendingSteer(address, steerId, item)
+        }
         return true
       } catch (err) {
         if (epoch === desktopEpoch) {
@@ -3234,6 +3291,16 @@ export const useApp = create<AppState>((set, get) => {
           void flushQueue(address)
         }
       }
+    },
+
+    dropPendingSteers: (ids) => {
+      const address = selectedSendAddress(get())
+      if (!address || ids.length === 0) return
+      const key = sendKey(address)
+      set((state) => {
+        const pendingSteers = withoutPendingSteers(state.pendingSteers, key, ids)
+        return pendingSteers === state.pendingSteers ? state : { pendingSteers }
+      })
     },
 
     sendQueuedInNewThread: async (id, mode) => {
@@ -3503,6 +3570,34 @@ export const useApp = create<AppState>((set, get) => {
         }
       })()
       rateRefresh.set(targetId, task)
+      return task
+    },
+
+    refreshAccountUsage: async (targetId) => {
+      const busy = usageRefresh.get(targetId)
+      if (busy) return busy
+      const session = get().sessions[sessionKey(targetId, 'codex')]
+      // 不为读用量单独启动 Codex（Agent 适配规范 R9），未打开时保持现状。
+      if (!session?.opened) return
+      // Agent 适配规范 §4：账号接口刷新间隔不少于 60 秒，期间沿用已读到的结果。
+      const last = get().rateLimits[targetId]?.usageUpdatedAt
+      if (last != null && Date.now() - last < ACCOUNT_USAGE_MIN_INTERVAL_MS) return
+      const epoch = desktopEpoch
+      const rpc = session.rpc
+      patchRate(targetId, { usageLoading: true })
+      const task = (async () => {
+        try {
+          const usage = pickAccountUsage(await rpc.request('account/usage/read', {}))
+          if (epoch !== desktopEpoch || get().sessions[session.key]?.rpc !== rpc) return
+          patchRate(targetId, { usage, usageLoading: false, usageError: null, usageUpdatedAt: Date.now() })
+        } catch (err) {
+          // 旧版 Codex 没有该方法时同样落到这里，界面提示读取失败即可。
+          if (epoch === desktopEpoch) patchRate(targetId, { usageLoading: false, usageError: friendlyError(err, t('读取总用量失败')) })
+        } finally {
+          if (epoch === desktopEpoch) usageRefresh.delete(targetId)
+        }
+      })()
+      usageRefresh.set(targetId, task)
       return task
     },
 

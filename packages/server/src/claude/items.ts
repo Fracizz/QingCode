@@ -19,6 +19,7 @@ import {
   reasoningItem,
   scalarText,
   summarizeInput,
+  tokenBreakdown,
   tokenUsage,
   userMessageContentItem,
   buildTurn,
@@ -58,6 +59,10 @@ export interface MapState {
    * 且二者先后不定（SDK 常先给完整消息再给 content_block_stop），据此保证 started/completed 各一次。
    */
   blockPhase?: Record<string, 'started' | 'done'>
+  /** 模型上下文窗口（来自 result.modelUsage[].contextWindow），跨轮保留，供上下文占用环换算百分比。 */
+  contextWindow?: number | null
+  /** 本轮最近一次主代理 API 调用的 token 计数，即当前上下文占用。 */
+  contextUsage?: Json | null
 }
 
 export interface MapResult {
@@ -74,8 +79,9 @@ export interface MapOptions {
 const FILE_EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 const BASH_TOOLS = new Set(['Bash', 'PowerShell'])
 
-export function emptyMapState(taskNotifications?: TaskNotificationState): MapState {
+export function emptyMapState(taskNotifications?: TaskNotificationState, contextWindow: number | null = null): MapState {
   return {
+    contextWindow,
     nextItem: 0,
     messageId: null,
     blockIds: {},
@@ -100,6 +106,8 @@ function cloneState(state: MapState): MapState {
     order: [...state.order],
     taskNotifications: state.taskNotifications,
     ...(state.blockPhase ? { blockPhase: { ...state.blockPhase } } : {}),
+    contextWindow: state.contextWindow ?? null,
+    contextUsage: state.contextUsage ?? null,
   }
 }
 
@@ -388,6 +396,33 @@ function assistantBlockId(
   return ensureBlockItem(ctx, resolved, kind, state)
 }
 
+/**
+ * 每次主代理 API 调用都带 message.usage，其输入 + 缓存 + 输出就是此刻的上下文占用。
+ * 逐次上报，占用环在一轮进行中就能实时变化，而不是等 result 才更新。子代理的调用不计入主会话上下文。
+ */
+function mapContextUsage(message: Json, ctx: MapContext, state: MapState, out: V2Notification[]): void {
+  if (message.parent_tool_use_id || !ctx.turnId) return
+  const usage = asRecord(asRecord(message.message)?.usage)
+  if (!usage) return
+  const last = tokenBreakdown(usage)
+  if (last.totalTokens <= 0 || state.contextUsage?.totalTokens === last.totalTokens) return
+  state.contextUsage = last
+  out.push(notification('thread/tokenUsage/updated', {
+    threadId: ctx.threadId,
+    turnId: ctx.turnId,
+    tokenUsage: { total: last, last, modelContextWindow: state.contextWindow ?? null, estimated: true },
+  }))
+}
+
+/** 多个模型（如子代理用了另一个模型）时取最大窗口：主会话模型的窗口通常最大，宁可低估占用比例。 */
+function modelContextWindow(result: Json): number | null {
+  const models = asRecord(result.modelUsage)
+  if (!models) return null
+  const windows = Object.values(models).map((model) => finite(asRecord(model)?.contextWindow))
+    .filter((value): value is number => value !== null && value > 0)
+  return windows.length ? Math.max(...windows) : null
+}
+
 function mapAssistant(message: Json, ctx: MapContext, state: MapState, out: V2Notification[]): void {
   const payload = asRecord(message.message)
   if (!payload) return
@@ -528,6 +563,7 @@ function mapMessage(
       break
     case 'assistant':
       mapAssistant(msg, ctx, state, out)
+      mapContextUsage(msg, ctx, state, out)
       break
     case 'user': {
       const isOwnPrompt = state.items[scalarText(msg.uuid)]?.type === 'userMessage'
@@ -569,11 +605,12 @@ function mapMessage(
       const durationMs = finite(msg.duration_ms)
       if (durationMs !== null && durationMs >= 0) turn.durationMs = durationMs
       out.push(notification('turn/completed', { threadId: ctx.threadId, turn }))
+      state.contextWindow = modelContextWindow(msg) ?? state.contextWindow ?? null
       out.push(
         notification('thread/tokenUsage/updated', {
           threadId: ctx.threadId,
           turnId: ctx.turnId,
-          tokenUsage: tokenUsage(msg),
+          tokenUsage: tokenUsage(msg, { last: state.contextUsage ?? null, window: state.contextWindow }),
         }),
       )
       break

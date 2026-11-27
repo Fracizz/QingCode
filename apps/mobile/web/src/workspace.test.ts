@@ -4,7 +4,7 @@ import { createGateway, setGateway } from './client'
 import { MOCK_FP } from './mock'
 import { useApp } from './store'
 import type { Connection, Project, Target } from './types'
-import { applyThreadOrder, threadAttentionTier, workspaceThreadOrder, changeThreadPreference, closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, moveWorkspaceProject, orderWorkspaceProjects, recentThreadStatus, registerBackHandler, startWorkspaceObserver, stickyGroupOrder, workspaceGroupKey, pinnedFirst, toggleProjectPin, workspaceProjectKey, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
+import { applyGroupOrder, changeThreadPreference, closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, moveWorkspaceProject, orderWorkspaceProjects, recentThreadStatus, registerBackHandler, startWorkspaceObserver, stickyGroupOrder, workspaceGroupKey, pinnedFirst, toggleProjectPin, workspaceProjectKey, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
 
 const laptop: Project = { id: 'laptop', targetId: 'local', name: 'sandbox', path: 'C:\\sandbox', lastOpenedAt: 1 }
 const remote: Project = { id: 'remote', targetId: 'ssh', name: 'sandbox', path: '/srv/sandbox', lastOpenedAt: 0 }
@@ -187,39 +187,14 @@ describe('移动工作台', () => {
   })
 })
 
-describe('会话分档排序', () => {
-  it('待处理 > 未读结果 > 运行中 > 其余，看过的结果不压过运行中', () => {
-    expect(threadAttentionTier('pending')).toBe(0)
-    expect(threadAttentionTier('input')).toBe(0)
-    expect(threadAttentionTier('unread')).toBe(1)
-    expect(threadAttentionTier('failed', true)).toBe(1)
-    expect(threadAttentionTier('running', true)).toBe(2)
-    expect(threadAttentionTier('completed')).toBe(3)
-  })
-
-  it('分组按最需要关注的会话排序，档内按时间，置顶仍在组内最前', () => {
+describe('会话排序', () => {
+  it('按创建时间从新到旧排列，不随运行状态、未读或最近活动重排', () => {
     const rows = [
-      thread(laptop, { id: 'new-idle', updatedAt: 9 }),
-      thread(laptop, { id: 'old-running', updatedAt: 1, activity: 'running' }),
-      thread(remote, { id: 'remote-input', updatedAt: 2 }),
-      thread(remote, { id: 'remote-done', updatedAt: 3, activity: 'completed', unread: true }),
+      thread(laptop, { id: 'old-active', createdAt: 1, updatedAt: 99, activity: 'running', unread: true }),
+      thread(laptop, { id: 'new-idle', createdAt: 9, updatedAt: 9 }),
+      thread(laptop, { id: 'mid-done', createdAt: 5, updatedAt: 50, activity: 'completed', unread: true }),
     ]
-    const status = (item: WorkspaceThread) => item.id === 'remote-input' ? 'input' as const : recentThreadStatus(item)
-    const groups = groupWorkspaceThreads(rows, [laptop, remote], '', undefined, status)
-    expect(groups.map((group) => group.threads.map((item) => item.id))).toEqual([
-      ['remote-input', 'remote-done'],
-      ['old-running', 'new-idle'],
-    ])
-  })
-
-  it('稳定顺序：沿用旧顺序重排分组，新会话排在最前', () => {
-    const a = thread(laptop, { id: 'a' })
-    const b = thread(laptop, { id: 'b' })
-    const c = thread(remote, { id: 'c' })
-    const fresh = [{ project: remote, threads: [c] }, { project: laptop, threads: [b, a] }]
-    const settled = workspaceThreadOrder([{ project: laptop, threads: [a, b] }])
-    expect(applyThreadOrder(fresh, settled).map((group) => group.threads.map((item) => item.id))).toEqual([['c'], ['a', 'b']])
-    expect(applyThreadOrder(fresh, [])).toBe(fresh)
+    expect(groupWorkspaceThreads(rows, [laptop], '')[0]?.threads.map((item) => item.id)).toEqual(['new-idle', 'mid-done', 'old-active'])
   })
 
   it('置顶项目排在最前，其余保持原顺序', () => {
@@ -236,7 +211,8 @@ describe('会话分档排序', () => {
     const fresh = [{ project: remote, threads: [c] }, { project: laptop, threads: [a] }]
     const next = stickyGroupOrder(fresh.map(workspaceGroupKey), fixed)
     expect(next).toEqual(fixed)
-    expect(applyThreadOrder(fresh, [], next).map((group) => group.project.id)).toEqual([laptop.id, remote.id])
+    expect(applyGroupOrder(fresh, next).map((group) => group.project.id)).toEqual([laptop.id, remote.id])
+    expect(applyGroupOrder(fresh, [])).toBe(fresh)
     expect(stickyGroupOrder(['x', ...fixed], fixed)).toEqual(['x', ...fixed])
     // 被搜索暂时过滤掉的项目保留原位。
     expect(stickyGroupOrder([fixed[1]!], fixed)).toEqual(fixed)

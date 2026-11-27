@@ -80,7 +80,7 @@ describe('启用状态与默认 Agent', () => {
 })
 
 describe('会话列表合并', () => {
-  it('各 Agent 的会话按更新时间降序合并并保留 Agent 标注', () => {
+  it('各 Agent 的会话按创建时间降序合并并保留 Agent 标注', () => {
     const codex = toThreadSummaries({ data: [{ id: 'a', preview: 'A', updatedAt: 100 }, { id: 'c', preview: 'C', updatedAt: 300 }] }, 'codex')
     const claude = toThreadSummaries({ data: [{ id: 'b', preview: 'B', updatedAt: 200 }, { id: 'a', preview: 'A2', updatedAt: 100 }] }, 'claude')
     const merged = mergeThreadSummaries([codex, claude, []])

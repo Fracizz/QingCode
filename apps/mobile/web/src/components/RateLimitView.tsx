@@ -5,13 +5,17 @@ import {
   claudeQuotaSource,
   claudeQuotaSummary,
   compactText,
+  formatTokens,
   formatReset,
   claudeHasWindows,
   remainingQuotaPercent,
   severity,
   severityForPercent,
   tightestPercent,
+  recentUsageDays,
+  sumUsageTokens,
   windowLabel,
+  type AccountUsage,
   type ClaudeRateLimitSnapshot,
   type RateLimitWindow,
   getLocale,
@@ -131,7 +135,7 @@ export function TargetRateLimits({ targetId, targetName, available }: {
       {open && (open === 'codex' ? showCodex : showClaude) && (
         <Dialog title={t('{target} · {agent} 额度', { target: targetName, agent: agentLabel(open) })} onClose={() => setOpen(null)}>
           {open === 'codex'
-            ? <RateLimitDetails targetId={targetId} available={available} />
+            ? <RateLimitDetails targetId={targetId} available={available} showUsage />
             : <ClaudeQuotaDetails targetId={targetId} snapshot={claude} available={available && claudeOpened} />}
         </Dialog>
       )}
@@ -140,7 +144,7 @@ export function TargetRateLimits({ targetId, targetName, available }: {
 }
 
 /** 对话里模型弹层下方的额度区：只看当前目标、当前 Agent，比在连接页单独开入口更贴近使用场景。 */
-export function AgentQuota({ targetId, agent }: { targetId: string; agent: string }) {
+export function AgentQuota({ targetId, agent, showUsage }: { targetId: string; agent: string; showUsage?: boolean }) {
   const opened = useApp((s) => s.sessions[sessionKey(targetId, 'codex')]?.opened === true)
   const claudeAvailable = useApp((s) => s.eventsConnected && s.sessions[sessionKey(targetId, 'claude')]?.opened === true)
   const claude = useApp((s) => s.claudeRateLimits[targetId])
@@ -148,7 +152,7 @@ export function AgentQuota({ targetId, agent }: { targetId: string; agent: strin
     return (
       <section className="mb-3" aria-label={t('Codex 额度')}>
         <div className="qn-label">{t('额度')}</div>
-        <RateLimitDetails targetId={targetId} available={opened} />
+        <RateLimitDetails targetId={targetId} available={opened} showUsage={showUsage} />
       </section>
     )
   }
@@ -183,7 +187,7 @@ function WindowRow({ label, window, now }: { label: string; window: RateLimitWin
   )
 }
 
-export function RateLimitDetails({ targetId, available }: { targetId: string; available: boolean }) {
+export function RateLimitDetails({ targetId, available, showUsage }: { targetId: string; available: boolean; showUsage?: boolean }) {
   const entry = useApp((s) => s.rateLimits[targetId])
   const session = useApp((s) => s.sessions[sessionKey(targetId, 'codex')])
   const [now, setNow] = useState(() => Date.now())
@@ -204,6 +208,7 @@ export function RateLimitDetails({ targetId, available }: { targetId: string; av
     const app = useApp.getState()
     if (app.sessions[sessionKey(targetId, 'codex')]?.opened) {
       void app.refreshRateLimits(targetId)
+      if (showUsage) void app.refreshAccountUsage(targetId)
     } else {
       // 显式刷新才打开尚未运行的 Codex，打开后由会话通道发起首次读取。
       void app.ensureOpen(targetId, 'codex')
@@ -239,6 +244,7 @@ export function RateLimitDetails({ targetId, available }: { targetId: string; av
         <p className="mb-2 text-xs text-qn-danger">{snapshot.rateLimitReachedType
           ? t('已达额度上限（{type}）', { type: snapshot.rateLimitReachedType }) : t('已达额度上限')}</p>
       )}
+      {showUsage && <AccountUsageSummary targetId={targetId} available={available} />}
       <div className="mt-2 border-t border-qn-border pt-2 text-[11px] text-qn-muted">
         {account ? (
           <>
@@ -254,5 +260,74 @@ export function RateLimitDetails({ targetId, available }: { targetId: string; av
         })}</div>
       </div>
     </div>
+  )
+}
+
+const USAGE_DAYS = 7
+
+/** Codex 账号级总用量（官方 account/usage/read）。打开详情时读一次，之后跟随上方刷新按钮。 */
+function AccountUsageSummary({ targetId, available }: { targetId: string; available: boolean }) {
+  const usage = useApp((s) => s.rateLimits[targetId]?.usage)
+  const loading = useApp((s) => s.rateLimits[targetId]?.usageLoading === true)
+  const error = useApp((s) => s.rateLimits[targetId]?.usageError ?? null)
+  const refreshUsage = useApp((s) => s.refreshAccountUsage)
+  const opened = useApp((s) => s.sessions[sessionKey(targetId, 'codex')]?.opened === true)
+  const loaded = usage !== undefined
+  const ready = available && opened
+
+  useEffect(() => {
+    // 只在 Codex 会话已打开时读取，不为此启动 Agent；读到结果后不再自动重复请求。
+    if (ready && !loaded) void refreshUsage(targetId)
+  }, [ready, loaded, refreshUsage, targetId])
+
+  return (
+    <section className="mt-3 border-t border-qn-border pt-2" aria-label={t('Codex 总用量')}>
+      <div className="mb-1 flex items-center justify-between text-xs">
+        <span>{t('总用量')}</span>
+        {loading && <span className="text-qn-muted">{t('刷新中…')}</span>}
+      </div>
+      {error && <p className="mb-1 text-xs text-qn-danger">{translateMessage(error)}</p>}
+      {usage ? <UsageStats usage={usage} /> : !loading && !error && (
+        <p className="text-xs text-qn-muted">{ready ? t('暂无用量数据') : t('打开 Codex 后可查看')}</p>
+      )}
+    </section>
+  )
+}
+
+function UsageStats({ usage }: { usage: AccountUsage }) {
+  const days = recentUsageDays(usage, USAGE_DAYS)
+  const max = Math.max(1, ...days.map((day) => day.tokens))
+  const rows: Array<[string, string]> = []
+  if (usage.lifetimeTokens !== null) rows.push([t('累计'), `${formatTokens(usage.lifetimeTokens)} tokens`])
+  if (days.length > 0) rows.push([t('近 {days} 天', { days: days.length }), `${formatTokens(sumUsageTokens(days))} tokens`])
+  if (usage.peakDailyTokens !== null) rows.push([t('单日峰值'), `${formatTokens(usage.peakDailyTokens)} tokens`])
+  if (usage.currentStreakDays !== null) {
+    rows.push([t('连续使用'), usage.longestStreakDays !== null
+      ? t('{days} 天（最长 {longest} 天）', { days: usage.currentStreakDays, longest: usage.longestStreakDays })
+      : t('{days} 天', { days: usage.currentStreakDays })])
+  }
+  return (
+    <>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+        {rows.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-qn-muted">{label}</dt>
+            <dd className="text-right tabular-nums">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {days.length > 1 && (
+        <div className="mt-2 flex h-10 items-end gap-1" role="img"
+          aria-label={t('近 {days} 天每日用量：{list}', {
+            days: days.length,
+            list: days.map((day) => `${day.date.slice(5)} ${formatTokens(day.tokens)}`).join(', '),
+          })}>
+          {days.map((day) => (
+            <div key={day.date} className="flex-1 rounded-sm"
+              style={{ height: `${Math.max(4, (day.tokens / max) * 100)}%`, background: day.tokens > 0 ? 'var(--color-qn-accent)' : 'var(--color-qn-border)' }} />
+          ))}
+        </div>
+      )}
+    </>
   )
 }

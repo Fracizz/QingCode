@@ -109,7 +109,7 @@ describe('parseConnections', () => {
 })
 
 describe('toThreadSummaries / formatTime', () => {
-  it('按更新时间倒序，兼容秒级时间戳', () => {
+  it('按创建时间倒序（缺失时退回更新时间），兼容秒级时间戳', () => {
     const summaries = toThreadSummaries({
       data: [
         { id: 'old', preview: '第一行\n第二行', cwd: '/a', updatedAt: 1_600_000_000 },
@@ -120,6 +120,15 @@ describe('toThreadSummaries / formatTime', () => {
     })
     expect(summaries.map((item) => item.id)).toEqual(['new', 'old', 'opened'])
     expect(summaries[1]?.title).toBe('第一行')
+    // 有创建时间时按创建时间排序，最近活动时间不影响顺序。
+    const created = toThreadSummaries({
+      data: [
+        { id: 'first', preview: 'a', createdAt: 1_600_000_000, updatedAt: 1_900_000_000 },
+        { id: 'second', preview: 'b', createdAt: 1_700_000_000, updatedAt: 1_700_000_000 },
+      ],
+    })
+    expect(created.map((item) => item.id)).toEqual(['second', 'first'])
+    expect(created[1]?.createdAt).toBe(1_600_000_000_000)
     expect(formatTime(0)).toBe('—')
     expect(formatTime(1_700_000_000_000)).not.toBe('—')
   })
@@ -214,6 +223,15 @@ describe('会话恢复、草稿和审批', () => {
       resource, image,
     ])
     expect(buildMobileTurnInput('claude', '', [file])).toEqual([file])
+  })
+
+  it('技能放在正文之前，只有技能也能组成输入', () => {
+    const skill = { type: 'skill', name: 'pdf', path: '/skills/pdf/SKILL.md' } as const
+    const image = { type: 'image', url: 'data:image/png;base64,AA==' } as const
+    expect(buildMobileTurnInput('claude', '整理', [image, skill])).toEqual([
+      skill, { type: 'text', text: '整理', text_elements: [] }, image,
+    ])
+    expect(buildMobileTurnInput('codex', '', [skill])).toEqual([skill])
   })
 })
 

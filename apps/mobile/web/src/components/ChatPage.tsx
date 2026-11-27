@@ -1,4 +1,4 @@
-import { ChevronDown, PanelLeft, Square } from 'lucide-react'
+import { ChevronDown, GitCompare, PanelLeft, Square } from 'lucide-react'
 import { accessOptions, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, resolveAccessMode, sessionStatus, sessionStatusLabels, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
@@ -18,9 +18,12 @@ import { GitChangesDialog } from './GitChangesDialog'
 import { FileActionsContext, MessageItem, ToolGroup, WorkGroup, type FileActions } from './MessageItem'
 import { ModelPicker } from './ModelSheet'
 import { NewSessionButton } from './NewSessionButton'
+import { ProjectTools } from './ProjectTools'
+import { PendingSteers } from './PendingSteers'
 import { QueuedMessages } from './QueuedMessages'
 import { AgentQuota } from './RateLimitView'
 import { SessionSwitcher } from './SessionSwitcher'
+import { skillsKey, useSkills } from '../skills'
 import { SubagentLauncher } from './SubagentDetails'
 import { Badge, Button, Dialog, Empty, Header, LoadingIcon, Note } from './ui'
 
@@ -166,6 +169,14 @@ export function ChatPage() {
   const subtitleProject = threadTitle ? project?.name : undefined
   const statusLabel = selectedThreadId ? sessionStatusLabels[sessionStatus(view, thread?.activity)] : null
   const cwd = currentCwd({ projects, selectedProjectId })
+  // 技能随 Agent、目标和项目变化；会话连上后再拉，Claude 空闲时强制刷新以带出刚装的技能。
+  const skillKey = selectedTargetId ? skillsKey(selectedTargetId, selectedAgent, cwd || null) : null
+  const skills = useSkills((s) => skillKey ? s.lists[skillKey]?.items : undefined)
+  const loadSkills = useSkills((s) => s.load)
+  const skillRpc = session?.opened ? session.rpc : undefined
+  useEffect(() => {
+    if (skillKey && skillRpc) void loadSkills(skillKey, cwd || null, skillRpc, selectedAgent === 'claude' && !running)
+  }, [skillKey, cwd, skillRpc, loadSkills, selectedAgent, running])
   const imageUnavailable = resolveSelection(models ?? [], modelPrefs).model?.imageInput === false
     ? t('当前模型不支持图片') : undefined
   const fileActions = useMemo<FileActions>(() => ({
@@ -276,7 +287,10 @@ export function ChatPage() {
       case 'new': void state.newThread(selectedAgent); return
       case 'resume': setSwitching(true); return
       case 'stop': void stopTurn(); return
-      case 'refresh': void state.refreshThreads(); return
+      case 'refresh':
+        void state.refreshThreads()
+        if (skillKey && skillRpc) void loadSkills(skillKey, cwd || null, skillRpc, true)
+        return
       case 'compact': setContextPanel({ key: chatKey, panel: 'confirm' }); return
       case 'context': setContextPanel({ key: chatKey, panel: 'usage' }); return
       case 'model':
@@ -340,6 +354,9 @@ export function ChatPage() {
             )}
             {/* 常驻新建入口：不必先回到会话列表；无当前项目时由按钮内弹出项目选择。 */}
             <NewSessionButton project={project} projects={projects} iconOnly className="qn-header-icon size-[44px] shrink-0" />
+            {/* 对话中直接进入项目文件、终端、Git 差异等页面，不必先退回项目列表。 */}
+            {project && <ProjectTools key={project.id} project={project} compact className="qn-header-icon size-[44px] shrink-0"
+              actions={[{ icon: GitCompare, label: t('Git 差异'), onClick: () => runCommand('diff') }]} />}
           </>
         }
       />
@@ -432,6 +449,13 @@ export function ChatPage() {
             {commandMessage && !activeCommand && <Note message={commandMessage} onClose={() => setCommandFeedback(null)} />}
           </div>
         )}
+        <PendingSteers key={`steer:${chatKey}`} items={items} running={running} agentName={agentLabel(selectedAgent)}
+          onRestore={(text) => {
+            // 输入框已有内容时追加在后面，不覆盖用户正在写的草稿。
+            const current = useApp.getState().draftText
+            setDraftText(current.trim() ? `${current}
+${text}` : text)
+          }} />
         <QueuedMessages key={`queue:${chatKey}`} running={running} canSteer={!compacting && !!view?.activeTurnId} />
         <Composer
           key={chatKey}
@@ -461,6 +485,7 @@ export function ChatPage() {
           canSteer={!!view?.activeTurnId}
           steerHint={selectedAgent === 'claude' ? t('本轮结束时可能进入下一轮') : undefined}
           commands={{ run: runCommand, unavailable: commandReason }}
+          skills={skills}
           toolbar={
             <>
               {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">{t('无审批：工具直接执行')}</span>}
@@ -475,15 +500,17 @@ export function ChatPage() {
               )}
               {selectedTargetId && <ModelPicker targetId={selectedTargetId} agent={selectedAgent}
                 open={activeCommand === 'model'} onOpenChange={(open) => setCommandDialog(open ? { key: chatKey, id: 'model' } : null)} />}
-              <ContextUsage key={`context:${chatKey}`} tokenUsage={view?.tokenUsage} estimatedCostUsd={claudeCost}
-                panel={contextPanel?.key === chatKey ? contextPanel.panel : null}
-                onPanelChange={(panel) => setContextPanel(panel ? { key: chatKey, panel } : null)}
-                compact={selectedThreadId ? {
+            </>
+          }
+          trailing={
+            <ContextUsage key={`context:${chatKey}`} tokenUsage={view?.tokenUsage} estimatedCostUsd={claudeCost}
+              panel={contextPanel?.key === chatKey ? contextPanel.panel : null}
+              onPanelChange={(panel) => setContextPanel(panel ? { key: chatKey, panel } : null)}
+              compact={selectedThreadId ? {
                 busy: compacting,
                 blockedReason: compactionBlockedReason,
                 onConfirm: () => void compactConversation(),
               } : undefined} />
-            </>
           }
         />
       </div>
@@ -494,7 +521,7 @@ export function ChatPage() {
         ))}</ul>
       </Dialog>}
       {activeCommand === 'status' && selectedTargetId && <Dialog title={t('{agent} 额度', { agent: agentLabel(selectedAgent) })} onClose={closeCommand}>
-        <AgentQuota targetId={selectedTargetId} agent={selectedAgent} />
+        <AgentQuota targetId={selectedTargetId} agent={selectedAgent} showUsage />
       </Dialog>}
       {activeCommand === 'diff' && selectedTargetId && cwd && (
         <GitChangesDialog key={chatKey} targetId={selectedTargetId} cwd={cwd} onClose={closeCommand} />

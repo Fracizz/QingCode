@@ -2,6 +2,8 @@ import type {
   GetAccountParams,
   GetAccountRateLimitsParams,
   GetAccountRateLimitsResponse,
+  GetAccountTokenUsageParams,
+  GetAccountTokenUsageResponse,
   GetAccountResponse,
   ModelListParams,
   ModelListResponse,
@@ -68,6 +70,7 @@ export type ClientRequestMap = {
     params: GetAccountRateLimitsParams
     result: GetAccountRateLimitsResponse
   }
+  'account/usage/read': { params: GetAccountTokenUsageParams; result: GetAccountTokenUsageResponse }
 }
 
 export interface CodexTransport {

@@ -801,6 +801,25 @@ export class MockNativePort implements NativePort {
           result: { account: { type: 'chatgpt', email: 'dev@example.com', planType: 'plus', workspaceName: '' } },
         })
         return
+      case 'account/usage/read': {
+        if (agent !== 'codex') {
+          recv({ id, error: { code: -32601, message: 'Method not found' } })
+          return
+        }
+        const day = 86_400_000
+        const daily = [42_000, 0, 88_500, 120_300, 65_000, 210_000, 96_400].map((tokens, index) => ({
+          startDate: new Date(Date.now() - (6 - index) * day).toISOString().slice(0, 10),
+          tokens,
+        }))
+        recv({
+          id,
+          result: {
+            summary: { lifetimeTokens: 18_640_000, peakDailyTokens: 452_000, longestRunningTurnSec: 1260, currentStreakDays: 5, longestStreakDays: 23 },
+            dailyUsageBuckets: daily,
+          },
+        })
+        return
+      }
       default:
         recv({ id, error: { code: -32601, message: 'Method not found' } })
     }
