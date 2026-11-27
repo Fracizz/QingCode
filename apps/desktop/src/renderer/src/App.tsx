@@ -12,6 +12,7 @@ import { Sidebar } from './components/shell/Sidebar'
 import { TitleBar } from './components/shell/TitleBar'
 import { TargetForm } from './components/TargetForm'
 import { useWorkspaceScope, WorkspaceDock } from './components/shell/WorkspaceDock'
+import { installAgentUiEvents } from './features/agentctl/agentUiEvents'
 import { QuickOpen } from './features/explorer'
 import { CommandPalette, defaultCommands, registerCommands, storeCommandDeps, toggleCommandPalette } from './features/palette'
 import { closeSettings, openSettings, SettingsDialog, useSettings, useSettingsDialog } from './features/settings'
@@ -26,6 +27,9 @@ import { useProjects } from './store/projects'
 import { useRateLimits } from './store/rateLimits'
 import { useTargets, type ConnectCredentials } from './store/targets'
 import { useUi } from './store/ui'
+
+// Agent 经 qn 命令发来的提醒与打开文件请求（全局只装一次）。
+installAgentUiEvents()
 
 /**
  * 外壳布局（docs/design/ui-shell.md，优先参考 Codex 桌面版）：

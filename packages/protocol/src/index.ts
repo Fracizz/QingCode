@@ -34,6 +34,10 @@ export type {
   ServerMethod,
   ServerParams,
   ServerResult,
+  UiNotifyParams,
+  UiOpenParams,
+  UiNotifyEvt,
+  UiOpenEvt,
 } from './messages'
 
 export { attachFramedStream } from './node'

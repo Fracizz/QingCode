@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import {
@@ -16,6 +17,8 @@ import {
   type AgentHost,
   type AgentHostHub,
 } from './codexHost'
+import { applyAgentEnv, installShim, newAgentToken } from './agentctl/env'
+import { AGENT_REQ_METHODS } from './agentctl/policy'
 import { createClaudeHost } from './claude/bridge'
 import { createPiHost } from './pi/host'
 import { DirectListener } from './direct/listener'
@@ -54,8 +57,9 @@ interface ClientSession {
   /** 文件/Git 处理函数登记的连接级清理（监听、搜索） */
   cleanups: Array<() => void>
   workspace?: WorkspaceContext
-  /** ipc：本机命名管道/unix socket（持主 token）；direct：TLS 直连（持可撤销授权） */
-  origin: 'ipc' | 'direct'
+  /** ipc：本机命名管道/unix socket（持主 token）；direct：TLS 直连（持可撤销授权）；
+   * agent：daemon 拉起的 Agent 经 qn 命令连回（持进程内 agent token，只能调用白名单方法） */
+  origin: 'ipc' | 'direct' | 'agent'
   peer?: string
   grantId?: string
 }
@@ -72,6 +76,8 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   ensureRunDir(paths)
   const logger = new Logger(paths.daemonLog)
   const token = readOrCreateToken(paths)
+  // agent token 只存在于本进程及其子进程环境中，daemon 重启即失效；与主 token 分开以便收窄权限。
+  const agentToken = newAgentToken()
 
   const server = await listenSingleInstance(paths, logger)
   if (!server) {
@@ -81,6 +87,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
 
   writeDaemonJson(paths, { pid: process.pid, version: options.version, startedAt: Date.now() })
   logger.info(`daemon 启动 v${options.version}`)
+  prepareAgentCli(paths, agentToken, logger)
 
   const clients = new Map<number, ClientSession>()
   // 每个 agent 的 codex.recv 必须带上自己的 agent（缺省等同 codex），否则客户端无法分流。
@@ -144,6 +151,17 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     setTimeout(() => session.conn.close(), 40).unref()
   }
 
+  /** 界面事件只发给真正的界面客户端（桌面/直连），不回发给 qn 连接。 */
+  const broadcastUi = (name: string, payload: unknown): number => {
+    let delivered = 0
+    for (const session of clients.values()) {
+      if (!session.hello || session.origin === 'agent') continue
+      session.conn.send({ t: 'evt', name, payload })
+      delivered++
+    }
+    return delivered
+  }
+
   const workspaceContext = (session: ClientSession): WorkspaceContext => {
     session.workspace ??= {
       clientId: session.id,
@@ -169,6 +187,9 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     }
     if (session.origin === 'direct' && ADMIN_METHODS.has(method)) {
       return sendErr(session, id, 'forbidden', `直连客户端不能调用 ${method}`)
+    }
+    if (session.origin === 'agent' && !AGENT_REQ_METHODS.has(method)) {
+      return sendErr(session, id, 'forbidden', `qn 不允许调用 ${method}：只开放查询与界面提醒，命令请用 Agent 自己的工具执行`)
     }
     try {
       switch (method) {
@@ -223,6 +244,26 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
           return sendOk(session, id, await direct.reload().then(afterDirectReload))
         case 'direct.status':
           return sendOk(session, id, direct.status())
+        case 'ui.notify': {
+          const body = typeof p?.body === 'string' ? p.body.trim().slice(0, 2000) : ''
+          if (!body) return sendErr(session, id, 'params', 'ui.notify 需要 body')
+          const title = typeof p?.title === 'string' ? p.title.trim().slice(0, 120) : ''
+          return sendOk(session, id, {
+            delivered: broadcastUi('ui.notify', { body, ...(title ? { title } : {}) }),
+          })
+        }
+        case 'ui.open': {
+          if (typeof p?.path !== 'string' || p.path.length === 0) {
+            return sendErr(session, id, 'params', 'ui.open 需要 path')
+          }
+          return sendOk(session, id, {
+            delivered: broadcastUi('ui.open', {
+              path: p.path,
+              ...(positiveInt(p.line) ? { line: p.line } : {}),
+              ...(positiveInt(p.column) ? { column: p.column } : {}),
+            }),
+          })
+        }
         case 'server.shutdown': {
           const whenIdle = p?.whenIdle === true
           if (whenIdle && hasActiveWork()) {
@@ -309,8 +350,15 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
       onMessage(raw: unknown) {
         if (!session.hello) {
           let grantId: string | null = null
+          let viaAgentToken = false
           const check = origin === 'ipc'
-            ? checkHello(raw, { token })
+            ? checkHello(raw, {
+                authorize: (candidate) => {
+                  if (sameToken(candidate, token)) return true
+                  viaAgentToken = sameToken(candidate, agentToken)
+                  return viaAgentToken
+                },
+              })
             : checkHello(raw, {
                 authorize: (candidate) => {
                   if (peer && direct.isLocked(peer)) return false
@@ -324,6 +372,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
             return
           }
           if (grantId) session.grantId = grantId
+          if (viaAgentToken) session.origin = 'agent'
           if (origin === 'direct') logger.info(`直连 ${peer ?? '?'} 已接入（授权 ${grantId ?? '?'}）`)
           session.hello = true
           session.conn.send({
@@ -340,8 +389,16 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
           return
         }
         if (parsed.t === 'hello') return
-        if (parsed.t === 'req') void handleReq(session, parsed)
-        else hosts[parsed.agent ?? 'codex'].handleClientMessage(session.id, parsed.msg)
+        if (parsed.t === 'req') {
+          void handleReq(session, parsed)
+          return
+        }
+        // qn 连接不经手 Agent 官方协议：codex.send 直接断开，避免借此代答审批或改会话参数。
+        if (session.origin === 'agent') {
+          fail(session, 'forbidden', 'qn 连接不能收发 Agent 协议消息')
+          return
+        }
+        hosts[parsed.agent ?? 'codex'].handleClientMessage(session.id, parsed.msg)
       },
       onClose() {
         clients.delete(id)
@@ -445,6 +502,33 @@ function canConnect(endpoint: string, timeoutMs: number): Promise<boolean> {
     socket.once('connect', () => finish(true))
     socket.once('error', () => finish(false))
   })
+}
+
+/** 写 qn 启动脚本并把连接信息放进本进程环境：之后拉起的 Agent 与终端都会继承。 */
+function prepareAgentCli(paths: ServerPaths, agentToken: string, logger: Logger): void {
+  const script = process.argv[1]
+  if (!script) return
+  try {
+    const { binDir, cli } = installShim(paths.runDir, {
+      execPath: process.execPath,
+      script,
+      electronAsNode: process.env.ELECTRON_RUN_AS_NODE === '1',
+    })
+    applyAgentEnv(process.env, { endpoint: paths.endpoint, token: agentToken, binDir, cli })
+  } catch (err) {
+    logger.warn(`准备 qn 命令失败: ${describe(err)}`)
+  }
+}
+
+function sameToken(candidate: unknown, expected: string): boolean {
+  if (typeof candidate !== 'string') return false
+  const left = Buffer.from(candidate, 'utf8')
+  const right = Buffer.from(expected, 'utf8')
+  return left.length === right.length && timingSafeEqual(left, right)
+}
+
+function positiveInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

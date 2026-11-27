@@ -28,21 +28,39 @@ export class IpcClient {
   private welcomeWaiter: { resolve(): void; reject(err: Error): void; timer: ReturnType<typeof setTimeout> } | null = null
   private nextId = 1
   private closed = false
+  private clientName = 'qingcode-next-ensure'
+  /** res/welcome/error 以外的帧（evt、codex.recv）交给它；qn 的会话命令靠它收通知。 */
+  onFrame: ((frame: Record<string, unknown>) => void) | null = null
+  onClose: (() => void) | null = null
 
   private constructor(socket: net.Socket) {
     this.conn = attachFramedStream(new SocketStream(socket), {
       onMessage: (msg: unknown) => this.onMessage(msg),
-      onClose: () => this.failAll(new Error('daemon 连接已关闭')),
+      onClose: () => {
+        this.failAll(new Error('daemon 连接已关闭'))
+        this.onClose?.()
+      },
     })
   }
 
   static async connect(paths: ServerPaths, token?: string, timeoutMs = 1500): Promise<IpcClient> {
     const auth = token ?? readToken(paths)
     if (!auth) throw new Error('daemon token 不存在')
-    const socket = await openSocket(paths.endpoint, timeoutMs)
+    return IpcClient.connectEndpoint(paths.endpoint, auth, timeoutMs)
+  }
+
+  static async connectEndpoint(endpoint: string, token: string, timeoutMs = 1500, clientName?: string): Promise<IpcClient> {
+    const socket = await openSocket(endpoint, timeoutMs)
     const client = new IpcClient(socket)
-    await client.handshake(auth, timeoutMs)
+    if (clientName) client.clientName = clientName
+    await client.handshake(token, timeoutMs)
     return client
+  }
+
+  /** 发送 req 以外的帧（codex.send）。 */
+  send(frame: Record<string, unknown>): void {
+    if (this.closed) throw new Error('daemon 连接已关闭')
+    this.conn.send(frame)
   }
 
   get pid(): number {
@@ -88,7 +106,7 @@ export class IpcClient {
         t: 'hello',
         protocol: PROTOCOL_VERSION,
         token,
-        client: { name: 'qingcode-next-ensure', version: VERSION },
+        client: { name: this.clientName, version: VERSION },
       })
     })
   }
@@ -124,7 +142,9 @@ export class IpcClient {
       const code = typeof error.code === 'string' ? error.code : 'internal'
       const detail = typeof error.message === 'string' ? error.message : '请求失败'
       waiter.reject(new IpcRequestError(code, detail))
+      return
     }
+    this.onFrame?.(raw)
   }
 
   private failAll(err: Error): void {

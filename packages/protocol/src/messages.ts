@@ -87,7 +87,17 @@ export interface ServerMethods extends WorkspaceMethods {
     result: { running: boolean; pid?: number; activeTurns: number }
   }
   'server.shutdown': { params: { whenIdle: true } | void; result: Record<string, never> }
+  /** Agent 经 `qn notify` 请求提醒用户；daemon 广播 evt `ui.notify`。 */
+  'ui.notify': { params: UiNotifyParams; result: { delivered: number } }
+  /** Agent 经 `qn open` 请求在编辑器中打开文件；daemon 广播 evt `ui.open`。 */
+  'ui.open': { params: UiOpenParams; result: { delivered: number } }
 }
+
+export type UiNotifyParams = { title?: string; body: string }
+export type UiOpenParams = { path: string; line?: number; column?: number }
+/** evt `ui.notify` / `ui.open` 的载荷与请求参数相同。 */
+export type UiNotifyEvt = UiNotifyParams
+export type UiOpenEvt = UiOpenParams
 
 export type ServerMethod = keyof ServerMethods
 export type ServerParams<M extends ServerMethod> = ServerMethods[M]['params']

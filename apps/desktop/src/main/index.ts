@@ -232,6 +232,8 @@ if (!app.requestSingleInstanceLock()) {
       win.focus()
     }
   })
+  // Windows 系统通知按 AppUserModelID 归属，需与安装包 appId 一致才能弹出（qn notify）。
+  if (process.platform === 'win32') app.setAppUserModelId('com.qingcode.next')
   void app.whenReady().then(() => {
     // 自绘标题栏，不要系统菜单栏（Alt 也不会唤出）；复制粘贴等编辑快捷键由 Chromium 原生处理。
     // macOS 的 Cmd+C/V/Q 依赖应用菜单，只在其他平台去掉。
