@@ -5,6 +5,7 @@ import { t, translateMessage } from '@qn/codex-client'
 import { BackendCallError, onBackendRestart } from '../../lib/backend'
 import { friendlyError } from '../../lib/errors'
 import { useTargets } from '../../store/targets'
+import { isCwdUntrusted } from '../../store/projectTrust'
 import { onServerEvt, serverCall } from '../workspace/serverCall'
 import { appendOutput, clearOutput, emptyOutput, markDropped, type RunOutput } from './outputModel'
 import { loadRunConfigs, saveRunConfigs, type LoadedRunConfigs } from './runConfigIo'
@@ -105,6 +106,8 @@ export const useRunStore = create<RunStore>((set, get) => {
     },
 
     start: async (targetId, params) => {
+      // 命令面板等入口也会走这里，统一拦截未信任项目。
+      if (isCwdUntrusted(targetId, params.cwd)) throw new Error(t('项目未信任，无法启动运行配置'))
       const result = await serverCall(targetId, 'run.start', params)
       const info: RunInfo = {
         runId: result.runId,

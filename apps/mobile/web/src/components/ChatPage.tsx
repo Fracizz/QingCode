@@ -1,5 +1,5 @@
 import { ChevronDown, PanelLeft, Square } from 'lucide-react'
-import { accessOptions, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, resolveAccessMode, sessionStatus, sessionStatusLabels, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
+import { accessOptions, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, resolveAccessMode, sessionStatus, sessionStatusLabels, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { bindChatPinch } from '../chatFont'
@@ -118,7 +118,7 @@ export function ChatPage() {
   const streamingId = streamingReplyId(view)
   const interrupted = !running && view?.activity === 'interrupted'
   const turnError = !running && !interrupted ? view?.error : undefined
-  const currentStop = running && stopRequest?.chatKey === chatKey && stopRequest.turnId === view.activeTurnId ? stopRequest : null
+  const currentStop = running && stopRequest?.chatKey === chatKey && stopRequest.turnId === interruptTurnIdOf(view) ? stopRequest : null
   const stopping = currentStop !== null && currentStop.error === null
   const stopError = currentStop?.error
   const activeItemIds = running ? view.turns?.find((turn) => turn.id === view.activeTurnId)?.itemIds : undefined
@@ -239,8 +239,8 @@ export function ChatPage() {
   }
 
   async function stopTurn() {
-    const turnId = view?.activeTurnId
-    if (!running || !turnId || stopping) return
+    const turnId = interruptTurnIdOf(view)
+    if (!running || turnId === null || stopping) return
     const request = { chatKey, turnId, error: null }
     setStopRequest(request)
     try {

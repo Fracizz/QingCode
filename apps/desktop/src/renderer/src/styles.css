@@ -315,8 +315,10 @@ button:disabled {
     background: var(--color-qn-hover);
   }
 
+  /* 过程折叠头、工具行等：内边距留给悬停底色，负外边距抵消，让文字和图标与回复正文左对齐。 */
   .qn-message-activity {
     padding-inline: calc(var(--spacing) * 2);
+    margin-inline-start: calc(var(--spacing) * -2);
   }
 
   /*

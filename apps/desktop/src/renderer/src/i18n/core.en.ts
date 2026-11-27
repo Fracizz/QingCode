@@ -241,4 +241,6 @@ export default {
   '请先等待当前一轮结束': 'Wait for the current turn to finish',
   '当前额度已用完': 'Quota used up',
   '压缩会话失败': 'Failed to compact the session',
+  // 工作区信任
+  '更新项目信任失败': 'Failed to update project trust',
 } satisfies Record<string, string>

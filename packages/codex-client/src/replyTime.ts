@@ -8,7 +8,7 @@ export function formatReplyTime(timestamp: number, today: number) {
   const date = new Date(timestamp)
   if (timestamp <= 0 || !Number.isFinite(date.getTime())) return null
   const day = [date.getFullYear(), twoDigits(date.getMonth() + 1), twoDigits(date.getDate())].join('-')
-  const time = `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`
+  const time = `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}:${twoDigits(date.getSeconds())}`
   const full = `${day} ${time}`
   return { label: localReplyDay(timestamp) === today ? time : full, full, dateTime: date.toISOString() }
 }

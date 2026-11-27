@@ -480,6 +480,38 @@ describe('输入框 Agent 错误', () => {
     expect(store().error).toBeNull()
   })
 
+  const failCodexOpen = () => callMock.mockImplementation(async (method: string, params?: CallParams) => {
+    if (method === 'server.req' && params?.method === 'codex.open' && params.params?.agent === 'codex') {
+      throw new Error('codex not found')
+    }
+    return fakeCall(method, params)
+  })
+
+  it('打开 Codex 会话失败时，报错不写进仍在显示的其他对话', async () => {
+    failCodexOpen()
+    store().setContext('remote', '/project')
+    useCodex.setState({ currentAgent: 'claude', currentThreadId: 'claude-thread' })
+
+    await store().openThread('codex-thread', 'codex')
+
+    expect(store().currentThreadId).toBe('claude-thread')
+    expect(store().error).toBeNull()
+    expect(store().notice).toContain('远端未找到 codex')
+  })
+
+  it('侧栏操作非当前会话失败时改用提示，当前会话失败仍写入输入框', async () => {
+    failCodexOpen()
+    store().setContext('remote', '/project')
+    useCodex.setState({ currentAgent: 'claude', currentThreadId: 'claude-thread' })
+
+    await expect(store().renameThread('codex-thread', 'codex', '新名')).resolves.toBe(false)
+    expect(store().error).toBeNull()
+    expect(store().notice).toContain('远端未找到 codex')
+
+    useCodex.setState({ currentAgent: 'codex', currentThreadId: 'codex-thread', notice: null })
+    await expect(store().renameThread('codex-thread', 'codex', '新名')).resolves.toBe(false)
+    expect(store().error).toContain('远端未找到 codex')
+  })
 })
 
 it('可在发送首条消息前启动 pi，首轮沿用该会话和所选模型', async () => {
@@ -888,7 +920,8 @@ describe('打开历史会话', () => {
       await vi.advanceTimersByTimeAsync(30_000)
       await opening
       expect(useCodex.getState().openingThread).toBeNull()
-      expect(useCodex.getState().error).toContain('打开会话超时')
+      expect(useCodex.getState().notice).toContain('打开会话超时')
+      expect(useCodex.getState().error).toBeNull()
       expect(useCodex.getState().currentThreadId).toBeNull()
     } finally {
       vi.useRealTimers()

@@ -1,10 +1,10 @@
 import {
   t,
   collectSubagents, mergeSubagentHistory, prependThreadHistory, readSubagentThread, readThreadHistoryPage,
-  subagentRecordStatus, subagentStatusTone,
+  subagentAvatar, subagentRecordStatus, subagentStatusTone,
   type CodexRpcLike, type ItemView, type SubagentEntry, type ThreadView,
 } from '@qn/codex-client'
-import { Bot, ChevronRight, X } from 'lucide-react'
+import { Atom, Bot, ChevronRight, X, Compass, Feather, Gem, Leaf, Puzzle, Rocket, Telescope, type LucideIcon } from 'lucide-react'
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { friendlyError } from '../lib/errors'
 import { streamingReplyId } from '../lib/turnGroups'
@@ -25,9 +25,23 @@ function AgentBadge({ status }: { status: string }) {
   return <Badge tone={tone === 'active' ? 'accent' : tone}>{status || t('状态未知')}</Badge>
 }
 
-function AgentAvatar({ size = 17 }: { size?: number }) {
-  return <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-400/12 text-violet-300">
+// 子代理头像：按子代理标识稳定取图标和配色，多个子代理一眼可分；不传标识时用通用机器人图标。
+// 实色底 + 白色图标，与项目首字母头像同一套 avatar token，深浅主题下图标对比度都足够。
+const agentSeed = (entry: SubagentEntry) => entry.threadId || entry.key
+const AVATAR_ICONS = [Telescope, Compass, Rocket, Feather, Leaf, Atom, Puzzle, Gem] satisfies LucideIcon[]
+const AVATAR_COLORS = [
+  'bg-qn-avatar-1', 'bg-qn-avatar-2', 'bg-qn-avatar-3', 'bg-qn-avatar-4',
+  'bg-qn-avatar-5', 'bg-qn-avatar-6', 'bg-qn-avatar-7', 'bg-qn-avatar-8',
+]
+
+function AgentAvatar({ seed, size = 17, className = 'size-8' }: { seed?: string; size?: number; className?: string }) {
+  if (!seed) return <span className={`grid shrink-0 place-items-center rounded-lg bg-violet-400/12 text-violet-300 ${className}`}>
     <Bot size={size} strokeWidth={1.8} aria-hidden />
+  </span>
+  const { icon, color } = subagentAvatar(seed)
+  const Icon = AVATAR_ICONS[icon % AVATAR_ICONS.length]!
+  return <span className={`grid shrink-0 place-items-center rounded-lg text-white ${AVATAR_COLORS[color % AVATAR_COLORS.length]} ${className}`}>
+    <Icon size={size} strokeWidth={1.9} aria-hidden />
   </span>
 }
 
@@ -118,7 +132,7 @@ function AgentRecord({ entry, live, rpc, renderItem }: {
   return (
     <section className="space-y-4" aria-label={t('子代理详情')}>
       <div className="flex items-start gap-2.5">
-        <AgentAvatar size={19} />
+        <AgentAvatar seed={agentSeed(entry)} size={19} />
         <div className="min-w-0 flex-1">
           <h3 className="break-words text-ui-md font-semibold">{name}</h3>
           {metadata && <p className="mt-0.5 break-words text-ui-sm text-qn-muted">{metadata}</p>}
@@ -210,7 +224,7 @@ export function SubagentLauncher({ entries, threads, rpc, renderItem }: {
               {entries.map((item) => (
                 <button type="button" key={item.key} aria-pressed={item === entry} onClick={() => setSelected(item.key)}
                   className="flex w-full items-center gap-2 rounded-lg p-2 text-left hover:bg-qn-hover focus-visible:outline-qn-outline-hover aria-pressed:bg-qn-active">
-                  <AgentAvatar size={15} />
+                  <AgentAvatar seed={agentSeed(item)} size={15} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-ui font-medium" title={item.name}>{item.name}</span>
                     <span className="mt-0.5 block truncate text-ui-sm text-qn-muted">{item.status || t('状态未知')}</span>
@@ -243,7 +257,9 @@ export function SubagentDetails({ item, renderItem }: {
     <div>
       <button type="button" className="qn-message-activity flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-lg text-left text-ui text-qn-muted hover:bg-qn-hover hover:text-qn-text" aria-haspopup="dialog"
         onClick={() => setSelected(entries[0]?.key ?? '')}>
-        <Bot size={16} strokeWidth={1.8} className="shrink-0 text-violet-300" aria-hidden />
+        {entries.length === 1
+          ? <AgentAvatar seed={agentSeed(entries[0]!)} size={12} className="size-5 rounded-md" />
+          : <Bot size={16} strokeWidth={1.8} className="shrink-0 text-violet-300" aria-hidden />}
         <span className="min-w-0 flex-1 truncate">{item.title}{entries.length > 1 ? ` · ${entries.length}` : ''}</span>
         {item.status && <AgentBadge status={item.status} />}
         <ChevronRight size={15} className="shrink-0 text-qn-dim" aria-hidden />

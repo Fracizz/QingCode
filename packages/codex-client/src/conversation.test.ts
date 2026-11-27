@@ -10,6 +10,7 @@ import {
   dropOptimisticUsers,
   emptyState,
   failActiveThreads,
+  interruptTurnIdOf,
   loadRecentThreadHistory,
   loadThread,
   moveOptimisticUsers,
@@ -899,5 +900,19 @@ describe('进行中轮次的历史加载', () => {
     const agents = state.threads.t1!.items.filter((item) => item.kind === 'agent')
     expect(agents.map((item) => item.kind === 'agent' && item.streaming)).toEqual([false, false])
     expect(state.threads.t1!.status).toBe('running')
+  })
+})
+
+describe('interruptTurnIdOf', () => {
+  const base = { id: 't', items: [], pendingApprovals: [] }
+  it('运行中缺 activeTurnId 时仍可中断', () => {
+    expect(interruptTurnIdOf({ ...base, status: 'running', activeTurnId: 'a' })).toBe('a')
+    expect(interruptTurnIdOf({ ...base, status: 'running', activeTurnId: null, turns: [
+      { id: 'old', outcome: 'completed', startedAtMs: null, durationMs: null, itemIds: [] },
+      { id: 'live', startedAtMs: null, durationMs: null, itemIds: [] },
+    ] })).toBe('live')
+    expect(interruptTurnIdOf({ ...base, status: 'running', activeTurnId: null })).toBe('')
+    expect(interruptTurnIdOf({ ...base, status: 'idle', activeTurnId: null })).toBeNull()
+    expect(interruptTurnIdOf(undefined)).toBeNull()
   })
 })

@@ -94,7 +94,7 @@ describe('BackendRouter', () => {
   it('占位注册不会覆盖先注册的真实实现', async () => {
     const port = new FakePort()
     const router = new BackendRouter()
-    router.register('projects.list', () => [{ id: 'p1', targetId: 'local', name: 'p', path: 'C:\\p', lastOpenedAt: 1 }])
+    router.register('projects.list', () => [{ id: 'p1', targetId: 'local', name: 'p', path: 'C:\\p', lastOpenedAt: 1, trusted: true }])
     router.registerNotImplemented(['projects.list'])
     router.attachPort(port)
 

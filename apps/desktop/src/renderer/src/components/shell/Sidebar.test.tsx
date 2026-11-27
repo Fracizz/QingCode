@@ -22,7 +22,7 @@ it('从项目菜单收起和展开会话列表时保留当前会话', async () =
   const target: SshTarget = {
     id: 'project-menu-test', kind: 'ssh', name: '远端', host: 'example', port: 22, username: 'user', auth: { kind: 'agent' },
   }
-  const project: Project = { id: 'qingcode', targetId: target.id, name: 'QingCode', path: '/qingcode', lastOpenedAt: 0 }
+  const project: Project = { id: 'qingcode', targetId: target.id, name: 'QingCode', path: '/qingcode', lastOpenedAt: 0, trusted: true }
   const other: Project = { ...project, id: 'other', name: '其他项目', path: '/other' }
   const select = vi.fn(async () => undefined)
   useProjects.setState({
@@ -79,8 +79,8 @@ it('用铃铛临时提前活动会话、项目和目标，再点恢复工作区�
   const remote: SshTarget = {
     id: 'remote', kind: 'ssh', name: '远端', host: 'example', port: 22, username: 'user', auth: { kind: 'agent' },
   }
-  const quiet: Project = { id: 'quiet', targetId: remote.id, name: '空闲项目', path: '/quiet', lastOpenedAt: 0 }
-  const busy: Project = { id: 'busy', targetId: remote.id, name: '活动项目', path: '/busy', lastOpenedAt: 0 }
+  const quiet: Project = { id: 'quiet', targetId: remote.id, name: '空闲项目', path: '/quiet', lastOpenedAt: 0, trusted: true }
+  const busy: Project = { id: 'busy', targetId: remote.id, name: '活动项目', path: '/busy', lastOpenedAt: 0, trusted: true }
   const projectList = { projects: [quiet, busy], loading: false, error: null }
   const threads: ThreadSummary[] = Array.from({ length: 9 }, (_, index) => ({
     id: String(index), title: `会话 ${index}`, preview: '', agent: 'codex', cwd: busy.path, updatedAt: 9 - index,

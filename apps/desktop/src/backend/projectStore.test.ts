@@ -29,6 +29,7 @@ const project = (id: string, targetId: string, path: string, lastOpenedAt = 1) =
   name: `${id}-name`,
   path,
   lastOpenedAt,
+  trusted: true,
 })
 
 describe('basenameOf / normalizeProjectPath', () => {
@@ -55,7 +56,7 @@ describe('normalizeProjects', () => {
     ])
     expect(result).toHaveLength(3)
     expect(result[0]).toEqual({
-      id: 'a', targetId: 'local', name: 'a-name', path: 'C:\\work\\app', lastOpenedAt: 10,
+      id: 'a', targetId: 'local', name: 'a-name', path: 'C:\\work\\app', lastOpenedAt: 10, trusted: true,
     })
     expect(result.find((p) => p.id === 'c')?.name).toBe('demo')
     expect(result.find((p) => p.id === 'f')?.lastOpenedAt).toBe(0)
@@ -79,7 +80,7 @@ describe('upsertProject / removeProject', () => {
   it('新增用生成 id；同 targetId+path 更新时保留 id 与名称并刷新时间', () => {
     const first = upsertProject([], { targetId: 'local', path: '/srv/demo/' }, 'p-new', 100)
     expect(first.project).toEqual({
-      id: 'p-new', targetId: 'local', name: 'demo', path: '/srv/demo', lastOpenedAt: 100,
+      id: 'p-new', targetId: 'local', name: 'demo', path: '/srv/demo', lastOpenedAt: 100, trusted: false,
     })
 
     const updated = upsertProject(
@@ -110,6 +111,26 @@ describe('upsertProject / removeProject', () => {
     expect(() => upsertProject([], { targetId: '', path: '/p' }, 'x')).toThrow()
     const list = normalizeProjects([project('a', 'local', 'p1'), project('b', 'local', 'p2')])
     expect(removeProject(list, 'a').map((p) => p.id)).toEqual(['b'])
+  })
+})
+
+describe('工作区信任', () => {
+  it('旧数据缺少 trusted 时迁移为已信任，显式 false 保留', () => {
+    const [legacy, untrusted] = normalizeProjects([
+      { id: 'a', targetId: 'local', path: '/a', lastOpenedAt: 2 },
+      { id: 'b', targetId: 'local', path: '/b', lastOpenedAt: 1, trusted: false },
+    ])
+    expect(legacy?.trusted).toBe(true)
+    expect(untrusted?.trusted).toBe(false)
+  })
+
+  it('新项目默认不信任；更新时未传 trusted 保留原状态，显式传值则覆盖', () => {
+    const added = upsertProject([], { targetId: 'local', path: '/p' }, 'p1', 1)
+    expect(added.project.trusted).toBe(false)
+    const trusted = upsertProject(added.projects, { id: 'p1', targetId: 'local', path: '/p', trusted: true }, 'x', 2)
+    expect(trusted.project.trusted).toBe(true)
+    const renamed = upsertProject(trusted.projects, { id: 'p1', targetId: 'local', path: '/p', name: 'n' }, 'x', 3)
+    expect(renamed.project.trusted).toBe(true)
   })
 })
 

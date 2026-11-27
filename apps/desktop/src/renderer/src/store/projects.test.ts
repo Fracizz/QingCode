@@ -8,7 +8,7 @@ const { save } = vi.hoisted(() => ({ save: vi.fn() }))
 vi.mock('../lib/backend', () => ({ call: save }))
 
 const project = (id: string, lastOpenedAt: number, targetId = 'local'): Project =>
-  ({ id, targetId, path: `/${id}`, name: id, lastOpenedAt })
+  ({ id, targetId, path: `/${id}`, name: id, lastOpenedAt, trusted: true })
 const projectIds = (targetId = 'local') => projectListOf(useProjects.getState(), targetId).projects.map(({ id }) => id)
 
 beforeEach(() => {
@@ -25,7 +25,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 it('切换项目时立即更新会话上下文，迟到的保存不会取消已打开的会话', async () => {
-  const project = { id: 'project', targetId: 'local', path: '/project', name: '项目', lastOpenedAt: 1 }
+  const project = { id: 'project', targetId: 'local', path: '/project', name: '项目', lastOpenedAt: 1, trusted: true }
   let finishSave!: (value: typeof project) => void
   save.mockReturnValueOnce(new Promise<typeof project>((resolve) => { finishSave = resolve }))
   const refresh = vi.spyOn(useCodex.getState(), 'refreshThreads').mockResolvedValue()

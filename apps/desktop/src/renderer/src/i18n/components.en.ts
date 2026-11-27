@@ -599,4 +599,14 @@ export default {
   'CPU 占用率 · {count} 个逻辑核心': 'CPU usage · logical cores: {count}',
   '内存': 'Mem',
   '内存已用 {capacity} · {percent}': 'Memory used {capacity} · {percent}',
+  // 工作区信任
+  '信任此项目？': 'Trust this project?',
+  '暂不信任': 'Not now',
+  '信任': 'Trust',
+  '只信任你了解来源的项目。未信任的项目不能启动运行配置，Agent 只能以「请求批准」模式工作。之后可在项目菜单中更改。': 'Only trust projects whose source you know. Untrusted projects cannot start run configurations, and the agent can only work in Ask for approval mode. You can change this later from the project menu.',
+  '项目未信任': 'project not trusted',
+  '{mode}（{reason}）': '{mode} ({reason})',
+  '取消信任': 'Revoke trust',
+  '信任项目': 'Trust project',
+  '未信任的项目不能启动运行配置，Agent 只能用默认权限': 'Untrusted projects cannot start run configurations; the agent uses default permissions only',
 } satisfies Record<string, string>

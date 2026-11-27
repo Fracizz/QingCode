@@ -213,7 +213,7 @@ beforeAll(async () => {
   router = new BackendRouter()
   router.register('targets.list', () => [LOCAL_TARGET])
   router.register('projects.list', ({ targetId }) => targetId === 'local'
-    ? [{ id: 'test-project', targetId, path: '/project', name: '测试项目', lastOpenedAt: 0 }]
+    ? [{ id: 'test-project', targetId, path: '/project', name: '测试项目', lastOpenedAt: 0, trusted: true }]
     : [])
   router.register('server.req', (params) => {
     lastServerReq = params

@@ -42,11 +42,11 @@ it('在回复上方显示完成时间，跨午夜后补上本地日期', async (
     expect(host.querySelector('time')).toBeNull()
     await act(() => root.render(<MessageItem item={{ ...reply, streaming: false }} />))
     const time = host.querySelector('time')!
-    expect(time.textContent).toBe('23:58')
+    expect(time.textContent).toBe('23:58:00')
     expect(time.dateTime).toBe(completed.toISOString())
     expect(time.nextElementSibling?.classList.contains('qn-markdown')).toBe(true)
     await act(() => vi.advanceTimersByTime(1000))
-    expect(host.querySelector('time')?.textContent).toBe('2026-11-26 23:58')
+    expect(host.querySelector('time')?.textContent).toBe('2026-11-26 23:58:00')
   } finally {
     await act(() => root.unmount())
     vi.useRealTimers()

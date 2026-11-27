@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { UserInput } from './codex-types'
 import { applyNotification, emptyState, mergeSubagentHistory, type ItemView } from './conversation'
-import { collectSubagents, describeSubagentItem, requestSubagents, supportsSubagentRequests } from './subagents'
+import { collectSubagents, describeSubagentItem, requestSubagents, subagentAvatar, SUBAGENT_AVATAR_VARIANTS, supportsSubagentRequests } from './subagents'
 
 describe('随本条消息请求子代理', () => {
   it('只为 Codex 和 Claude 提供入口', () => {
@@ -97,5 +97,20 @@ describe('查看子代理详情', () => {
     const next: ItemView = { kind: 'command', id: 'next', command: 'pwd', output: '', status: 'inProgress' }
     expect(mergeSubagentHistory([stored], [before, next], [before])).toEqual([stored, next])
     expect(mergeSubagentHistory([stored], [update, next], [before])).toEqual([update, next])
+  })
+})
+
+describe('子代理头像', () => {
+  it('同一标识稳定，不同标识分散到多种图标和配色', () => {
+    expect(subagentAvatar('call-1')).toEqual(subagentAvatar('call-1'))
+    const avatars = Array.from({ length: 32 }, (_, i) => subagentAvatar(`call-${i}`))
+    for (const { icon, color } of avatars) {
+      expect(icon).toBeGreaterThanOrEqual(0)
+      expect(icon).toBeLessThan(SUBAGENT_AVATAR_VARIANTS)
+      expect(color).toBeGreaterThanOrEqual(0)
+      expect(color).toBeLessThan(SUBAGENT_AVATAR_VARIANTS)
+    }
+    expect(new Set(avatars.map(({ icon }) => icon)).size).toBeGreaterThan(4)
+    expect(new Set(avatars.map(({ color }) => color)).size).toBeGreaterThan(4)
   })
 })

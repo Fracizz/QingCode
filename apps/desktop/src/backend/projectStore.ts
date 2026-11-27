@@ -14,6 +14,7 @@ export type ProjectInput = {
   name?: string
   path: string
   lastOpenedAt?: number
+  trusted?: boolean
 }
 
 // 远端是 POSIX 路径、本机是 Windows 路径，不能用 node:path 单侧解析。
@@ -43,7 +44,9 @@ function parseProject(x: unknown): Project | null {
   const time = typeof x.lastOpenedAt === 'number' && Number.isFinite(x.lastOpenedAt)
     ? Math.max(0, Math.round(x.lastOpenedAt))
     : 0
-  return { id, targetId, name, path: rawPath, lastOpenedAt: time }
+  // 信任功能上线前保存的项目都由用户主动添加，迁移时视为已信任。
+  const trusted = x.trusted !== false
+  return { id, targetId, name, path: rawPath, lastOpenedAt: time, trusted }
 }
 
 export function sortProjects(projects: readonly Project[]): Project[] {
@@ -92,7 +95,9 @@ export function upsertProject(
   const lastOpenedAt = typeof input.lastOpenedAt === 'number' && Number.isFinite(input.lastOpenedAt)
     ? Math.max(0, Math.round(input.lastOpenedAt))
     : now
-  const next: Project = { id, targetId, name, path, lastOpenedAt }
+  // 新项目未显式信任时默认不信任；已有项目未传值时保留原状态。
+  const trusted = typeof input.trusted === 'boolean' ? input.trusted : existing?.trusted ?? false
+  const next: Project = { id, targetId, name, path, lastOpenedAt, trusted }
   const list = [...projects]
   if (at >= 0) list[at] = next
   else list.push(next)

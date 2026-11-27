@@ -111,7 +111,10 @@ export async function importLegacyData(
 
   let nextProjects = projects
   for (const project of plan.projects) {
-    nextProjects = upsertProject(nextProjects, project, createProjectId()).projects
+    // 旧版项目都是用户亲手添加的，迁移为已信任；已存在的项目保留当前信任状态。
+    const key = projectKey(project.targetId, project.path)
+    const exists = nextProjects.some((item) => projectKey(item.targetId, item.path) === key)
+    nextProjects = upsertProject(nextProjects, exists ? project : { ...project, trusted: true }, createProjectId()).projects
   }
   if (plan.projects.length > 0) await writeProjects(d.userData, nextProjects)
 

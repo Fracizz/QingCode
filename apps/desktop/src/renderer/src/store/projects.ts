@@ -4,6 +4,7 @@ import type { Project } from '../../../shared/backendApi'
 import { call } from '../lib/backend'
 import { friendlyError } from '../lib/errors'
 import { useCodex } from './codex'
+import { useProjectTrust } from './projectTrust'
 import { useTargets } from './targets'
 
 export type ProjectPlacement = 'before' | 'after'
@@ -41,7 +42,9 @@ type ProjectsState = {
   setShowAllThreads: (id: string, showAll: boolean) => void
   /** 收起某个目标下所有项目的会话列表。 */
   collapseAll: (targetId: string) => void
-  add: (targetId: string, path: string) => Promise<Project | null>
+  /** trusted 为用户在信任确认框里的选择。 */
+  add: (targetId: string, path: string, trusted: boolean) => Promise<Project | null>
+  setTrusted: (project: Project, trusted: boolean) => Promise<void>
   remove: (id: string) => Promise<void>
   rename: (project: Project, name: string) => Promise<void>
   pinned: string[]
@@ -217,6 +220,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
       try {
         const projects = await call('projects.list', { targetId })
         if (loadRevisions.get(targetId) !== revision) return
+        useProjectTrust.getState().setTargetProjects(targetId, projects)
         patch((state) => {
           const ordered = orderProjects(projects, state.orderByTarget.get(targetId) ?? readIds(orderKey(targetId)))
           const next: Patch = {
@@ -317,9 +321,9 @@ export const useProjects = create<ProjectsState>((set, get) => {
       set({ treeByTarget: rememberTree(treeByTarget, targetId, { ...tree, expandedIds: [] }) })
     },
 
-    add: async (targetId, path) => {
+    add: async (targetId, path, trusted) => {
       try {
-        const project = await call('projects.save', { targetId, path })
+        const project = await call('projects.save', { targetId, path, trusted })
         await get().load(targetId)
         await get().select(project)
         return project
@@ -342,6 +346,23 @@ export const useProjects = create<ProjectsState>((set, get) => {
         }
       } catch (err) {
         if (targetId) setError(targetId, friendlyError(err, t('删除项目失败')))
+      }
+    },
+
+    setTrusted: async (project, trusted) => {
+      if (project.trusted === trusted) return
+      try {
+        await call('projects.save', {
+          id: project.id,
+          targetId: project.targetId,
+          name: project.name,
+          path: project.path,
+          trusted,
+        })
+        // 重新加载以同步信任索引，codex/run 两侧立即按新状态拦截。
+        await get().load(project.targetId)
+      } catch (err) {
+        setError(project.targetId, friendlyError(err, t('更新项目信任失败')))
       }
     },
 

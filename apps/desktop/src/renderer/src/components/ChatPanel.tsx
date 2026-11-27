@@ -23,6 +23,7 @@ import {
 } from '../lib/attachments'
 import { readImage, uploadToTarget } from '../lib/attachmentIo'
 import { getAccessMode } from '../features/access/accessModel'
+import { useCwdUntrusted } from '../store/projectTrust'
 import { screenFiles, useImageSupport } from '../features/composer'
 import { useSettings } from '../features/settings/settingsStore'
 import { formatCost } from '../lib/claudeUsage'
@@ -652,7 +653,9 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
     }
   }
 
-  const accessMode = useCodex((state) => currentTargetId ? getAccessMode(state.access,
+  // 未信任项目显示与实际发送一致的默认档位。
+  const untrustedCwd = useCwdUntrusted(currentTargetId, currentCwd)
+  const accessMode = useCodex((state) => untrustedCwd ? 'default' : currentTargetId ? getAccessMode(state.access,
     { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId },
     useSettings.getState().settings.general.globalAccessMode) : 'default')
   const access = accessOptions[currentAgent].find((option) => option.mode === accessMode)

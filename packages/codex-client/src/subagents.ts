@@ -55,6 +55,17 @@ export type SubagentEntry = {
   activity: { id: string; title: string; status: string; detail?: string }[]
 }
 
+// 子代理头像变体数量：两端各自准备同样数量的图标和配色。
+export const SUBAGENT_AVATAR_VARIANTS = 8
+
+/** 按子代理标识哈希出图标和配色下标；图标与配色错开取位，8×8 组合下同屏撞脸概率很低，且同一子代理在列表和消息里保持一致。 */
+export function subagentAvatar(seed: string): { icon: number; color: number } {
+  let hash = 2166136261
+  for (const c of seed) hash = Math.imul(hash ^ c.codePointAt(0)!, 16777619)
+  hash >>>= 0
+  return { icon: hash % SUBAGENT_AVATAR_VARIANTS, color: (hash >>> 8) % SUBAGENT_AVATAR_VARIANTS }
+}
+
 export function subagentStatusTone(status: string): 'active' | 'ok' | 'warn' | 'danger' | 'muted' {
   switch (status) {
     case t('运行中'): case t('已启动'): case t('等待启动'): case t('调用中'): return 'active'

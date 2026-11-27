@@ -46,10 +46,11 @@ export function registerDataMethods(router: BackendRouter): void {
     if (path === '') throw new RouterError('invalid_params', '项目路径不能为空')
     const id = typeof p.id === 'string' && p.id !== '' ? p.id : undefined
     const name = typeof p.name === 'string' ? p.name : undefined
+    const trusted = typeof p.trusted === 'boolean' ? p.trusted : undefined
     const current = await readProjects(backendConfig.userData)
     const { projects, project } = upsertProject(
       current,
-      { id, targetId, name, path },
+      { id, targetId, name, path, trusted },
       createProjectId()
     )
     await writeProjects(backendConfig.userData, projects)

@@ -281,6 +281,18 @@ function clearError(thread: ThreadView): ThreadView {
   return next
 }
 
+/**
+ * 停止按钮要用的 turn id。会话显示运行中却没记下 activeTurnId 时（例如重连后只收到
+ * thread/status/changed、错过了 turn/started），退回最后一个未结束的轮次；仍没有则返回空串，
+ * Claude/pi 只按 threadId 中断。返回 null 表示确实没有可中断的轮次。
+ */
+export function interruptTurnIdOf(view: ThreadView | undefined): string | null {
+  if (!view) return null
+  if (view.activeTurnId) return view.activeTurnId
+  if (view.status !== 'running') return null
+  return view.turns?.findLast((turn) => !turn.outcome)?.id ?? ''
+}
+
 function statusFromActivity(activity: ThreadActivity = 'idle'): ThreadStatus {
   if (isActiveThread(activity)) return 'running'
   if (activity === 'failed') return 'error'

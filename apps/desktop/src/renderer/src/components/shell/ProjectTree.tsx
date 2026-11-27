@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent } from 'react'
-import { ChevronDown, ChevronUp, Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, SquarePen, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, ShieldCheck, ShieldOff, SquarePen, X } from 'lucide-react'
 import { t } from '@qn/codex-client'
 import { useShallow } from 'zustand/react/shallow'
 import { copyText } from '../../lib/clipboard'
@@ -225,6 +225,7 @@ function ProjectRow({
   const pinned = useProjects((s) => s.pinned.includes(project.id))
   const togglePin = useProjects((s) => s.togglePin)
   const rename = useProjects((s) => s.rename)
+  const setTrusted = useProjects((s) => s.setTrusted)
   const remove = useProjects((s) => s.remove)
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -335,6 +336,13 @@ function ProjectRow({
             </MenuItem>
             <MenuItem icon={<Copy size={14} />} hint="C" onSelect={copyPath}>
               {t('复制路径')}
+            </MenuItem>
+            <MenuItem
+              icon={project.trusted ? <ShieldOff size={14} /> : <ShieldCheck size={14} />}
+              title={t('未信任的项目不能启动运行配置，Agent 只能用默认权限')}
+              onSelect={() => void setTrusted(project, !project.trusted)}
+            >
+              {project.trusted ? t('取消信任') : t('信任项目')}
             </MenuItem>
             <MenuSeparator />
             <MenuItem icon={<X size={14} />} title={t('不删除磁盘文件')} onSelect={() => void remove(project.id)}>

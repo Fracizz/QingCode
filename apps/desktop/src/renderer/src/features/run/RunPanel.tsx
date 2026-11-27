@@ -23,6 +23,8 @@ import { StatusDot } from '../../components/StatusDot'
 import { copyText } from '../../lib/clipboard'
 import { cn } from '../../lib/cn'
 import { openFile } from '../workspace/openers'
+import { useProjects } from '../../store/projects'
+import { isPathUntrusted, useCwdUntrusted } from '../../store/projectTrust'
 import { styleToCss } from './ansi'
 import { outputText, type OutputSegment } from './outputModel'
 import { RunConfigEditor } from './RunConfigEditor'
@@ -65,6 +67,33 @@ const guessOs = (cwd: string): RunOs => (/^[A-Za-z]:/.test(cwd) ? 'windows' : 'l
 
 /** 运行配置面板：配置列表 + 自动发现 + 输出。props 与 GitPanel 一致。 */
 export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
+  const untrusted = useCwdUntrusted(targetId, cwd)
+  if (untrusted) return <UntrustedRunNotice targetId={targetId} cwd={cwd} />
+  return <TrustedRunPanel targetId={targetId} cwd={cwd} />
+}
+
+/** 未信任项目不读取也不执行 run.json，避免打开陌生仓库就能被诱导运行其中的命令。 */
+function UntrustedRunNotice({ targetId, cwd }: { targetId: string; cwd: string }) {
+  const project = useProjects((s) => s.byTarget[targetId]?.projects.find((item) => !item.trusted && isPathUntrusted([item.path], cwd)))
+  const setTrusted = useProjects((s) => s.setTrusted)
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-qn-panel text-qn-text">
+      <div className="flex shrink-0 items-center gap-1 border-b border-qn-border px-2 py-2">
+        <span className="px-1 text-ui-sm font-medium">{t('运行')}</span>
+      </div>
+      <EmptyState>
+        <p>{t('此项目未信任，运行配置已停用。')}</p>
+        {project && (
+          <button type="button" className="qn-button mt-3" onClick={() => void setTrusted(project, true)}>
+            {t('信任此项目')}
+          </button>
+        )}
+      </EmptyState>
+    </div>
+  )
+}
+
+function TrustedRunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
   const view = useRun(targetId, cwd)
   const init = useRunStore((s) => s.init)
   const loadConfigs = useRunStore((s) => s.loadConfigs)

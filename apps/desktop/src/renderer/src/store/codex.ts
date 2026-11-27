@@ -17,6 +17,7 @@ import {
   emptyState,
   failActiveThreads,
   interruptTurn,
+  interruptTurnIdOf,
   isActiveThread,
   isOversizeHistoryResponse,
   listThreads,
@@ -92,6 +93,7 @@ import { useAgentPrefs } from './agentPrefs'
 import { overridesFor, prefsFor, useModels } from './models'
 import { useTargets } from './targets'
 import { useThreadPrefs } from './threadPrefs'
+import { isCwdUntrusted } from './projectTrust'
 
 type TargetSession = {
   key: string
@@ -189,6 +191,19 @@ function openingAnotherChat(state: CodexState): boolean {
   return !!state.openingThread && !isMainChat(state, state.openingThread)
 }
 
+/** 草稿态 threadId 为 null。 */
+type ViewAddress = { targetId: string; agent: AgentKind; threadId: string | null }
+
+/**
+ * 输入框里的 error 是全局字段，会跟着界面显示在任何对话上。
+ * 只有失败的对话仍在界面上时才写 error，否则改为短暂提示，避免报错串到别的对话。
+ */
+function failureFor(state: CodexState, chat: ViewAddress, message: string): Partial<CodexState> {
+  const visible = state.currentTargetId === chat.targetId && state.currentAgent === chat.agent &&
+    state.currentThreadId === chat.threadId && !openingAnotherChat(state)
+  return visible ? { error: message } : { notice: message }
+}
+
 export function currentThreadApprovals(state: CodexState): readonly ApprovalView[] {
   const { currentTargetId, currentAgent, currentThreadId } = state
   if (!currentTargetId || !currentThreadId || openingAnotherChat(state)) return noApprovals
@@ -209,6 +224,15 @@ const noThreads: ThreadSummary[] = []
 
 export function threadListFor(state: CodexState, targetId: string, cwd: string | null): ThreadListState | undefined {
   return state.threadLists[threadListKey({ targetId, cwd })]
+}
+
+/** 会话所在目录：优先取已加载列表里的线程 cwd，找不到时用当前项目目录。 */
+function threadCwd(state: CodexState, targetId: string, agent: AgentKind, threadId: string): string | null {
+  const thread = Object.values(state.threadLists)
+    .filter((list) => list.targetId === targetId)
+    .flatMap((list) => list.threads)
+    .find((item) => item.agent === agent && item.id === threadId)
+  return thread?.cwd || (state.currentTargetId === targetId ? state.currentCwd : null)
 }
 
 /** 分支会话的新标题：在该目标已加载的同 agent 会话里找同名系列，原会话不在列表里时不改名。 */
@@ -668,8 +692,11 @@ export const useCodex = create<CodexState>((set, get) => {
     options: { cwd: string | null; ephemeral: boolean },
   ): Promise<string | null> => {
     const key = sessionKey(targetId, agent)
+    // 新建发起时所在的草稿；等待期间切走后，报错不能落到新界面上。
+    const origin = { targetId, agent, threadId: get().currentThreadId }
     if (!(await ensureOpen(targetId, agent))) {
-      set({ error: get().sessions[key]?.openError ?? t('{agent} 未就绪', { agent: agentLabel(agent) }) })
+      const message = get().sessions[key]?.openError ?? t('{agent} 未就绪', { agent: agentLabel(agent) })
+      set((state) => failureFor(state, origin, message))
       return null
     }
     const session = get().sessions[key]
@@ -685,7 +712,8 @@ export const useCodex = create<CodexState>((set, get) => {
       }))
       return result.thread.id
     } catch (err) {
-      set({ error: friendlyError(err, t('新建会话失败')) })
+      const message = friendlyError(err, t('新建会话失败'))
+      set((state) => failureFor(state, origin, message))
       return null
     }
   }
@@ -701,9 +729,8 @@ export const useCodex = create<CodexState>((set, get) => {
     }
     const session = get().sessions[sessionKey(targetId, agent)]
     if (!session) return
-    const view = session.state.threads[threadId]
-    const turnId = view?.activeTurnId
-    if (!turnId) {
+    const turnId = interruptTurnIdOf(session.state.threads[threadId])
+    if (turnId === null) {
       set({ notice: t('当前没有运行中的 turn') })
       return
     }
@@ -717,6 +744,7 @@ export const useCodex = create<CodexState>((set, get) => {
 
   /**
    * 在当前目标的指定 agent 会话上，对 threadId 执行一次 RPC。
+   * 失败时只有该会话正在显示才写入 error，侧栏里对其他会话的操作改用提示。
    */
   const withSession = async <T,>(
     agent: AgentKind,
@@ -729,8 +757,10 @@ export const useCodex = create<CodexState>((set, get) => {
       set({ error: t('请先选择目标') })
       return null
     }
+    const chat = { targetId, agent, threadId }
     if (!(await ensureOpen(targetId, agent))) {
-      set({ error: get().sessions[sessionKey(targetId, agent)]?.openError ?? t('{agent} 未就绪', { agent: agentLabel(agent) }) })
+      const message = get().sessions[sessionKey(targetId, agent)]?.openError ?? t('{agent} 未就绪', { agent: agentLabel(agent) })
+      set((state) => failureFor(state, chat, message))
       return null
     }
     const session = get().sessions[sessionKey(targetId, agent)]
@@ -738,7 +768,8 @@ export const useCodex = create<CodexState>((set, get) => {
     try {
       return await run(session)
     } catch (err) {
-      set({ error: friendlyError(err, fallback) })
+      const message = friendlyError(err, fallback)
+      set((state) => failureFor(state, chat, message))
       return null
     }
   }
@@ -976,7 +1007,10 @@ export const useCodex = create<CodexState>((set, get) => {
       }
     })
     try {
-      const mode = getAccessMode(get().access, { targetId: session.targetId, agent: session.agent, threadId },
+      // 未信任项目里 Agent 只能用默认权限，忽略总控与会话档位。
+      const mode = isCwdUntrusted(session.targetId, threadCwd(get(), session.targetId, session.agent, threadId))
+        ? 'default'
+        : getAccessMode(get().access, { targetId: session.targetId, agent: session.agent, threadId },
           useSettings.getState().settings.general.globalAccessMode)
       const access = turnAccessOverride(session.agent, mode)
       if (access && session.openedConfig?.accessModes !== true) {
@@ -1364,7 +1398,8 @@ export const useCodex = create<CodexState>((set, get) => {
         if (!isCurrent()) return
         const session = get().sessions[key]
         if (!ready || !session) {
-          set({ error: session?.openError ?? t('{agent} 未就绪', { agent: agentLabel(picked) }) })
+          // 界面仍停在原对话，报错写进输入框会让原对话也显示这条错误。
+          set({ notice: session?.openError ?? t('{agent} 未就绪', { agent: agentLabel(picked) }) })
           return
         }
         const before = session.state.threads[threadId]
@@ -1408,7 +1443,7 @@ export const useCodex = create<CodexState>((set, get) => {
         await Promise.race([load(), deadline])
       } catch (err) {
         if (isCurrent()) {
-          set({ error: err === timeout ? timeout.message : friendlyError(err, t('打开会话失败')), openingThread: null })
+          set({ notice: err === timeout ? timeout.message : friendlyError(err, t('打开会话失败')), openingThread: null })
           // 迟到的回包不能再切换到这条会话。
           if (err === timeout) ++openThreadToken
         }

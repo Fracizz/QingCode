@@ -7,13 +7,15 @@ import type { AgentKind } from '../../../../shared/backendApi'
 import { t, accessOptions, type AccessMode, type AccessSelection } from '@qn/codex-client'
 
 export function AccessModePicker({
-  agent, mode, inheritedMode, supported, disabled, onChange,
+  agent, mode, inheritedMode, supported, disabled, lockedReason, onChange,
 }: {
   agent: AgentKind
   mode: AccessSelection
   inheritedMode: AccessMode
   supported: boolean
   disabled: boolean
+  /** 有值时锁定为默认档位（如项目未信任），提示里说明原因。 */
+  lockedReason?: string
   onChange: (mode: AccessSelection) => void
 }) {
   const [confirm, setConfirm] = useState<AccessMode | null>(null)
@@ -21,12 +23,14 @@ export function AccessModePicker({
   const openingConfirmation = useRef(false)
   const available = accessOptions[agent]
   if (!available.length) return null
-  const effectiveMode = mode === 'inherit' ? inheritedMode : mode
+  const effectiveMode = lockedReason ? 'default' : mode === 'inherit' ? inheritedMode : mode
   const current = available.find((option) => option.mode === effectiveMode)
   const pending = available.find((option) => option.mode === confirm)
   if (!current) return null
   const Icon = current.warning ? ShieldAlert : Shield
-  const label = mode === 'inherit' ? t('{mode}（跟随总控）', { mode: current.label }) : current.label
+  const label = lockedReason
+    ? t('{mode}（{reason}）', { mode: current.label, reason: lockedReason })
+    : mode === 'inherit' ? t('{mode}（跟随总控）', { mode: current.label }) : current.label
 
   return (
     <>
@@ -38,7 +42,7 @@ export function AccessModePicker({
               ref={trigger}
               type="button"
               aria-label={t('访问模式：{mode}', { mode: label })}
-              disabled={disabled}
+              disabled={disabled || Boolean(lockedReason)}
               className={cn(
                 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg outline-none enabled:hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
                 current.warning ? 'bg-qn-danger/10 text-qn-danger' : effectiveMode !== 'default' ? 'bg-qn-warn/10 text-qn-warn' : 'text-qn-muted',

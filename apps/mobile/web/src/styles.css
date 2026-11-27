@@ -26,6 +26,15 @@
   --color-qn-claude: #f0a37f;
   --color-qn-archive: #7a4422;
   --color-qn-archive-text: #ffffff;
+  /* 子代理头像配色：与电脑版 --color-qn-avatar-* 同值，实色底配白色图标。 */
+  --color-qn-avatar-1: #3f72af;
+  --color-qn-avatar-2: #2f8466;
+  --color-qn-avatar-3: #a8622f;
+  --color-qn-avatar-4: #7058b0;
+  --color-qn-avatar-5: #b84a64;
+  --color-qn-avatar-6: #2a7f86;
+  --color-qn-avatar-7: #b55a2a;
+  --color-qn-avatar-8: #5560b8;
 }
 
 /*

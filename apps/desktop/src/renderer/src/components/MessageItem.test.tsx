@@ -293,7 +293,7 @@ it('把最终回复时间放在工作摘要右侧，简单回复在正文上方�
       <MessageItem item={reply} replyTimeInSummary />
     </>))
     expect(host.querySelector('summary')?.textContent).toContain('工作了 6m 0s')
-    expect(host.querySelector('summary time')?.textContent).toBe('2025-12-31 23:58')
+    expect(host.querySelector('summary time')?.textContent).toBe('2025-12-31 23:58:00')
     expect(host.querySelectorAll('time')).toHaveLength(1)
     await act(() => root.render(<MessageItem item={reply} />))
     expect(host.querySelector('time')?.nextElementSibling?.classList.contains('qn-markdown')).toBe(true)

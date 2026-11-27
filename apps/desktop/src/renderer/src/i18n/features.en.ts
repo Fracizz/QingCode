@@ -623,4 +623,8 @@ export default {
   '当前 Git 仓库未配置远端地址': 'This Git repository has no remote URL',
   '读取 Git 远端地址失败': 'Failed to read Git remote URLs',
   '选择要复制的 Git 远端地址': 'Choose a Git remote URL to copy',
+  // 工作区信任
+  '此项目未信任，运行配置已停用。': 'This project is not trusted, so run configurations are disabled.',
+  '信任此项目': 'Trust this project',
+  '项目未信任，无法启动运行配置': 'Project not trusted; cannot start run configurations',
 } satisfies Record<string, string>

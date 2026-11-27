@@ -12,6 +12,7 @@ import {
   failActiveThreads,
   forkThread,
   interruptTurn,
+  interruptTurnIdOf,
   isStreamDelta,
   isOversizeHistoryResponse,
   isThreadOutcome,
@@ -3372,8 +3373,8 @@ export const useApp = create<AppState>((set, get) => {
       const { selectedTargetId, selectedThreadId, selectedAgent, sessions } = get()
       if (!selectedTargetId || !selectedThreadId) return
       const session = sessions[sessionKey(selectedTargetId, selectedAgent)]
-      const turnId = session?.state.threads[selectedThreadId]?.activeTurnId
-      if (session && turnId) await interruptTurn(session.rpc, selectedThreadId, turnId)
+      const turnId = interruptTurnIdOf(session?.state.threads[selectedThreadId])
+      if (session && turnId !== null) await interruptTurn(session.rpc, selectedThreadId, turnId)
     },
 
     respondApproval: async (requestId, decision) => {

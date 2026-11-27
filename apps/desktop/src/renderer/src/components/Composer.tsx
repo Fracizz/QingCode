@@ -17,6 +17,7 @@ import {
 import { useSetting } from '../features/settings/settingsStore'
 import { AccessModePicker } from '../features/access/AccessModePicker'
 import { accessKey, getAccessSelection, type AccessAddress } from '../features/access/accessModel'
+import { useCwdUntrusted } from '../store/projectTrust'
 import {
   applyMention,
   imageSendBlock,
@@ -166,6 +167,7 @@ export function Composer({
   const accessMode = useCodex((s) => accessAddress ? getAccessSelection(s.access, accessAddress) : 'inherit')
   const inheritedMode = resolveAccessMode(agent, useSetting((settings) => settings.general.globalAccessMode))
   const setAccessMode = useCodex((s) => s.setAccessMode)
+  const untrusted = useCwdUntrusted(targetId, root)
   const accessSupported = useCodex((s) => Boolean(targetId && s.sessions[sessionKey(targetId, agent)]?.openedConfig?.accessModes))
   const sendingPending = useCodex((s) => Boolean(targetId && threadId && s.pendingSends[pendingSendKey({ targetId, agent, threadId })]?.[0]?.sending))
 
@@ -583,6 +585,7 @@ export function Composer({
                 mode={accessMode}
                 inheritedMode={inheritedMode}
                 supported={accessSupported}
+                lockedReason={untrusted ? t('项目未信任') : undefined}
                 disabled={Boolean(disabled || sending || running || sendingPending)}
                 onChange={(mode) => setAccessMode(accessAddress, draftRevision, mode)}
               />

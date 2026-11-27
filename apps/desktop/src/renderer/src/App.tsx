@@ -11,6 +11,7 @@ import { TooltipProvider } from './components/primitives'
 import { Sidebar } from './components/shell/Sidebar'
 import { TitleBar } from './components/shell/TitleBar'
 import { TargetForm } from './components/TargetForm'
+import { TrustProjectDialog } from './components/TrustProjectDialog'
 import { ProjectFilesView, useWorkspaceScope, WorkspaceDock } from './components/shell/WorkspaceDock'
 import { QuickOpen } from './features/explorer'
 import { CommandPalette, defaultCommands, registerCommands, storeCommandDeps, toggleCommandPalette } from './features/palette'
@@ -22,7 +23,7 @@ import { useDock } from './store/dock'
 import { useBootSplash } from './hooks/useBootSplash'
 import { useCodex } from './store/codex'
 import { useLegacy } from './store/legacy'
-import { useProjects } from './store/projects'
+import { projectListOf, useProjects } from './store/projects'
 import { useRateLimits } from './store/rateLimits'
 import { useTargets, type ConnectCredentials } from './store/targets'
 import { useUi } from './store/ui'
@@ -50,6 +51,8 @@ export default function App() {
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed)
   const pickerOpen = useUi((s) => s.directoryPickerOpen)
   const pickerTargetId = useUi((s) => s.directoryPickerTarget) ?? selectedId
+  // 选好目录后先询问是否信任，再保存项目。
+  const [pendingProject, setPendingProject] = useState<{ targetId: string; path: string } | null>(null)
 
   const [targetForm, setTargetForm] = useState<{ open: boolean; editing: SshTarget | DirectTarget | null }>({
     open: false,
@@ -295,7 +298,21 @@ export default function App() {
           onConfirm={(path) => {
             useUi.getState().closeDirectoryPicker()
             if (pickerTargetId !== selectedId) selectTarget(pickerTargetId)
-            void useProjects.getState().add(pickerTargetId, path)
+            const existing = projectListOf(useProjects.getState(), pickerTargetId).projects
+              .find((project) => project.path.replace(/[\\/]+$/, '') === path.trim().replace(/[\\/]+$/, ''))
+            // 已存在的项目保留原信任状态，不再重复询问。
+            if (existing) void useProjects.getState().add(pickerTargetId, path, existing.trusted)
+            else setPendingProject({ targetId: pickerTargetId, path })
+          }}
+        />
+      )}
+      {pendingProject && (
+        <TrustProjectDialog
+          path={pendingProject.path}
+          onClose={() => setPendingProject(null)}
+          onChoose={(trusted) => {
+            setPendingProject(null)
+            void useProjects.getState().add(pendingProject.targetId, pendingProject.path, trusted)
           }}
         />
       )}
