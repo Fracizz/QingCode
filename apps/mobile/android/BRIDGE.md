@@ -38,6 +38,9 @@
 | `rpc` | `{host, port?, fp, token, method, params?, agent?}` | 透传电脑网关 `/rpc` 的 `result`；`token` 只放 `Authorization` 头 |
 | `events.open` | `{host, port?, fp, token}` | 字符串 stream id，例如 `"s1"` |
 | `events.close` | `{stream}` | `{closed:true}`；`stream` 也接受 `{stream:"s1"}` |
+| `background.get` | `{}` | 本机后台保持连接开关，默认 `true` |
+| `background.set` | `{enabled}` | 保存并返回开关值 |
+| `background.connection` | `{active}` | 同步当前是否有选中的电脑，返回 `active`。开关开启且有电脑时，由前台 Activity 启动连接服务。 |
 | `clipboard.read` | `{}` | 剪贴板文本字符串（无内容时 `""`） |
 | `clipboard.write` | `{text}` | `{ok:true}`。文本上限 256 Ki UTF-16 字符。 |
 | `images.pick` | `{maxCount?, maxBytes?}` | `{images:[{name,mime,dataUrl}], skipped}`。系统选择器支持选取最多四张图，返回的压缩后总字节数不超过 700 KiB。 |

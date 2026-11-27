@@ -3,15 +3,17 @@ import type { TurnStartParams } from './codex-types'
 type AgentKind = 'codex' | 'claude' | 'pi'
 
 export type AccessMode = 'default' | 'readOnly' | 'fullAccess' | 'plan' | 'acceptEdits' | 'bypassPermissions'
+export type AccessSelection = AccessMode | 'inherit'
+export type GlobalAccessMode = 'default' | 'restricted'
 
-type AccessOption = {
-  mode: AccessMode
+type AccessOption<Mode extends AccessSelection = AccessMode> = {
+  mode: Mode
   label: string
   hint: string
   warning?: string
 }
 
-const defaultMode: AccessOption = { mode: 'default', label: '默认权限', hint: '沿用 Agent 默认权限' }
+const defaultMode: AccessOption = { mode: 'default', label: 'Agent 默认权限', hint: '使用 Agent 自身的配置' }
 
 export const accessOptions: Record<AgentKind, readonly AccessOption[]> = {
   codex: [
@@ -32,6 +34,24 @@ export const accessOptions: Record<AgentKind, readonly AccessOption[]> = {
     },
   ],
   pi: [],
+}
+
+export function isGlobalAccessMode(value: unknown): value is GlobalAccessMode {
+  return value === 'default' || value === 'restricted'
+}
+
+export function resolveAccessMode(agent: AgentKind, globalMode: GlobalAccessMode | undefined, selection: AccessSelection = 'inherit'): AccessMode {
+  if (selection !== 'inherit') return selection
+  if (globalMode === 'restricted') {
+    if (agent === 'codex') return 'readOnly'
+    if (agent === 'claude') return 'plan'
+  }
+  return 'default'
+}
+
+export function inheritedAccessOption(agent: AgentKind, mode: AccessMode): AccessOption<'inherit'> {
+  const current = accessOptions[agent].find((option) => option.mode === mode)
+  return { mode: 'inherit', label: '继承总控', hint: `当前为${current?.label ?? defaultMode.label}` }
 }
 
 type CodexAccessOverride = Required<Pick<TurnStartParams, 'approvalPolicy' | 'sandboxPolicy'>> & {

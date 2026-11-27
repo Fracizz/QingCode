@@ -44,6 +44,7 @@ export function TargetsPage() {
   const beginRepair = useApp((s) => s.beginRepair)
   const [menu, setMenu] = useState<string | null>(null)
   const selected = targets.find((target) => target.id === menu)
+  const connectingTarget = targets.find((target) => target.id === connectingId)
 
   useEffect(() => { void loadAgentSettings() }, [loadAgentSettings])
 
@@ -56,9 +57,8 @@ export function TargetsPage() {
         {repair && conn && <Note tone="error" message="请重新配对这台电脑。" actionLabel="重新配对" onAction={() => beginRepair(conn.id)} />}
         {error && <Note message={error} tone="error" onClose={clearError} />}
         {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
-        {eventsError && !repair && <Note message={eventsError} tone="warn" />}
-        {connectingId && <Note message="首次连接或 SSH 指纹变化时，请在电脑上确认指纹。" />}
-        {targets.length === 0 ? (error || repair ? <Empty>没有可用的目标。</Empty> : <Loading text="正在读取目标…" />) : (
+        {connectingTarget?.kind === 'ssh' && <Note message="首次连接或 SSH 指纹变化时，请在电脑上确认指纹。" />}
+        {targets.length === 0 ? (error || repair || eventsError ? <Empty>没有可用的目标。</Empty> : <Loading text="正在读取目标…" />) : (
           <div className="qn-list-group">
             {targets.map((target) => {
               const state = states[target.id]?.state ?? 'idle'
@@ -72,7 +72,9 @@ export function TargetsPage() {
                     <StatusDot tone={target.kind === 'local' && state === 'idle' && eventsConnected ? 'ok' : stateTone(state)} />
                     <span className="qn-row-copy">
                       <span className="qn-list-primary">{target.name}</span>
-                      {target.kind === 'ssh' && <span className="qn-subtitle block">{formatAddress(target.host, target.port)}</span>}
+                      {target.kind !== 'local' && <span className="qn-subtitle block">
+                        {target.kind === 'direct' && '直连 · '}{formatAddress(target.host, target.port)}
+                      </span>}
                     </span>
                     <Badge tone={stateTone(state)}>{canOpen ? '查看项目' : busy ? stateText[state] : '连接'}</Badge>
                   </button>
@@ -88,7 +90,9 @@ export function TargetsPage() {
       </div>
       {selected && (
         <Dialog title={selected.name} onClose={() => setMenu(null)}>
-          {selected.kind === 'ssh' && <p className="mb-2 text-xs text-qn-muted">{selected.username}@{formatAddress(selected.host, selected.port)}</p>}
+          {selected.kind !== 'local' && <p className="mb-2 text-xs text-qn-muted">
+            {selected.kind === 'ssh' ? `${selected.username}@` : '直连 · '}{formatAddress(selected.host, selected.port)}
+          </p>}
           <div className="grid">
             <SheetAction icon={FolderOpen} onClick={() => { setMenu(null); void selectTarget(selected.id) }}>查看项目</SheetAction>
             {states[selected.id]?.state === 'ready' ? (

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ItemView, ThreadView } from '@qn/codex-client'
-import { formatDuration, groupFlow, groupTurns, hasPendingSubmission, isGroupRunning, streamingReplyId, summarizeTools } from './turnGroups'
+import type { ItemView, ThreadView, TurnMeta } from '@qn/codex-client'
+import { formatDuration, formatStoppedDuration, groupFlow, groupTurns, hasPendingSubmission, isGroupRunning, streamingReplyId, summarizeTools, turnTimeline } from './turnGroups'
 
 const user = (id: string) => ({ kind: 'user', id, text: 'hi' }) as unknown as ItemView
 const agent = (id: string) => ({ kind: 'agent', id, text: 'ok', streaming: false }) as unknown as ItemView
@@ -89,7 +89,7 @@ describe('summarizeTools', () => {
 
 describe('groupTurns', () => {
   const kinds = (entries: ReturnType<typeof groupTurns>) =>
-    entries.map((e) => (e.kind === 'item' ? e.item.id : e.kind === 'tools' ? `tools:${e.items.length}` : `work:${e.entries.length}`))
+    entries.map((e) => (e.kind === 'item' ? e.item.id : e.kind === 'tools' ? `tools:${e.items.length}` : e.kind === 'work' ? `work:${e.entries.length}` : e.key))
 
   it('已结束的轮次把过程收进 work，只露出最终回复', () => {
     const items = [user('u1'), think('r'), agent('mid'), cmd('c'), agent('a1'), user('u2'), agent('a2')]
@@ -106,6 +106,29 @@ describe('groupTurns', () => {
 
   it('没有工具步骤时不折叠', () => {
     expect(kinds(groupTurns([user('u'), agent('a')], undefined, false))).toEqual(['u', 'a'])
+  })
+
+  it('停止提示留在原轮次，保留已输出的消息和下一轮的运行过程', () => {
+    const items = [user('u1'), cmd('c1'), agent('partial'), user('u2'), cmd('c2')]
+    const turns: TurnMeta[] = [
+      { id: 't1', outcome: 'interrupted', startedAtMs: 1, durationMs: 0, itemIds: ['u1', 'c1', 'partial'] },
+      { id: 't2', startedAtMs: 2, durationMs: null, itemIds: ['u2', 'c2'] },
+    ]
+    const entries = groupTurns(items, turns, true)
+    expect(kinds(entries)).toEqual(['u1', 'work:1', 'partial', 'stopped-t1', 'u2', 'c2'])
+    expect(entries[3]).toMatchObject({ kind: 'stopped', durationMs: 0 })
+    expect(turnTimeline(items, turns).map((entry) => entry.key)).toEqual(['u1', 'c1', 'partial', 'stopped-t1', 'u2', 'c2'])
+  })
+
+  it('在下一轮前显示无条目的停止提示，等加载早期消息后再显示对应提示', () => {
+    const turns: TurnMeta[] = [
+      { id: 'older', outcome: 'interrupted', startedAtMs: 1, durationMs: 1000, itemIds: ['unloaded'] },
+      { id: 'empty', outcome: 'interrupted', startedAtMs: 2, durationMs: null, itemIds: [] },
+      { id: 'next', outcome: 'completed', startedAtMs: 3, durationMs: 2000, itemIds: ['u', 'a'] },
+    ]
+    expect(kinds(groupTurns([user('u'), agent('a')], turns, false))).toEqual(['stopped-empty', 'u', 'a'])
+    expect(kinds(groupTurns([user('unloaded'), user('u'), agent('a')], turns, false)))
+      .toEqual(['unloaded', 'stopped-older', 'stopped-empty', 'u', 'a'])
   })
 
   it('完成的空摘要不生成可展开的工作过程', () => {
@@ -130,6 +153,9 @@ describe('formatDuration', () => {
     expect(formatDuration(4_200)).toBe('4s')
     expect(formatDuration(296_000)).toBe('4m 56s')
     expect(formatDuration(3_720_000)).toBe('1h 2m')
+    expect(formatStoppedDuration(999)).toBe('0秒')
+    expect(formatStoppedDuration(61_500)).toBe('1分1秒')
+    expect(formatStoppedDuration(3_720_000)).toBe('1小时2分0秒')
   })
 })
 

@@ -2,7 +2,7 @@ import { useRef } from 'react'
 import { X } from 'lucide-react'
 import { IconButton } from './ui'
 
-export function MessageImage({ src, label }: { src: string; label: string }) {
+export function MessageImage({ src, label, compact = false }: { src: string; label: string; compact?: boolean }) {
   const previewRef = useRef<HTMLDialogElement>(null)
 
   return (
@@ -11,10 +11,12 @@ export function MessageImage({ src, label }: { src: string; label: string }) {
         type="button"
         aria-label={`查看${label}`}
         aria-haspopup="dialog"
-        className="max-w-[min(100%,16rem)] cursor-zoom-in overflow-hidden rounded-xl border border-qn-border focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-qn-accent"
+        className={`cursor-zoom-in overflow-hidden border focus-visible:outline-2 focus-visible:outline-qn-accent ${compact
+          ? 'size-6 shrink-0 rounded-md border-qn-border-strong bg-qn-bg'
+          : 'max-w-[min(100%,16rem)] rounded-xl border-qn-border focus-visible:outline-offset-2'}`}
         onClick={() => previewRef.current?.showModal()}
       >
-        <img src={src} alt={label} className="max-h-48 max-w-full object-contain" />
+        <img src={src} alt={label} className={compact ? 'size-full object-contain' : 'max-h-48 max-w-full object-contain'} />
       </button>
       <dialog
         ref={previewRef}

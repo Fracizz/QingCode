@@ -49,6 +49,8 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
   private NativeBridge bridge;
   private volatile boolean destroyed;
   private boolean resumed;
+  private boolean desktopConnectionActive;
+  private boolean connectionServiceStarted;
   private boolean backPending;
   private final AtomicReference<String> pendingPairing = new AtomicReference<>();
 
@@ -79,6 +81,7 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
   @Override protected void onResume() {
     super.onResume();
     resumed = true;
+    updateConnectionService();
     if (webView != null) {
       webView.onResume();
       webView.evaluateJavascript("if (typeof window.__qnResume === 'function') window.__qnResume()", null);
@@ -87,7 +90,7 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
 
   @Override protected void onPause() {
     resumed = false;
-    if (webView != null) webView.onPause();
+    if (webView != null && !connectionServiceStarted) webView.onPause();
     super.onPause();
   }
 
@@ -125,8 +128,44 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
     return resumed && !isFinishing() && webView != null && isInternalAssetUrl(webView.getUrl());
   }
 
+  @Override public boolean backgroundConnectionEnabled() {
+    return getSharedPreferences("app_preferences", MODE_PRIVATE).getBoolean("background_connection", true);
+  }
+
+  @Override public void setBackgroundConnectionEnabled(boolean enabled) {
+    getSharedPreferences("app_preferences", MODE_PRIVATE).edit().putBoolean("background_connection", enabled).apply();
+    runOnUiThread(this::updateConnectionService);
+  }
+
+  @Override public void setDesktopConnectionActive(boolean active) {
+    runOnUiThread(() -> {
+      desktopConnectionActive = active;
+      updateConnectionService();
+    });
+  }
+
+  private void updateConnectionService() {
+    if (destroyed) return;
+    Intent intent = new Intent(this, DesktopConnectionService.class);
+    if (!desktopConnectionActive || !backgroundConnectionEnabled()) {
+      if (connectionServiceStarted) {
+        stopService(intent);
+        connectionServiceStarted = false;
+        if (!resumed && webView != null) webView.onPause();
+      }
+    } else if (resumed && !connectionServiceStarted) {
+      try {
+        startForegroundService(intent);
+        connectionServiceStarted = true;
+      } catch (IllegalStateException | SecurityException ignored) {
+        // 后台启动受系统限制，回到前台后再尝试。
+      }
+    }
+  }
+
   @Override protected void onDestroy() {
     destroyed = true;
+    if (connectionServiceStarted) stopService(new Intent(this, DesktopConnectionService.class));
     if (bridge != null) bridge.close();
     if (webView != null) {
       webView.removeJavascriptInterface("QnNative");

@@ -8,18 +8,20 @@ const connection: Connection = {
   fp: 'ab'.repeat(32), token: 'test', desktopName: '电脑', createdAt: 0,
 }
 
-it('恢复同一电脑和会话的权限，保留显式选回的默认权限', () => {
+it('恢复同一电脑和会话的权限，保留显式选择的 Agent 默认和总控继承', () => {
   const address = { desktopId: connection.id, targetId: 'local', agent: 'codex', threadId: 'thread' } as const
   const key = accessPreferenceKey(address, connection.fp)
   const readOnly = accessPreferenceKey({ ...address, threadId: 'read-only-thread' }, connection.fp)
+  const inherited = accessPreferenceKey({ ...address, threadId: 'inherited-thread' }, connection.fp)
   const raw = JSON.stringify({
     [key]: 'default',
     [readOnly]: 'readOnly',
+    [inherited]: 'inherit',
     [accessPreferenceKey({ ...address, agent: 'claude' }, connection.fp)]: 'readOnly',
     [accessPreferenceKey({ ...address, threadId: 'another' }, 'cd'.repeat(32))]: 'fullAccess',
     malformed: 'fullAccess',
   })
-  expect(restoreAccessPrefs(raw, [connection], {})).toEqual({ [key]: 'default', [readOnly]: 'readOnly' })
+  expect(restoreAccessPrefs(raw, [connection], {})).toEqual({ [key]: 'default', [readOnly]: 'readOnly', [inherited]: 'inherit' })
   const archived = archivedThreadKey(connection.id, address.targetId, { agent: address.agent, id: address.threadId })
-  expect(restoreAccessPrefs(raw, [connection], { [archived]: true })).toEqual({ [readOnly]: 'readOnly' })
+  expect(restoreAccessPrefs(raw, [connection], { [archived]: true })).toEqual({ [readOnly]: 'readOnly', [inherited]: 'inherit' })
 })

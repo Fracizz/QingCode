@@ -1,8 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createServer, type Server as HttpsServer } from 'node:https'
-import { turnAccessOverride } from '@qn/codex-client'
+import { isGlobalAccessMode, resolveAccessMode, turnAccessOverride, type GlobalAccessMode } from '@qn/codex-client'
+import { isJsonRpcRequest } from '@qn/protocol'
 import { redactToken } from '../remoteCommands'
 import { RouterError, toWireError, type CodexReplyRoute } from '../router'
+import { openMobileHistory } from './history'
 import { mobileProjectFiles } from './projectAccess'
 import type { MobileCertificate } from './cert'
 import type { DeviceStore, MobileDevice, PairFailureState } from './pairing'
@@ -60,6 +62,7 @@ const RPC_METHODS = new Set([
   'mobile.turn.start',
   // 网关自有方法，不转发给同名 backend 方法。
   'mobile.agents',
+  'mobile.history.open',
   'mobile.files.list',
   'mobile.files.search',
   'mobile.files.read',
@@ -79,7 +82,7 @@ const SERVER_REQ_METHODS = new Set([
   'git.diff',
 ])
 
-const FORWARDED_EVENTS = new Set(['target.state', 'codex.recv', 'server.evt'])
+const FORWARDED_EVENTS = new Set(['target.state', 'codex.recv', 'server.evt', 'settings.access'])
 
 class HttpGatewayError extends Error {
   constructor(
@@ -162,6 +165,7 @@ function ownRecord(value: unknown, key: string): JsonRecord | null {
 
 export type MobileAgentsResult = {
   defaultAgent: AgentName
+  globalAccessMode?: GlobalAccessMode
   agents: Record<string, Partial<Record<AgentName, { enabled: boolean }>>>
 }
 
@@ -181,7 +185,8 @@ export function mobileAgentsFromSettings(settings: unknown): MobileAgentsResult 
     }
     agents[targetId] = picked
   }
-  return { defaultAgent, agents }
+  const globalAccessMode = general?.globalAccessMode
+  return { defaultAgent, agents, ...(isGlobalAccessMode(globalAccessMode) ? { globalAccessMode } : {}) }
 }
 
 const AGENT_PATH_KEYS: Record<AgentName, 'codexPath' | 'claudePath' | 'piPath'> = {
@@ -242,15 +247,22 @@ function forwardRpcParams(body: JsonRecord, method: string): unknown {
   return params ?? {}
 }
 
-function mobileTurnParams(params: unknown): JsonRecord {
+function mobileTurnParams(params: unknown, settings?: unknown): JsonRecord {
   if (!isRecord(params) || typeof params.targetId !== 'string' || !isAgent(params.agent) ||
       !isRecord(params.msg) || params.msg.method !== 'turn/start' || typeof params.msg.id !== 'string' ||
       !isRecord(params.msg.params)) {
     throw new RouterError('invalid_params', '访问模式发送参数无效')
   }
+  if (params.inheritAccess === true) {
+    if (resolveAccessMode(params.agent, mobileGlobalAccess(settings)) !== params.accessMode) {
+      throw new RouterError('access_mode_changed', '权限总控已更新，请检查当前访问模式后重试')
+    }
+  }
   const access = turnAccessOverride(params.agent, params.accessMode)
   const { threadId, input, model, effort, serviceTier } = params.msg.params
-  if (!access || typeof threadId !== 'string' || !threadId || !Array.isArray(input)) {
+  const useDefault = params.agent !== 'pi' && params.accessMode === 'default' && typeof params.inheritAccess === 'boolean'
+  if ((!access && !useDefault) ||
+      typeof threadId !== 'string' || !threadId || !Array.isArray(input)) {
     throw new RouterError('invalid_params', '当前 Agent 不支持此访问模式，或轮次参数无效')
   }
   return {
@@ -267,6 +279,12 @@ function mobileTurnParams(params: unknown): JsonRecord {
       },
     },
   }
+}
+
+function mobileGlobalAccess(settings: unknown): GlobalAccessMode {
+  const mode = ownRecord(settings, 'general')?.globalAccessMode
+  if (!isGlobalAccessMode(mode)) throw new RouterError('access_settings_unavailable', '暂时无法读取电脑的权限总控，请重试')
+  return mode
 }
 
 function clientIp(req: IncomingMessage): string {
@@ -525,18 +543,53 @@ export class MobileGateway {
       return this.sendError(res, status, allowed.code, allowed.message)
     }
     const method = body.method as string
-    if (method === 'mobile.agents') {
-      return this.sendJson(res, 200, mobileAgentsFromSettings(await this.readSettings()))
-    }
     let params = forwardRpcParams(body, method)
     if (method === 'server.req' && isRecord(params) && params.method === 'codex.open') {
       params = injectAgentPath(params, await this.readSettings())
     }
     try {
       const invoke = (name: string, value: unknown) => this.options.router.invoke(name, value)
+      if (method === 'mobile.agents') {
+        const settings = await this.readSettings()
+        mobileGlobalAccess(settings)
+        return this.sendJson(res, 200, { ...mobileAgentsFromSettings(settings), fastHistoryOpen: true })
+      }
+      if (method === 'mobile.history.open') {
+        if (!isRecord(params) || typeof params.targetId !== 'string' || !params.targetId ||
+            typeof params.threadId !== 'string' || !params.threadId || !isAgent(params.agent)) {
+          throw new RouterError('invalid_params', '缺少目标、Agent 或会话 ID')
+        }
+        const lifetime = new AbortController()
+        const close = () => lifetime.abort()
+        if (res.destroyed) return
+        res.once('close', close)
+        try {
+          const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(25_000)])
+          const history = await openMobileHistory({ targetId: params.targetId, agent: params.agent, threadId: params.threadId },
+            (value, route) => this.options.router.invoke('codex.send', value, route), signal)
+          return this.sendJson(res, 200, history)
+        } finally {
+          res.off('close', close)
+        }
+      }
       if (method === 'codex.send' || method === 'mobile.turn.start') {
         // 独立方法让旧网关拒绝请求，避免按默认权限误发该轮。
-        const result = await this.invokeCodex(device.id, method === 'mobile.turn.start' ? mobileTurnParams(params) : params)
+        if (method === 'mobile.turn.start') {
+          const settings = isRecord(params) && params.inheritAccess === true ? await this.readSettings() : undefined
+          params = mobileTurnParams(params, settings)
+        } else if (isRecord(params) && isRecord(params.msg) && params.msg.method === 'turn/start' && isRecord(params.msg.params)) {
+          // 旧手机和读取总控失败的手机都可能走普通入口，由网关补上当前总控。
+          const agent = isAgent(params.agent) ? params.agent : 'codex'
+          if (agent !== 'pi') {
+            const mode = resolveAccessMode(agent, mobileGlobalAccess(await this.readSettings()))
+            params = { ...params, msg: { ...params.msg, params: { ...params.msg.params, ...turnAccessOverride(agent, mode) } } }
+          }
+        }
+        if (isRecord(body.params) && body.params.replyViaHttp === true && isRecord(params) &&
+            isJsonRpcRequest(params.msg) && params.msg.method === 'turn/start') {
+          return this.sendJson(res, 200, { reply: await this.invokeTurn(res, params) })
+        }
+        const result = await this.invokeCodex(device.id, params)
         return this.sendJson(res, 200, result ?? null)
       }
       const result = method.startsWith('mobile.files.')
@@ -544,16 +597,41 @@ export class MobileGateway {
         : MOBILE_TERMINAL_METHODS.has(method)
           ? await this.terminals.run(invoke, device.id, method, params)
           : await invoke(method, params)
-      if (method === 'server.req' && isRecord(params) && params.method === 'codex.attach' &&
-          isRecord(result) && result.accessModes === true) {
-        return this.sendJson(res, 200, { ...result, mobileAccessModes: true })
+      if (method === 'server.req' && isRecord(params) && isRecord(result)) {
+        const supported = params.method === 'codex.open' && isRecord(result.capabilities)
+          ? result.capabilities.accessModes
+          : params.method === 'codex.attach' ? result.accessModes : undefined
+        if (supported === true) return this.sendJson(res, 200, { ...result, mobileAccessModes: true })
       }
       return this.sendJson(res, 200, result ?? null)
     } catch (err) {
       const error = toWireError(err)
-      const status = error.code === 'invalid_params' ? 400 : error.code === 'not_found' ? 404
+      const status = error.code === 'invalid_params' ? 400 : error.code === 'not_found' ? 404 : error.code === 'access_mode_changed' ? 409
+        : error.code === 'access_settings_unavailable' ? 503
         : error.code === 'forbidden' || error.code === 'terminal_disabled' ? 403 : 502
       return this.sendError(res, status, error.code, redactToken(error.message) || '电脑端请求失败')
+    }
+  }
+
+  private async invokeTurn(res: ServerResponse, params: JsonRecord): Promise<unknown> {
+    const lifetime = new AbortController()
+    const close = () => lifetime.abort()
+    res.once('close', close)
+    const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(25_000)])
+    try {
+      return await new Promise<unknown>((resolve, reject) => {
+        signal.throwIfAborted()
+        const abort = () => reject(new RouterError('timeout', '发送结果未确认'))
+        signal.addEventListener('abort', abort, { once: true })
+        // 回包跟随发送请求，即使手机的事件流重连，也可以确认目标是否收到了这一轮。
+        void this.options.router.invoke('codex.send', params, {
+          signal,
+          receive: ({ msg }) => resolve(msg),
+        }).catch(reject)
+      })
+    } finally {
+      res.off('close', close)
+      lifetime.abort()
     }
   }
 

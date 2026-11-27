@@ -79,11 +79,11 @@ describe('codex api', () => {
       },
     } as CodexRpcLike
 
-    const { data } = await listThreads(rpc, ['/repo', '/other'], 2)
+    const { data } = await listThreads(rpc, ['/repo', '/other'], 2, { archived: true })
     expect(data.map((thread) => thread.id)).toEqual(['a', 'b'])
     expect(calls).toEqual([
-      { cwd: ['/repo', '/other'], sortKey: 'updated_at', limit: 2 },
-      { cwd: ['/repo', '/other'], sortKey: 'updated_at', limit: 1, cursor: 'p2' },
+      { cwd: ['/repo', '/other'], sortKey: 'updated_at', limit: 2, archived: true },
+      { cwd: ['/repo', '/other'], sortKey: 'updated_at', limit: 1, cursor: 'p2', archived: true },
     ])
   })
 

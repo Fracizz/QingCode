@@ -14,6 +14,7 @@ it('重连补齐会话后续发待发消息，保留中断或提交结果未确�
   const state = useApp.getState
   const view = () => state().sessions['codex:local']?.state.threads['t-demo']
   const queue = () => selectedQueuedSends(state()) ?? []
+  const openEvents = gateway.openEvents.bind(gateway)
   const opened = vi.spyOn(gateway, 'openEvents')
   const actualRpc = gateway.rpc.bind(gateway)
   let readHeld = false
@@ -36,7 +37,12 @@ it('重连补齐会话后续发待发消息，保留中断或提交结果未确�
     if (method === 'codex.send' && msg?.method === 'turn/start' && msg.params?.input?.[0]?.text === '结果丢失') {
       lostReply = msg.id
     }
-    return actualRpc(...args)
+    const result = await actualRpc(...args)
+    if (method === 'server.req' && typeof params === 'object' && params !== null && 'method' in params) {
+      if (params.method === 'codex.attach') return { ...result as object, mobileAccessModes: undefined }
+      if (params.method === 'codex.open') return { ...result as object, mobileAccessModes: true }
+    }
+    return result
   })
   const sent = (text: string) => rpc.mock.calls.filter(([, method, params]) => {
     const msg = (params as { msg?: { method: string; params?: { input?: { text: string }[] } } })?.msg
@@ -50,9 +56,17 @@ it('重连补齐会话后续发待发消息，保留中断或提交结果未确�
     const stream = await opened.mock.results.at(-1)?.value
     await advance(gateway.closeEvents(stream), 30)
     expect(state().eventsConnected).toBe(false)
+    expect(state().eventsError).toBeNull()
+  }
+
+  const document = Object.assign(new EventTarget(), { visibilityState: 'visible' })
+  const changeVisibility = (visibility: 'visible' | 'hidden') => {
+    document.visibilityState = visibility
+    document.dispatchEvent(new Event('visibilitychange'))
   }
 
   vi.useFakeTimers()
+  vi.stubGlobal('document', document)
   setGateway(gateway)
   try {
     await advance(Promise.all([
@@ -64,6 +78,7 @@ it('重连补齐会话后续发待发消息，保留中断或提交结果未确�
     await advance(state().selectTarget('local'))
     await advance(state().selectProject('p-local'), 300)
     await expect(advance(state().openThread('t-demo', 'codex'))).resolves.toBe(true)
+    expect(state().sessions['codex:local']?.accessSupported).toBe(true)
 
     await expect(advance(state().send('第一轮'), 30)).resolves.toBe(true)
     await expect(advance(state().send('锁屏前排队'), 30)).resolves.toBe(true)
@@ -82,6 +97,35 @@ it('重连补齐会话后续发待发消息，保留中断或提交结果未确�
     await vi.advanceTimersByTimeAsync(2200)
     expect(sent('锁屏前排队')).toHaveLength(1)
     expect(sent('离线时排队')).toHaveLength(1)
+    expect(queue()).toEqual([])
+    expect(state().sessions['codex:local']?.accessSupported).toBe(true)
+    expect(state().backgroundConnectionEnabled).toBe(true)
+
+    await expect(advance(state().send('目标掉线前的一轮'), 30)).resolves.toBe(true)
+    await expect(advance(state().send('等待目标自动重连'), 30)).resolves.toBe(true)
+    const targetState = (stateName: 'error' | 'connecting' | 'ready') => state().handleGatewayEvent({
+      name: 'target.state', payload: { id: 'local', state: stateName },
+    })
+    targetState('error')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(queue().map(({ error }) => error)).toEqual([undefined])
+    expect(sent('等待目标自动重连')).toHaveLength(0)
+    targetState('connecting')
+    targetState('ready')
+    await vi.advanceTimersByTimeAsync(1900)
+    expect(sent('等待目标自动重连')).toHaveLength(1)
+    expect(queue()).toEqual([])
+
+    useApp.setState({ backgroundConnectionEnabled: false })
+    await expect(advance(state().send('切到后台前的一轮'), 30)).resolves.toBe(true)
+    await expect(advance(state().send('等回到前台再发送'), 30)).resolves.toBe(true)
+    changeVisibility('hidden')
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(sent('等回到前台再发送')).toHaveLength(0)
+    expect(queue().map(({ error }) => error)).toEqual([undefined])
+    changeVisibility('visible')
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(sent('等回到前台再发送')).toHaveLength(1)
     expect(queue()).toEqual([])
 
     await expect(advance(state().send('后来被中断的一轮'), 30)).resolves.toBe(true)
@@ -110,9 +154,22 @@ it('重连补齐会话后续发待发消息，保留中断或提交结果未确�
     expect(view()?.items.filter((item) => item.kind === 'user' && item.text === '结果丢失')).toHaveLength(1)
     expect(queue()[0]).toMatchObject({ text: '结果丢失', sending: false, error: UNCONFIRMED_QUEUED_SEND })
     expect(sent('结果丢失')).toHaveLength(1)
+
+    opened.mockRejectedValue(new Error('电脑当前不可达'))
+    await disconnect()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(state().eventsError).toBeNull()
+    await vi.advanceTimersByTimeAsync(17_000)
+    expect(state().eventsError).toBe('暂时无法连接电脑，正在自动重试。')
+    opened.mockImplementation(openEvents)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(state().eventsConnected).toBe(true)
+    expect(state().eventsError).toBeNull()
   } finally {
     releaseRead?.()
     await advance(state().removeConnection(conn.id))
+    useApp.setState({ backgroundConnectionEnabled: true })
+    vi.unstubAllGlobals()
     vi.useRealTimers()
     setGateway(null)
   }

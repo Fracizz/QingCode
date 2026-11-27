@@ -1,5 +1,5 @@
 import {
-  useEffect,
+  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -13,12 +13,18 @@ import { Check, MessageSquarePlus, PanelRightOpen, X } from 'lucide-react'
 import {
   captureSelection,
   clearDomSelection,
+  selectionPosition,
   type SelectionSnapshot,
+  type ToolbarPosition,
 } from '../lib/selection'
 import { IconButton } from './ui'
 
 const emptyHighlights: readonly Range[] = []
 const annotationHighlightName = 'qn-chat-annotation'
+type ActiveSelection = { snapshot: SelectionSnapshot; position: ToolbarPosition }
+
+const inToolbar = (target: EventTarget | null): boolean =>
+  target instanceof Element && target.closest('[data-qn-selection]') !== null
 
 export function SelectionLayer({
   children,
@@ -42,9 +48,10 @@ export function SelectionLayer({
   layoutKey?: string
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
-  const [snapshot, setSnapshot] = useState<SelectionSnapshot | null>(null)
+  const [active, setActive] = useState<ActiveSelection | null>(null)
   const [commenting, setCommenting] = useState(false)
   const [comment, setComment] = useState('')
+  const snapshot = active?.snapshot
   const commentRange = commenting ? snapshot?.range : undefined
 
   useLayoutEffect(() => {
@@ -62,59 +69,98 @@ export function SelectionLayer({
     }
   }, [highlights, commentRange])
 
-  // 消息重新换行后，浮层不能继续使用原来的选区坐标。
-  useLayoutEffect(() => {
-    setSnapshot(null)
-  }, [layoutKey])
-
-  const dismiss = (clearBrowserSelection = true): void => {
-    setSnapshot(null)
+  const dismiss = useCallback((clearBrowserSelection = true) => {
+    setActive(null)
     setCommenting(false)
     setComment('')
-    if (clearBrowserSelection) clearDomSelection()
-  }
-
-  useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') dismiss()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
+    if (clearBrowserSelection && rootRef.current) clearDomSelection(rootRef.current)
   }, [])
 
-  const inToolbar = (target: EventTarget | null): boolean =>
-    target instanceof Element && target.closest('[data-qn-selection]') !== null
+  useLayoutEffect(() => {
+    dismiss()
+  }, [layoutKey, dismiss])
 
-  const onMouseDown = (event: MouseEvent<HTMLDivElement>) => {
-    if (inToolbar(event.target)) return
-    // 重新拖选时先撤掉旧浮层，DOM 选区交给浏览器自然处理。
-    if (snapshot) dismiss(false)
-  }
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (!root || !snapshot) return
+    const document = root.ownerDocument
+    let frame = 0
+    const refresh = () => {
+      frame = 0
+      const position = selectionPosition(root, snapshot, commenting)
+      if (!position) {
+        dismiss(false)
+        return
+      }
+      setActive((current) => {
+        if (!current || current.snapshot !== snapshot) return current
+        const previous = current.position
+        return previous.top === position.top && previous.left === position.left && previous.above === position.above
+          ? current : { snapshot, position }
+      })
+    }
+    const scheduleRefresh = () => {
+      if (frame === 0) frame = requestAnimationFrame(refresh)
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button === 0 && !inToolbar(event.target)) dismiss(!event.shiftKey)
+    }
+    const onEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.isComposing) dismiss()
+    }
+
+    // 流式正文、折叠详情和滚动都可能在工具条打开时改变选区的位置。
+    const mutations = new MutationObserver((records) => {
+      if (records.some(({ target }) => !inToolbar(target instanceof Element ? target : target.parentElement))) {
+        scheduleRefresh()
+      }
+    })
+    mutations.observe(root, {
+      subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['open', 'hidden', 'class', 'style'],
+    })
+    const resize = new ResizeObserver(scheduleRefresh)
+    resize.observe(root)
+    root.addEventListener('scroll', scheduleRefresh, true)
+    document.addEventListener('selectionchange', scheduleRefresh)
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('keydown', onEscape)
+    return () => {
+      cancelAnimationFrame(frame)
+      mutations.disconnect()
+      resize.disconnect()
+      root.removeEventListener('scroll', scheduleRefresh, true)
+      document.removeEventListener('selectionchange', scheduleRefresh)
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('keydown', onEscape)
+    }
+  }, [snapshot, commenting, dismiss])
 
   const onMouseUp = (event: MouseEvent<HTMLDivElement>) => {
-    if (inToolbar(event.target)) return
+    if (event.button !== 0 || inToolbar(event.target)) return
     const root = rootRef.current
-    const next = root ? captureSelection(root) : null
-    if (!next) {
-      dismiss()
-      return
-    }
-    setSnapshot(next)
+    const snapshot = root && captureSelection(root)
+    const position = root && snapshot && selectionPosition(root, snapshot, false)
+    if (!snapshot || !position) return
+    setActive({ snapshot, position })
     setCommenting(false)
     setComment('')
   }
 
-  const confirm = () => {
-    if (!snapshot) return
-    onAdd(snapshot.text, comment.trim(), snapshot.range)
-    dismiss()
+  const withSelection = (action: (snapshot: SelectionSnapshot, root: HTMLDivElement) => void) => {
+    const root = rootRef.current
+    if (root && snapshot && selectionPosition(root, snapshot, commenting)) action(snapshot, root)
+    else dismiss(false)
   }
 
-  const openSide = () => {
-    if (!snapshot) return
+  const confirm = () => withSelection((snapshot) => {
+    onAdd(snapshot.text, comment.trim(), snapshot.range)
+    dismiss()
+  })
+
+  const openSide = () => withSelection((snapshot) => {
     onSide?.(snapshot.text, snapshot.itemId)
     dismiss()
-  }
+  })
 
   const commentKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing) return
@@ -134,18 +180,17 @@ export function SelectionLayer({
         if (containerRef) containerRef.current = node
       }}
       className={`qn-chat-selection relative ${className}`}
-      onMouseDown={onMouseDown}
       onMouseUp={onMouseUp}
       onScroll={onScroll}
     >
-      {snapshot && (
+      {active && (
         <div
           data-qn-selection
           className="absolute z-30 select-none"
           style={{
-            top: snapshot.position.top,
-            left: snapshot.position.left,
-            transform: snapshot.position.above ? 'translateY(-100%)' : undefined,
+            top: active.position.top,
+            left: active.position.left,
+            transform: active.position.above ? 'translateY(-100%)' : undefined,
           }}
         >
         <div className="qn-pop qn-surface-float flex items-center gap-1 p-1 text-ui-sm">
@@ -155,10 +200,10 @@ export function SelectionLayer({
                 type="button"
                 className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 hover:bg-qn-hover"
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
+                onClick={() => withSelection((_, root) => {
                   setCommenting(true)
-                  clearDomSelection()
-                }}
+                  clearDomSelection(root)
+                })}
               >
                 <MessageSquarePlus size={13} /> 添加到对话
               </button>

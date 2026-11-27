@@ -1,4 +1,6 @@
 // 图片附件的纯逻辑：文件筛选、data URL 解析与校验、按模型输入模态判断能否发图。
+import { MAX_FRAME_BYTES } from '@qn/protocol'
+import type { UserInput } from '@qn/codex-client'
 
 /** 单张图片上限（按解码后字节数）；与 server 侧 Claude/pi 映射的上限一致。 */
 export const IMAGE_MAX_BYTES = 10 * 1024 * 1024
@@ -7,6 +9,9 @@ export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/
 
 const MIME_SET = new Set<string>(IMAGE_MIME_TYPES)
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i
+// 给 JSON-RPC 外层、会话 ID 和模型/权限参数留出空间。
+const MAX_TURN_INPUT_BYTES = MAX_FRAME_BYTES - 8 * 1024
+const OVERSIZE_TURN_INPUT = '消息和附件编码后超过传输上限，请移除部分内容后再发送'
 
 type FileLike = { name: string; type: string; size: number }
 
@@ -93,7 +98,14 @@ export function imageSendBlock(dataUrls: string[], imagesAllowed: boolean, unsup
     const problem = imageDataUrlProblem(url)
     if (problem) return `${problem}，请移除后再发送`
   }
-  return null
+  if (dataUrls.reduce((sum, url) => sum + url.length, 0) > MAX_TURN_INPUT_BYTES) return OVERSIZE_TURN_INPUT
+  return turnInputSizeProblem(dataUrls.map((url) => ({ type: 'image', url })))
+}
+
+export function turnInputSizeProblem(input: readonly UserInput[]): string | null {
+  const json = JSON.stringify(input)
+  const tooLarge = json.length > MAX_TURN_INPUT_BYTES || new TextEncoder().encode(json).byteLength > MAX_TURN_INPUT_BYTES
+  return tooLarge ? OVERSIZE_TURN_INPUT : null
 }
 
 // ---------- 模型输入模态 ----------

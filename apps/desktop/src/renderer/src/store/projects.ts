@@ -3,6 +3,7 @@ import type { Project } from '../../../shared/backendApi'
 import { call } from '../lib/backend'
 import { friendlyError } from '../lib/errors'
 import { useCodex } from './codex'
+import { useTargets } from './targets'
 
 export type ProjectPlacement = 'before' | 'after'
 
@@ -13,10 +14,16 @@ export type ProjectList = {
   error: string | null
 }
 
+type ProjectTreeState = { projectId: string | null; expandedIds: string[] }
+
 type ProjectsState = {
   byTarget: Record<string, ProjectList>
   /** 各目标里普通项目的手动排序（含置顶项目原位置，取消置顶时据此恢复）。 */
   orderByTarget: Map<string, string[]>
+  /** 各目标上次打开的项目与展开的项目，重载后恢复。 */
+  treeByTarget: Map<string, ProjectTreeState>
+  /** 显示全部会话（而非最近几条）的项目。 */
+  fullThreadLists: string[]
   /** 当前活动目标（与 useTargets.selectedId 同步），下面三个字段是它的列表镜像，供主区直接读取。 */
   targetId: string | null
   projects: Project[]
@@ -29,6 +36,8 @@ type ProjectsState = {
   reloadAll: () => Promise<void>
   setActiveTarget: (targetId: string) => void
   select: (project: Project) => Promise<void>
+  setExpanded: (project: Project, expanded: boolean) => void
+  setShowAllThreads: (id: string, showAll: boolean) => void
   add: (targetId: string, path: string) => Promise<Project | null>
   remove: (id: string) => Promise<void>
   rename: (project: Project, name: string) => Promise<void>
@@ -37,12 +46,46 @@ type ProjectsState = {
   move: (id: string, anchorId: string, placement: ProjectPlacement) => void
 }
 
-// 项目置顶与排序只是本机显示偏好，不进后端。
+// 项目置顶、排序与展开状态只是本机显示偏好，不进后端。
 const PIN_KEY = 'qn.projects.pinned'
+const FULL_THREAD_LISTS_KEY = 'qn.projects.fullThreadLists'
 const orderKey = (targetId: string) => `qn.projects.order.${targetId}`
+const treeKey = (targetId: string) => `qn.projects.tree.${targetId}`
 const EMPTY: ProjectList = { projects: [], loading: false, error: null }
 // 每个目标各自计数，迟到的旧列表响应不能覆盖新结果。
 const loadRevisions = new Map<string, number>()
+
+function readTree(targetId: string): ProjectTreeState | undefined {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(treeKey(targetId)) ?? 'null')
+    if (value && typeof value === 'object' && 'projectId' in value
+      && (typeof value.projectId === 'string' || value.projectId === null)) {
+      const { projectId } = value
+      if ('expandedIds' in value && Array.isArray(value.expandedIds)) {
+        return { projectId, expandedIds: value.expandedIds.filter((id): id is string => typeof id === 'string') }
+      }
+      // 旧版每个目标只保存了当前项目的折叠状态。
+      if (projectId && 'collapsed' in value && typeof value.collapsed === 'boolean') {
+        return { projectId, expandedIds: value.collapsed ? [] : [projectId] }
+      }
+    }
+  } catch {
+    // 存储不可用时仍可手动展开项目。
+  }
+}
+
+function rememberTree(trees: Map<string, ProjectTreeState>, targetId: string, tree?: ProjectTreeState) {
+  const next = new Map(trees)
+  if (tree) next.set(targetId, tree)
+  else next.delete(targetId)
+  try {
+    if (tree) localStorage.setItem(treeKey(targetId), JSON.stringify(tree))
+    else localStorage.removeItem(treeKey(targetId))
+  } catch {
+    // 存储不可用时仍保留本次运行的展开状态。
+  }
+  return next
+}
 
 function readIds(key: string): string[] {
   try {
@@ -93,7 +136,7 @@ export function projectListOf(state: Pick<ProjectsState, 'byTarget'>, targetId: 
   return state.byTarget[targetId] ?? EMPTY
 }
 
-type Patch = Partial<Pick<ProjectsState, 'byTarget' | 'orderByTarget' | 'targetId' | 'selectedId' | 'pinned'>>
+type Patch = Partial<Pick<ProjectsState, 'byTarget' | 'orderByTarget' | 'treeByTarget' | 'targetId' | 'selectedId' | 'pinned'>>
 
 /** 写入 byTarget / 活动目标后，同步活动目标的镜像字段。 */
 function withMirror(state: ProjectsState, patch: Patch): Partial<ProjectsState> {
@@ -111,6 +154,20 @@ function targetOfProject(state: ProjectsState, id: string): string | undefined {
   return Object.entries(state.byTarget).find(([, list]) => list.projects.some((item) => item.id === id))?.[0]
 }
 
+/** 去掉已删除项目的展开记录；当前项目已不存在时清空它。 */
+function pruneTree(trees: Map<string, ProjectTreeState>, targetId: string, projects: Project[]) {
+  const saved = trees.get(targetId) ?? readTree(targetId)
+  if (!saved) return trees
+  const exists = (id: string) => projects.some((project) => project.id === id)
+  const expandedIds = saved.expandedIds.filter(exists)
+  const projectId = saved.projectId && exists(saved.projectId) ? saved.projectId : null
+  if (!projectId && !expandedIds.length) return rememberTree(trees, targetId)
+  if (projectId !== saved.projectId || expandedIds.length !== saved.expandedIds.length) {
+    return rememberTree(trees, targetId, { projectId, expandedIds })
+  }
+  return trees.has(targetId) ? trees : new Map(trees).set(targetId, saved)
+}
+
 export const useProjects = create<ProjectsState>((set, get) => {
   const patch = (fn: (state: ProjectsState) => Patch) => set((state) => withMirror(state, fn(state)))
   // 保存只回写字段，不重新排序：打开项目不应打乱用户拖好的顺序。
@@ -124,9 +181,25 @@ export const useProjects = create<ProjectsState>((set, get) => {
   const setError = (targetId: string, error: string) =>
     patch((state) => updateList(state, targetId, (list) => ({ ...list, error })))
 
+  /** 活动目标还没打开项目时，恢复它上次打开的项目（不刷新 lastOpenedAt）。 */
+  const restoreSelection = (targetId: string) => {
+    const state = get()
+    if (state.targetId !== targetId || state.selectedId !== null) return
+    const projectId = state.treeByTarget.get(targetId)?.projectId
+    const project = projectListOf(state, targetId).projects.find(({ id }) => id === projectId)
+    if (!project) return
+    patch(() => ({ selectedId: project.id }))
+    const chat = useCodex.getState()
+    if (chat.currentTargetId !== targetId || chat.currentCwd !== project.path) {
+      chat.setContext(targetId, project.path, useTargets.getState().states[targetId]?.state === 'ready')
+    }
+  }
+
   return {
     byTarget: {},
     orderByTarget: new Map(),
+    treeByTarget: new Map(),
+    fullThreadLists: readIds(FULL_THREAD_LISTS_KEY),
     targetId: null,
     projects: [],
     loading: false,
@@ -150,6 +223,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
               error: null,
             })),
             orderByTarget: rememberOrder(state.orderByTarget, targetId, ordered.map(({ id }) => id)),
+            treeByTarget: pruneTree(state.treeByTarget, targetId, projects),
           }
           // 当前项目被别处删掉时取消选中。
           const lost =
@@ -158,6 +232,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
             !projects.some((item) => item.id === state.selectedId)
           return lost ? { ...next, selectedId: null } : next
         })
+        restoreSelection(targetId)
       } catch (err) {
         if (loadRevisions.get(targetId) !== revision) return
         patch((state) =>
@@ -183,14 +258,23 @@ export const useProjects = create<ProjectsState>((set, get) => {
         return { targetId, selectedId: keep ? state.selectedId : null }
       })
       if (!get().byTarget[targetId]) void get().load(targetId)
+      else restoreSelection(targetId)
     },
 
     select: async (project) => {
-      patch((state) => ({
-        targetId: project.targetId,
-        selectedId: project.id,
-        ...updateList(state, project.targetId, (list) => ({ ...list, error: null })),
-      }))
+      patch((state) => {
+        const { id, targetId } = project
+        const expandedIds = state.treeByTarget.get(targetId)?.expandedIds ?? readTree(targetId)?.expandedIds ?? []
+        return {
+          targetId,
+          selectedId: id,
+          ...updateList(state, targetId, (list) => ({ ...list, error: null })),
+          treeByTarget: rememberTree(state.treeByTarget, targetId, {
+            projectId: id,
+            expandedIds: expandedIds.includes(id) ? expandedIds : [...expandedIds, id],
+          }),
+        }
+      })
       useCodex.getState().setContext(project.targetId, project.path, true)
       // 打开项目时刷新 lastOpenedAt；后端暂未实现时仍然允许进入对话。
       try {
@@ -204,6 +288,22 @@ export const useProjects = create<ProjectsState>((set, get) => {
       } catch (err) {
         setError(project.targetId, friendlyError(err, '刷新项目时间失败'))
       }
+    },
+
+    setExpanded: ({ targetId, id }, expanded) => {
+      const { treeByTarget } = get()
+      const tree = treeByTarget.get(targetId) ?? readTree(targetId) ?? { projectId: null, expandedIds: [] }
+      if (tree.expandedIds.includes(id) === expanded) return
+      const expandedIds = expanded ? [...tree.expandedIds, id] : tree.expandedIds.filter((item) => item !== id)
+      set({ treeByTarget: rememberTree(treeByTarget, targetId, { ...tree, expandedIds }) })
+    },
+
+    setShowAllThreads: (id, showAll) => {
+      const { fullThreadLists } = get()
+      if (fullThreadLists.includes(id) === showAll) return
+      const next = showAll ? [...fullThreadLists, id] : fullThreadLists.filter((item) => item !== id)
+      writeIds(FULL_THREAD_LISTS_KEY, next)
+      set({ fullThreadLists: next })
     },
 
     add: async (targetId, path) => {
@@ -223,6 +323,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
       const wasSelected = get().selectedId === id
       try {
         await call('projects.remove', { id })
+        get().setShowAllThreads(id, false)
         if (targetId) await get().load(targetId)
         if (wasSelected) {
           patch(() => ({ selectedId: null }))

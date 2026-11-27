@@ -15,6 +15,7 @@ import type {
   LinkFactory,
   LinkHooks,
   LocalLinkContext,
+  RemoteServerCommand,
   SshLinkContext,
   SshRemoteContext,
   SshTestContext,
@@ -40,13 +41,15 @@ export interface TargetManagerOptions {
   createLocal?: LinkFactory<LocalLinkContext>
   createDirect?: LinkFactory<DirectLinkContext>
   testSsh?: (context: SshTestContext) => Promise<TargetProbe>
-  runRemote?: (context: SshRemoteContext, commands: ReadonlyArray<readonly string[]>) => Promise<Array<Record<string, unknown>>>
+  runRemote?: (context: SshRemoteContext, commands: readonly RemoteServerCommand[]) => Promise<Array<Record<string, unknown>>>
   gate?: HostKeyDecider
 }
 
 // SSH 目标开了直连加速时，直连只给较短的时间；不通就回退 SSH，避免每次重连都卡满默认超时。
 const DIRECT_FALLBACK_TIMEOUT_MS = 5_000
 const STARTUP_CONNECT_TIMEOUT_MS = 60_000
+// 给已有直连预留 TLS 连接和 daemon 握手的时间。
+const STARTUP_SSH_TIMEOUT_MS = 40_000
 
 /** SSH 目标上的直连配置换算成直连目标形状，复用 connectDirectTarget。 */
 export function directViewOf(target: SshTarget): DirectTarget | null {
@@ -73,10 +76,11 @@ interface Session {
   desired: boolean
   state: TargetState
   link: TargetLink | null
+  server?: TargetLink['server']
   generation: number
   attempt: number
   retryTimer: ReturnType<typeof setTimeout> | null
-  startupController: AbortController | null
+  connectController: AbortController | null
   credentials: TargetCredentials
   remember: boolean
   /** 渲染进程 open/attach 过的 agent；重连后逐个补 attach。 */
@@ -108,6 +112,7 @@ function describe(err: unknown): string {
 /** id → TargetConnection：统一连接、重连、透传与事件加 targetId。 */
 export class TargetManager {
   private readonly sessions = new Map<string, Session>()
+  private readonly updating = new Set<string>()
   private readonly gate: HostKeyDecider
   private readonly createSsh: LinkFactory<SshLinkContext>
   private readonly createLocal: LinkFactory<LocalLinkContext>
@@ -138,6 +143,7 @@ export class TargetManager {
 
   async connect(target: Target, credentials: TargetCredentials, remember = false, startup = false): Promise<void> {
     let session = this.sessions.get(target.id)
+    if (session?.connectController && this.updating.has(target.id)) return
     if (session?.desired && session.state === 'ready') {
       this.setState(session, 'ready', session.link?.notice)
       return
@@ -152,7 +158,7 @@ export class TargetManager {
         generation: 0,
         attempt: 0,
         retryTimer: null,
-        startupController: null,
+        connectController: null,
         credentials: {},
         remember: false,
         codexOpened: new Set(),
@@ -169,12 +175,12 @@ export class TargetManager {
     session.attempt = 0
     this.clearRetry(session)
     const generation = ++session.generation
-    session.startupController?.abort()
+    session.connectController?.abort()
     const previousLink = session.link
     session.link = null
     previousLink?.close()
     const controller = startup ? new AbortController() : null
-    session.startupController = controller
+    session.connectController = controller
     const signal = controller?.signal
     const current = session
 
@@ -203,21 +209,55 @@ export class TargetManager {
     } finally {
       clearTimeout(timer)
       controller.signal.removeEventListener('abort', stop)
-      if (current.startupController === controller) current.startupController = null
+      if (current.connectController === controller) current.connectController = null
+    }
+  }
+
+  async forceUpdate(id: string): Promise<void> {
+    const session = this.sessions.get(id)
+    if (!session?.desired) throw new RouterError('not_connected', '请先连接目标，再强制更新 Server')
+    if (session.target.kind === 'direct') throw new RouterError('invalid_params', '强制更新 Server 需要本机或 SSH 连接')
+    if (this.updating.has(id) || (session.state !== 'ready' && session.state !== 'error')) {
+      throw new RouterError('target_busy', '目标正在连接或更新，请稍候')
+    }
+
+    this.updating.add(id)
+    this.clearRetry(session)
+    const generation = ++session.generation
+    session.connectController?.abort()
+    const controller = new AbortController()
+    session.connectController = controller
+    const previousLink = session.link
+    session.link = null
+    previousLink?.close()
+    this.setState(session, 'deploying', '正在准备强制更新 Server')
+    try {
+      await this.open(session, generation, controller.signal, true)
+      if (session.generation === generation && session.lastError) {
+        throw new RouterError('update_failed', session.lastError)
+      }
+    } finally {
+      if (session.connectController === controller) session.connectController = null
+      this.updating.delete(id)
     }
   }
 
   /** 试连一次，不影响现有会话；凭据合并规则与 connect 一致。 */
   async test(target: SshTarget, credentials: TargetCredentials): Promise<TargetProbe> {
     const saved = target.id ? await this.readSecret(target.id, this.options.userData) : null
-    return this.testSsh({ target, credentials: { ...(saved ?? {}), ...credentials }, gate: this.gate })
+    return this.testSsh({
+      target,
+      credentials: { ...(saved ?? {}), ...credentials },
+      gate: this.gate,
+      resourcesPath: this.options.resourcesPath,
+    })
   }
 
   /** 经 SSH 执行 server 子命令；凭据合并规则与 connect 一致，结果可能含 token，调用方不得记录。 */
   async remoteServer(
     target: SshTarget,
     credentials: TargetCredentials,
-    commands: ReadonlyArray<readonly string[]>
+    commands: readonly RemoteServerCommand[]
   ): Promise<Array<Record<string, unknown>>> {
     const saved = await this.readSecret(target.id, this.options.userData)
     return this.runRemote({
@@ -229,15 +269,16 @@ export class TargetManager {
   }
 
   /** 更新直连 token（undefined 为清除），保留其它已保存凭据。 */
-  async setDirectToken(id: string, token: string | undefined): Promise<void> {
+  async setDirectToken(id: string, token: string | undefined): Promise<string | undefined> {
     const saved = (await this.readSecret(id, this.options.userData)) ?? {}
-    const { directToken: _old, ...rest } = saved
+    const { directToken: previous, ...rest } = saved
     await this.saveSecret(id, token ? { ...rest, directToken: token } : rest, this.options.userData)
     const session = this.sessions.get(id)
     if (session) {
       const { directToken: _stale, ...creds } = session.credentials
       session.credentials = token ? { ...creds, directToken: token } : creds
     }
+    return previous
   }
 
   /** 目标配置变更（如开启/关闭直连）后同步给现有会话，下次重连生效。 */
@@ -254,8 +295,8 @@ export class TargetManager {
     session.everReady = false
     this.clearRetry(session)
     session.generation++
-    session.startupController?.abort()
-    session.startupController = null
+    session.connectController?.abort()
+    session.connectController = null
     const link = session.link
     session.link = null
     link?.close()
@@ -322,7 +363,7 @@ export class TargetManager {
     }
   }
 
-  private async open(session: Session, generation: number, signal?: AbortSignal): Promise<void> {
+  private async open(session: Session, generation: number, signal?: AbortSignal, forceReplace = false): Promise<void> {
     const isCurrent = () => generation === session.generation && session.desired && !signal?.aborted
     let opened = false
     const hooks: LinkHooks = {
@@ -368,8 +409,9 @@ export class TargetManager {
             electronPath: this.options.electronPath,
             serverScript: join(this.options.resourcesPath, 'server', 'qn-server.cjs'),
             appVersion: this.options.appVersion,
+            ...(forceReplace ? { forceReplace, signal } : {}),
           })
-        : await this.openSsh(session, hooks, signal)
+        : await this.openSsh(session, hooks, signal, forceReplace)
 
       if (!isCurrent()) {
         link.close()
@@ -377,6 +419,14 @@ export class TargetManager {
       }
       opened = true
       session.link = link
+      if (link.server) {
+        if (session.server && (session.server.pid !== link.server.pid || session.server.version !== link.server.version)) {
+          // 事件序号按 daemon 进程计数，切到新进程时须在回放前通知客户端清除旧游标。
+          session.lastSeq = { codex: 0, claude: 0, pi: 0 }
+          this.options.emit('server.evt', { targetId: session.id, name: 'server.restarted', payload: {} })
+        }
+        session.server = link.server
+      }
       // server 只向调用过 attach 的客户端广播 codex.recv，重连必须按 agent 各补一次。
       for (const agent of session.codexOpened) {
         try {
@@ -406,20 +456,26 @@ export class TargetManager {
     }
   }
 
-  private async openSsh(session: Session, hooks: LinkHooks, signal?: AbortSignal): Promise<TargetLink> {
+  private async openSsh(session: Session, hooks: LinkHooks, signal?: AbortSignal, forceReplace = false): Promise<TargetLink> {
     const target = session.target as SshTarget
     const view = directViewOf(target)
     const token = session.credentials.directToken
-    const ssh = () => this.createSsh({
+    const ssh = (sshSignal = signal) => this.createSsh({
       target,
       credentials: session.credentials,
-      hooks,
+      hooks: sshSignal ? {
+        ...hooks,
+        onState: (state, detail) => { if (!sshSignal.aborted) hooks.onState(state, detail) },
+        onClose: (err) => { if (!sshSignal.aborted) hooks.onClose(err) },
+      } : hooks,
       userData: this.options.userData,
       resourcesPath: this.options.resourcesPath,
       appVersion: this.options.appVersion,
-      gate: signal ? { verify: (host, port, fingerprint) => this.gate.verify(host, port, fingerprint, false) } : this.gate,
-      signal,
+      gate: signal && !forceReplace ? { verify: (host, port, fingerprint) => this.gate.verify(host, port, fingerprint, false) } : this.gate,
+      signal: sshSignal,
+      ...(forceReplace ? { forceReplace } : {}),
     })
+    if (forceReplace) return ssh()
     if (view && token) {
       const direct = () => this.createDirect({
         target: view,
@@ -432,12 +488,18 @@ export class TargetManager {
       // 只有 SSH 能部署 Server，启动恢复时优先走 SSH；更新遇阻时仍可使用已有直连。
       if (signal) {
         try {
-          return await ssh()
+          return await this.openStartupSsh(ssh, signal)
         } catch (err) {
           signal.throwIfAborted()
-          const link = await direct()
-          link.notice = `SSH 更新未完成（${describe(err)}），已通过直连连接`
-          return link
+          const failure = `SSH 更新未完成（${describe(err)}）`
+          hooks.onState('connecting', `${failure}，正在尝试直连`)
+          try {
+            const link = await direct()
+            link.notice = `${failure}，已通过直连连接`
+            return link
+          } catch (directError) {
+            throw new Error(`${failure}，直连也失败（${describe(directError)}）`)
+          }
         }
       }
       try {
@@ -447,6 +509,34 @@ export class TargetManager {
       }
     }
     return ssh()
+  }
+
+  private async openStartupSsh(ssh: (signal: AbortSignal) => Promise<TargetLink>, startupSignal: AbortSignal): Promise<TargetLink> {
+    const controller = new AbortController()
+    const signal = AbortSignal.any([startupSignal, controller.signal])
+    signal.throwIfAborted()
+    const timer = setTimeout(() => controller.abort(new Error('SSH 更新或连接超时')), STARTUP_SSH_TIMEOUT_MS)
+    let abort!: () => void
+    const stopped = new Promise<never>((_, reject) => {
+      abort = () => reject(signal.reason)
+      signal.addEventListener('abort', abort, { once: true })
+    })
+    try {
+      const pending = ssh(signal).then((link) => {
+        if (signal.aborted) {
+          link.close()
+          signal.throwIfAborted()
+        }
+        return link
+      })
+      return await Promise.race([pending, stopped])
+    } catch (err) {
+      controller.abort(err)
+      throw err
+    } finally {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', abort)
+    }
   }
 
   private handleFailure(session: Session, err: unknown, retry: boolean): void {

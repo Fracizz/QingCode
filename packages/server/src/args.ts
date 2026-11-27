@@ -5,6 +5,7 @@ export interface CliArgs {
   command: ServerCommand
   stateDir?: string
   replace: boolean
+  forceReplace?: true
   stdio: boolean
   /** serve / direct enable：监听地址 host:port 或 port */
   listen?: string
@@ -57,6 +58,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
 
   let stateDir: string | undefined
   let replace = false
+  let forceReplace = false
   let stdio = false
   let allowPublic = false
   let listen: string | undefined
@@ -68,9 +70,10 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     const arg = rest[i]
     if (arg === undefined) continue
 
-    if (arg === '--replace') {
-      if (command !== 'ensure') throw new CliError('--replace 只能用于 ensure')
+    if (arg === '--replace' || arg === '--force-replace') {
+      if (command !== 'ensure') throw new CliError(`${arg} 只能用于 ensure`)
       replace = true
+      if (arg === '--force-replace') forceReplace = true
       continue
     }
     if (arg === '--stdio') {
@@ -119,6 +122,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     ...(id !== undefined ? { id } : {}),
     command,
     replace,
+    ...(forceReplace ? { forceReplace: true } : {}),
     stdio,
   }
 }

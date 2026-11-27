@@ -4,7 +4,7 @@ import { createGateway, setGateway } from './client'
 import { MOCK_FP } from './mock'
 import { useApp } from './store'
 import type { Connection, Project, Target } from './types'
-import { closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, recentThreadStatus, registerBackHandler, startWorkspaceObserver, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
+import { changeThreadPreference, closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, moveWorkspaceProject, orderWorkspaceProjects, recentThreadStatus, registerBackHandler, startWorkspaceObserver, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
 
 const laptop: Project = { id: 'laptop', targetId: 'local', name: 'sandbox', path: 'C:\\sandbox', lastOpenedAt: 1 }
 const remote: Project = { id: 'remote', targetId: 'ssh', name: 'sandbox', path: '/srv/sandbox', lastOpenedAt: 0 }
@@ -66,6 +66,42 @@ describe('移动工作台', () => {
     const archived = { [archivedThreadKey('desktop-a', laptop.targetId, archivedThread)]: true } as const
     expect(visibleWorkspaceThreads(all, 'desktop-a', archived)).toEqual(otherThreads)
     expect(visibleWorkspaceThreads(all, 'desktop-b', archived)).toEqual(all)
+  })
+
+  it('恢复手机上的会话置顶、本地别名和项目排序，并按电脑区分', async () => {
+    const gateway = createGateway()
+    const app = useApp.getState()
+    const workspace = useWorkspace.getState()
+    const desktopId = 'desktop-organization'
+    const connection: Connection = { id: desktopId, name: '电脑', host: 'localhost', port: 38500,
+      fp: MOCK_FP, token: 'mock-token', desktopName: '电脑', createdAt: 0 }
+    const older = thread(laptop, { agent: 'claude' })
+    const newer = thread(laptop, { id: 'newer', updatedAt: 2 })
+    const nextProject = { ...laptop, id: 'second' }
+    setGateway(gateway)
+    useApp.setState({ connections: [connection], activeId: desktopId })
+    useWorkspace.setState({ preferences: {} })
+    let stop = startWorkspaceObserver()
+    try {
+      changeThreadPreference(desktopId, older, { pinned: true, title: '本地别名' })
+      moveWorkspaceProject(desktopId, nextProject, [laptop, nextProject], -1)
+      await vi.waitFor(async () => expect(await gateway.storageGet('workspace.sessions')).toContain('本地别名'))
+      stop()
+      useWorkspace.setState({ preferences: {} })
+      stop = startWorkspaceObserver()
+      await vi.waitFor(() => expect(useWorkspace.getState().preferences[desktopId]).toBeDefined())
+      const prefs = useWorkspace.getState().preferences[desktopId]
+      expect(groupWorkspaceThreads([newer, older], [laptop], '', prefs)[0]?.threads.map(({ title }) => title))
+        .toEqual(['本地别名', newer.title])
+      expect(groupWorkspaceThreads([newer, older], [laptop], '本地别名', prefs)[0]?.threads).toHaveLength(1)
+      expect(orderWorkspaceProjects([laptop, nextProject], prefs?.projectOrders.local)).toEqual([nextProject, laptop])
+      expect(useWorkspace.getState().preferences['another-desktop']).toBeUndefined()
+    } finally {
+      stop()
+      useApp.setState(app)
+      useWorkspace.setState(workspace)
+      setGateway(null)
+    }
   })
 
   it('立即保存已读到的历史，重开后电脑离线也能按原项目分组', async () => {

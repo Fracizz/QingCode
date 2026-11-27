@@ -405,12 +405,12 @@ input[type="radio"] {
   padding: 12px max(14px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
 }
 
-.qn-dialog[data-placement="side"] {
+.qn-dialog[data-placement="left"][open] {
   align-items: stretch;
   justify-content: flex-start;
 }
 
-.qn-dialog[data-placement="side"] .qn-dialog-panel {
+.qn-dialog[data-placement="left"] .qn-dialog-panel {
   display: flex;
   flex-direction: column;
   width: min(87%, 440px);
@@ -917,36 +917,6 @@ input[type="radio"] {
 .qn-group-title > h2 { min-width: 0; margin: 0; flex-shrink: 1; }
 .qn-group-title > .qn-origin { flex-shrink: 0; font-weight: 500; }
 
-/* 工作台顶部当前电脑行：状态点 + 名称 + 文字状态。 */
-.qn-workspace-context-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 100%;
-  min-height: 36px;
-  margin: 2px 0 8px -4px;
-  padding: 0 8px 0 4px;
-  border-radius: 8px;
-  color: var(--color-qn-text);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.qn-workspace-context-bar:active { background: var(--qn-press); }
-
-.qn-workspace-context-state {
-  flex-shrink: 0;
-  color: var(--color-qn-muted);
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
-}
-
-.qn-workspace-context-state[data-tone="warn"] { color: var(--color-qn-warn); }
-.qn-workspace-context-state[data-tone="danger"] { color: var(--color-qn-danger); }
-.qn-dot[data-tone="ok"] { background: var(--color-qn-ok); }
-.qn-dot[data-tone="warn"] { background: var(--color-qn-warn); animation: qn-breathe 1.6s ease-in-out infinite; }
-.qn-dot[data-tone="danger"] { background: var(--color-qn-danger); }
-
 .qn-group-heading > :is(h2, h3) {
   min-width: 0;
   margin: 0;
@@ -1207,7 +1177,7 @@ input[type="radio"] {
   outline: none;
 }
 
-/* 工具行：一行排下，左侧工具可收缩省略，右侧操作固定；按钮视觉 34px，命中区靠伪元素扩到 44px。 */
+/* 左侧工具在窄屏换行，发送与停止按钮留在右下方。 */
 .qn-composer-toolbar {
   display: flex;
   align-items: center;
@@ -1219,14 +1189,15 @@ input[type="radio"] {
 .qn-composer-tools {
   display: flex;
   flex: 1 1 auto;
+  flex-wrap: wrap;
   min-width: 0;
   align-items: center;
   gap: 2px;
   white-space: nowrap;
 }
 
-.qn-composer-model {
-  flex: 0 1 auto;
+.qn-composer-tools > .qn-composer-model {
+  flex: 1 1 4.5rem;
   min-width: 4.5rem;
   max-width: 14rem;
 }
@@ -1241,14 +1212,14 @@ input[type="radio"] {
   font-size: 12.5px;
 }
 
-.qn-composer-tools > .qn-access-chip {
-  flex-shrink: 0;
+.qn-access-chip {
+  gap: 4px;
+  min-width: 44px;
   min-height: 44px;
-  padding-inline: 6px;
-}
-
-.qn-composer-tools:has(> .qn-access-chip) {
-  flex-basis: 13rem;
+  padding: 0 6px;
+  border-radius: var(--radius-lg);
+  color: var(--color-qn-muted);
+  font-size: 12px;
 }
 
 .qn-access-chip[data-tone="warn"] {
@@ -1264,7 +1235,6 @@ input[type="radio"] {
 .qn-composer-model > .qn-chip:active { background: var(--qn-press); }
 
 .qn-composer-tools > * { flex-shrink: 0; }
-.qn-composer-tools > .qn-composer-model { flex-shrink: 1; }
 
 .qn-icon-button {
   padding: 0;
@@ -1281,6 +1251,7 @@ input[type="radio"] {
   display: flex;
   flex-shrink: 0;
   align-items: center;
+  align-self: flex-end;
   gap: 6px;
   margin-inline-start: auto;
 }
@@ -1646,7 +1617,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 /* ===== 弹层 ===== */
 .qn-dialog[open]::backdrop { animation: qn-fade var(--qn-motion-medium) ease backwards; }
 .qn-dialog[open] .qn-dialog-panel { animation: qn-sheet-up var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
-.qn-dialog[data-placement="side"][open] .qn-dialog-panel { animation: qn-drawer-in 240ms var(--qn-ease-emphasized) backwards; }
+.qn-dialog[data-placement="left"][open] .qn-dialog-panel { animation: qn-drawer-in 240ms var(--qn-ease-emphasized) backwards; }
 .qn-dialog[data-placement="full"][open] .qn-dialog-panel { animation: qn-push-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
 
 .qn-dialog-panel {

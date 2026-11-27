@@ -1,7 +1,7 @@
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useApp } from '../store'
-import { filterProjects } from '../workspace'
+import { filterProjects, orderWorkspaceProjects, useWorkspacePreferences } from '../workspace'
 import { Button, Empty, Header, Loading, Note } from './ui'
 import { WorkspaceProjectRow, WorkspaceSearch } from './WorkspaceHome'
 
@@ -16,9 +16,11 @@ export function ProjectsPage() {
   const selectProject = useApp((s) => s.selectProject)
   const openDirectory = useApp((s) => s.openDirectory)
   const [query, setQuery] = useState('')
+  const preferences = useWorkspacePreferences()
 
   const target = targets.find((item) => item.id === selectedTargetId)
-  const list = filterProjects(projects.filter((item) => item.targetId === selectedTargetId), targets, query)
+  const list = selectedTargetId ? orderWorkspaceProjects(filterProjects(projects, targets, query, selectedTargetId),
+    preferences?.projectOrders[selectedTargetId]) : []
 
   return (
     <>
@@ -30,7 +32,7 @@ export function ProjectsPage() {
         {!loading && list.length === 0 && <Empty>{query ? '没有匹配的项目。' : '该目标下还没有项目。'}</Empty>}
         {list.length > 0 && (
           <div className="qn-list-group mt-3">
-            {list.map((project) => <WorkspaceProjectRow key={project.id} project={project} target={target}
+            {list.map((project) => <WorkspaceProjectRow key={project.id} project={project} target={target} orderedProjects={query.trim() ? undefined : list}
               onOpen={() => void selectProject(project.id)} />)}
           </div>
         )}

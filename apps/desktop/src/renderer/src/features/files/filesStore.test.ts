@@ -66,6 +66,20 @@ it('关闭最后一个标签时收起文件面板，重新打开文件时展开'
   expect(useFiles.getState().open).toBe(true)
 })
 
+it('最后一个标签关闭后，旧的激活或展开操作无法重新撑开文件面板', () => {
+  useDock.getState().setView('chat')
+  openFile({ targetId: 'ssh', path: '/repo/README.md' })
+  const { activeId, requestCloseAll, activate, setOpen } = useFiles.getState()
+  expect(activeId).not.toBeNull()
+
+  requestCloseAll()
+  activate(activeId!)
+  expect(useFiles.getState()).toMatchObject({ open: false, activeId: null })
+
+  setOpen(true)
+  expect(useFiles.getState()).toMatchObject({ open: false, tabs: [] })
+})
+
 it('有未保存改动时，确认关闭最后一个标签后才收起文件面板', async () => {
   useDock.getState().setView('chat')
   openFile({ targetId: 'ssh', path: '/repo/README.md' })

@@ -4,6 +4,9 @@ export const DEFAULT_FONT_SIZES = {
   composerFontSize: 15,
   editorFontSize: 13,
   terminalFontSize: 14,
+  sidebarFontSize: 15,
+  projectFontSize: 15,
+  sessionFontSize: 14,
 } as const
 
 export type FontSizeKey = keyof typeof DEFAULT_FONT_SIZES
@@ -19,6 +22,10 @@ const LEGACY_DEFAULT_FONT_SIZES: Record<FontSizeKey, number> = {
   composerFontSize: 14,
   editorFontSize: 12.5,
   terminalFontSize: 13,
+  // 侧栏三项在版本 1 之后才加入，迁移按它们最初的默认值处理。
+  sidebarFontSize: 14,
+  projectFontSize: 14,
+  sessionFontSize: 13,
 }
 
 export function isFontSize(value: unknown): value is number {

@@ -25,7 +25,7 @@ import {
 } from '../lib/rateLimitView'
 import { entryFor, type RateLimitEntry } from '../lib/rateLimitsEntry'
 import { agentLabel, DEFAULT_AGENT } from '../lib/agents'
-import { useRateLimits } from '../store/rateLimits'
+import { RATE_LIMIT_REFRESH_MINUTES, useRateLimits } from '../store/rateLimits'
 import { RefreshIcon } from './LoadingIcon'
 import { ProgressRing } from './ProgressRing'
 import { PopoverContent, PopoverRoot, PopoverTrigger } from './primitives'
@@ -178,7 +178,7 @@ function Body({
 
       <div className="mt-3 flex items-center justify-between border-t border-qn-border pt-2 text-ui-sm text-qn-muted">
         <span>{updatedAtText(entry?.updatedAt, now)}</span>
-        <span>可见时每 60 秒刷新</span>
+        <span>窗口可见时每 {RATE_LIMIT_REFRESH_MINUTES} 分钟刷新</span>
       </div>
     </div>
   )

@@ -26,6 +26,7 @@ import {
 import { HistoryPageCache, listHistoryItems, listHistoryTurns } from '../claude/historyPages'
 import { redact } from '../log'
 import { VERSION } from '../version'
+import { nativeAgentCwd } from '../workspace/paths'
 import { PiRpcError } from './errors'
 import {
   emptyMapState,
@@ -63,6 +64,7 @@ interface PiSession {
   meta: PiSessionMeta
   rpc: PiRpcProcess | null
   starting: Promise<PiRpcProcess> | null
+  preparingTurn: boolean
   turnId: string | null
   state: MapState
   idleTimer: ReturnType<typeof setTimeout> | null
@@ -180,7 +182,7 @@ export class PiHost extends JsonRpcAgentHost {
         const session = this.sessions.get(threadId)
         if (!session) return { status: 'notLoaded' }
         if (!session.meta.ephemeral) throw new PiRpcError(-32602, '仅可结束临时会话')
-        if (session.turnId) throw new PiRpcError(-32602, '请先停止当前轮次')
+        if (session.turnId || session.preparingTurn) throw new PiRpcError(-32602, '请先停止当前轮次')
         this.closeRpc(session)
         this.forgetTemporary(threadId)
         return { status: 'unsubscribed' }
@@ -209,7 +211,8 @@ export class PiHost extends JsonRpcAgentHost {
   private async threadList(params: Json): Promise<Json> {
     const cwd = Array.isArray(params.cwd)
       ? params.cwd.filter((dir): dir is string => typeof dir === 'string' && dir.length > 0)
-      : typeof params.cwd === 'string' && params.cwd ? params.cwd : undefined
+        .map((dir) => nativeAgentCwd(dir))
+      : typeof params.cwd === 'string' && params.cwd ? nativeAgentCwd(params.cwd) : undefined
     const limit = typeof params.limit === 'number' && Number.isSafeInteger(params.limit) && params.limit > 0
       ? params.limit : undefined
     const infos = await this.safeListSessions(cwd)
@@ -231,7 +234,7 @@ export class PiHost extends JsonRpcAgentHost {
   }
 
   private async threadStart(params: Json): Promise<Json> {
-    const cwd = typeof params.cwd === 'string' && params.cwd ? params.cwd : process.cwd()
+    const cwd = typeof params.cwd === 'string' && params.cwd ? nativeAgentCwd(params.cwd) : process.cwd()
     const ephemeral = params.ephemeral === true
     const pendingId = `qn-pi-pending-${++this.counter}`
     const session = this.sessionFor(pendingId, { id: pendingId, cwd, preview: '', ephemeral })
@@ -270,7 +273,7 @@ export class PiHost extends JsonRpcAgentHost {
   private async threadRead(method: string, params: Json): Promise<Json> {
     const threadId = scalarText(params.threadId)
     if (!threadId) throw new PiRpcError(-32602, 'threadId 不能为空')
-    const meta = await this.metaFor(threadId, typeof params.cwd === 'string' ? params.cwd : undefined)
+    const meta = await this.metaFor(threadId, typeof params.cwd === 'string' ? nativeAgentCwd(params.cwd) : undefined)
     const session = this.sessionFor(threadId, meta)
     const metadataOnly = (method === 'thread/resume' && params.excludeTurns === true)
       || (method === 'thread/read' && params.includeTurns === false)
@@ -305,22 +308,23 @@ export class PiHost extends JsonRpcAgentHost {
     const threadId = scalarText(params.threadId)
     if (!threadId) throw new PiRpcError(-32602, 'threadId 不能为空')
     const { prompt, echo } = await resolvePiPrompt(params.input)
-    const meta = await this.metaFor(threadId, typeof params.cwd === 'string' ? params.cwd : undefined)
+    const meta = await this.metaFor(threadId, typeof params.cwd === 'string' ? nativeAgentCwd(params.cwd) : undefined)
     const session = this.sessionFor(threadId, meta)
-    if (session.turnId) throw new PiRpcError(-32603, '会话已有运行中的 turn')
+    if (session.turnId || session.preparingTurn) throw new PiRpcError(-32603, '会话已有准备中或运行中的 turn')
 
     const turnId = randomUUID()
-    session.turnId = turnId
-    session.state = emptyMapState()
     const userItem = userMessageContentItem(`${turnId}-user`, echo)
-    session.state.items[scalarText(userItem.id)] = userItem
-    session.state.order.push(scalarText(userItem.id))
     const turn = buildTurn(turnId, [userItem], 'inProgress')
-    this.notify({ method: 'turn/started', params: { threadId, turn } })
 
+    session.preparingTurn = true
     try {
       const rpc = await this.ensureRpc(session)
       await this.applyModel(session, rpc, params)
+      session.turnId = turnId
+      session.state = emptyMapState()
+      session.state.items[scalarText(userItem.id)] = userItem
+      session.state.order.push(scalarText(userItem.id))
+      this.notify({ method: 'turn/started', params: { threadId, turn } })
       const response = await rpc.command('prompt', prompt as unknown as RpcRecord)
       if (response.success === false) {
         this.finishTurn(session, 'failed', scalarText(response.error) || 'pi 拒绝了 prompt')
@@ -331,8 +335,10 @@ export class PiHost extends JsonRpcAgentHost {
     } catch (err) {
       this.finishTurn(session, 'failed', describe(err))
       throw err
+    } finally {
+      session.preparingTurn = false
+      this.touch(session)
     }
-    this.touch(session)
     return { turn }
   }
 
@@ -366,13 +372,22 @@ export class PiHost extends JsonRpcAgentHost {
     const target = key ? parsePiModelKey(key) : null
     if (target && key !== session.model) {
       const response = await rpc.command('set_model', target)
-      if (response.success === false) throw new PiRpcError(-32603, scalarText(response.error) || `切换模型失败: ${key}`)
+      if (response.success === false) {
+        this.hub.log(`pi 切换模型失败: ${redact(scalarText(response.error))}`)
+        throw new PiRpcError(-32603, 'pi 切换模型失败，消息未发送')
+      }
       session.model = key
+      // 换模型后原思考档可能被 pi 调整，下一次显式选择要重新应用。
+      delete session.thinkingLevel
     }
     const level = params.effort
     if (isPiLevel(level) && level !== session.thinkingLevel) {
       const response = await rpc.command('set_thinking_level', { level })
-      if (response.success !== false) session.thinkingLevel = level
+      if (response.success === false) {
+        this.hub.log(`pi 切换思考强度失败: ${redact(scalarText(response.error))}`)
+        throw new PiRpcError(-32603, 'pi 切换思考强度失败，消息未发送，请检查当前模型支持的档位')
+      }
+      session.thinkingLevel = level
     }
   }
 
@@ -454,6 +469,7 @@ export class PiHost extends JsonRpcAgentHost {
       meta,
       rpc: null,
       starting: null,
+      preparingTurn: false,
       turnId: null,
       state: emptyMapState(),
       idleTimer: null,
@@ -526,7 +542,7 @@ export class PiHost extends JsonRpcAgentHost {
     if (session.idleTimer) clearTimeout(session.idleTimer)
     session.idleTimer = setTimeout(() => {
       session.idleTimer = null
-      if (session.turnId) return
+      if (session.turnId || session.preparingTurn) return
       this.closeRpc(session)
     }, this.idleTimeoutMs)
     session.idleTimer.unref?.()

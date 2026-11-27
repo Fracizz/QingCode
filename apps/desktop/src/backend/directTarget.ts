@@ -70,6 +70,7 @@ export async function connectDirectTarget(context: DirectLinkContext): Promise<T
       },
     })
     return {
+      server: { pid: server.pid, version: server.serverVersion },
       request: (method, params) => server.request(method, params),
       codexSend: (msg, agent) => server.codexSend(msg, agent),
       close: () => {

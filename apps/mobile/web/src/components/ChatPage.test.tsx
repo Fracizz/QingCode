@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { type AgentSession, useApp } from '../store'
 import { MobileCodexTransport } from '../transport'
+import { closeTopSheet } from '../workspace'
 import { ChatPage } from './ChatPage'
 
 it('长会话先显示最新消息，可以逐批查看完整历史', async () => {
@@ -34,7 +35,7 @@ it('长会话先显示最新消息，可以逐批查看完整历史', async () =
       root.render(<ChatPage />)
     })
     expect(host.textContent).toContain('记录[124]')
-    expect(host.querySelector('button[aria-label="访问模式：默认权限"]')).not.toBeNull()
+    expect(host.querySelector('button[aria-label="访问模式：继承总控"]')).not.toBeNull()
     expect(host.textContent).toContain('记录[65]')
     expect(host.textContent).not.toContain('记录[64]')
     await act(() => earlier()?.click())
@@ -111,7 +112,12 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
     expect(host.textContent).not.toMatch(/Turn interrupted|本轮失败|未能中断本轮/)
     expect(host.querySelector('[role="alert"]')).toBeNull()
 
-    await act(() => setTurn({ ...thread, status: 'error', activity: 'failed', activeTurnId: null, error: '503: upstream down' }))
+    await act(() => setTurn({ ...thread, status: 'error', activity: 'failed', activeTurnId: null, error: '503: upstream down',
+      items: [...thread.items, { kind: 'user', id: 'next', text: '开始下一轮' }],
+      turns: [{ id: 'turn', outcome: 'interrupted', startedAtMs: null, durationMs: null, itemIds: ['message', 'reply', 'command'] }],
+    }))
+    expect(host.textContent?.match(/本轮已中断/g)).toHaveLength(1)
+    expect(host.textContent!.indexOf('本轮已中断')).toBeLessThan(host.textContent!.indexOf('开始下一轮'))
     const error = host.querySelector('[role="alert"]')?.textContent
     expect(error).toContain('模型服务暂时不可用（503）')
     expect(error).toContain('upstream down')
@@ -123,7 +129,7 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
   }
 })
 
-it('从聊天顶栏查看去重的子代理列表、只读记录和实时结果', async () => {
+it('无子代理时隐藏顶栏，出现子代理时可从顶栏查看记录和实时结果', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   const methods = {
@@ -198,11 +204,20 @@ it('从聊天顶栏查看去重的子代理列表、只读记录和实时结果'
     await act(() => {
       useApp.setState({
         selectedTargetId: 'local', selectedThreadId: 'parent', eventsConnected: true,
-        sessions: { [session.key]: session },
+        sessions: { [session.key]: { ...session, state: { threads: { parent: { ...parent, items: [] } } } } },
       })
       root.render(<ChatPage />)
     })
+    expect(host.querySelector('header.qn-header')).toBeNull()
+    expect(host.querySelector('.qn-composer-tools > button:first-child')?.getAttribute('aria-label')).toBe('切换会话')
+    await clickButton('切换会话')
+    expect(dialog()?.getAttribute('data-placement')).toBe('left')
+    await act(() => { expect(closeTopSheet()).toBe(true) })
+    expect(dialog()).toBeNull()
+
+    await act(() => useApp.setState({ sessions: { [session.key]: session } }))
     expect(host.querySelector('header button[aria-label="子代理"] svg.lucide-bot')).toBeTruthy()
+    expect(host.querySelector('header button[aria-label="返回"]')).toBeNull()
     expect(host.querySelector('.qn-body')?.textContent).not.toContain('启动子代理')
     expect(historyReads()).toHaveLength(0)
     await clickButton('子代理')
@@ -250,6 +265,7 @@ it('从聊天顶栏查看去重的子代理列表、只读记录和实时结果'
     expect(dialog()?.textContent).toContain('已完成')
     await act(() => useApp.setState({ selectedThreadId: 'other' }))
     expect(dialog()).toBeNull()
+    expect(host.querySelector('header.qn-header')).toBeNull()
   } finally {
     await act(() => root.unmount())
     useApp.setState(initial)

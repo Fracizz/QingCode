@@ -7,7 +7,7 @@ import type { ServerMessage } from '@qn/protocol'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { AgentHostError, type AgentHostHub } from '../codexHost'
-import { AsyncQueue, ClaudeBridge, type ClaudeDeps, type QueryLike } from './bridge'
+import { AsyncQueue, ClaudeBridge, type ClaudeBridgeOptions, type ClaudeDeps, type QueryLike } from './bridge'
 import type { Json } from './v2'
 
 class FakeQuery implements QueryLike {
@@ -36,6 +36,11 @@ class FakeQuery implements QueryLike {
     this.permissionChanges.push(mode)
   }
 
+  async supportedCommands(): Promise<unknown[]> {
+    return [{ name: path.basename(this.options?.env?.CLAUDE_CONFIG_DIR ?? 'default'), description: '自定义技能' },
+      { name: 'help', builtin: true }]
+  }
+
   close(): void {
     this.closed = true
     this.messages.close()
@@ -54,6 +59,7 @@ function harness(options: {
   failResolve?: boolean
   listSessions?: ClaudeDeps['listSessions']
   getSessionMessages?: ClaudeDeps['getSessionMessages']
+  sessionReader?: ClaudeBridgeOptions['sessionReader']
 } = {}): Harness {
   const sent: Harness['sent'] = []
   const recv: Harness['recv'] = []
@@ -85,6 +91,7 @@ function harness(options: {
   }
   const bridge = new ClaudeBridge(hub, '0.0.1', {
     deps,
+    sessionReader: options.sessionReader,
     resolve: (claudePath) => {
       if (options.failResolve) {
         throw new AgentHostError('agent_unavailable', `未找到 claude (${claudePath ?? ''})`)
@@ -523,6 +530,54 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
       await h.bridge.open()
       await send('third-turn', await openThread('third'))
       expect(h.queries[2]?.options?.env?.CLAUDE_CONFIG_DIR).toBe(process.env.CLAUDE_CONFIG_DIR)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('配置目录隔离会话元数据、历史分页和已打开会话的命令', async () => {
+    const first = path.resolve('profile-a')
+    const second = path.resolve('profile-b')
+    const sessionId = 'shared-session'
+    const cwd = '/work'
+    const sessionReader = vi.fn((directory: string) => {
+      const name = path.basename(directory)
+      const info = { sessionId, summary: name, cwd, lastModified: 1_700_000_000_000 }
+      return {
+        listSessions: async () => [info],
+        getSessionInfo: async (id: string) => id === sessionId ? info : undefined,
+        getSessionMessages: async () => [{
+          uuid: 'history', message: { role: 'user', content: [{ type: 'text', text: name }] },
+        }],
+      }
+    })
+    const h = harness({ sessionReader })
+    const rpc = async (id: string, method: string, params: Json) => {
+      request(h, id, method, params)
+      return response(h, id)
+    }
+    const skills = (id: string) => rpc(id, 'skills/list', { cwds: [cwd] })
+    const turns = (id: string) => rpc(id, 'thread/turns/list', { threadId: sessionId })
+    try {
+      await h.bridge.open({ claudeConfigDir: first })
+      expect(await skills('skills-before')).toHaveProperty('result.data.0.skills', [])
+      expect(h.queries).toHaveLength(0)
+      expect(await rpc('list-a', 'thread/list', { cwd })).toHaveProperty('result.data.0.preview', 'profile-a')
+      expect(JSON.stringify(await turns('history-a'))).toContain('profile-a')
+      await rpc('send-a', 'turn/start', { threadId: sessionId, input: [{ type: 'text', text: 'A' }] })
+      expect(await skills('skills-a')).toHaveProperty('result.data.0.skills.0.name', 'profile-a')
+      expect(await skills('skills-a-builtins')).toHaveProperty('result.data.0.skills.length', 1)
+
+      await h.bridge.open({ claudeConfigDir: second })
+      expect(await skills('skills-b-before')).toHaveProperty('result.data.0.skills', [])
+      const history = JSON.stringify(await turns('history-b'))
+      expect(history).toContain('profile-b')
+      expect(history).not.toContain('profile-a')
+      await rpc('send-b', 'turn/start', { threadId: sessionId, input: [{ type: 'text', text: 'B' }] })
+      expect(h.queries.map((entry) => entry.options?.env?.CLAUDE_CONFIG_DIR)).toEqual([first, second])
+      expect(await skills('skills-b-after')).toHaveProperty('result.data.0.skills.0.name', 'profile-b')
+      expect(sessionReader).toHaveBeenCalledWith(first)
+      expect(sessionReader).toHaveBeenCalledWith(second)
     } finally {
       h.bridge.shutdown()
     }

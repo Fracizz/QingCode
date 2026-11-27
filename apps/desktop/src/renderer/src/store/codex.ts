@@ -14,6 +14,7 @@ import {
   emptyState,
   failActiveThreads,
   interruptTurn,
+  isActiveThread,
   isOversizeHistoryResponse,
   listThreads,
   loadRecentThreadHistory,
@@ -25,12 +26,14 @@ import {
   requestSubagents,
   resolveServerRequest,
   sendInput,
+  sessionStatus,
   setThreadName,
   startThread,
   steerTurn,
   supportsSubagentRequests,
   userItemFromInput,
   type ApprovalDecision,
+  type ApprovalView,
   type ConversationState,
   type ItemView,
   type RequestId,
@@ -44,7 +47,8 @@ import type { AgentKind } from '../../../shared/backendApi'
 import { call, on } from '../lib/backend'
 import { attachResult, BackendCodexTransport, maxSeq, openSeq } from '../lib/codexTransport'
 import { describeCodexOpenError, friendlyError, isActiveWriterError } from '../lib/errors'
-import { mergeThreadSummaries, toThreadSummaries, type ThreadSummary } from '../lib/threads'
+import { mergeThreadSummaries, refreshThreadOrder, toThreadSummaries, type ThreadSummary } from '../lib/threads'
+import { archivedThreadSummaries, isInactiveForArchive } from '../lib/threadPrefs'
 import {
   AGENTS,
   DEFAULT_AGENT,
@@ -56,13 +60,15 @@ import {
   sessionKey,
   type AgentAvailability,
 } from '../lib/agents'
-import { quoteBlock } from '../lib/annotations'
+import { buildAnnotatedMessage, type Annotation } from '../lib/annotations'
 import { agentPrefs } from '../features/settings/settingsModel'
 import { useSettings } from '../features/settings/settingsStore'
 import { adaptTurnInput } from '../features/composer/agentInput'
+import { turnInputSizeProblem } from '../features/composer/images'
 import {
   emptyAccessMemory,
   getAccessMode,
+  getAccessSelection,
   rememberAccessMode,
   resetDraftAccess,
   resetTargetAccess,
@@ -70,7 +76,7 @@ import {
   turnAccessOverride,
   type AccessAddress,
   type AccessMemory,
-  type AccessMode,
+  type AccessSelection,
 } from '../features/access/accessModel'
 import { configuredAgentOpen } from '../features/access/openConfig'
 import { threadKey } from '../lib/threads'
@@ -134,6 +140,7 @@ type SideChatState = {
   parentThreadId: string
   threadId: string | null
   draft: string
+  annotations: Annotation[]
   open: boolean
   busy: boolean
   firstMessage: string
@@ -155,6 +162,42 @@ export function currentSideChat(state: CodexState) {
   return state.sideChats[currentChatKey(state)]
 }
 
+const noApprovals: readonly ApprovalView[] = []
+
+function isMainChat(state: CodexState, { targetId, agent, threadId }: ChatAddress): boolean {
+  return state.currentTargetId === targetId && state.currentAgent === agent && state.currentThreadId === threadId
+}
+
+function openingAnotherChat(state: CodexState): boolean {
+  return !!state.openingThread && !isMainChat(state, state.openingThread)
+}
+
+export function currentThreadApprovals(state: CodexState): readonly ApprovalView[] {
+  const { currentTargetId, currentAgent, currentThreadId } = state
+  if (!currentTargetId || !currentThreadId || openingAnotherChat(state)) return noApprovals
+  return state.sessions[sessionKey(currentTargetId, currentAgent)]?.state.threads[currentThreadId]?.pendingApprovals ?? noApprovals
+}
+
+export function currentSideApprovals(state: CodexState): readonly ApprovalView[] {
+  const side = currentSideChat(state)
+  if (!side?.open || side.expired || !side.threadId || openingAnotherChat(state)) return noApprovals
+  return state.sessions[sessionKey(side.targetId, side.agent)]?.state.threads[side.threadId]?.pendingApprovals ?? noApprovals
+}
+
+type ThreadListScope = { targetId: string; cwd: string | null }
+type ThreadListState = ThreadListScope & { threads: ThreadSummary[]; loading: boolean; error: string | null }
+
+const threadListKey = ({ targetId, cwd }: ThreadListScope) => JSON.stringify([targetId, cwd])
+const noThreads: ThreadSummary[] = []
+
+export function threadListFor(state: CodexState, targetId: string, cwd: string | null): ThreadListState | undefined {
+  return state.threadLists[threadListKey({ targetId, cwd })]
+}
+
+export function currentThreads(state: CodexState): ThreadSummary[] {
+  return (state.currentTargetId && threadListFor(state, state.currentTargetId, state.currentCwd)?.threads) || noThreads
+}
+
 type CodexState = {
   sessions: Record<string, TargetSession>
   agents: Record<string, Record<AgentKind, AgentAvailability>>
@@ -162,9 +205,7 @@ type CodexState = {
   currentCwd: string | null
   currentThreadId: string | null
   currentAgent: AgentKind
-  threads: ThreadSummary[]
-  threadsLoading: boolean
-  threadsError: string | null
+  threadLists: Record<string, ThreadListState>
   sending: boolean
   sendingMessage: { key: string; preview?: PendingUser } | null
   access: AccessMemory
@@ -177,13 +218,15 @@ type CodexState = {
   setContext: (targetId: string | null, cwd: string | null, refresh?: boolean) => void
   ensureOpen: (targetId: string, agent?: AgentKind) => Promise<boolean>
   probeAgents: (targetId: string) => Promise<void>
-  refreshThreads: () => Promise<void>
+  refreshThreads: (scope?: ThreadListScope) => Promise<void>
+  listArchivedThreads: (targetId: string) => Promise<{ threads: ThreadSummary[]; error: string | null }>
+  restoreThread: (targetId: string, thread: ThreadSummary) => Promise<void>
   newThread: (agent?: AgentKind, onDraftCreated?: (threadId: string) => void) => Promise<void>
   /** 回到"新会话"草稿态（参考 Codex 的 New thread）：不立即建会话，发第一条消息时再创建，避免留下空会话。 */
   startDraft: (agent?: AgentKind) => void
   /** 草稿态下切换下一条消息使用的 Agent；已打开会话时 Agent 跟随会话，不可切换。 */
   setDraftAgent: (agent: AgentKind) => void
-  setAccessMode: (address: AccessAddress, draftRevision: number, mode: AccessMode) => void
+  setAccessMode: (address: AccessAddress, draftRevision: number, mode: AccessSelection) => void
   openThread: (threadId: string, agent?: AgentKind) => Promise<void>
   loadEarlierHistory: (beforeApply: () => void) => Promise<void>
   openingThread: ChatAddress | null
@@ -193,6 +236,9 @@ type CodexState = {
   removePendingSend: (chat: ChatAddress, id: number) => void
   retryPendingSend: (chat: ChatAddress) => void
   openSideChat: (quote?: string) => void
+  addSideAnnotation: (quote: string, comment: string) => void
+  editSideAnnotation: (id: string, quote: string) => void
+  removeSideAnnotation: (id: string) => void
   restartSideChat: () => Promise<void>
   endSideChat: () => Promise<void>
   setSideDraft: (draft: string) => void
@@ -200,8 +246,8 @@ type CodexState = {
   closeSideChat: () => void
   interrupt: () => Promise<void>
   interruptSide: () => Promise<void>
-  respondApproval: (requestId: RequestId, decision: ApprovalDecision) => void
-  /** 以下会话管理操作只对支持对应 RPC 的 agent（Codex）生效；成功返回 true 并刷新列表。 */
+  respondApproval: (chat: ChatAddress, requestId: RequestId, decision: ApprovalDecision) => void
+  /** 归档在缺少原生 RPC 的 Agent 上保存在桌面端。 */
   renameThread: (threadId: string, agent: AgentKind, name: string) => Promise<boolean>
   archiveThread: (threadId: string, agent: AgentKind) => Promise<boolean>
   deleteThread: (threadId: string, agent: AgentKind) => Promise<boolean>
@@ -214,6 +260,7 @@ type CodexState = {
 
 // 旧版 server 会丢弃超长回包，请求永远等不到响应；超时后释放“打开中”并允许重试。
 const OPEN_THREAD_TIMEOUT_MS = 30_000
+const AUTO_ARCHIVE_INTERVAL_MS = 60 * 60 * 1000
 
 let subscribed = false
 let offEvents: Array<() => void> = []
@@ -241,8 +288,22 @@ export const useCodex = create<CodexState>((set, get) => {
   const changingParentThreads = new Set<string>()
   const replacing = new Set<string>()
   let nextPendingId = 0
-  let refreshToken = 0
+  let nextSideAnnotationId = 0
+  const sideAnnotation = (quote: string, comment = ''): Annotation =>
+    ({ id: `side-${++nextSideAnnotationId}`, quote, comment })
+  const threadListRequests = new Map<string, symbol>()
   let openThreadToken = 0
+
+  const refreshThreadListsFor = (targetId: string, agent: AgentKind, threadId?: string, cwd?: string) => {
+    const state = get()
+    if (state.currentTargetId === targetId) void state.refreshThreads()
+    for (const list of Object.values(state.threadLists)) {
+      if (list.targetId !== targetId || (state.currentTargetId === targetId && state.currentCwd === list.cwd)) continue
+      if ((cwd !== undefined && (list.cwd === null || list.cwd === cwd)) || list.threads.some((thread) => thread.agent === agent && thread.id === threadId)) {
+        void state.refreshThreads({ targetId, cwd: list.cwd })
+      }
+    }
+  }
 
   const patchSession = (key: string, update: (session: TargetSession) => TargetSession): void => {
     set((state) => {
@@ -360,13 +421,14 @@ export const useCodex = create<CodexState>((set, get) => {
           else if (!replacing.has(pendingSendKey(chat))) pausePending(chat, '上一轮未完成，队列已暂停', true)
         }
       }
-      const method = (notification as { method?: unknown }).method
       if (
-        method === 'turn/completed' ||
-        method === 'thread/started' ||
-        method === 'thread/name/updated'
+        notification.method === 'turn/completed' ||
+        notification.method === 'thread/started' ||
+        notification.method === 'thread/name/updated'
       ) {
-        if (get().currentTargetId === targetId) void get().refreshThreads()
+        const params = notification.params
+        if ('thread' in params) refreshThreadListsFor(targetId, agent, params.thread.id, params.thread.cwd)
+        else refreshThreadListsFor(targetId, agent, params.threadId)
       }
     })
     rpc.onServerRequest((request: ServerRequest) => {
@@ -409,19 +471,23 @@ export const useCodex = create<CodexState>((set, get) => {
         if (directory && capabilities?.agentConfigDir !== true) {
           throw new Error('目标服务暂不支持 Agent 配置目录，请升级目标服务后重试')
         }
-        const replaced = agent === 'codex' && session.openedConfig !== null && session.openedConfig.directory !== directory
+        const replaced = session.openedConfig !== null && session.openedConfig.directory !== directory
         if (replaced) {
           expireSides(targetId, agent)
           const prefix = targetAgentKeyPrefix(targetId, agent)
           patchSession(key, (value) => ({ ...value, state: emptyState(), threadsAwaitingResume: new Set() }))
           set((state) => ({
             access: resetTargetAccess(state.access, targetId, agent),
-            pendingSends: Object.fromEntries(Object.entries(state.pendingSends).filter(([key]) => !key.startsWith(prefix))),
+            pendingSends: agent === 'codex'
+              ? Object.fromEntries(Object.entries(state.pendingSends).filter(([key]) => !key.startsWith(prefix)))
+              : state.pendingSends,
+            threadLists: Object.fromEntries(Object.entries(state.threadLists).map(([id, list]) => [
+              id, list.targetId === targetId ? { ...list, threads: list.threads.filter((thread) => thread.agent !== agent) } : list,
+            ])),
             ...(state.currentTargetId === targetId ? {
-              threads: state.threads.filter((thread) => thread.agent !== agent),
               ...(state.currentAgent === agent && state.currentThreadId !== null ? {
                 currentThreadId: null,
-                notice: 'Codex 配置目录已切换，请重新选择会话',
+                notice: `${agentLabel(agent)} 配置目录已切换，请重新选择会话`,
               } : {}),
             } : {}),
           }))
@@ -608,6 +674,23 @@ export const useCodex = create<CodexState>((set, get) => {
   const parentAddress = (side: SideChatState): ChatAddress =>
     ({ targetId: side.targetId, agent: side.agent, threadId: side.parentThreadId })
 
+  function threadHasWork(chat: ChatAddress): boolean {
+    const state = get()
+    const key = pendingSendKey(chat)
+    const view = state.sessions[sessionKey(chat.targetId, chat.agent)]?.state.threads[chat.threadId]
+    return submitting.has(key) || !!state.pendingSends[key]?.length || view?.status === 'running' || isActiveThread(sessionStatus(view))
+  }
+
+  function removeFromThreadLists({ targetId, agent, threadId }: ChatAddress) {
+    set((state) => ({
+      threadLists: Object.fromEntries(Object.entries(state.threadLists).map(([id, list]) => {
+        if (list.targetId !== targetId) return [id, list]
+        const threads = list.threads.filter((thread) => thread.id !== threadId || thread.agent !== agent)
+        return [id, threads.length === list.threads.length ? list : { ...list, threads }]
+      })),
+    }))
+  }
+
   function sideHasWork(side: SideChatState): boolean {
     if (side.busy) return true
     if (!side.threadId) return false
@@ -623,8 +706,18 @@ export const useCodex = create<CodexState>((set, get) => {
       set({ error: '请先选择目标' })
       return false
     }
-    const key = pendingSendKey({ targetId, agent, threadId })
+    const chat = { targetId, agent, threadId }
+    const key = pendingSendKey(chat)
     if (changingParentThreads.has(key)) return false
+    const openingChat = get().openingThread
+    if (openingChat && pendingSendKey(openingChat) === key) {
+      set({ notice: '请等待会话打开后重试' })
+      return false
+    }
+    if (threadHasWork(chat)) {
+      set({ notice: '请先停止会话并处理审批或排队消息' })
+      return false
+    }
     const sides = Object.entries(get().sideChats).filter(([, side]) => pendingSendKey(parentAddress(side)) === key)
     if (sides.some(([, side]) => sideHasWork(side))) {
       set({ notice: '请先停止侧聊并处理审批或排队消息' })
@@ -643,20 +736,94 @@ export const useCodex = create<CodexState>((set, get) => {
             await session.rpc.request('thread/unsubscribe', { threadId: side.threadId })
             patchSide(sideKey, { expired: true, error: '侧聊已结束，可重新开始。' })
           }
+          if (threadHasWork(chat)) throw new Error('请先停止会话并处理审批或排队消息')
           if (native) await (action === 'archive' ? archiveThread : deleteThread)(session.rpc, threadId)
           return true
         })
         if (!ok) return false
       }
       for (const [sideKey, side] of sides) dropSide(sideKey, side)
-      if (native && get().currentTargetId === targetId) {
-        leaveIfCurrent(threadId, agent)
-        set((state) => ({ threads: state.threads.filter((t) => !(t.id === threadId && t.agent === agent)) }))
-        void get().refreshThreads()
+      if (action === 'archive') useThreadPrefs.getState().setArchived(targetId, agent, threadId, true)
+      if (get().currentTargetId === targetId) leaveIfCurrent(threadId, agent)
+      if (native) {
+        refreshThreadListsFor(targetId, agent, threadId)
+        removeFromThreadLists(chat)
       }
       return true
     } finally {
       changingParentThreads.delete(key)
+    }
+  }
+
+  async function loadThreadList(targetId: string, cwd?: string, archived = false) {
+    const lists = await Promise.all(AGENTS.map(async (agent) => {
+      const session = get().sessions[sessionKey(targetId, agent)]
+      const status = statusFor(targetId, agent)
+      if (status?.state !== 'ready' || !session?.opened) {
+        const error = archived && status?.state === 'error' ? `${agentLabel(agent)}：${status.detail ?? '未就绪'}` : null
+        return { threads: [], error }
+      }
+      try {
+        const result = await listThreads(session.rpc, cwd, undefined, archived && agent === 'codex' ? { archived: true } : undefined)
+        const current = get().sessions[session.key]
+        const threads = current?.opened && current.openedConfig === session.openedConfig ? toThreadSummaries(result, agent) : []
+        return { threads, error: null }
+      } catch (err) {
+        return { threads: [], error: `${agentLabel(agent)}：${friendlyError(err, '加载会话列表失败')}` }
+      }
+    }))
+    return { threads: mergeThreadSummaries(lists.map(({ threads }) => threads)), error: lists.find(({ error }) => error)?.error ?? null }
+  }
+
+  async function archiveInactiveLocalThreads(days: number, isCurrent: () => boolean) {
+    const targetId = 'local'
+    await probeAgents(targetId)
+    if (!isCurrent()) return
+    const cutoff = Date.now() - days * 24 * AUTO_ARCHIVE_INTERVAL_MS
+    const changedDirectories = new Set<string>()
+    await Promise.all(AGENTS.map(async (agent) => {
+      const session = get().sessions[sessionKey(targetId, agent)]
+      if (!session) return
+      const isSessionCurrent = () => {
+        const current = get().sessions[session.key]
+        return isCurrent() && current?.opened && current.openedConfig === session.openedConfig &&
+          current.openedConfig?.directory === configDirFor(targetId, agent)
+      }
+      if (!isSessionCurrent()) return
+      try {
+        const result = await listThreads(session.rpc)
+        const threads = toThreadSummaries(result.data.filter((thread) => !thread.ephemeral && !thread.parentThreadId), agent)
+        for (const thread of threads) {
+          if (!isSessionCurrent()) break
+          const chat = { targetId, agent, threadId: thread.id }
+          const key = pendingSendKey(chat)
+          const state = get()
+          const prefs = useThreadPrefs.getState()
+          if (!isInactiveForArchive(thread, prefs.byTarget[targetId], cutoff) || changingParentThreads.has(key) ||
+            isMainChat(state, chat) || (state.openingThread && pendingSendKey(state.openingThread) === key) ||
+            threadHasWork(chat) || Object.values(state.sideChats).some((side) => pendingSendKey(parentAddress(side)) === key)) continue
+          changingParentThreads.add(key)
+          try {
+            if (agent === 'codex') {
+              await archiveThread(session.rpc, thread.id)
+              changedDirectories.add(thread.cwd)
+              removeFromThreadLists(chat)
+            }
+            prefs.setArchived(targetId, agent, thread.id, true)
+          } catch {
+            // 单个会话归档失败时，下一轮检查会重新读取它的状态。
+          } finally {
+            changingParentThreads.delete(key)
+          }
+        }
+      } catch {
+        // Agent 离线或读取失败时保留会话，等下次检查。
+      }
+    }))
+    for (const { targetId: listTarget, cwd } of Object.values(get().threadLists)) {
+      if (listTarget === targetId && (cwd === null ? changedDirectories.size > 0 : changedDirectories.has(cwd))) {
+        void get().refreshThreads({ targetId, cwd })
+      }
     }
   }
 
@@ -716,7 +883,8 @@ export const useCodex = create<CodexState>((set, get) => {
       }
     })
     try {
-      const mode = getAccessMode(get().access, { targetId: session.targetId, agent: session.agent, threadId })
+      const mode = getAccessMode(get().access, { targetId: session.targetId, agent: session.agent, threadId },
+        useSettings.getState().settings.general.globalAccessMode)
       const access = turnAccessOverride(session.agent, mode)
       if (access && session.openedConfig?.accessModes !== true) {
         throw new Error('目标服务暂不支持当前访问模式，请升级目标服务后重试')
@@ -744,6 +912,7 @@ export const useCodex = create<CodexState>((set, get) => {
 
   async function flushPending(chat: ChatAddress, retry = false): Promise<void> {
     const key = pendingSendKey(chat)
+    if (changingParentThreads.has(key)) return
     if (Object.values(get().sideChats).some((side) => side.expired && side.targetId === chat.targetId &&
       side.agent === chat.agent && side.threadId === chat.threadId)) return
     const session = get().sessions[sessionKey(chat.targetId, chat.agent)]
@@ -809,9 +978,7 @@ export const useCodex = create<CodexState>((set, get) => {
     currentCwd: null,
     currentThreadId: null,
     currentAgent: DEFAULT_AGENT,
-    threads: [],
-    threadsLoading: false,
-    threadsError: null,
+    threadLists: {},
     sending: false,
     sendingMessage: null,
     access: emptyAccessMemory,
@@ -826,8 +993,58 @@ export const useCodex = create<CodexState>((set, get) => {
     init: () => {
       if (subscribed) return () => undefined
       subscribed = true
+      let stopped = false
+      let checkingArchive = false
+      let checkAgain = false
+      const initialSettings = useSettings.getState()
+      let savedArchiveDays = initialSettings.loaded && !initialSettings.saving ? initialSettings.settings.general.autoArchiveDays : 0
+      const checkArchive = () => {
+        const days = savedArchiveDays
+        const isCurrent = () => !stopped && savedArchiveDays === days &&
+          useSettings.getState().settings.general.autoArchiveDays === days && useTargets.getState().states.local?.state === 'ready'
+        if (!days || !isCurrent()) return
+        if (checkingArchive) {
+          checkAgain = true
+          return
+        }
+        checkingArchive = true
+        void archiveInactiveLocalThreads(days, isCurrent).catch(() => undefined).finally(() => {
+          checkingArchive = false
+          if (checkAgain) {
+            checkAgain = false
+            checkArchive()
+          }
+        })
+      }
+      const archiveTimer = setInterval(checkArchive, AUTO_ARCHIVE_INTERVAL_MS)
       offEvents = [
+        useSettings.subscribe((state, previous) => {
+          if (!state.loaded || state.saving) return
+          const days = state.settings.general.autoArchiveDays
+          if (savedArchiveDays === days && previous.settings.general.autoArchiveDays === days) return
+          savedArchiveDays = days
+          checkArchive()
+        }),
+        useTargets.subscribe((state, previous) => {
+          if (state.states.local?.state === 'ready' && previous.states.local?.state !== 'ready') checkArchive()
+        }),
         on('server.evt', (payload) => {
+          if (payload.name === 'server.restarted') {
+            for (const session of Object.values(get().sessions)) {
+              if (session.targetId !== payload.targetId) continue
+              session.transport.resetLastSeq()
+              patchSession(session.key, (value) => ({
+                ...value,
+                opened: false,
+                lastSeq: null,
+                state: failActiveThreads(value.state, 'Server 已重启，进行中的任务已中断'),
+                threadsAwaitingResume: new Set(Object.keys(value.state.threads)),
+              }))
+              expireSides(payload.targetId, session.agent)
+              patchAgent(payload.targetId, session.agent, { state: 'unknown' })
+            }
+            return
+          }
           const exitedAgent = exitedAgentOf(payload.name, payload.payload)
           if (!exitedAgent) return
           const key = sessionKey(payload.targetId, exitedAgent)
@@ -857,11 +1074,15 @@ export const useCodex = create<CodexState>((set, get) => {
             return
           }
           if (get().currentTargetId !== payload.id) return
-          // 连接就绪后检测两个 agent，用于新建会话的可选项与占位符。
-          void get().probeAgents(payload.id)
+          // 启动时项目可能先于连接恢复，就绪后才能查到这个目录的历史会话。
+          if (get().currentCwd) void get().refreshThreads()
+          else void get().probeAgents(payload.id)
         }),
       ]
+      checkArchive()
       return () => {
+        stopped = true
+        clearInterval(archiveTimer)
         for (const off of offEvents) off()
         offEvents = []
         subscribed = false
@@ -869,7 +1090,6 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     setContext: (targetId, cwd, refresh = false) => {
-      ++refreshToken
       ++openThreadToken
       clearAllDrafts()
       set({
@@ -878,9 +1098,6 @@ export const useCodex = create<CodexState>((set, get) => {
         currentThreadId: null,
         openingThread: null,
         currentAgent: targetId ? defaultFor(targetId) : DEFAULT_AGENT,
-        threads: [],
-        threadsLoading: false,
-        threadsError: null,
         error: null,
       })
       if (refresh && targetId) void get().refreshThreads()
@@ -889,35 +1106,56 @@ export const useCodex = create<CodexState>((set, get) => {
     ensureOpen,
     probeAgents,
 
-    refreshThreads: async () => {
-      const token = ++refreshToken
-      const { currentTargetId: targetId, currentCwd: cwd } = get()
-      if (!targetId) {
-        set({ threads: [], threadsLoading: false, threadsError: null })
-        return
+    refreshThreads: async (scope) => {
+      const { targetId, cwd } = scope ?? { targetId: get().currentTargetId, cwd: get().currentCwd }
+      if (!targetId) return
+      const key = threadListKey({ targetId, cwd })
+      const request = Symbol()
+      threadListRequests.set(key, request)
+      const update = (threads: ThreadSummary[], loading: boolean, error: string | null) => {
+        set((state) => ({
+          threadLists: { ...state.threadLists, [key]: { targetId, cwd, threads, loading, error } },
+        }))
       }
+      update(get().threadLists[key]?.threads ?? noThreads, true, null)
+      try {
+        await get().probeAgents(targetId)
+        if (threadListRequests.get(key) !== request) return
+        const { threads, error } = await loadThreadList(targetId, cwd ?? undefined)
+        if (threadListRequests.get(key) === request) {
+          update(refreshThreadOrder(get().threadLists[key]?.threads ?? noThreads, threads), false, error)
+        }
+      } catch (err) {
+        if (threadListRequests.get(key) === request) {
+          update(get().threadLists[key]?.threads ?? noThreads, false, friendlyError(err, '加载会话列表失败'))
+        }
+      } finally {
+        if (threadListRequests.get(key) === request) threadListRequests.delete(key)
+      }
+    },
+
+    listArchivedThreads: async (targetId) => {
       await get().probeAgents(targetId)
-      if (token !== refreshToken || get().currentTargetId !== targetId) return
-      set({ threadsLoading: true, threadsError: null })
-      const lists = await Promise.all(
-        AGENTS.map(async (agent) => {
-          const key = sessionKey(targetId, agent)
-          const session = get().sessions[key]
-          if (statusFor(targetId, agent)?.state !== 'ready' || !session?.opened) return []
-          try {
-            return toThreadSummaries(
-              await listThreads(session.rpc, cwd ?? undefined),
-              agent,
-            )
-          } catch (err) {
-            const detail = `${agentLabel(agent)}：${friendlyError(err, '加载会话列表失败')}`
-            if (token === refreshToken) set((state) => ({ threadsError: state.threadsError ?? detail }))
-            return []
-          }
-        }),
-      )
-      if (token !== refreshToken || get().currentTargetId !== targetId) return
-      set({ threads: mergeThreadSummaries(lists), threadsLoading: false })
+      const { threads, error } = await loadThreadList(targetId, undefined, true)
+      return { threads: archivedThreadSummaries(threads, useThreadPrefs.getState().byTarget[targetId]), error }
+    },
+
+    restoreThread: async (targetId, { agent, id: threadId, cwd }) => {
+      const key = pendingSendKey({ targetId, agent, threadId })
+      if (changingParentThreads.has(key)) throw new Error('正在更新该会话，请稍后重试')
+      changingParentThreads.add(key)
+      try {
+        if (agent === 'codex') {
+          const ready = await ensureOpen(targetId, agent)
+          const session = get().sessions[sessionKey(targetId, agent)]
+          if (!ready || !session) throw new Error(session?.openError ?? 'Codex 未就绪')
+          await session.rpc.request('thread/unarchive', { threadId })
+        }
+        useThreadPrefs.getState().setArchived(targetId, agent, threadId, false)
+        refreshThreadListsFor(targetId, agent, threadId, cwd)
+      } finally {
+        changingParentThreads.delete(key)
+      }
     },
 
     newThread: async (agent, onDraftCreated) => {
@@ -982,7 +1220,7 @@ export const useCodex = create<CodexState>((set, get) => {
         const session = state.sessions[sessionKey(targetId, agent)]
         if (
           state.currentTargetId !== targetId || state.currentAgent !== agent || state.currentThreadId !== threadId ||
-          session?.openedConfig?.accessModes !== true ||
+          !session?.opened || (mode !== 'default' && mode !== 'inherit' && session.openedConfig?.accessModes !== true) ||
           state.sending || (threadId === null && state.access.draftRevision !== draftRevision) ||
           (threadId !== null && (session.state.threads[threadId]?.status === 'running' || submitting.has(pendingSendKey({ targetId, agent, threadId }))))
         ) return state
@@ -999,9 +1237,13 @@ export const useCodex = create<CodexState>((set, get) => {
       }
       const picked = agent ?? currentAgent
       if (openingThread?.targetId === targetId && openingThread.agent === picked && openingThread.threadId === threadId) return
+      const chat = { targetId, agent: picked, threadId }
+      if (changingParentThreads.has(pendingSendKey(chat))) {
+        set({ error: '正在更新该会话，请稍后重试' })
+        return
+      }
       const token = ++openThreadToken
       const isCurrent = () => token === openThreadToken
-      const chat = { targetId, agent: picked, threadId }
       const key = sessionKey(targetId, picked)
       clearAllDrafts()
       set({ openingThread: chat, error: null })
@@ -1106,12 +1348,21 @@ export const useCodex = create<CodexState>((set, get) => {
       const input = options?.delegate && supportsSubagentRequests(agent) ? requestSubagents(userInput) : userInput
       const key = sessionKey(targetId, agent)
       let threadId = options?.threadId ?? context.currentThreadId
-      const draftMode = getAccessMode(context.access, { targetId, agent, threadId: null })
+      const draftMode = getAccessSelection(context.access, { targetId, agent, threadId: null })
       let chat = threadId ? { targetId, agent, threadId } : null
       let chatKey = chat ? pendingSendKey(chat) : null
       const mode = options?.mode ?? 'queue'
       const overrides = overridesFor(targetId, agent)
       const report = (error: string | null) => options?.sideKey ? patchSide(options.sideKey, { error }) : set({ error })
+      const sizeProblem = turnInputSizeProblem(adaptTurnInput(agent, input))
+      if (sizeProblem) {
+        report(sizeProblem)
+        return false
+      }
+      if (chatKey && changingParentThreads.has(chatKey)) {
+        report('正在更新该会话，请稍后重试')
+        return false
+      }
       report(null)
 
       const enqueue = (address: ChatAddress) => {
@@ -1164,8 +1415,8 @@ export const useCodex = create<CodexState>((set, get) => {
         const session = get().sessions[key]
         if (!session) throw new Error(`${agentLabel(agent)} 未就绪`)
         const previousConfig = context.sessions[key]?.openedConfig
-        if (agent === 'codex' && threadId && previousConfig && previousConfig.directory !== session.openedConfig?.directory) {
-          throw new Error('Codex 配置目录已切换，请重新选择会话再发送')
+        if (threadId && previousConfig && previousConfig.directory !== session.openedConfig?.directory) {
+          throw new Error(`${agentLabel(agent)} 配置目录已切换，请重新选择会话再发送`)
         }
         if (!threadId) {
           const created = await startThread(session.rpc, context.currentCwd ? { cwd: context.currentCwd } : {})
@@ -1262,33 +1513,67 @@ export const useCodex = create<CodexState>((set, get) => {
         targetId: state.currentTargetId, agent: state.currentAgent, threadId: state.currentThreadId,
       }))) return
       const key = currentChatKey(state)
-      const parent = state.threads.find((thread) => thread.id === state.currentThreadId && thread.agent === state.currentAgent)
+      const parent = currentThreads(state).find((thread) => thread.id === state.currentThreadId && thread.agent === state.currentAgent)
       const side = state.sideChats[key] ?? {
         targetId: state.currentTargetId, cwd: parent?.cwd || state.currentCwd, agent: state.currentAgent,
         parentThreadId: state.currentThreadId,
-        threadId: null, draft: '', firstMessage: '', error: null, expired: false, busy: false,
+        threadId: null, draft: '', annotations: [], firstMessage: '', error: null, expired: false, busy: false,
       }
-      const draft = quote ? [side.draft.trimEnd(), quoteBlock(quote)].filter(Boolean).join('\n\n') + '\n\n' : side.draft
-      set({ sideChats: { ...state.sideChats, [key]: { ...side, open: true, draft } } })
+      const annotations = quote?.trim() ? [...side.annotations, sideAnnotation(quote)] : side.annotations
+      set({ sideChats: { ...state.sideChats, [key]: { ...side, open: true, annotations } } })
+    },
+
+    addSideAnnotation: (quote, comment) => {
+      const state = get()
+      const side = currentSideChat(state)
+      if (side && quote.trim()) {
+        patchSide(currentChatKey(state), { annotations: [...side.annotations, sideAnnotation(quote, comment)] })
+      }
+    },
+    editSideAnnotation: (id, quote) => {
+      const state = get()
+      const side = currentSideChat(state)
+      if (side && !side.busy) {
+        patchSide(currentChatKey(state), {
+          annotations: side.annotations.map((annotation) => annotation.id === id ? { ...annotation, quote } : annotation),
+        })
+      }
+    },
+    removeSideAnnotation: (id) => {
+      const state = get()
+      const side = currentSideChat(state)
+      if (side && !side.busy) {
+        patchSide(currentChatKey(state), { annotations: side.annotations.filter((annotation) => annotation.id !== id) })
+      }
     },
 
     sendSide: async (text, mode) => {
       const key = currentChatKey(get())
       const side = get().sideChats[key]
-      if (!side || side.busy || side.expired || !text.trim() ||
+      if (!side || side.busy || side.expired ||
         changingParentThreads.has(pendingSendKey(parentAddress(side)))) return
+      const message = buildAnnotatedMessage(side.annotations, text)
+      if (!message) return
       patchSide(key, { busy: true, error: null })
       const { targetId, agent } = side
       try {
         let threadId = side.threadId
         if (!threadId) {
           threadId = await createSideThread(side)
-          patchSide(key, { threadId, firstMessage: text })
+          patchSide(key, { threadId })
         }
         if (get().sending) throw new Error('正在提交另一条消息，请稍后重试')
         if (get().sideChats[key]?.expired) return
-        const sent = await get().send(text, { targetId, agent, threadId, sideKey: key, mode })
-        if (sent && get().sideChats[key]?.draft === text) patchSide(key, { draft: '' })
+        const sent = await get().send(message, { targetId, agent, threadId, sideKey: key, mode })
+        const latest = get().sideChats[key]
+        if (sent && latest) {
+          const sentAnnotations = new Set(side.annotations.map((annotation) => annotation.id))
+          patchSide(key, {
+            firstMessage: latest.firstMessage || message,
+            draft: latest.draft === text ? '' : latest.draft,
+            annotations: latest.annotations.filter((annotation) => !sentAnnotations.has(annotation.id)),
+          })
+        }
       } catch (err) {
         patchSide(key, { error: friendlyError(err, '侧聊发送失败') })
       } finally {
@@ -1309,7 +1594,10 @@ export const useCodex = create<CodexState>((set, get) => {
       if (submitting.has(oldKey)) return
       if (!state.pendingSends[oldKey]?.length) {
         forgetSideTranscript(side)
-        patchSide(key, { threadId: null, expired: false, error: null, draft: side.draft || side.firstMessage })
+        patchSide(key, {
+          threadId: null, expired: false, error: null, firstMessage: '',
+          draft: side.annotations.length ? side.draft : side.draft || side.firstMessage,
+        })
         return
       }
       patchSide(key, { busy: true })
@@ -1368,34 +1656,40 @@ export const useCodex = create<CodexState>((set, get) => {
       if (side?.threadId) await interruptFor(side.targetId, side.agent, side.threadId)
     },
 
-    respondApproval: (requestId, decision) => {
+    respondApproval: (chat, requestId, decision) => {
       const state = get()
-      for (const [key, session] of Object.entries(state.sessions)) {
-        if (session.targetId !== state.currentTargetId || session.agent !== state.currentAgent) continue
-        const approval = Object.values(session.state.threads)
-          .flatMap((thread) => thread.pendingApprovals)
-          .find((item) => item.requestId === requestId)
-        if (!approval) continue
-        try {
-          session.rpc.respond(approval.requestId, approvalResponse(approval, decision))
-          patchSession(key, (value) => ({
-            ...value,
-            state: resolveServerRequest(value.state, approval.requestId),
-          }))
-          set({ error: null })
-          return
-        } catch (err) {
-          set({ error: friendlyError(err, '提交审批失败') })
-          return
-        }
+      const main = isMainChat(state, chat)
+      const side = currentSideChat(state)
+      const inSide = side?.open && !side.expired && side.targetId === chat.targetId
+        && side.agent === chat.agent && side.threadId === chat.threadId
+      // 旧卡片可能在切换会话后才触发事件，审批仍须来自当前可见会话。
+      if (openingAnotherChat(state) || (!main && !inSide)) return
+
+      const report = (error: string | null) => main ? set({ error }) : patchSide(currentChatKey(state), { error })
+      const key = sessionKey(chat.targetId, chat.agent)
+      const session = state.sessions[key]
+      const approval = session?.state.threads[chat.threadId]?.pendingApprovals.find((item) => item.requestId === requestId)
+      if (!session || !approval) {
+        report('该审批请求已失效')
+        return
       }
-      set({ error: '该审批请求已失效' })
+      try {
+        session.rpc.respond(approval.requestId, approvalResponse(approval, decision))
+        patchSession(key, (value) => ({
+          ...value,
+          state: resolveServerRequest(value.state, approval.requestId),
+        }))
+        report(null)
+      } catch (err) {
+        report(friendlyError(err, '提交审批失败'))
+      }
     },
 
     renameThread: async (threadId, agent, name) => {
+      const targetId = get().currentTargetId
       const ok = await withSession(agent, '重命名失败', (session) => setThreadName(session.rpc, threadId, name).then(() => true))
       if (ok === null) return false
-      void get().refreshThreads()
+      if (targetId) refreshThreadListsFor(targetId, agent, threadId)
       return true
     },
 
@@ -1404,15 +1698,18 @@ export const useCodex = create<CodexState>((set, get) => {
     deleteThread: (threadId, agent) => removeParentThread(threadId, agent, 'delete'),
 
     forkThread: async (threadId, agent, lastTurnId) => {
-      const targetId = get().currentTargetId
+      const { currentTargetId: targetId, currentCwd: cwd } = get()
+      const token = openThreadToken
       const result = await withSession(agent, '创建分支失败', (session) => forkThread(session.rpc, threadId, lastTurnId))
       if (!result || !targetId) return false
       patchSession(sessionKey(targetId, agent), (value) => ({
         ...value,
         state: loadThread(value.state, result.thread),
       }))
-      set({ currentThreadId: result.thread.id, currentAgent: agent, error: null, notice: '已创建聊天分支' })
-      void get().refreshThreads()
+      if (token === openThreadToken) {
+        set({ currentThreadId: result.thread.id, currentAgent: agent, error: null, notice: '已创建聊天分支' })
+      }
+      void get().refreshThreads({ targetId, cwd })
       return true
     },
 

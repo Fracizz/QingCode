@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PeerCertificate } from 'node:tls'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { AppSettings } from '../../shared/backendApi'
-import { DEFAULT_FONT_SIZES, FONT_SIZES_VERSION } from '../../shared/fontSizes'
+import type { AppSettings, BackendParams } from '../../shared/backendApi'
+import { defaultAppSettings } from '../settings/appSettings'
 import { BackendRouter, type WirePort } from '../router'
 import type { SecretCipher } from '../secretStore'
 import { loadOrCreateCertificate, type MobileCertificate } from './cert'
@@ -43,7 +43,9 @@ const cipher: SecretCipher = {
 const PAIR_CODE = 'Pair.Code!'
 const LOCAL_TARGET = { id: 'local' as const, kind: 'local' as const, name: '本机' }
 const APP_SETTINGS: AppSettings = {
-  general: { sendKey: 'enter', autoConnectLast: false, defaultAgent: 'claude', density: 'comfortable', theme: 'dark', ...DEFAULT_FONT_SIZES, fontSizesVersion: FONT_SIZES_VERSION },
+  general: {
+    ...defaultAppSettings().general, autoConnectLast: false, defaultAgent: 'claude', globalAccessMode: 'restricted',
+  },
   agents: {
     local: {
       codex: { enabled: true, path: '  C:\\tools\\codex.exe  ', configDir: 'C:\\Users\\me\\.codex' },
@@ -64,6 +66,8 @@ let now = 1000
 let identityChecks = 0
 let lastServerReq: unknown = null
 let lastCodexSend: unknown = null
+let agentSettingsAvailable = true
+let handleCodexRequest: ((params: BackendParams<'codex.send'>) => void) | undefined
 
 function httpsOptions(
   path: string,
@@ -214,6 +218,9 @@ beforeAll(async () => {
   router.register('server.req', (params) => {
     lastServerReq = params
     if (params.method === 'term.open') return params.params
+    if (params.method === 'codex.open' && params.targetId === 'ssh-93') {
+      return { capabilities: { accessModes: true } }
+    }
     if (params.method === 'codex.attach' && params.targetId === 'local') {
       return { lastSeq: 4, truncated: false, accessModes: (params.params as { agent?: string })?.agent !== 'pi' }
     }
@@ -221,8 +228,12 @@ beforeAll(async () => {
   })
   router.register('codex.send', (params) => {
     lastCodexSend = params
+    handleCodexRequest?.(params)
   })
-  router.register('settings.get', () => APP_SETTINGS)
+  router.register('settings.get', () => {
+    if (!agentSettingsAvailable) throw new Error('设置暂不可读')
+    return APP_SETTINGS
+  })
   gateway = new MobileGateway({
     router,
     devices: deviceStore,
@@ -304,6 +315,7 @@ describe('手机网关纯逻辑', () => {
     const result = mobileAgentsFromSettings(APP_SETTINGS)
     expect(result).toEqual({
       defaultAgent: 'claude',
+      globalAccessMode: 'restricted',
       agents: {
         local: { codex: { enabled: true }, claude: { enabled: true }, pi: { enabled: false } },
         'ssh-93': { claude: { enabled: false } },
@@ -480,8 +492,22 @@ describe('手机网关 HTTPS 集成', () => {
     }, token)
     expect(turn.status).toBe(200)
     expect(lastCodexSend).toEqual({ targetId: 'local', msg: {
-      id: expect.any(String), method: 'turn/start', params: { threadId: 'thread', input: [] },
+      id: expect.any(String), method: 'turn/start', params: {
+        threadId: 'thread', input: [], approvalPolicy: 'never',
+        sandboxPolicy: { type: 'readOnly', networkAccess: false }, qingcodeAccessOverride: true,
+      },
     } })
+    const forwarded = lastCodexSend
+    agentSettingsAvailable = false
+    try {
+      const rejected = await requestJson('/rpc', 'POST', { method: 'codex.send', params: {
+        targetId: 'local', agent: 'claude', msg: { id: 'settings-down', method: 'turn/start', params: { threadId: 'thread', input: [] } },
+      } }, token)
+      expect(rejected.json()).toMatchObject({ error: { code: 'access_settings_unavailable' } })
+      expect(lastCodexSend).toBe(forwarded)
+    } finally {
+      agentSettingsAvailable = true
+    }
 
     for (const [targetId, agent, supported] of [
       ['local', 'codex', true], ['local', 'claude', true], ['local', 'pi', false], ['ssh-93', 'codex', false],
@@ -493,6 +519,10 @@ describe('手机网关 HTTPS 集成', () => {
       if (supported) expect(attached.json()).toHaveProperty('mobileAccessModes', true)
       else expect(attached.json()).not.toHaveProperty('mobileAccessModes')
     }
+    const openedWithAccessModes = await requestJson('/rpc', 'POST', { method: 'server.req', params: {
+      targetId: 'ssh-93', method: 'codex.open', params: { agent: 'codex' },
+    } }, token)
+    expect(openedWithAccessModes.json()).toHaveProperty('mobileAccessModes', true)
 
     const turnRequest = (agent: string, accessMode: string) => ({
       method: 'mobile.turn.start',
@@ -516,18 +546,36 @@ describe('手机网关 HTTPS 集成', () => {
       params: { threadId: 'thread', input: [], model: 'test-model', claudePermissionMode: 'plan' },
     } })
     const forwardedTurn = lastCodexSend
+    const inheritedTurn = (agent: string, mode: string) => {
+      const request = turnRequest(agent, mode)
+      return { ...request, params: { ...request.params, inheritAccess: true } }
+    }
+    const staleAccess = await requestJson('/rpc', 'POST', inheritedTurn('codex', 'default'), token)
+    expect(staleAccess.status).toBe(409)
+    expect(lastCodexSend).toBe(forwardedTurn)
     for (const [agent, mode] of [['pi', 'fullAccess'], ['claude', 'readOnly'], ['codex', 'invalid']] as const) {
       const rejected = await requestJson('/rpc', 'POST', turnRequest(agent, mode), token)
       expect(rejected.status).toBe(400)
       expect(lastCodexSend).toBe(forwardedTurn)
     }
+    expect((await requestJson('/rpc', 'POST', inheritedTurn('codex', 'readOnly'), token)).status).toBe(200)
+    expect(lastCodexSend).toMatchObject({ msg: { params: { sandboxPolicy: { type: 'readOnly', networkAccess: false } } } })
+    expect((await requestJson('/rpc', 'POST', inheritedTurn('claude', 'plan'), token)).status).toBe(200)
+    expect(lastCodexSend).toMatchObject({ msg: { params: { claudePermissionMode: 'plan' } } })
+    const defaultTurn = turnRequest('codex', 'default')
+    expect((await requestJson('/rpc', 'POST', {
+      ...defaultTurn, params: { ...defaultTurn.params, inheritAccess: false },
+    }, token)).status).toBe(200)
+    expect(lastCodexSend).toEqual({ targetId: 'local', agent: 'codex', msg: {
+      id: expect.any(String), method: 'turn/start', params: { threadId: 'thread', input: [], model: 'test-model' },
+    } })
 
     const agents = await requestJson('/rpc', 'POST', { method: 'mobile.agents', params: {} }, token)
     expect(agents.status).toBe(200)
-    expect(agents.json()).toEqual(mobileAgentsFromSettings(APP_SETTINGS))
+    expect(agents.json()).toEqual({ ...mobileAgentsFromSettings(APP_SETTINGS), fastHistoryOpen: true })
     expect(agents.text).not.toContain('claude.exe')
 
-    const opened = await requestJson(
+    const claudeOpened = await requestJson(
       '/rpc',
       'POST',
       {
@@ -538,7 +586,7 @@ describe('手机网关 HTTPS 集成', () => {
       },
       token
     )
-    expect(opened.status).toBe(200)
+    expect(claudeOpened.status).toBe(200)
     expect(lastServerReq).toEqual({
       targetId: 'local',
       method: 'codex.open',
@@ -590,6 +638,56 @@ describe('手机网关 HTTPS 集成', () => {
     const revoked = await requestJson('/rpc', 'POST', { method: 'targets.list', params: {} }, token)
     expect(revoked.status).toBe(401)
   }, 20_000)
+
+  it('没有事件流时也能通过 HTTPS 确认该轮已提交', async () => {
+    const { token } = await deviceStore.add({ name: '发送测试手机', ip: '127.0.0.1', now })
+    const turn = { id: 'turn-1', status: 'inProgress' }
+    handleCodexRequest = ({ targetId, agent, msg }) => {
+      const { id } = msg as { id: string }
+      router.emit('codex.recv', { targetId, agent, seq: null, msg: { id, result: { turn } } })
+    }
+    try {
+      const result = await requestJson('/rpc', 'POST', { method: 'mobile.turn.start', params: {
+        targetId: 'local', agent: 'codex', accessMode: 'readOnly', replyViaHttp: true,
+        msg: { id: 'turn-request', method: 'turn/start', params: { threadId: 'thread', input: [] } },
+      } }, token)
+      expect(result.status).toBe(200)
+      expect(result.json()).toEqual({ reply: { id: 'turn-request', result: { turn } } })
+    } finally {
+      handleCodexRequest = undefined
+    }
+  })
+
+  it('一次 HTTPS 调用恢复会话并返回最近一页，沿用 Agent 给出的游标', async () => {
+    const { token } = await deviceStore.add({ name: '历史测试手机', ip: '127.0.0.1', now })
+    const params = { targetId: 'local', agent: 'codex', threadId: 'history-thread' }
+    const calls: unknown[] = []
+    handleCodexRequest = ({ targetId, agent, msg }) => {
+      const request = msg as { id: string; method: string; params: unknown }
+      calls.push({ targetId, agent, method: request.method, params: request.params })
+      const result = request.method === 'thread/resume'
+        ? { thread: { id: params.threadId, status: { type: 'idle' }, turns: [] }, turnsBackwardsCursor: 'newest' }
+        : { data: [{ id: 'recent', items: [] }], nextCursor: 'older' }
+      router.emit('codex.recv', { targetId, agent, seq: null, msg: { id: request.id, result } })
+    }
+    try {
+      const body = { method: 'mobile.history.open', params: { ...params, method: 'turn/start', cwd: '/irrelevant' } }
+      expect((await requestJson('/rpc', 'POST', body)).status).toBe(401)
+      const result = await requestJson('/rpc', 'POST', body, token)
+      expect(result.status).toBe(200)
+      expect(result.json()).toMatchObject({ resumed: true,
+        thread: { id: params.threadId, turns: [{ id: 'recent' }] }, earlier: { turns: 'older' },
+      })
+      expect(calls).toEqual([
+        { targetId: 'local', agent: 'codex', method: 'thread/resume', params: { threadId: params.threadId, excludeTurns: true } },
+        { targetId: 'local', agent: 'codex', method: 'thread/turns/list', params: {
+          threadId: params.threadId, cursor: 'newest', limit: 8, sortDirection: 'desc', itemsView: 'full',
+        } },
+      ])
+    } finally {
+      handleCodexRequest = undefined
+    }
+  })
 
   it('长历史只到发起设备，同名请求、桌面请求与审批互不干扰', async () => {
     const a = await deviceStore.add({ name: '本人手机', ip: '127.0.0.1', now })

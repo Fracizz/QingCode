@@ -12,6 +12,8 @@ import type {
   ServerRequest,
   ThreadArchiveParams,
   ThreadArchiveResponse,
+  ThreadUnarchiveParams,
+  ThreadUnarchiveResponse,
   ThreadCompactStartParams,
   ThreadCompactStartResponse,
   ThreadDeleteParams,
@@ -52,6 +54,7 @@ export type ClientRequestMap = {
   'thread/name/set': { params: ThreadSetNameParams; result: ThreadSetNameResponse }
   'thread/unsubscribe': { params: ThreadUnsubscribeParams; result: ThreadUnsubscribeResponse }
   'thread/archive': { params: ThreadArchiveParams; result: ThreadArchiveResponse }
+  'thread/unarchive': { params: ThreadUnarchiveParams; result: ThreadUnarchiveResponse }
   'thread/compact/start': { params: ThreadCompactStartParams; result: ThreadCompactStartResponse }
   'thread/delete': { params: ThreadDeleteParams; result: ThreadDeleteResponse }
   'thread/fork': { params: ThreadForkParams; result: ThreadForkResponse }

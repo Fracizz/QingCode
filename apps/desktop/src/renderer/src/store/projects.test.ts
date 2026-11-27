@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { Project } from '../../../shared/backendApi'
 import { useCodex } from './codex'
 import { projectListOf, useProjects } from './projects'
+import { useTargets } from './targets'
 
 const { save } = vi.hoisted(() => ({ save: vi.fn() }))
 vi.mock('../lib/backend', () => ({ call: save }))
@@ -15,6 +16,7 @@ beforeEach(() => {
   vi.stubGlobal('localStorage', {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
   })
   save.mockReset()
   useProjects.setState(useProjects.getInitialState())
@@ -130,4 +132,88 @@ it('迟到的旧列表响应不覆盖其他目标，各目标的项目顺序独�
   expect(projectIds('local')).toEqual(['a', 'b'])
   await load('remote')
   expect(projectIds('remote')).toEqual(['d', 'c'])
+})
+
+it('重载后按目标恢复多个展开项目及当前项目', async () => {
+  const local = project('a', 1)
+  const localOther = project('c', 2)
+  const remote = project('b', 1, 'remote')
+  const { load, select, setExpanded } = useProjects.getState()
+  const previousStates = useTargets.getState().states
+  const setContext = vi.spyOn(useCodex.getState(), 'setContext')
+  const refresh = vi.spyOn(useCodex.getState(), 'refreshThreads').mockResolvedValue()
+  save.mockResolvedValueOnce([local, localOther]).mockResolvedValueOnce(local).mockResolvedValueOnce(localOther)
+    .mockResolvedValueOnce([remote]).mockResolvedValueOnce(remote)
+    .mockResolvedValueOnce([local, localOther]).mockResolvedValueOnce([remote])
+  try {
+    await load('local')
+    await select(local)
+    await select(localOther)
+    expect(useProjects.getState().treeByTarget.get('local')?.expandedIds).toEqual(['a', 'c'])
+    setExpanded(local, false)
+    setExpanded(local, true)
+    expect(useProjects.getState().selectedId).toBe(localOther.id)
+    await load('remote')
+    await select(remote)
+
+    useProjects.setState(useProjects.getInitialState())
+    useTargets.setState({ states: { local: { id: 'local', state: 'ready' } } })
+    setContext.mockClear()
+    // 侧栏同时铺开多个目标，load 不切换活动目标：先模拟 App 选定活动目标。
+    useProjects.setState({ targetId: 'local' })
+    await load('local')
+    expect(useProjects.getState().selectedId).toBe(localOther.id)
+    expect(useProjects.getState().treeByTarget.get('local')?.expandedIds).toEqual(['c', 'a'])
+    expect(setContext).toHaveBeenLastCalledWith('local', localOther.path, true)
+
+    await load('remote')
+    expect(useProjects.getState().selectedId).toBe(localOther.id)
+    useProjects.getState().setActiveTarget('remote')
+    expect(useProjects.getState().selectedId).toBe(remote.id)
+    expect(useProjects.getState().treeByTarget.get('remote')?.expandedIds).toEqual(['b'])
+    expect(setContext).toHaveBeenLastCalledWith('remote', remote.path, false)
+    expect(save.mock.calls.filter(([method]) => method === 'projects.save')).toHaveLength(3)
+  } finally {
+    setContext.mockRestore()
+    refresh.mockRestore()
+    useTargets.setState({ states: previousStates })
+  }
+})
+
+it.each([true, false])('恢复旧版项目展开记录（collapsed=%s）', async (collapsed) => {
+  const local = project('a', 1)
+  localStorage.setItem('qn.projects.tree.local', JSON.stringify({ projectId: local.id, collapsed }))
+  save.mockResolvedValueOnce([local])
+  useProjects.setState({ targetId: 'local' })
+  await useProjects.getState().load('local')
+  expect(useProjects.getState().selectedId).toBe(local.id)
+  expect(useProjects.getState().treeByTarget.get('local')?.expandedIds).toEqual(collapsed ? [] : ['a'])
+})
+
+it('当前项目已删除时保留其他展开项目', async () => {
+  const saved = { projectId: 'gone', expandedIds: ['gone', 'a'] }
+  localStorage.setItem('qn.projects.tree.local', JSON.stringify(saved))
+  save.mockResolvedValueOnce([project('a', 1)])
+  await useProjects.getState().load('local')
+  expect(useProjects.getState().selectedId).toBeNull()
+  expect(useProjects.getState().treeByTarget.get('local')).toEqual({ projectId: null, expandedIds: ['a'] })
+})
+
+it('已删除的项目不会从上次展开状态恢复', async () => {
+  localStorage.setItem('qn.projects.tree.local', JSON.stringify({ projectId: 'gone', collapsed: false }))
+  save.mockResolvedValueOnce([project('available', 1)])
+  await useProjects.getState().load('local')
+  expect(useProjects.getState().selectedId).toBeNull()
+  expect(localStorage.getItem('qn.projects.tree.local')).toBeNull()
+})
+
+it('每个项目独立保存显示全部或仅显示最近会话的偏好', async () => {
+  const { setShowAllThreads } = useProjects.getState()
+  setShowAllThreads('a', true)
+  setShowAllThreads('b', true)
+  setShowAllThreads('b', false)
+
+  vi.resetModules()
+  const { useProjects: reloaded } = await import('./projects')
+  expect(reloaded.getState().fullThreadLists).toEqual(['a'])
 })

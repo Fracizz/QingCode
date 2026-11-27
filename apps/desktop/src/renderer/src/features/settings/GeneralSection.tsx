@@ -1,6 +1,8 @@
+import { isGlobalAccessMode } from '@qn/codex-client'
 import { Select } from '../../components/primitives'
 import { Checkbox } from '../../components/ui'
 import { DEFAULT_FONT_SIZES, FONT_SIZES, isFontSize } from '../../../../shared/fontSizes'
+import { AUTO_ARCHIVE_DAYS, isAutoArchiveDays } from '../../../../shared/backendApi'
 import { useSettings } from './settingsStore'
 import {
   DEFAULT_AGENT_OPTIONS,
@@ -14,6 +16,11 @@ import {
   isSettingsTheme,
 } from './settingsModel'
 import { SectionHeading, Segmented, SettingRow } from './fields'
+
+const archiveOptions = AUTO_ARCHIVE_DAYS.map((days) => ({
+  value: String(days),
+  label: days === 0 ? '永不' : `${days} 天`,
+}))
 
 export function GeneralSection({ visible }: { visible: (itemId: string) => boolean }) {
   const general = useSettings((state) => state.settings.general)
@@ -59,10 +66,40 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
         </SettingRow>
       )}
 
+      {visible('autoArchiveDays') && (
+        <SettingRow
+          title="自动归档不活跃的会话"
+          description="本机连接就绪时，定期归档超过所选天数未更新的会话，保留置顶和正在使用的会话。"
+        >
+          <Select
+            aria-label="自动归档不活跃的会话"
+            value={String(general.autoArchiveDays)}
+            options={archiveOptions}
+            onValueChange={(value) => {
+              const days = Number(value)
+              if (isAutoArchiveDays(days)) void update({ general: { autoArchiveDays: days } })
+            }}
+          />
+        </SettingRow>
+      )}
+
+      {visible('globalAccessMode') && (
+        <SettingRow title="权限总控" description="使用「继承总控」的会话采用此设置。受限权限对应 Codex 只读、Claude 计划模式。">
+          <Select
+            aria-label="权限总控"
+            value={general.globalAccessMode}
+            options={[{ value: 'default', label: 'Agent 默认权限' }, { value: 'restricted', label: '受限权限' }]}
+            onValueChange={(value) => {
+              if (isGlobalAccessMode(value)) void update({ general: { globalAccessMode: value } })
+            }}
+          />
+        </SettingRow>
+      )}
+
       {visible('density') && (
         <SettingRow
           title="界面密度"
-          description="写入 html[data-density]，只提供样式钩子；具体紧凑规则由界面 token 决定。"
+          description="紧凑模式缩小界面间距，字体大小可单独调整。"
         >
           <Segmented
             value={general.density}

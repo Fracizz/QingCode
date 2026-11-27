@@ -1,7 +1,9 @@
 import { useState } from 'react'
+import { create } from 'zustand'
 import {
   Check,
   ChevronRight,
+  Download,
   EyeOff,
   FolderPlus,
   KeyRound,
@@ -22,7 +24,7 @@ import { useUi } from '../../store/ui'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, PopoverContent, PopoverRoot, PopoverTrigger } from '../primitives'
 import { SearchField } from '../SearchField'
 import { StatusDot } from '../StatusDot'
-import { EmptyState, ErrorNote, IconButton } from '../ui'
+import { EmptyState, ErrorNote, IconButton, Modal } from '../ui'
 
 export type TargetActions = {
   onAdd: () => void
@@ -57,7 +59,44 @@ export function targetSubtitle(target: Target): string {
   return '这台电脑'
 }
 
-/** 编辑 / 忘记密码 / 从侧栏移除 / 删除：侧栏分组头与选择面板共用。 */
+// 确认框不能挂在菜单里：选择面板点菜单项会先关闭面板，菜单随之卸载。
+const useForceUpdate = create<{ target: Target | null }>(() => ({ target: null }))
+
+/** 强制更新 Server 的确认框，侧栏里渲染一次。 */
+export function ForceUpdateDialog() {
+  const target = useForceUpdate((s) => s.target)
+  const forceUpdate = useTargets((s) => s.forceUpdate)
+  if (!target) return null
+  const close = () => useForceUpdate.setState({ target: null })
+  return (
+    <Modal
+      title="强制更新 Server？"
+      description={`如果「${target.name}」仍在运行旧版 Server，更新会重启 Server、中断正在进行的任务并关闭该目标的终端。`}
+      onClose={close}
+      width="max-w-md"
+      bodyClassName="hidden"
+      footer={(
+        <div className="flex justify-end gap-2">
+          <button type="button" className="qn-button-subtle" onClick={close}>取消</button>
+          <button
+            type="button"
+            className="qn-button bg-qn-danger hover:bg-qn-danger"
+            onClick={() => {
+              close()
+              void forceUpdate(target.id)
+            }}
+          >
+            强制更新
+          </button>
+        </div>
+      )}
+    >
+      {null}
+    </Modal>
+  )
+}
+
+/** 强制更新 / 编辑 / 忘记密码 / 从侧栏移除 / 删除：侧栏分组头与选择面板共用。 */
 function TargetMenu({
   target,
   actions,
@@ -71,8 +110,10 @@ function TargetMenu({
 }) {
   const remove = useTargets((s) => s.remove)
   const hide = useTargets((s) => s.hideFromSidebar)
-  const active = useTargets((s) => isTargetActive(s.states[target.id]?.state ?? 'idle'))
-  if (target.kind === 'local') return null
+  const state = useTargets((s) => s.states[target.id]?.state ?? 'idle')
+  const active = isTargetActive(state)
+  const canUpdate = target.kind !== 'direct' && (state === 'ready' || state === 'error')
+  if (target.kind === 'local' && !canUpdate) return null
   return (
     <Menu onOpenChange={onOpenChange}>
       <MenuTrigger asChild>
@@ -81,27 +122,37 @@ function TargetMenu({
         </IconButton>
       </MenuTrigger>
       <MenuContent align="end">
-        <MenuItem icon={<Pencil size={14} />} onSelect={() => actions.onEdit(target)}>
-          编辑连接
-        </MenuItem>
-        <MenuItem icon={<KeyRound size={14} />} onSelect={() => actions.onForgetSecret(target.id)}>
-          忘记已保存的密码
-        </MenuItem>
-        {inSidebar && (
-          <MenuItem
-            icon={<EyeOff size={14} />}
-            onSelect={() => {
-              if (active) actions.onDisconnect(target.id)
-              hide(target.id)
-            }}
-          >
-            {active ? '断开并从侧栏移除' : '从侧栏移除'}
+        {canUpdate && (
+          <MenuItem danger icon={<Download size={14} />} onSelect={() => useForceUpdate.setState({ target })}>
+            强制更新 Server
           </MenuItem>
         )}
-        <MenuSeparator />
-        <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => void remove(target.id)}>
-          删除连接
-        </MenuItem>
+        {canUpdate && target.kind !== 'local' && <MenuSeparator />}
+        {target.kind !== 'local' && (
+          <>
+          <MenuItem icon={<Pencil size={14} />} onSelect={() => actions.onEdit(target)}>
+            编辑连接
+          </MenuItem>
+          <MenuItem icon={<KeyRound size={14} />} onSelect={() => actions.onForgetSecret(target.id)}>
+            忘记已保存的密码
+          </MenuItem>
+          {inSidebar && (
+            <MenuItem
+              icon={<EyeOff size={14} />}
+              onSelect={() => {
+                if (active) actions.onDisconnect(target.id)
+                hide(target.id)
+              }}
+            >
+              {active ? '断开并从侧栏移除' : '从侧栏移除'}
+            </MenuItem>
+          )}
+          <MenuSeparator />
+          <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => void remove(target.id)}>
+            删除连接
+          </MenuItem>
+          </>
+        )}
       </MenuContent>
     </Menu>
   )

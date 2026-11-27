@@ -4,18 +4,19 @@ import { copyText } from '../../lib/clipboard'
 import type { Project } from '../../../../shared/backendApi'
 import { sessionKey } from '../../lib/agents'
 import { applyThreadPrefs } from '../../lib/threadPrefs'
-import { threadKey } from '../../lib/threads'
+import { threadKey, type ThreadSummary } from '../../lib/threads'
 import { formatRelative } from '../../lib/time'
-import { useCodex } from '../../store/codex'
+import { threadListFor, useCodex } from '../../store/codex'
 import { projectListOf, useProjects, type ProjectPlacement } from '../../store/projects'
 import { useTargets } from '../../store/targets'
 import { useThreadPrefs } from '../../store/threadPrefs'
-import { useUi } from '../../store/ui'
+import { useUi, type ThreadListReveal } from '../../store/ui'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../primitives'
 import { ErrorNote, IconButton, Spinner } from '../ui'
 import { ThreadRow } from './ThreadRow'
 
 const THREAD_PREVIEW_LIMIT = 8
+const noThreads: ThreadSummary[] = []
 const PROJECT_DRAG_TYPE = 'application/x-qingcode-project'
 
 type ProjectDrop = { id: string; placement: ProjectPlacement }
@@ -23,19 +24,21 @@ type SortProps = Pick<ComponentProps<'button'>, 'onDragStart' | 'onDragEnd' | 'o
 
 /**
  * 某个目标下的项目 → 会话两级树（参考 Codex 侧栏）：侧栏里每个铺开的目标各渲染一份。
- * 会话列表按当前项目 cwd 加载（codex store 一次只持有一个 cwd 的列表），所以全局只展开当前项目。
+ * 每个展开的项目按自己的 cwd 读会话列表，可同时展开多个。
  */
 export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; onSelectTarget: (id: string) => void }) {
   const { projects, loading, error: projectError } = useProjects((s) => projectListOf(s, targetId))
   const selectedId = useProjects((s) => (s.targetId === targetId ? s.selectedId : null))
   const load = useProjects((s) => s.load)
   const select = useProjects((s) => s.select)
+  const expandedIds = useProjects((s) => s.treeByTarget.get(targetId)?.expandedIds)
+  const setExpanded = useProjects((s) => s.setExpanded)
   const move = useProjects((s) => s.move)
   const pinned = useProjects((s) => s.pinned)
   const openPicker = useUi((s) => s.openDirectoryPicker)
+  const reveal = useUi((s) => s.threadListReveal)
   const activeTarget = useTargets((s) => s.selectedId)
 
-  const [collapsed, setCollapsed] = useState(false)
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<ProjectDrop | null>(null)
   // 相对时间每分钟刷新一次即可。
@@ -52,26 +55,28 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
     return () => clearInterval(timer)
   }, [])
 
+  useEffect(() => {
+    if (reveal && (reveal.targetId !== targetId || reveal.projectId !== selectedId || !expandedIds?.includes(reveal.projectId))) {
+      useUi.getState().finishThreadListReveal(reveal)
+    }
+  }, [reveal, targetId, selectedId, expandedIds])
+
   /** 切到项目所在目标（未连接时会发起连接），再打开项目。 */
-  const open = (project: Project) => {
+  const activateProject = (project: Project) => {
     if (activeTarget !== targetId) onSelectTarget(targetId)
-    void select(project)
+    if (project.id !== selectedId) void select(project)
   }
 
-  const onProjectClick = (project: Project) => {
-    if (project.id === selectedId) {
-      setCollapsed((value) => !value)
-      return
-    }
-    setCollapsed(false)
-    open(project)
+  const onProjectClick = (project: Project, expanded: boolean) => {
+    if (!expanded) activateProject(project)
+    setExpanded(project, !expanded)
   }
 
   const newDraftIn = (project: Project) => {
     // 先切到该项目再进入草稿态：会话在发第一条消息时才创建，不留空会话。
-    if (project.id !== selectedId) open(project)
+    activateProject(project)
     useCodex.getState().startDraft()
-    setCollapsed(false)
+    setExpanded(project, true)
   }
 
   const clearDrag = () => {
@@ -87,7 +92,7 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
   }
 
   return (
-    <div className="pb-1">
+    <div className="qn-project-tree pb-1">
       {loading && projects.length === 0 && (
         <div className="space-y-1.5 py-1 pl-6 pr-2">
           {[0, 1].map((key) => (
@@ -99,7 +104,7 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
       {!loading && projects.length === 0 && !projectError && (
         <button
           type="button"
-          className="flex h-8 w-full items-center gap-2 rounded-lg pl-[30px] text-left text-ui text-qn-dim hover:bg-qn-hover hover:text-qn-text"
+          className="flex min-h-8 w-full items-center gap-2 rounded-lg pl-[30px] text-left text-[length:var(--qn-project-detail-font-size)] leading-tight text-qn-dim hover:bg-qn-hover hover:text-qn-text"
           onClick={() => openPicker(targetId)}
         >
           <FolderPlus size={14} /> 添加项目
@@ -108,7 +113,7 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
 
       {projects.map((project, index) => {
         const active = project.id === selectedId
-        const expanded = active && !collapsed
+        const expanded = expandedIds?.includes(project.id) ?? false
         const isPinned = pinned.includes(project.id)
         const previous = projects[index - 1]
         const next = projects[index + 1]
@@ -166,11 +171,20 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
               active={active}
               expanded={expanded}
               now={now}
-              onOpen={() => onProjectClick(project)}
+              onOpen={() => onProjectClick(project, expanded)}
               onNewDraft={() => newDraftIn(project)}
               sortProps={sortProps}
             />
-            {expanded && <ThreadList now={now} />}
+            {expanded && (
+              <ThreadList
+                project={project}
+                now={now}
+                active={active}
+                reveal={reveal?.targetId === targetId && reveal.projectId === project.id ? reveal : null}
+                onActivate={() => activateProject(project)}
+                onNewDraft={() => newDraftIn(project)}
+              />
+            )}
           </div>
         )
       })}
@@ -220,13 +234,13 @@ function ProjectRow({
 
   if (editing) {
     return (
-      <div className="flex h-8 items-center gap-2 pl-2 pr-1">
+      <div className="flex min-h-8 items-center gap-(--qn-tree-row-inset) pl-(--qn-tree-row-inset) pr-1">
         <ProjectInitial name={project.name} />
         <input
           ref={inputRef}
           value={draft}
           aria-label="项目名称"
-          className="qn-input h-7 min-w-0 flex-1 px-1.5 py-0 text-ui"
+          className="qn-input min-h-7 min-w-0 flex-1 px-1.5 py-0 text-[length:var(--qn-project-detail-font-size)] leading-tight"
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commit}
           onKeyDown={(event) => {
@@ -256,14 +270,14 @@ function ProjectRow({
 
   return (
     <div
-      className={`group flex h-8 items-center gap-1 rounded-lg pl-2 pr-1 text-ui-md ${
+      className={`group/project flex min-h-8 items-center gap-1 rounded-lg pl-(--qn-tree-row-inset) pr-1 text-[length:var(--qn-project-font-size)] leading-tight ${
         active ? 'text-qn-text' : 'text-qn-text/85 hover:bg-qn-hover'
       } ${(active && !expanded) || menuOpen ? 'bg-qn-hover' : ''}`}
       title={project.path}
     >
       <button
         type="button"
-        className={`group flex h-full min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent${sortProps ? ' cursor-grab active:cursor-grabbing' : ''}`}
+        className={`group flex min-w-0 flex-1 items-center gap-(--qn-tree-row-inset) self-stretch rounded-md py-px text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent${sortProps ? ' cursor-grab active:cursor-grabbing' : ''}`}
         aria-expanded={expanded}
         aria-keyshortcuts={sortProps ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
         draggable={Boolean(sortProps)}
@@ -279,10 +293,10 @@ function ProjectRow({
           </span>
         )}
       </button>
-      <span className={`shrink-0 pr-1.5 text-ui-sm text-qn-dim group-hover:hidden ${menuOpen ? 'hidden' : ''}`}>
+      <span className={`shrink-0 pr-1.5 text-[length:var(--qn-project-detail-font-size)] text-qn-dim group-hover/project:hidden ${menuOpen ? 'hidden' : ''}`}>
         {formatRelative(project.lastOpenedAt, now)}
       </span>
-      <span className={`shrink-0 items-center group-hover:flex ${menuOpen ? 'flex' : 'hidden'}`}>
+      <span className={`shrink-0 items-center group-hover/project:flex ${menuOpen ? 'flex' : 'hidden'}`}>
         <Menu open={menuOpen} onOpenChange={setMenuOpen}>
           <MenuTrigger asChild>
             <button
@@ -338,7 +352,7 @@ function ProjectInitial({ name }: { name: string }) {
   // 拉丁字母/数字以基线 + 约 0.36em 让大写字高居中；中日韩字符用 central 基线。
   const latin = /^[\p{Script=Latin}\p{N}]$/u.test(ch)
   return (
-    <span aria-hidden className={`inline-flex h-[18px] w-[18px] shrink-0 rounded-[5px] ${color}`}>
+    <span aria-hidden className={`inline-flex size-(--qn-tree-icon-size) shrink-0 rounded-[5px] ${color}`}>
       <svg width="18" height="18" viewBox="0 0 18 18" className="block">
         <text
           x="9"
@@ -356,32 +370,69 @@ function ProjectInitial({ name }: { name: string }) {
   )
 }
 
-function ThreadList({ now }: { now: number }) {
-  const rawThreads = useCodex((s) => s.threads)
-  const threadsLoading = useCodex((s) => s.threadsLoading)
-  const threadsError = useCodex((s) => s.threadsError)
-  const currentThreadId = useCodex((s) => s.currentThreadId)
+function ThreadList({ project, now, active, reveal, onActivate, onNewDraft }: {
+  project: Project
+  now: number
+  active: boolean
+  reveal: ThreadListReveal | null
+  onActivate: () => void
+  onNewDraft: () => void
+}) {
+  const { targetId, id: projectId, path: cwd } = project
+  const ready = useTargets((s) => s.states[targetId]?.state === 'ready')
+  const list = useCodex((s) => threadListFor(s, targetId, cwd))
+  const threadsLoading = list?.loading ?? ready
+  const threadsError = list?.error
+  const currentKey = useCodex((s) => active && s.currentTargetId === targetId && s.currentCwd === cwd && s.currentThreadId
+    ? threadKey(s.currentAgent, s.currentThreadId) : null)
   const currentAgent = useCodex((s) => s.currentAgent)
-  const currentTargetId = useCodex((s) => s.currentTargetId)
   const sessions = useCodex((s) => s.sessions)
-  const openError = useCodex((s) =>
-    s.currentTargetId ? s.sessions[sessionKey(s.currentTargetId, s.currentAgent)]?.openError : null,
-  )
+  const openError = active ? sessions[sessionKey(targetId, currentAgent)]?.openError : null
   const refreshThreads = useCodex((s) => s.refreshThreads)
-  const startDraft = useCodex((s) => s.startDraft)
-  const openThread = useCodex((s) => s.openThread)
-  const [showAll, setShowAll] = useState(false)
-  const prefs = useThreadPrefs((s) => (currentTargetId ? s.byTarget[currentTargetId] : undefined))
+  const showAll = useProjects((s) => s.fullThreadLists.includes(projectId))
+  const setShowAll = useProjects((s) => s.setShowAllThreads)
+  const prefs = useThreadPrefs((s) => s.byTarget[targetId])
+  const listRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (ready && !threadListFor(useCodex.getState(), targetId, cwd)?.loading) {
+      void refreshThreads({ targetId, cwd })
+    }
+  }, [ready, refreshThreads, targetId, cwd])
+
+  const rawThreads = list?.threads ?? noThreads
   // 本地偏好：置顶在前、隐藏本地归档、套用本地名称。
   const threads = useMemo(() => applyThreadPrefs(rawThreads, prefs), [rawThreads, prefs])
 
-  const shown = showAll ? threads : threads.slice(0, THREAD_PREVIEW_LIMIT)
-  const hidden = threads.length - shown.length
+  const currentIndex = currentKey ? threads.findIndex((thread) => threadKey(thread.agent, thread.id) === currentKey) : -1
+  const preview = threads.slice(0, THREAD_PREVIEW_LIMIT)
+  // 当前会话较旧时单独保留这一行，避免定位时展开整个列表。
+  if (currentIndex >= THREAD_PREVIEW_LIMIT) preview.push(threads[currentIndex]!)
+  const shown = showAll ? threads : preview
+  const remaining = threads.length - preview.length
+
+  useEffect(() => {
+    if (!reveal) return
+    const finish = useUi.getState().finishThreadListReveal
+    if (!active || reveal.threadKey !== currentKey) {
+      finish(reveal)
+      return
+    }
+    const container = listRef.current
+    if (!container) return
+    const row = currentKey ? container.querySelector<HTMLButtonElement>('button[aria-current="true"]') : null
+    // 展开项目时列表可能刚开始加载，等会话行出现后再定位。
+    if (currentKey && !row && threadListFor(useCodex.getState(), targetId, cwd)?.loading) return
+    const element = row ?? container
+    element.focus({ preventScroll: true })
+    element.scrollIntoView({ block: row ? 'nearest' : 'start', inline: 'nearest' })
+    finish(reveal)
+  }, [reveal, active, currentKey, threads, threadsLoading, targetId, cwd])
 
   return (
-    <div className="flex flex-col gap-0.5 pt-0.5 pb-1.5">
+    <div ref={listRef} role="group" aria-label={`${project.name}会话列表`} tabIndex={-1} className="flex flex-col gap-0.5 pt-0.5 pb-1.5">
       {threadsLoading && threads.length === 0 && (
-        <div className="py-1.5 pl-[31px]">
+        <div className="py-1.5 pl-(--qn-tree-title-start)">
           <Spinner label="加载会话…" />
         </div>
       )}
@@ -389,35 +440,37 @@ function ThreadList({ now }: { now: number }) {
       {!threadsLoading && threads.length === 0 && !threadsError && (
         <button
           type="button"
-          className="flex h-8 w-full items-center rounded-lg pl-[31px] text-left text-ui text-qn-dim hover:bg-qn-hover hover:text-qn-text"
-          onClick={() => startDraft()}
+          className="flex min-h-8 w-full items-center rounded-lg py-0.5 pl-(--qn-tree-title-start) text-left text-[length:var(--qn-session-font-size)] leading-tight text-qn-muted hover:bg-qn-hover hover:text-qn-text"
+          onClick={onNewDraft}
         >
           暂无会话，开始一个
         </button>
       )}
 
       {shown.map((thread) => {
-        const view = currentTargetId
-          ? sessions[sessionKey(currentTargetId, thread.agent)]?.state.threads[thread.id]
-          : undefined
+        const key = threadKey(thread.agent, thread.id)
+        const view = sessions[sessionKey(targetId, thread.agent)]?.state.threads[thread.id]
         return (
           <ThreadRow
-            key={threadKey(thread.agent, thread.id)}
+            key={key}
             thread={thread}
+            targetId={targetId}
             now={now}
-            current={thread.id === currentThreadId && thread.agent === currentAgent}
+            current={key === currentKey}
             view={view}
+            onActivate={onActivate}
           />
         )
       })}
 
-      {hidden > 0 && (
+      {remaining > 0 && (
         <button
           type="button"
-          className="h-7 w-full rounded-lg pl-[31px] text-left text-ui-sm text-qn-muted hover:bg-qn-hover hover:text-qn-text"
-          onClick={() => setShowAll(true)}
+          className="min-h-7 w-full rounded-lg py-0.5 pl-(--qn-tree-title-start) text-left text-[length:var(--qn-session-detail-font-size)] leading-tight text-qn-muted hover:bg-qn-hover hover:text-qn-text"
+          aria-expanded={showAll}
+          onClick={() => setShowAll(projectId, !showAll)}
         >
-          显示其余 {hidden} 个会话
+          {showAll ? '收起会话' : `显示其余 ${remaining} 个会话`}
         </button>
       )}
 
@@ -428,11 +481,11 @@ function ThreadList({ now }: { now: number }) {
           variant="compact"
           className="mx-1 mt-1"
           retryIcon
-          onRetry={() => void refreshThreads()}
+          onRetry={() => void refreshThreads({ targetId, cwd })}
         />
       )}
-      {threadsError && threadsError === openError && currentTargetId && (
-        <div className="py-1 pl-[31px] text-ui-sm text-qn-dim">会话列表不可用</div>
+      {threadsError && threadsError === openError && (
+        <div className="py-1 pl-(--qn-tree-title-start) text-[length:var(--qn-session-detail-font-size)] leading-tight text-qn-muted">会话列表不可用</div>
       )}
     </div>
   )

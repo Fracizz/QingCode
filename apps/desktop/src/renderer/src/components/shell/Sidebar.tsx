@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Settings, Smartphone, SquarePen, Upload } from 'lucide-react'
+import { Archive, Settings, Smartphone, SquarePen, Upload } from 'lucide-react'
 import { useCodex } from '../../store/codex'
 import { useTargets } from '../../store/targets'
 import { useUi } from '../../store/ui'
@@ -7,8 +7,9 @@ import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from '../../lib/layout'
 import { LegacyBanner } from '../LegacyImport'
 import { ResizeHandle } from '../ResizeHandle'
 import { ErrorNote } from '../ui'
+import { ArchivedThreadsDialog } from './ArchivedThreadsDialog'
 import { ProjectTree } from './ProjectTree'
-import { TargetPicker, TargetSectionHeader, type TargetActions } from './TargetSwitcher'
+import { ForceUpdateDialog, TargetPicker, TargetSectionHeader, type TargetActions } from './TargetSwitcher'
 import { sidebarTargets } from '../../store/targets'
 
 const COLLAPSED_KEY = 'qn-sidebar-collapsed-targets'
@@ -54,6 +55,7 @@ export function Sidebar({
   const startDraft = useCodex((s) => s.startDraft)
   const isDraft = useCodex((s) => s.currentThreadId === null)
   const [version, setVersion] = useState('')
+  const [archiveOpen, setArchiveOpen] = useState(false)
 
   useEffect(() => {
     void window.qn?.version().then(setVersion).catch(() => undefined)
@@ -67,7 +69,7 @@ export function Sidebar({
       <div className="px-2 pt-2">
         <button
           type="button"
-          className={`group flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-ui-md outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent ${
+          className={`group flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 py-0.5 text-[length:var(--qn-sidebar-font-size)] leading-tight outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent ${
             isDraft ? 'bg-qn-hover text-qn-text' : 'text-qn-text/90'
           }`}
           onClick={() => startDraft()}
@@ -77,6 +79,14 @@ export function Sidebar({
           <kbd className="hidden rounded-md border border-qn-border-strong px-1 font-sans text-ui-xs text-qn-dim group-hover:inline">
             Ctrl N
           </kbd>
+        </button>
+        <button
+          type="button"
+          className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 py-0.5 text-left text-[length:var(--qn-sidebar-font-size)] leading-tight text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
+          onClick={() => setArchiveOpen(true)}
+        >
+          <Archive size={16} className="text-qn-muted" aria-hidden="true" />
+          已归档会话
         </button>
       </div>
 
@@ -109,6 +119,11 @@ export function Sidebar({
         })}
         <ErrorNote message={loadError} variant="compact" className="mx-1 mt-1.5" />
       </div>
+      {/* 归档列表跟随活动目标：主区当前用的是哪台机器，就看哪台的归档。 */}
+      {archiveOpen && selectedId && (
+        <ArchivedThreadsDialog key={selectedId} targetId={selectedId} onClose={() => setArchiveOpen(false)} />
+      )}
+      <ForceUpdateDialog />
 
       <div className="px-2 pb-1">
         <LegacyBanner />
@@ -151,7 +166,7 @@ function FooterButton({ label, onClick, children }: { label: string; onClick: ()
   return (
     <button
       type="button"
-      className="flex shrink-0 items-center gap-1 rounded-lg px-1 py-1.5 text-ui-sm whitespace-nowrap text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
+      className="flex shrink-0 items-center gap-1 rounded-lg px-1 py-1.5 text-[length:var(--qn-sidebar-detail-font-size)] leading-tight whitespace-nowrap text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
       onClick={onClick}
     >
       {children}

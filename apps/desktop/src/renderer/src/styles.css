@@ -100,6 +100,16 @@
   /* 保持浏览器默认 16px 根字号：Tailwind 尺寸全是 rem，根字号缩小会让 text-xs 只剩 10.5px。 */
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
+  /* 设置加载前使用默认字号，辅助文字随各组字号变化。 */
+  --qn-sidebar-font-size: 15px;
+  --qn-sidebar-title-font-size: calc(var(--qn-sidebar-font-size) + 2px);
+  --qn-sidebar-detail-font-size: max(10px, calc(var(--qn-sidebar-font-size) - 2px));
+  --qn-sidebar-list-font-size: max(10px, calc(var(--qn-sidebar-font-size) - 1px));
+  --qn-sidebar-list-detail-font-size: max(10px, calc(var(--qn-sidebar-font-size) - 3px));
+  --qn-project-font-size: 15px;
+  --qn-project-detail-font-size: max(10px, calc(var(--qn-project-font-size) - 1px));
+  --qn-session-font-size: 14px;
+  --qn-session-detail-font-size: max(10px, calc(var(--qn-session-font-size) - 1px));
 }
 
 /*
@@ -325,6 +335,12 @@ button:disabled {
   }
 }
 
+.qn-project-tree {
+  --qn-tree-row-inset: calc(var(--spacing) * 2);
+  --qn-tree-icon-size: 18px;
+  --qn-tree-title-start: calc(var(--qn-tree-icon-size) + var(--qn-tree-row-inset) * 2);
+}
+
 .qn-scroll::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -504,6 +520,7 @@ body.qn-resizing webview {
 
 .qn-resizer:hover .qn-resizer-line,
 .qn-resizer:hover .qn-resizer-grip,
+.qn-side-chat > .qn-resizer .qn-resizer-grip,
 .qn-resizer:focus-visible .qn-resizer-line,
 .qn-resizer:focus-visible .qn-resizer-grip,
 .qn-resizer[data-active="true"] .qn-resizer-line,

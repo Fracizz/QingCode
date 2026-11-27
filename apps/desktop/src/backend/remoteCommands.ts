@@ -45,14 +45,24 @@ export function posixQuote(value: string): string {
 }
 
 export function buildProbeCommand(): string {
-  return [
+  const probe = [
     `printf 'QN_OS=%s\\n' "$(uname -s)"`,
     `printf 'QN_HOME=%s\\n' "$HOME"`,
     `printf 'QN_ARCH=%s\\n' "$(uname -m)"`,
-    `printf 'QN_NODE=%s\\n' "$(command -v node || true)"`,
-    `printf 'QN_NODE_VER=%s\\n' "$(node -v 2>/dev/null || true)"`,
     `printf 'QN_SHA256SUM=%s\\n' "$(command -v sha256sum || { command -v shasum >/dev/null && echo 'shasum -a 256'; } || true)"`,
+    `for node in "$(command -v node)" "\${VOLTA_HOME:-$HOME/.volta}/bin/node" "$HOME/.local/bin/node" ` +
+      `"\${NVM_DIR:-$HOME/.nvm}"/versions/node/*/bin/node ` +
+      `"\${FNM_DIR:-\${XDG_DATA_HOME:-$HOME/.local/share}/fnm}"/node-versions/*/installation/bin/node ` +
+      `/usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node; do ` +
+      `[ -f "$node" ] && [ -x "$node" ] || continue; ` +
+      `version=$("$node" -v 2>/dev/null) || continue; ` +
+      `major=\${version#v}; major=\${major%%[.+-]*}; ` +
+      `case "$major" in ''|*[!0-9]*) continue ;; esac; ` +
+      `[ "$major" -ge 18 ] || continue; ` +
+      `printf 'QN_NODE=%s\\nQN_NODE_VER=%s\\n' "$node" "$version"; break; done`,
   ].join('; ')
+  // SSH 默认 shell 可能是 Fish，统一用 POSIX sh 解释探测脚本。
+  return `sh -c ${posixQuote(probe)}`
 }
 
 export function nodeMajor(version: string): number {
@@ -129,8 +139,8 @@ export function buildUploadCommand(tmp: string, dest: string): string {
   return `chmod 600 ${posixQuote(tmp)} && mv -f ${posixQuote(tmp)} ${posixQuote(dest)}`
 }
 
-export function buildEnsureCommand(nodePath: string, script: string): string {
-  return `${posixQuote(nodePath)} ${posixQuote(script)} ensure --replace`
+export function buildEnsureCommand(nodePath: string, script: string, forceReplace = false): string {
+  return `${posixQuote(nodePath)} ${posixQuote(script)} ensure ${forceReplace ? '--force-replace' : '--replace'}`
 }
 
 export function buildConnectCommand(nodePath: string, script: string): string {
@@ -248,9 +258,42 @@ export function buildRuntimeInstallCommand(tmp: string, dest: string): string {
 // 默认 shell 可能是 cmd、PowerShell 或 Git Bash，引号规则互不相同：
 // 文件操作一律交给 node 执行，脚本以 base64url 传入，命令行里不出现任何需要按 shell 转义的字符。
 
-function nodeEval(source: string): string {
+function nodeExpression(source: string): string {
   const encoded = Buffer.from(source, 'utf8').toString('base64url')
-  return `node -e "eval(Buffer.from('${encoded}','base64').toString())"`
+  return `eval(Buffer.from('${encoded}','base64').toString())`
+}
+
+function powershellCommand(lines: readonly string[]): string {
+  const encoded = Buffer.from(lines.join('\n'), 'utf16le').toString('base64')
+  return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}`
+}
+
+function powershellLiteral(value: string): string {
+  return `'${value.replace(/['‘’]/g, '$&$&')}'`
+}
+
+function windowsNodeCommand(nodePath: string, args: readonly string[]): string {
+  if (nodePath === 'node') return [nodePath, ...args.map(windowsQuote)].join(' ')
+  const argumentsString = args.map((arg) => {
+    const escaped = arg.replace(/(\\*)"/g, '$1$1\\"').replace(/\\+$/, '$&$&')
+    return `"${escaped}"`
+  }).join(' ')
+  // connect --stdio 传输二进制帧，子进程必须直接继承 SSH 的输入输出句柄。
+  return powershellCommand([
+    '$start = New-Object System.Diagnostics.ProcessStartInfo',
+    `$start.FileName = ${powershellLiteral(nodePath)}`,
+    `$start.Arguments = ${powershellLiteral(argumentsString)}`,
+    '$start.UseShellExecute = $false',
+    '$process = [System.Diagnostics.Process]::Start($start)',
+    '$process.WaitForExit()',
+    'exit $process.ExitCode',
+  ])
+}
+
+function nodeEval(source: string, nodePath = 'node'): string {
+  const expression = nodeExpression(source)
+  if (nodePath === 'node') return `node -e "${expression}"`
+  return windowsNodeCommand(nodePath, ['-e', expression])
 }
 
 /** 三种 shell 的双引号内仍会展开的字符直接拒绝，而不是尝试转义。 */
@@ -259,14 +302,36 @@ export function windowsQuote(value: string): string {
   return `"${value}"`
 }
 
+const WINDOWS_PROBE = [
+  "const os = require('os')",
+  "console.log('QN_OS=' + process.platform)",
+  "console.log('QN_HOME=' + os.homedir().split(String.fromCharCode(92)).join('/'))",
+  "console.log('QN_ARCH=' + process.arch)",
+  "console.log('QN_NODE_VER=' + process.version)",
+].join('\n')
+
 export function buildWindowsProbeCommand(): string {
-  return nodeEval([
-    "const os = require('os')",
-    "console.log('QN_OS=' + process.platform)",
-    "console.log('QN_HOME=' + os.homedir().split(String.fromCharCode(92)).join('/'))",
-    "console.log('QN_ARCH=' + process.arch)",
-    "console.log('QN_NODE_VER=' + process.version)",
-  ].join('\n'))
+  return nodeEval(WINDOWS_PROBE)
+}
+
+export function buildWindowsFallbackProbeCommand(): string {
+  return powershellCommand([
+    '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+    '$paths = @(Get-Command node.exe -CommandType Application -All -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)',
+    'foreach ($root in @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {',
+    "  if ($root) { $paths += Join-Path $root 'nodejs\\node.exe' }",
+    '}',
+    "if ($env:LOCALAPPDATA) { $paths += Join-Path $env:LOCALAPPDATA 'Programs\\nodejs\\node.exe' }",
+    "if ($env:NVM_SYMLINK) { $paths += Join-Path $env:NVM_SYMLINK 'node.exe' }",
+    'foreach ($path in ($paths | Select-Object -Unique)) {',
+    '  if (!(Test-Path -LiteralPath $path -PathType Leaf)) { continue }',
+    '  $version = & $path -v 2>$null',
+    "  if ($LASTEXITCODE -ne 0 -or $version -notmatch '^v(\\d+)\\.' -or [int]$Matches[1] -lt 18) { continue }",
+    `  & $path -e ${powershellLiteral(nodeExpression(WINDOWS_PROBE))}`,
+    "  if ($LASTEXITCODE -eq 0) { Write-Output ('QN_NODE=' + $path); exit 0 }",
+    '}',
+    'exit 1',
+  ])
 }
 
 /** POSIX 探测在 cmd / PowerShell 下没有输出，在 Git Bash 下 uname 为 MINGW*：两者都要改走 Windows 分支。 */
@@ -281,37 +346,46 @@ export function parseWindowsProbe(stdout: string): RemoteProbe {
   const nodeVersion = fields.get('NODE_VER') ?? ''
   if (fields.get('OS') !== 'win32') throw new Error('无法识别远端系统')
   if (!home) throw new Error('无法读取远端用户目录')
-  if (nodeMajor(nodeVersion) < 18) throw new Error('远端需要 Node ≥ 18')
-  return { os: 'Windows', home, arch: fields.get('ARCH') ?? '', nodePath: 'node', nodeVersion, sha256sumPath: '' }
+  const supported = nodeMajor(nodeVersion) >= 18
+  return {
+    os: 'Windows', home, arch: fields.get('ARCH') ?? '', sha256sumPath: '',
+    nodePath: supported ? fields.get('NODE') || 'node' : '',
+    nodeVersion: supported ? nodeVersion : '',
+  }
 }
 
-export function buildWindowsMkdirCommand(dir: string): string {
-  return nodeEval(`require('fs').mkdirSync(${JSON.stringify(dir)}, { recursive: true })`)
+export function buildWindowsMkdirCommand(dir: string, nodePath?: string): string {
+  return nodeEval(`require('fs').mkdirSync(${JSON.stringify(dir)}, { recursive: true })`, nodePath)
 }
 
 /** 输出格式与 sha256sum 一致，复用 parseRemoteSha；文件不存在时无输出。 */
-export function buildWindowsShaCommand(file: string): string {
+export function buildWindowsShaCommand(file: string, nodePath?: string): string {
   return nodeEval([
     "const fs = require('fs')",
     `const file = ${JSON.stringify(file)}`,
     "if (fs.existsSync(file)) console.log(require('crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex') + '  qn')",
-  ].join('\n'))
+  ].join('\n'), nodePath)
 }
 
-export function buildWindowsUploadCommand(tmp: string, dest: string): string {
-  return nodeEval(`require('fs').renameSync(${JSON.stringify(tmp)}, ${JSON.stringify(dest)})`)
+export function buildWindowsUploadCommand(tmp: string, dest: string, nodePath?: string): string {
+  return nodeEval(`require('fs').renameSync(${JSON.stringify(tmp)}, ${JSON.stringify(dest)})`, nodePath)
 }
 
-export function buildWindowsEnsureCommand(script: string): string {
-  return `node ${windowsQuote(script)} ensure --replace`
+export function buildWindowsEnsureCommand(script: string, nodePath = 'node', forceReplace = false): string {
+  const flag = forceReplace ? '--force-replace' : '--replace'
+  return nodePath === 'node'
+    ? `node ${windowsQuote(script)} ensure ${flag}`
+    : windowsNodeCommand(nodePath, [script, 'ensure', flag])
 }
 
-export function buildWindowsConnectCommand(script: string): string {
-  return `node ${windowsQuote(script)} connect --stdio`
+export function buildWindowsConnectCommand(script: string, nodePath = 'node'): string {
+  return nodePath === 'node'
+    ? `node ${windowsQuote(script)} connect --stdio`
+    : windowsNodeCommand(nodePath, [script, 'connect', '--stdio'])
 }
 
-export function buildWindowsServerCommand(script: string, args: readonly string[]): string {
-  return ['node', windowsQuote(script), ...args.map(windowsQuote)].join(' ')
+export function buildWindowsServerCommand(script: string, args: readonly string[], nodePath = 'node'): string {
+  return windowsNodeCommand(nodePath, [script, ...args])
 }
 
 /** Win32-OpenSSH 的 sftp-server 用 /C:/... 表示盘符路径。 */

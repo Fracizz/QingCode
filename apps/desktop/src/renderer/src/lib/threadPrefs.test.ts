@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyThreadPrefs, emptyThreadPrefs, parseThreadPrefs, toggleKey } from './threadPrefs'
+import { applyThreadPrefs, archivedThreadSummaries, emptyThreadPrefs, isInactiveForArchive, parseThreadPrefs, toggleKey } from './threadPrefs'
 import type { ThreadSummary } from './threads'
 
 const thread = (id: string, updatedAt: number, agent: ThreadSummary['agent'] = 'codex'): ThreadSummary => ({
@@ -34,12 +34,35 @@ describe('applyThreadPrefs', () => {
   })
 })
 
+it('归档列表合并原生归档与旧版隐藏记录，并保留本地名称', () => {
+  const prefs = parseThreadPrefs('{"local":{"hidden":{"claude:old":true},"names":{"claude:old":"旧项目"}}}').local
+  expect(archivedThreadSummaries([
+    thread('native', 3), thread('old', 2, 'claude'), thread('regular', 1, 'pi'),
+  ], prefs).map(({ title }) => title)).toEqual(['native', '旧项目'])
+})
+
+it('只归档有时间记录、未置顶、未恢复且已超过期限的空闲会话', () => {
+  const prefs = {
+    ...emptyThreadPrefs(),
+    pinned: { 'codex:pinned': 1 },
+    restoredAt: { 'codex:restored': 101 },
+    hidden: { 'codex:hidden': true as const },
+  }
+  const candidates = [
+    thread('at-cutoff', 100), thread('fresh', 101), thread('no-timestamp', 0),
+    thread('pinned', 50), thread('restored', 50), thread('hidden', 50),
+    { ...thread('running', 50), activity: 'running' as const },
+    { ...thread('pending', 50), activity: 'pending' as const },
+  ]
+  expect(candidates.filter((item) => isInactiveForArchive(item, prefs, 100)).map(({ id }) => id)).toEqual(['at-cutoff'])
+})
+
 describe('parseThreadPrefs', () => {
   it('丢弃非法字段', () => {
     const parsed = parseThreadPrefs(
-      JSON.stringify({ t1: { pinned: { a: 1, b: 'x' }, unread: { a: true, b: 1 }, names: { a: ' ' }, hidden: [] } }),
+      JSON.stringify({ t1: { pinned: { a: 1, b: 'x' }, unread: { a: true, b: 1 }, names: { a: ' ' }, hidden: [], restoredAt: { a: 10, b: 'x' } } }),
     )
-    expect(parsed.t1).toEqual({ pinned: { a: 1 }, unread: { a: true }, names: {}, hidden: {} })
+    expect(parsed.t1).toEqual({ pinned: { a: 1 }, unread: { a: true }, names: {}, hidden: {}, restoredAt: { a: 10 } })
   })
 
   it('损坏的 JSON 返回空', () => {

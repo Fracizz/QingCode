@@ -4,7 +4,7 @@ import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { LoadingIcon } from './LoadingIcon'
-import { MessageItem, ToolGroup, TurnProgress, WorkGroup } from './MessageItem'
+import { MessageItem, ToolGroup, TurnProgress, TurnStopped, WorkGroup } from './MessageItem'
 
 vi.mock('../features/files', () => ({
   createMarkdownLink: () => 'a', FileChangeActions: () => null, PathText: () => null, qnUrlTransform: (url: string) => url,
@@ -14,11 +14,124 @@ vi.mock('../store/codex', () => ({ useCodex: () => null }))
 vi.mock('./CodeBlock', () => ({ CodeBlock: () => null }))
 vi.mock('./MessageActions', () => ({ MessageActions: () => null }))
 vi.mock('./SubagentDetails', () => ({ SubagentDetails: () => null }))
-vi.mock('./ui', () => ({ Badge: ({ children }: { children: ReactNode }) => <span>{children}</span>, IconButton: () => null }))
+vi.mock('./ui', () => ({
+  Badge: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+  IconButton: ({ label, children, onClick }: { label: string; children: ReactNode; onClick?: () => void }) => (
+    <button type="button" aria-label={label} onClick={onClick}>{children}</button>
+  ),
+}))
 
 const toggle = (summary: HTMLElement) => act(async () => {
   summary.click()
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
+})
+
+it('收到无效的发送时间时仍显示用户消息', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  try {
+    const item: ItemView = { kind: 'user', id: 'user', text: '继续检查', sentAt: 1e16 }
+    await act(() => root.render(<MessageItem item={item} />))
+    expect(host.textContent).toContain(item.text)
+    expect(host.querySelector('time')).toBeNull()
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
+
+it('流式 Markdown 解析失败时显示原文，保留其他消息并在结束时重新渲染', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const onCaughtError = vi.fn()
+  const root = createRoot(host, { onCaughtError })
+  const text = '> '.repeat(6000) + '回复内容'
+  const reply: ItemView = { kind: 'agent', id: 'reply', text, streaming: true }
+  const render = (item: ItemView) => act(() => root.render(
+    <>
+      <MessageItem item={{ kind: 'user', id: 'user', text: '继续检查' }} />
+      <MessageItem item={item} />
+    </>,
+  ))
+  try {
+    await render(reply)
+    expect(onCaughtError).toHaveBeenCalledTimes(1)
+    expect(host.textContent).toContain('继续检查')
+    expect(host.textContent).toContain(text)
+
+    await render({ ...reply, text: text + '，仍在生成' })
+    expect(host.textContent).toContain('仍在生成')
+    expect(onCaughtError).toHaveBeenCalledTimes(1)
+
+    await render({ ...reply, text: '**检查完成**', streaming: false })
+    expect(host.querySelector('strong')?.textContent).toBe('检查完成')
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
+
+it('编辑消息时保留输入框的选区和焦点，并用修订后的文字发送', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const onMessageMouseUp = vi.fn()
+  const onEdit = vi.fn().mockResolvedValue(true)
+  const item: ItemView = { kind: 'user', id: 'message', text: '五分钟刷一次' }
+  try {
+    await act(() => root.render(<div onMouseUp={onMessageMouseUp}><MessageItem item={item} onEdit={onEdit} /></div>))
+    await act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑消息"]')!.click())
+    const area = host.querySelector('textarea')!
+    const send = host.querySelector<HTMLButtonElement>('button[type="submit"]')!
+    expect(document.activeElement).toBe(area)
+    expect(send.disabled).toBe(false)
+
+    area.setSelectionRange(0, 3)
+    area.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }))
+    expect(onMessageMouseUp).not.toHaveBeenCalled()
+    expect([area.selectionStart, area.selectionEnd]).toEqual([0, 3])
+
+    const focus = vi.spyOn(area, 'focus')
+    const enter = (text: string) => act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(area, text)
+      area.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    await enter(' ')
+    expect(send.disabled).toBe(true)
+    const text = '十分钟刷一次'
+    await enter(text)
+    expect(focus).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(area)
+    expect(send.disabled).toBe(false)
+    await act(() => send.click())
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith(text, [{ type: 'text', text, text_elements: [] }])
+    expect(host.querySelector('textarea')).toBeNull()
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('不改内容也能直接重发原文和附件', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const onEdit = vi.fn().mockResolvedValue(true)
+  const text = '/review   检查改动\n\n附件文件（请按需读取）：\n- 说明: /project/readme.md'
+  const image = { type: 'localImage', path: '/project/screenshot.png' } as const
+  try {
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'original', text, inputExtras: [image] }} onEdit={onEdit} />))
+    await act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑消息"]')!.click())
+    expect(host.querySelector('textarea')?.value).toBe('检查改动')
+    await act(() => host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click())
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith('检查改动', [{ type: 'text', text, text_elements: [] }, image])
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    vi.unstubAllGlobals()
+  }
 })
 
 it('没有摘要时只显示进行中的思考提示，收到摘要后可以展开', async () => {
@@ -46,7 +159,7 @@ it('没有摘要时只显示进行中的思考提示，收到摘要后可以展�
   }
 })
 
-it('工具组和处理提示共用加载圆环，完成或中断后换回状态图标', async () => {
+it('工具组和处理提示共用加载圆环，停止后显示用时', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.createElement('div')
   const root = createRoot(host)
@@ -64,10 +177,12 @@ it('工具组和处理提示共用加载圆环，完成或中断后换回状态�
 
     await act(() => root.render(<>
       <ToolGroup items={[{ ...command, status: 'completed' }]} />
-      <TurnProgress activity="interrupted" />
+      <TurnStopped durationMs={0} />
     </>))
     expect(host.innerHTML).not.toContain(reference)
-    expect(host.querySelector('[role="status"]')?.textContent).toBe('本轮已中断')
+    expect(host.querySelector('[role="status"]')?.textContent).toBe('你已停止，已用时 0秒')
+    await act(() => root.render(<TurnStopped durationMs={null} />))
+    expect(host.querySelector('[role="status"]')?.textContent).toBe('你已停止')
   } finally {
     await act(() => root.unmount())
     vi.unstubAllGlobals()

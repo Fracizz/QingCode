@@ -75,6 +75,22 @@ export function mergeThreadSummaries(lists: readonly ThreadSummary[][]): ThreadS
     .sort((a, b) => b.updatedAt - a.updatedAt || a.agent.localeCompare(b.agent))
 }
 
+// 项目列表刷新时保留已有行的位置，同时采用服务端最新的标题、时间和状态。
+export function refreshThreadOrder(previous: ThreadSummary[], incoming: ThreadSummary[]): ThreadSummary[] {
+  if (!previous.length) return incoming
+  const remaining = new Map(incoming.map(thread => [threadKey(thread.agent, thread.id), thread]))
+  const existing: ThreadSummary[] = []
+  for (const thread of previous) {
+    const key = threadKey(thread.agent, thread.id)
+    const updated = remaining.get(key)
+    if (updated) {
+      existing.push(updated)
+      remaining.delete(key)
+    }
+  }
+  return [...remaining.values(), ...existing]
+}
+
 export function formatTime(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return '—'
   const date = new Date(ms)

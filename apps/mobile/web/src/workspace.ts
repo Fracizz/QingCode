@@ -4,7 +4,7 @@ import { archivedThreadKey, sessionKey } from './agents'
 import { getGateway } from './client'
 import { parseProjects, parseStoredRecord, type ThreadSummary } from './state'
 import { useApp } from './store'
-import type { Project, Target } from './types'
+import type { AgentKind, Project, Target } from './types'
 
 export type WorkspaceTab = 'sessions' | 'projects' | 'connections'
 type WorkspaceTabTap = { tab: WorkspaceTab; at: number }
@@ -22,6 +22,24 @@ export type WorkspaceThread = ThreadSummary & {
 }
 type ProjectList = { items: Project[]; loading: boolean; error: boolean; loaded: boolean }
 type WorkspaceGroup = { project: Project; threads: WorkspaceThread[] }
+type ThreadPreference = { title?: string; pinned?: boolean }
+type WorkspacePreferences = {
+  fp: string
+  threads: Record<string, ThreadPreference>
+  projectOrders: Record<string, string[]>
+}
+
+export const threadPreferenceKey = (targetId: string, agent: AgentKind, threadId: string) => JSON.stringify([targetId, agent, threadId])
+const preferenceKey = (thread: WorkspaceThread) => threadPreferenceKey(thread.targetId, thread.agent, thread.id)
+
+export function useWorkspacePreferences() {
+  const activeId = useApp((state) => state.activeId)
+  const fp = useApp((state) => state.connections.find((item) => item.id === activeId)?.fp)
+  return useWorkspace((state) => {
+    const prefs = activeId ? state.preferences[activeId] : undefined
+    return prefs?.fp === fp ? prefs : undefined
+  })
+}
 
 const STORE_KEY = 'workspace.sessions'
 const MAX_SESSIONS = 100
@@ -58,16 +76,19 @@ export function filterProjects(projects: Project[], targets: Target[], query: st
   const byId = new Map(targets.map((target) => [target.id, target]))
   return scoped.filter((project) => {
     const target = byId.get(project.targetId)
-    return [project.name, project.path, target?.name, target?.kind === 'ssh' ? `远端 ${target.host}` : target?.name]
+    const host = target?.kind === 'direct' ? `直连 ${target.host}` : target?.kind === 'ssh' ? `远端 ${target.host}` : undefined
+    return [project.name, project.path, target?.name, host]
       .some((value) => value?.toLocaleLowerCase().includes(needle))
   })
 }
 
-export function groupWorkspaceThreads(threads: WorkspaceThread[], projects: Project[], query: string): WorkspaceGroup[] {
+export function groupWorkspaceThreads(threads: WorkspaceThread[], projects: Project[], query: string, preferences?: WorkspacePreferences): WorkspaceGroup[] {
   const needle = query.trim().toLocaleLowerCase()
   const groups = new Map<string, WorkspaceGroup>()
   const byId = new Map(projects.map((project) => [JSON.stringify([project.targetId, project.id]), project]))
-  for (const thread of [...threads].sort((a, b) => b.updatedAt - a.updatedAt)) {
+  for (const entry of [...threads].sort((a, b) => b.updatedAt - a.updatedAt)) {
+    const title = preferences?.threads[preferenceKey(entry)]?.title
+    const thread = title ? { ...entry, title } : entry
     const key = JSON.stringify([thread.targetId, thread.projectId])
     const project = byId.get(key)
     if (!project) continue
@@ -76,7 +97,27 @@ export function groupWorkspaceThreads(threads: WorkspaceThread[], projects: Proj
     if (group) group.threads.push(thread)
     else groups.set(key, { project, threads: [thread] })
   }
-  return [...groups.values()]
+  return [...groups.values()].map((group) => ({ ...group, threads: group.threads.sort((a, b) =>
+    Number(Boolean(preferences?.threads[preferenceKey(b)]?.pinned)) - Number(Boolean(preferences?.threads[preferenceKey(a)]?.pinned))) }))
+}
+
+export function orderWorkspaceProjects(projects: Project[], ids: string[] = []): Project[] {
+  const order = new Map(ids.map((id, index) => [id, index]))
+  return [...projects].sort((a, b) => (order.get(a.id) ?? order.size) - (order.get(b.id) ?? order.size))
+}
+
+function parsePreferences(raw: unknown): WorkspacePreferences | undefined {
+  if (!raw || typeof raw !== 'object') return
+  const value = raw as Partial<WorkspacePreferences>
+  if (typeof value.fp !== 'string') return
+  const threads = Object.fromEntries(Object.entries(value.threads ?? {}).flatMap(([key, item]) => {
+    if (!item || typeof item !== 'object') return []
+    const title = typeof item.title === 'string' ? item.title : undefined
+    return title || item.pinned === true ? [[key, { title, pinned: item.pinned === true }]] : []
+  }))
+  const projectOrders = Object.fromEntries(Object.entries(value.projectOrders ?? {}).flatMap(([key, order]) =>
+    Array.isArray(order) ? [[key, [...new Set(order.filter((id) => typeof id === 'string'))]]] : []))
+  return { fp: value.fp, threads, projectOrders }
 }
 
 type WorkspaceState = {
@@ -84,6 +125,7 @@ type WorkspaceState = {
   setTab: (tab: WorkspaceTab) => void
   threads: Record<string, WorkspaceThread[]>
   projects: Record<string, ProjectList>
+  preferences: Record<string, WorkspacePreferences>
   loadProjects: (desktopId: string) => Promise<void>
 }
 
@@ -124,13 +166,14 @@ function persistWorkspace() {
   // 先合并旧缓存，避免启动阶段的第一次刷新覆盖其他电脑的历史。
   storageWrites = storageWrites.then(async () => {
     await read
-    const { projects, threads } = useWorkspace.getState()
-    const desktops = new Set([...Object.keys(projects), ...Object.keys(threads)])
+    const { projects, threads, preferences } = useWorkspace.getState()
+    const desktops = new Set([...Object.keys(projects), ...Object.keys(threads), ...Object.keys(preferences)])
     const stored = Object.fromEntries([...desktops].map((id) => {
       const rows = threads[id] ?? []
       return [id, {
         projects: projects[id]?.items ?? projectsFromThreads(rows),
         threads: rows.map(({ activity: _activity, ...thread }) => ({ ...thread, preview: '' })),
+        preferences: preferences[id],
       }]
     }))
     await gateway.storageSet(STORE_KEY, JSON.stringify(stored))
@@ -147,6 +190,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
   threads: {},
   projects: {},
+  preferences: {},
   loadProjects: async (desktopId) => {
     const connection = useApp.getState().connections.find((item) => item.id === desktopId)
     if (!connection || get().projects[desktopId]?.loading) return
@@ -181,6 +225,42 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 }))
 
+function changePreferences(desktopId: string, change: (current: WorkspacePreferences) => WorkspacePreferences): void {
+  const fp = useApp.getState().connections.find((item) => item.id === desktopId)?.fp
+  if (!fp) return
+  useWorkspace.setState(({ preferences }) => {
+    const saved = preferences[desktopId]
+    const current = saved?.fp === fp ? saved : { fp, threads: {}, projectOrders: {} }
+    return { preferences: { ...preferences, [desktopId]: change(current) } }
+  })
+  persistWorkspace()
+}
+
+export function changeThreadPreference(desktopId: string, thread: WorkspaceThread, patch: ThreadPreference): void {
+  changePreferences(desktopId, (current) => {
+    const key = preferenceKey(thread)
+    const threads = { ...current.threads, [key]: { ...current.threads[key], ...patch } }
+    if (!threads[key]!.title && !threads[key]!.pinned) delete threads[key]
+    return { ...current, threads }
+  })
+}
+
+export function renameCachedThread(desktopId: string, thread: WorkspaceThread, title: string): void {
+  useWorkspace.setState(({ threads }) => ({ threads: { ...threads, [desktopId]: (threads[desktopId] ?? []).map((item) =>
+    preferenceKey(item) === preferenceKey(thread) ? { ...item, title } : item) } }))
+  persistWorkspace()
+}
+
+export function moveWorkspaceProject(desktopId: string, project: Project, rows: Project[], offset: -1 | 1): void {
+  const index = rows.findIndex(({ id }) => id === project.id)
+  const neighbor = rows[index + offset]
+  if (index < 0 || !neighbor) return
+  const ids = rows.map(({ id }) => id)
+  ids[index] = neighbor.id
+  ids[index + offset] = project.id
+  changePreferences(desktopId, (current) => ({ ...current, projectOrders: { ...current.projectOrders, [project.targetId]: ids } }))
+}
+
 export function startWorkspaceObserver(): () => void {
   let stop = false
   const removedDesktops = new Set<string>()
@@ -190,9 +270,12 @@ export function startWorkspaceObserver(): () => void {
     useWorkspace.setState((state) => {
       const threads = { ...state.threads }
       const projects = { ...state.projects }
+      const preferences = { ...state.preferences }
       for (const [id, entry] of Object.entries(parseStoredRecord(raw))) {
         if (removedDesktops.has(id)) continue
-        const snapshot = entry as { threads?: unknown; projects?: unknown } | null
+        const snapshot = entry as { threads?: unknown; projects?: unknown; preferences?: unknown } | null
+        const prefs = parsePreferences(snapshot?.preferences)
+        if (prefs && !preferences[id]) preferences[id] = prefs
         const rows = Array.isArray(entry) ? entry : snapshot?.threads
         if (!Array.isArray(rows)) continue
         threads[id] = mergeThreads(id, rows.filter(isThread), threads[id] ?? [], archived)
@@ -204,7 +287,7 @@ export function startWorkspaceObserver(): () => void {
           projects[id] = { ...(projects[id] ?? defaultProjects), items: [...items.values()] }
         }
       }
-      return { threads, projects }
+      return { threads, projects, preferences }
     })
   }).catch(() => undefined)
 
@@ -235,12 +318,14 @@ export function startWorkspaceObserver(): () => void {
         useWorkspace.setState((state) => {
           const threads = { ...state.threads }
           const projects = { ...state.projects }
+          const preferences = { ...state.preferences }
           for (const item of removed) {
             removedDesktops.add(item.id)
             delete threads[item.id]
             delete projects[item.id]
+            delete preferences[item.id]
           }
-          return { threads, projects }
+          return { threads, projects, preferences }
         })
         persistWorkspace()
       }

@@ -1,3 +1,4 @@
+import { isGlobalAccessMode } from '@qn/codex-client'
 import type {
   AgentPrefs,
   AppSettings,
@@ -8,6 +9,7 @@ import type {
   SettingsTheme,
 } from '../../shared/backendApi'
 import { DEFAULT_FONT_SIZES, FONT_SIZES_VERSION, resolveFontSizes, sanitizeFontSizes } from '../../shared/fontSizes'
+import { isAutoArchiveDays } from '../../shared/backendApi'
 
 // 设置的纯逻辑：默认值、白名单校验、深合并。IO 在 settingsStore.ts，两边共用同一份形状。
 // 只保存路径字符串，不读取 CODEX_HOME / CLAUDE_CONFIG_DIR 的内容（合规 §3.2）。
@@ -42,7 +44,9 @@ export function defaultAppSettings(): AppSettings {
     general: {
       sendKey: 'enter',
       autoConnectLast: true,
+      autoArchiveDays: 0,
       defaultAgent: 'codex',
+      globalAccessMode: 'default',
       density: 'comfortable',
       theme: 'dark',
       ...DEFAULT_FONT_SIZES,
@@ -116,8 +120,10 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
       defaultAgent: isSettingsAgent(general.defaultAgent)
         ? general.defaultAgent
         : defaults.general.defaultAgent,
+      autoArchiveDays: isAutoArchiveDays(general.autoArchiveDays) ? general.autoArchiveDays : defaults.general.autoArchiveDays,
       density: isSettingsDensity(general.density) ? general.density : defaults.general.density,
       theme: isSettingsTheme(general.theme) ? general.theme : defaults.general.theme,
+      globalAccessMode: isGlobalAccessMode(general.globalAccessMode) ? general.globalAccessMode : defaults.general.globalAccessMode,
       ...resolveFontSizes(general),
     },
     agents,
@@ -132,7 +138,9 @@ export function sanitizeSettingsPatch(raw: unknown): AppSettingsPatch {
   const nextGeneral: Partial<AppSettings['general']> = sanitizeFontSizes(general)
   if (isSettingsSendKey(general.sendKey)) nextGeneral.sendKey = general.sendKey
   if (typeof general.autoConnectLast === 'boolean') nextGeneral.autoConnectLast = general.autoConnectLast
+  if (isAutoArchiveDays(general.autoArchiveDays)) nextGeneral.autoArchiveDays = general.autoArchiveDays
   if (isSettingsAgent(general.defaultAgent)) nextGeneral.defaultAgent = general.defaultAgent
+  if (isGlobalAccessMode(general.globalAccessMode)) nextGeneral.globalAccessMode = general.globalAccessMode
   if (isSettingsDensity(general.density)) nextGeneral.density = general.density
   if (isSettingsTheme(general.theme)) nextGeneral.theme = general.theme
   if (Object.keys(nextGeneral).length > 0) patch.general = nextGeneral

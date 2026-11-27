@@ -5,8 +5,10 @@ import {
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
+  SIDE_CHAT_DEFAULT_WIDTH,
   clampSidebarWidth,
   parseLayoutPrefs,
+  sideChatLayout,
   windowControlsSide,
 } from './layout'
 
@@ -27,6 +29,19 @@ describe('clampSidebarWidth', () => {
 
   it('非法数值回落到默认宽度', () => {
     expect(clampSidebarWidth(Number.NaN)).toBe(SIDEBAR_DEFAULT_WIDTH)
+  })
+})
+
+describe('sideChatLayout', () => {
+  it('并排时保留主对话最小宽度，工作区足够宽时限制侧聊最大宽度', () => {
+    expect(sideChatLayout(SIDE_CHAT_DEFAULT_WIDTH, 1000)).toEqual({ docked: true, min: 320, max: 520, width: 420 })
+    expect(sideChatLayout(650, 1000).width).toBe(1000 - MAIN_MIN_WIDTH)
+    expect(sideChatLayout(999, 1600).width).toBe(720)
+  })
+
+  it('窄工作区用浮层，并在空间继续缩小时缩小面板', () => {
+    expect(sideChatLayout(600, 620)).toEqual({ docked: false, min: 320, max: 572, width: 572 })
+    expect(sideChatLayout(600, 300)).toEqual({ docked: false, min: 252, max: 252, width: 252 })
   })
 })
 

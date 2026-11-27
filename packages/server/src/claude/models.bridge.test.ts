@@ -25,6 +25,7 @@ class ModelQuery implements QueryLike {
   readonly messages = new AsyncQueue<unknown>()
   readonly setModelCalls: (string | undefined)[] = []
   readonly flagCalls: Record<string, unknown>[] = []
+  rejectEffort = false
   modelReads = 0
   constructor(
     readonly prompt: unknown,
@@ -52,6 +53,7 @@ class ModelQuery implements QueryLike {
 
   async applyFlagSettings(settings: Record<string, unknown>): Promise<void> {
     this.flagCalls.push(settings)
+    if (this.rejectEffort) throw new Error('强度不适用')
   }
 
   async interrupt(): Promise<void> {}
@@ -263,6 +265,35 @@ describe('Claude 模型/强度选择（桥层）', () => {
     expect(notes(h, 'turn/started').at(-1)?.params).toMatchObject({ model: null, reasoningEffort: 'low' })
     h.bridge.shutdown()
   }, 10_000)
+
+  it('强度切换失败保留已应用的模型，且消息只在用户重试成功后发送', async () => {
+    const h = harness()
+    await h.bridge.open({})
+    request(h, 'thread', 'thread/start', { cwd: '/work' })
+    const threadId = (((await response(h, 'thread')).result as Json).thread as Json).id as string
+    request(h, 'first', 'turn/start', { threadId, input: textInput('第一句'), model: 'sonnet', effort: 'medium' })
+    await response(h, 'first')
+    const query = h.queries[0]!
+    query.emit({ type: 'result', subtype: 'success', is_error: false })
+    await until(() => notes(h, 'turn/completed').length === 1)
+
+    const next = { threadId, input: textInput('第二句'), model: 'opus', effort: 'high' }
+    query.rejectEffort = true
+    request(h, 'rejected', 'turn/start', next)
+    expect(await response(h, 'rejected')).toHaveProperty('error.message', 'Claude 切换推理强度失败，消息未发送')
+    expect(notes(h, 'turn/started')).toHaveLength(1)
+    expect(h.bridge.activeTurns).toBe(0)
+    request(h, 'read', 'thread/read', { threadId, includeTurns: false })
+    expect(await response(h, 'read')).toHaveProperty('result.thread', expect.objectContaining({ model: 'opus', reasoningEffort: 'medium' }))
+
+    query.rejectEffort = false
+    request(h, 'retry', 'turn/start', next)
+    expect(await response(h, 'retry')).toHaveProperty('result.turn.status', 'inProgress')
+    expect(query.setModelCalls).toEqual(['opus'])
+    expect(query.flagCalls).toEqual([{ effortLevel: 'high' }, { effortLevel: 'high' }])
+    expect(notes(h, 'turn/started').at(-1)?.params).toMatchObject({ model: 'opus', reasoningEffort: 'high' })
+    h.bridge.shutdown()
+  })
 
   it('supportedModels() 失败时回退别名列表，且绝不为探测额外创建 query', async () => {
     const h = harness({ failModels: true })

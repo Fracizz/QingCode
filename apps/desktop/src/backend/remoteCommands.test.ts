@@ -1,3 +1,8 @@
+import { execFile } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import {
   buildConnectCommand,
@@ -21,6 +26,7 @@ import {
   serverInstallPath,
   buildWindowsConnectCommand,
   buildWindowsEnsureCommand,
+  buildWindowsFallbackProbeCommand,
   buildWindowsMkdirCommand,
   buildWindowsProbeCommand,
   buildWindowsShaCommand,
@@ -49,11 +55,11 @@ describe('POSIX 转义', () => {
   it('命令参数全部经过转义', () => {
     const path = "/root/it's bad/qn-server.cjs"
     expect(buildEnsureCommand('/usr/bin/node', path)).toContain(posixQuote(path))
+    expect(buildEnsureCommand('/usr/bin/node', path, true)).toBe(`'/usr/bin/node' ${posixQuote(path)} ensure --force-replace`)
     expect(buildConnectCommand('/usr/bin/node', path)).toContain('connect --stdio')
     expect(buildShaCommand('/usr/bin/sha256sum', path)).toContain('2>/dev/null || true')
     expect(buildMkdirCommand("/root/it's")).toContain('chmod 700')
     expect(buildUploadCommand('/tmp/x.tmp', path)).toContain('mv -f')
-    expect(buildProbeCommand()).toContain('node -v')
   })
 })
 
@@ -99,6 +105,41 @@ describe('远端探测解析', () => {
     expect(script).toBe(`/root/.qingcode-next/server/bin/0.0.1-${SHA.slice(0, 12)}/qn-server.cjs`)
     expect(parentPosixPath(script)).toBe(`/root/.qingcode-next/server/bin/0.0.1-${SHA.slice(0, 12)}`)
     expect(serverInstallPath('/root', '0.0/1', SHA)).toContain('0.0_1-')
+  })
+})
+
+describe.skipIf(process.platform === 'win32')('POSIX Node 探测', () => {
+  it.each([
+    { pathVersion: 'v20.1.0', expected: 'bin/node', version: 'v20.1.0' },
+    { pathVersion: 'v16.20.0', expected: 'node manager/versions/node/v22.1.0/bin/node', version: 'v22.1.0' },
+    { pathVersion: null, expected: '.local/share/fnm/node-versions/v24.1.0/installation/bin/node', version: 'v24.1.0' },
+  ])('优先使用合格的 PATH Node 并回退到用户安装目录（PATH 版本 $pathVersion）', async ({ pathVersion, expected, version }) => {
+    const home = mkdtempSync(join(tmpdir(), "qn-node-'"))
+    try {
+      const fakeNode = (relativePath: string, nodeVersion: string) => {
+        const file = join(home, relativePath)
+        mkdirSync(dirname(file), { recursive: true })
+        writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' '${nodeVersion}'\n`, { mode: 0o700 })
+      }
+      const bin = join(home, 'bin')
+      mkdirSync(bin)
+      symlinkSync('/bin/sh', join(bin, 'sh'))
+      symlinkSync('/usr/bin/uname', join(bin, 'uname'))
+      symlinkSync('/bin/sh', join(bin, 'sha256sum'))
+      if (pathVersion) {
+        fakeNode('bin/node', pathVersion)
+        fakeNode('node manager/versions/node/v16.2.0/bin/node', 'v16.2.0')
+        fakeNode('node manager/versions/node/v22.1.0/bin/node', 'v22.1.0')
+      }
+      fakeNode('.local/share/fnm/node-versions/v24.1.0/installation/bin/node', 'v24.1.0')
+      const { stdout } = await promisify(execFile)('/bin/sh', ['-c', buildProbeCommand()], {
+        encoding: 'utf8',
+        env: { HOME: home, PATH: bin, NVM_DIR: join(home, 'node manager') },
+      })
+      expect(parseProbe(stdout)).toMatchObject({ home, nodePath: join(home, expected), nodeVersion: version })
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })
 
@@ -154,6 +195,10 @@ describe('Windows 远端', () => {
     const match = /Buffer\.from\('([A-Za-z0-9_-]+)','base64'\)/.exec(command)
     return Buffer.from(match?.[1] ?? '', 'base64url').toString('utf8')
   }
+  const decodePowerShell = (command: string): string => {
+    expect(command).toMatch(/^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/)
+    return Buffer.from(command.split(' ').at(-1) ?? '', 'base64').toString('utf16le')
+  }
   const probe = 'QN_OS=win32\r\nQN_HOME=C:/Users/Administrator\r\nQN_ARCH=x64\r\nQN_NODE_VER=v24.18.0\r\n'
 
   it('Git Bash 的 MINGW 与 cmd/PowerShell 的空输出都不算 POSIX', () => {
@@ -165,9 +210,36 @@ describe('Windows 远端', () => {
   })
 
   it('解析探测输出并校验 Node 版本', () => {
-    expect(parseWindowsProbe(probe)).toMatchObject({ os: 'Windows', home: 'C:/Users/Administrator', arch: 'x64' })
-    expect(() => parseWindowsProbe(probe.replace('v24.18.0', 'v16.0.0'))).toThrow('远端需要 Node ≥ 18')
+    expect(parseWindowsProbe(probe)).toMatchObject({ os: 'Windows', home: 'C:/Users/Administrator', arch: 'x64', nodePath: 'node' })
+    expect(parseWindowsProbe(probe.replace('v24.18.0', 'v16.0.0'))).toMatchObject({ nodePath: '', nodeVersion: '' })
     expect(() => parseWindowsProbe(probe.replace('win32', 'linux'))).toThrow('无法识别远端系统')
+  })
+
+  it('发现 PATH 外的 Node 后，部署、连接和直连子命令使用同一个绝对路径', () => {
+    const fallback = decodePowerShell(buildWindowsFallbackProbeCommand())
+    expect(fallback).toContain("Join-Path $root 'nodejs\\node.exe'")
+    expect(fallback).toContain('[int]$Matches[1] -lt 18')
+    expect(fallback).toContain("Write-Output ('QN_NODE=' + $path)")
+
+    const node = "C:\\Program Files\\o'brien\\node.exe"
+    const { nodePath } = parseWindowsProbe(`${probe}QN_NODE=${node}\r\n`)
+    expect(nodePath).toBe(node)
+    const script = 'C:/Users/a b/qn.cjs'
+    for (const [command, args] of [
+      [buildWindowsMkdirCommand('C:/Users/a b', nodePath), '"-e"'],
+      [buildWindowsShaCommand(script, nodePath), '"-e"'],
+      [buildWindowsUploadCommand(`${script}.tmp`, script, nodePath), '"-e"'],
+      [buildWindowsEnsureCommand(script, nodePath), `"${script}" "ensure" "--replace"`],
+      [buildWindowsEnsureCommand(script, nodePath, true), `"${script}" "ensure" "--force-replace"`],
+      [buildWindowsConnectCommand(script, nodePath), `"${script}" "connect" "--stdio"`],
+      [buildWindowsServerCommand(script, ['direct', 'enable'], nodePath), `"${script}" "direct" "enable"`],
+      [buildWindowsServerCommand(script, ['direct', 'grant', '--name', 'a "b"\\'], nodePath), '"a \\"b\\"\\\\"'],
+    ] as const) {
+      const launch = decodePowerShell(command)
+      expect(launch).toContain("$start.FileName = 'C:\\Program Files\\o''brien\\node.exe'")
+      expect(launch).toContain(args)
+      expect(launch).toContain('$start.UseShellExecute = $false')
+    }
   })
 
   it('文件操作命令不含任何需要按 shell 转义的字符', () => {

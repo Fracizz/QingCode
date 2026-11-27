@@ -6,19 +6,14 @@ import {
   Copy,
   Eye,
   Download,
-  FileDiff,
   FileText,
-  Image as ImageIcon,
   LockKeyhole,
   PanelRightClose,
   RotateCw,
   Save,
   Search,
-  TriangleAlert,
   X,
 } from 'lucide-react'
-import { LoadingIcon } from '../../components/LoadingIcon'
-import { StatusDot } from '../../components/StatusDot'
 import { ErrorNote, IconButton, Spinner } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { copyText } from '../../lib/clipboard'
@@ -28,22 +23,25 @@ import { openFile } from '../workspace/openers'
 import { CodeEditor } from './editor/CodeEditor'
 import { DiffView } from './DiffView'
 import { BinaryNotice, ImageView } from './ImageView'
-import { basename, dirname, fileKind } from './fileLinks'
+import { dirname, fileKind } from './fileLinks'
 import { MarkdownPreview } from './MarkdownPreview'
 import { useFiles } from './filesStore'
 import { readOnlyLabel, readOnlyReason } from './editModel'
 import type { Tab } from './filesModel'
 import { FileDialogs } from './dialogs'
+import { FileTabs } from './FileTabs'
 
 function TabBody({
   tab,
   editorRef,
+  projectRoot,
   onRefresh,
   onLoadMore,
   onOpenFile,
 }: {
   tab: Tab
   editorRef: RefObject<EditorView | null>
+  projectRoot?: string
   onRefresh: () => void
   onLoadMore: () => void
   onOpenFile: () => void
@@ -71,6 +69,9 @@ function TabBody({
     )
   }
   const kind = fileKind(tab.path)
+  const onDownload = tab.status === 'ready'
+    ? (openAfterDownload: boolean) => downloadProjectFile(tab.targetId, projectRoot ?? dirname(tab.path), tab.path, openAfterDownload)
+    : undefined
   let body
   if (tab.status === 'loading' && !tab.content) {
     body = (
@@ -79,16 +80,17 @@ function TabBody({
       </div>
     )
   } else if (tab.binary) {
-    body = <BinaryNotice path={tab.path} />
+    body = <BinaryNotice key={tab.id} path={tab.path} onDownload={onDownload} />
   } else if (kind === 'image') {
     body = tab.truncated ? (
-      <BinaryNotice path={tab.path} message="图片过大，仅能读取前 10 MiB" />
+      <BinaryNotice key={tab.id} path={tab.path} message="图片过大，仅能读取前 10 MiB" onDownload={onDownload} />
     ) : (
-      <ImageView key={tab.id} content={tab.content} path={tab.path} />
+      <ImageView key={tab.id} content={tab.content} path={tab.path} onDownload={onDownload} />
     )
   } else if (kind === 'markdown' && tab.view === 'preview') {
     body = <>
-      <MarkdownPreview content={tab.content} targetId={tab.targetId} cwd={tab.cwd ?? dirname(tab.path)} />
+      <MarkdownPreview key={tab.id} content={tab.content} targetId={tab.targetId} cwd={tab.cwd ?? dirname(tab.path)}
+        onViewSource={() => useFiles.getState().setView(tab.id, 'source')} />
       {tab.truncated && <button type="button" className="qn-button-subtle" disabled={tab.busy} onClick={onLoadMore}>
         {tab.busy ? '加载中…' : '加载更多'}
       </button>}
@@ -129,7 +131,7 @@ export function FilePane({ className, scope, primary = false }: {
   scope?: ProjectScope
   primary?: boolean
 }) {
-  const { tabs: allTabs, activeId, open, setOpen, activate, setView, refresh, loadMore, requestClose, requestCloseAll, save } =
+  const { tabs: allTabs, activeId, open, setOpen, setView, refresh, loadMore, requestCloseAll, save } =
     useFiles()
   const editorRef = useRef<EditorView>(null)
   if (!open && !primary) return null
@@ -144,62 +146,7 @@ export function FilePane({ className, scope, primary = false }: {
   return (
     <div className={cn('flex h-full min-h-0 flex-col overflow-hidden bg-qn-bg', className)}>
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-qn-border px-1.5">
-        <div className="qn-scroll flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          {tabs.map((tab) => (
-            <div
-              key={tab.id}
-              role="tab"
-              aria-selected={tab.id === active?.id}
-              tabIndex={0}
-              title={tab.path}
-              onClick={() => activate(tab.id)}
-              onAuxClick={(event) => {
-                if (event.button === 1) requestClose(tab.id)
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault()
-                  activate(tab.id)
-                }
-              }}
-              className={cn(
-                'group/tab flex h-7 min-w-0 max-w-56 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-ui-sm outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
-                tab.id === active?.id ? 'bg-qn-active text-qn-text' : 'text-qn-muted hover:bg-qn-hover',
-              )}
-            >
-              {tab.busy || tab.saving ? (
-                <LoadingIcon size={12} className="text-qn-brand" />
-              ) : tab.kind === 'diff' ? (
-                <FileDiff size={12} className="shrink-0 text-qn-dim" />
-              ) : fileKind(tab.path) === 'image' ? (
-                <ImageIcon size={12} className="shrink-0 text-qn-dim" />
-              ) : (
-                <FileText size={12} className="shrink-0 text-qn-dim" />
-              )}
-              {tab.dirty && <StatusDot className="bg-qn-warn" title="未保存" />}
-              {tab.diskChanged && (
-                <span className="shrink-0" title="磁盘已更改" aria-label="磁盘已更改">
-                  <TriangleAlert size={11} className="text-qn-danger" />
-                </span>
-              )}
-              <span className="truncate">{basename(tab.path) || tab.path}</span>
-              <span className="truncate text-ui-xs text-qn-dim">{basename(dirname(tab.path))}</span>
-              <IconButton
-                label={`关闭 ${basename(tab.path)}`}
-                size="sm"
-                tooltip={false}
-                className="ml-auto size-4 text-qn-dim"
-                onKeyDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  requestClose(tab.id)
-                }}
-              >
-                <X size={11} />
-              </IconButton>
-            </div>
-          ))}
-        </div>
+        <FileTabs tabs={tabs} activeId={active?.id} />
         <div className="flex shrink-0 items-center gap-0.5 border-l border-qn-border pl-1">
           {active && (
             <>
@@ -269,6 +216,7 @@ export function FilePane({ className, scope, primary = false }: {
         <TabBody
           editorRef={editorRef}
           tab={active}
+          projectRoot={scope && inProject(active) ? scope.cwd : undefined}
           onRefresh={() => refresh(active.id)}
           onLoadMore={() => loadMore(active.id)}
           onOpenFile={() => openFile({ targetId: active.targetId, path: active.path })}

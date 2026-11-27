@@ -27,6 +27,7 @@ export async function listThreads(
   rpc: CodexRpcLike,
   cwd?: string | string[] | null,
   limit?: number,
+  options?: { archived?: boolean },
 ): Promise<ThreadListResponse> {
   if (limit !== undefined && limit <= 0) return { data: [], nextCursor: null, backwardsCursor: null }
   const threads = new Map<string, Thread>()
@@ -37,6 +38,7 @@ export async function listThreads(
     const page: ThreadListResponse = await rpc.request('thread/list', {
       ...(cwd === undefined ? {} : { cwd }),
       ...(limit === undefined ? {} : { limit: limit - threads.size }),
+      ...(options?.archived === undefined ? {} : { archived: options.archived }),
       ...(nextCursor ? { cursor: nextCursor } : {}),
       sortKey: 'updated_at',
     })

@@ -1,6 +1,9 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { ContextMenu } from 'radix-ui'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '../../components/primitives'
+import { copyText } from '../../lib/clipboard'
 import { cn } from '../../lib/cn'
 import { createMarkdownLink, qnUrlTransform } from './integrations'
 
@@ -41,8 +44,14 @@ function addHeadingIds() {
   }
 }
 
-export function MarkdownPreview({ content, targetId, cwd }: { content: string; targetId: string; cwd: string }) {
+export function MarkdownPreview({ content, targetId, cwd, onViewSource }: {
+  content: string
+  targetId: string
+  cwd: string
+  onViewSource: () => void
+}) {
   const preview = useRef<HTMLDivElement>(null)
+  const [menu, setMenu] = useState({ selection: '', href: '' })
   const components = useMemo<Components>(() => {
     const FileLink = createMarkdownLink(() => ({ targetId, cwd }))
     return {
@@ -67,10 +76,29 @@ export function MarkdownPreview({ content, targetId, cwd }: { content: string; t
     }
   }, [targetId, cwd])
   return (
-    <div ref={preview} className="qn-scroll qn-markdown min-h-0 flex-1 overflow-auto px-4 py-3 text-[length:var(--qn-editor-font-size,13px)] leading-[1.8] text-qn-text">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[addHeadingIds]} urlTransform={qnUrlTransform} components={components}>
-        {content}
-      </ReactMarkdown>
-    </div>
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <div ref={preview} tabIndex={0}
+          onContextMenuCapture={(event) => {
+            const selection = window.getSelection()
+            const withinPreview = selection && !selection.isCollapsed &&
+              event.currentTarget.contains(selection.anchorNode) && event.currentTarget.contains(selection.focusNode)
+            const link = event.target instanceof Element ? event.target.closest('a[href]') : null
+            setMenu({ selection: withinPreview ? selection.toString() : '', href: link?.getAttribute('href') ?? '' })
+          }}
+          className="qn-scroll qn-markdown min-h-0 flex-1 overflow-auto px-4 py-3 text-[length:var(--qn-editor-font-size,13px)] leading-[1.8] text-qn-text">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[addHeadingIds]} urlTransform={qnUrlTransform} components={components}>
+            {content}
+          </ReactMarkdown>
+        </div>
+      </ContextMenu.Trigger>
+      <ContextMenuContent aria-label="Markdown 预览操作">
+        <ContextMenuItem disabled={!menu.selection} onSelect={() => void copyText(menu.selection)}>复制选中文字</ContextMenuItem>
+        {menu.href && <ContextMenuItem onSelect={() => void copyText(menu.href)}>复制链接地址</ContextMenuItem>}
+        <ContextMenuItem onSelect={() => void copyText(content)}>复制 Markdown 源码</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={onViewSource}>查看源码</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu.Root>
   )
 }

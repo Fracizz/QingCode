@@ -1,16 +1,18 @@
 import { sessionStatus } from '@qn/codex-client'
-import { Check, FileText, FolderGit2, MessageCircleMore, MoreHorizontal, PanelRightOpen, RotateCw, SquarePen, Terminal } from 'lucide-react'
+import { Check, FileText, FolderGit2, ListTree, MessageCircleMore, MoreHorizontal, PanelRightOpen, RotateCw, SquarePen, Terminal } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useFiles } from '../../features/files'
 import { TERMINAL_SHORTCUT, useTerminalDock } from '../../features/terminal/dockState'
 import { useDock } from '../../store/dock'
 import { sideChatExcerpt } from '../../lib/annotations'
 import { sessionKey } from '../../lib/agents'
-import { currentSideChat, useCodex } from '../../store/codex'
+import { threadKey } from '../../lib/threads'
+import { currentSideChat, currentThreads, useCodex } from '../../store/codex'
 import { useProjects } from '../../store/projects'
+import { useThreadPrefs } from '../../store/threadPrefs'
 import { useUi } from '../../store/ui'
 import { AgentIcon } from '../AgentIcon'
-import { Menu, MenuContent, MenuGroup, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '../primitives'
+import { Menu, MenuContent, MenuGroup, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Tip } from '../primitives'
 import { IconButton } from '../ui'
 import { SessionStatusBadge } from './SessionStatusBadge'
 import { DOCK_TOOLS } from './WorkspaceDock'
@@ -24,12 +26,14 @@ const CHAT_WIDTH_OPTIONS = [
 export function MainHeader({ subagents }: { subagents?: ReactNode }) {
   const projects = useProjects((s) => s.projects)
   const projectId = useProjects((s) => s.selectedId)
+  const targetId = useCodex((s) => s.currentTargetId)
+  const cwd = useCodex((s) => s.currentCwd)
   const agent = useCodex((s) => s.currentAgent)
   const threadId = useCodex((s) => s.currentThreadId)
   const side = useCodex(currentSideChat)
   const sideView = useCodex((s) => side?.threadId
     ? s.sessions[sessionKey(side.targetId, side.agent)]?.state.threads[side.threadId] : undefined)
-  const threads = useCodex((s) => s.threads)
+  const threads = useCodex(currentThreads)
   const startDraft = useCodex((s) => s.startDraft)
   const refreshThreads = useCodex((s) => s.refreshThreads)
   const view = useCodex((s) => {
@@ -43,17 +47,39 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
   const fileTabs = useFiles((s) => s.tabs.length)
   const chatWidth = useUi((s) => s.chatWidth)
   const setChatWidth = useUi((s) => s.setChatWidth)
-  const project = projects.find((item) => item.id === projectId)
+  const key = threadId ? threadKey(agent, threadId) : null
+  const localName = useThreadPrefs((s) => targetId && key ? s.byTarget[targetId]?.names[key] : undefined)
+  const project = projects.find((item) => item.id === projectId && item.targetId === targetId && item.path === cwd)
   const thread = threads.find((item) => item.id === threadId && item.agent === agent)
-  const title = thread?.title ?? '新会话'
+  const title = localName ?? thread?.title ?? (threadId ? '未命名会话' : '新会话')
+  const listLabel = threadId ? '在侧栏定位当前会话' : '打开项目会话列表'
 
   const sideStatus = side?.expired ? '已结束'
     : sideView?.pendingApprovals.length ? '待审批' : sideView?.status === 'running' ? '运行中' : null
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 px-4 text-ui-md">
-      <MessageCircleMore size={16} strokeWidth={1.75} className="shrink-0 text-qn-muted" aria-hidden />
-      <span className="min-w-0 truncate font-medium text-qn-text">{title}</span>
+      {project ? (
+        <Tip label={listLabel} side="bottom" align="start">
+          <button
+            type="button"
+            aria-label={`${listLabel}：${title}`}
+            className="-ml-1.5 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left font-medium text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
+            onClick={() => {
+              useProjects.getState().setExpanded(project, true)
+              useUi.getState().revealThreadList({ targetId: project.targetId, projectId: project.id, threadKey: key })
+            }}
+          >
+            <ListTree size={16} strokeWidth={1.75} className="shrink-0 text-qn-muted" aria-hidden />
+            <span className="truncate">{title}</span>
+          </button>
+        </Tip>
+      ) : (
+        <>
+          <MessageCircleMore size={16} strokeWidth={1.75} className="shrink-0 text-qn-muted" aria-hidden />
+          <span className="min-w-0 truncate font-medium text-qn-text">{title}</span>
+        </>
+      )}
       {project && (
         <span className="hidden max-w-[16rem] shrink-0 items-center gap-1 truncate text-ui text-qn-dim sm:flex" title={project.path}>
           <FolderGit2 size={13} /> {project.name}

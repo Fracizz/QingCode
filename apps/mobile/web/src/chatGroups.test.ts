@@ -1,6 +1,6 @@
 import type { ItemView, ThreadView } from '@qn/codex-client'
 import { describe, expect, it } from 'vitest'
-import { groupChatItems, hiddenToolTrails, isChatVisible, replyPhase, streamingReplyId, toolSummary, type ToolItem } from './chatGroups'
+import { groupChatItems, hiddenToolTrails, interruptedTurnPositions, isChatVisible, replyPhase, streamingReplyId, toolSummary, type ToolItem } from './chatGroups'
 
 const command = (id: string, status = 'completed', exitCode: number | null = 0): ItemView =>
   ({ kind: 'command', id, command: 'ls', output: '', exitCode, status })
@@ -58,6 +58,15 @@ describe('手机消息流精简', () => {
     expect(replyPhase([command('c'), streaming], ['c', 's'])).toBe('正在回复')
     expect(replyPhase([agent('old'), change('f', ['x'])], ['f'])).toBe('正在修改文件')
   })
+})
+
+it('中断标记保留在原轮次，支持只含隐藏命令或没有条目的轮次', () => {
+  const items = [agent('a'), command('hidden'), agent('b')]
+  const interrupted = (id: string, itemIds: string[]) => ({ id, itemIds, outcome: 'interrupted' as const, startedAtMs: null, durationMs: null })
+  expect(interruptedTurnPositions(items, items.filter(isChatVisible), [
+    interrupted('not-loaded', ['older']), interrupted('only-command', ['hidden']), interrupted('empty', []),
+    { id: 'next', itemIds: ['b'], outcome: 'completed', startedAtMs: null, durationMs: null },
+  ]).get(1)).toEqual(['only-command', 'empty'])
 })
 
 describe('hiddenToolTrails', () => {

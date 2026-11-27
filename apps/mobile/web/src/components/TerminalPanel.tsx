@@ -350,9 +350,9 @@ function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTe
 
   return (
     <>
-      {!ready && (
-        <Note message={connected ? '目标连接已中断。' : '电脑连接已中断，连接恢复后会自动接回。'} tone="warn"
-          actionLabel={connected && targetState !== 'connecting' && targetState !== 'deploying' ? '连接目标' : undefined}
+      {connected && !ready && (
+        <Note message="目标连接已中断。" tone="warn"
+          actionLabel={targetState !== 'connecting' && targetState !== 'deploying' ? '连接目标' : undefined}
           onAction={() => requestConnect(project.targetId)} />
       )}
       {status.attaching && <Loading text="正在接回终端…" />}
@@ -409,6 +409,7 @@ function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTe
 export function TerminalPanel({ project }: { project: Project }) {
   const desktopId = useApp((s) => s.activeId)
   const connected = useApp((s) => s.eventsConnected)
+  const connectionWarning = useApp((s) => s.eventsError)
   const targetState = useApp((s) => s.targetStates[project.targetId]?.state)
   const [list, setList] = useState<TermInfo[] | null>(null)
   const [termId, setTermId] = useState<string | null>(null)
@@ -497,7 +498,7 @@ export function TerminalPanel({ project }: { project: Project }) {
       {error && <Note message={error} tone="error" actionLabel={needsTarget ? '连接目标' : '重试'}
         onAction={() => needsTarget ? requestConnect(project.targetId) : setRefresh((attempt) => attempt + 1)} />}
       {list === null && connected && <Loading text="正在读取可接回的项目终端…" />}
-      {list === null && !connected && <Note message="请先连接电脑。" tone="warn" />}
+      {!connected && connectionWarning && <Note message={connectionWarning} tone="warn" />}
       {list?.length === 0 && !error && <p className="py-5 text-center text-sm text-qn-muted">该项目还没有手机终端。</p>}
       {desktopId && selected && <TerminalScreen key={`${desktopId}:${selected.termId}`} desktopId={desktopId} project={project} info={selected}
         menu={menu} busy={busy} onCloseMenu={() => setMenu(false)} onCloseTerminal={() => { setMenu(false); setClosing(true) }} />}

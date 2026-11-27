@@ -1,4 +1,4 @@
-import { Ellipsis, FileText, Folder, RotateCw, Terminal } from 'lucide-react'
+import { Archive, ArrowDown, ArrowUp, Ellipsis, FileText, Folder, RotateCw, Terminal } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { callDevice } from '../client'
 import { getWindowNativePort, NativeRequestError } from '../native'
@@ -7,14 +7,20 @@ import { friendlyError } from '../state'
 import { useApp } from '../store'
 import type { Project } from '../types'
 import { formatBytes } from '../viewer'
-import { Button, Dialog, Note, SheetAction } from './ui'
+import { moveWorkspaceProject, threadPreferenceKey, useWorkspace, useWorkspacePreferences } from '../workspace'
+import { AgentTag, Button, Dialog, Empty, Loading, Note, SheetAction } from './ui'
 
 const CHUNK_BYTES = 256 * 1024
 const TerminalPanel = lazy(async () => ({ default: (await import('./TerminalPanel')).TerminalPanel }))
 
-export function ProjectTools({ project, compact = false }: { project: Project; compact?: boolean }) {
-  const [tool, setTool] = useState<'files' | 'terminal' | 'menu' | null>(null)
+export function ProjectTools({ project, compact = false, orderedProjects }: { project: Project; compact?: boolean; orderedProjects?: Project[] }) {
+  const [tool, setTool] = useState<'files' | 'terminal' | 'menu' | 'archive' | null>(null)
   const desktopId = useApp((s) => s.activeId)
+  const index = orderedProjects?.findIndex(({ id }) => id === project.id) ?? -1
+  function move(offset: -1 | 1) {
+    if (desktopId && orderedProjects) moveWorkspaceProject(desktopId, project, orderedProjects, offset)
+    setTool(null)
+  }
   return (
     <>
       {!compact && (
@@ -32,10 +38,16 @@ export function ProjectTools({ project, compact = false }: { project: Project; c
           <div className="qn-project-tools-menu">
             {compact && <SheetAction icon={Folder} onClick={() => setTool('files')}>浏览项目文件</SheetAction>}
             <SheetAction icon={Terminal} onClick={() => setTool('terminal')}>打开项目终端</SheetAction>
+            <SheetAction icon={Archive} onClick={() => setTool('archive')}>已归档会话</SheetAction>
+            {index >= 0 && orderedProjects && orderedProjects.length > 1 && <>
+              <SheetAction icon={ArrowUp} disabled={index === 0} onClick={() => move(-1)}>上移项目（仅此手机）</SheetAction>
+              <SheetAction icon={ArrowDown} disabled={index === orderedProjects.length - 1} onClick={() => move(1)}>下移项目（仅此手机）</SheetAction>
+            </>}
           </div>
         </Dialog>
       )}
       {tool === 'files' && <ProjectFileBrowser key={`${desktopId}:${project.id}`} desktopId={desktopId} project={project} onClose={() => setTool(null)} />}
+      {tool === 'archive' && desktopId && <ArchivedConversations key={`${desktopId}:${project.id}`} desktopId={desktopId} project={project} onClose={() => setTool(null)} />}
       {tool === 'terminal' && (
         <Dialog title={`终端 · ${project.name}`} placement="full" closeAt="top" onClose={() => setTool(null)}>
           <Suspense fallback={<p className="py-4 text-center text-sm text-qn-muted" role="status">正在加载终端…</p>}>
@@ -44,6 +56,62 @@ export function ProjectTools({ project, compact = false }: { project: Project; c
         </Dialog>
       )}
     </>
+  )
+}
+
+function ArchivedConversations({ desktopId, project, onClose }: { desktopId: string; project: Project; onClose: () => void }) {
+  const list = useApp((s) => s.listArchivedConversations)
+  const restore = useApp((s) => s.restoreConversation)
+  const requestConnect = useApp((s) => s.requestConnect)
+  const ready = useApp((s) => project.targetId === 'local' || s.targetStates[project.targetId]?.state === 'ready')
+  const prefs = useWorkspacePreferences()
+  const [result, setResult] = useState<Awaited<ReturnType<typeof list>> | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  const [restoring, setRestoring] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!ready) return
+    let current = true
+    setResult(null)
+    void list(project).then((value) => { if (current) setResult(value) },
+      (error) => { if (current) setResult({ threads: [], error: friendlyError(error, '读取归档失败') }) })
+    return () => { current = false }
+  }, [list, project, attempt, ready])
+
+  async function restoreThread(thread: NonNullable<typeof result>['threads'][number], key: string) {
+    if (restoring) return
+    setRestoring(key)
+    setError(null)
+    try {
+      await restore(project.targetId, thread)
+      setResult((current) => current && { ...current, threads: current.threads.filter((item) => item.id !== thread.id || item.agent !== thread.agent) })
+      if (useApp.getState().activeId === desktopId) void useWorkspace.getState().loadProjects(desktopId)
+    } catch (error) {
+      setError(friendlyError(error, '恢复会话失败'))
+    } finally {
+      setRestoring(null)
+    }
+  }
+
+  return (
+    <Dialog title={`已归档会话 · ${project.name}`} onClose={onClose}>
+      {!ready ? <Note message="请先连接项目主机。" actionLabel="连接主机" onAction={() => requestConnect(project.targetId)} />
+        : !result ? <Loading text="正在读取归档…" /> : <>
+          {result.error && <Note tone="error" message={result.error} actionLabel="重试" onAction={() => setAttempt(attempt + 1)} />}
+          {error && <Note tone="error" message={error} />}
+          {!result.error && !result.threads.length && <Empty>此项目没有已归档会话。</Empty>}
+          {result.threads.map((thread) => {
+            const key = threadPreferenceKey(project.targetId, thread.agent, thread.id)
+            const title = prefs?.threads[key]?.title ?? thread.title
+            return <div key={key} className="qn-row gap-2 border-b border-qn-border py-2">
+              <div className="min-w-0 flex-1"><p className="truncate" title={title}>{title}</p><AgentTag agent={thread.agent} /></div>
+              <Button aria-label={`恢复 ${title}`} disabled={restoring !== null} onClick={() => void restoreThread(thread, key)}>
+                {restoring === key ? '恢复中…' : '恢复'}
+              </Button>
+            </div>
+          })}
+        </>}
+    </Dialog>
   )
 }
 

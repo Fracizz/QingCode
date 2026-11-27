@@ -20,6 +20,9 @@ export function registerSettingsMethods(router: BackendRouter): void {
       const current = await readAppSettings(backendConfig.userData)
       const next = mergeAppSettings(current, patch)
       await writeAppSettings(backendConfig.userData, next)
+      if (next.general.globalAccessMode !== current.general.globalAccessMode) {
+        router.emit('settings.access', { globalAccessMode: next.general.globalAccessMode })
+      }
       return next
     })
     pendingSave = saved.then(() => undefined, () => undefined)

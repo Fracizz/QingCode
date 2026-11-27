@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
 import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
-import type { ApprovalDecision, ApprovalView, ItemView, RequestId } from '@qn/codex-client'
+import type { ItemView } from '@qn/codex-client'
 import { collectSubagents, DRAFT_THREAD_ID, supportsSubagentRequests } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { buildAnnotatedMessage, quoteBlock, sideChatExcerpt, type Annotation } from '../lib/annotations'
@@ -21,7 +21,7 @@ import { isAtBottom } from '../lib/diff'
 import { friendlyError } from '../lib/errors'
 import { targetDotClass } from '../lib/targetStatus'
 import { groupTurns, hasPendingSubmission, streamingReplyId } from '../lib/turnGroups'
-import { composerDraftKey, pendingSendKey, useCodex, type SendMode } from '../store/codex'
+import { composerDraftKey, currentThreadApprovals, pendingSendKey, useCodex, type SendMode } from '../store/codex'
 import { useProjects } from '../store/projects'
 import { skillsKey, useSkills } from '../store/skills'
 import { useTargets } from '../store/targets'
@@ -31,14 +31,13 @@ import { AnnotationBar } from './AnnotationBar'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
 import { LoadingIcon } from './LoadingIcon'
-import { MessageItem, ToolGroup, TurnProgress, WorkGroup } from './MessageItem'
+import { MessageItem, ToolGroup, TurnProgress, TurnStopped, WorkGroup } from './MessageItem'
 import { ContextRing, ModelPicker } from './ModelPicker'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
 import { StatusDot } from './StatusDot'
 import { MainHeader } from './shell/MainHeader'
 import { WelcomePane } from './shell/WelcomePane'
-import { SideChat } from './SideChat'
 import { SubagentLauncher } from './SubagentDetails'
 import { TurnErrorNote } from './TurnErrorNote'
 import { EmptyState, ErrorNote } from './ui'
@@ -138,21 +137,15 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? []), preview] : view?.items ?? [], [preview, view?.items])
   const subagents = useMemo(() => collectSubagents(view?.items ?? [], currentThreadId ?? undefined, session?.state.threads),
     [view?.items, currentThreadId, session?.state.threads])
-  const sideChats = useCodex((s) => s.sideChats)
-  const approvals: ApprovalView[] = currentThreadId && view
-    ? view.pendingApprovals
-    : Object.values(session?.state.threads ?? {})
-      .filter((thread) => !Object.values(sideChats).some((side) =>
-        side.threadId === thread.id && side.agent === currentAgent && side.targetId === currentTargetId))
-      .flatMap((thread) => thread.pendingApprovals)
+  const approvals = useCodex(currentThreadApprovals)
   const running = view?.status === 'running'
   const streamingId = streamingReplyId(view)
   const interrupted = !running && view?.activity === 'interrupted'
   const showProgress = approvals.length === 0 && !session?.openError
     && (running || hasPendingSubmission(items, !!sendingMessage || sendingQueued))
-  const empty = items.length === 0 && approvals.length === 0 && !running && !showProgress && !interrupted
-  const flow = useMemo(() => groupTurns(items.filter((item) => item.kind !== 'subagent'), view?.turns, running),
+  const flow = useMemo(() => groupTurns(items, view?.turns, running),
     [items, view?.turns, running])
+  const empty = items.length === 0 && flow.length === 0 && approvals.length === 0 && !running && !showProgress
   const defaultStart = Math.max(0, flow.length - HISTORY_BATCH_SIZE)
   const firstVisible = historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart
   const historyLoading = historyLoad?.key === chatKey && historyLoad.error === undefined
@@ -436,14 +429,14 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const isDraft = !currentThreadId
   const preparingPi = startingPiDraft === draftKey
 
-  const skillList = useSkills((s) =>
-    currentTargetId ? s.lists[skillsKey(currentTargetId, currentAgent, currentCwd)] : undefined,
-  )
+  const skillKey = currentTargetId ? skillsKey(currentTargetId, currentAgent, currentCwd, session?.openedConfig?.directory) : null
+  const skillList = useSkills((s) => skillKey ? s.lists[skillKey] : undefined)
   const loadSkills = useSkills((s) => s.load)
-  const sessionOpened = session?.opened === true
+  const skillRpc = session?.opened ? session.rpc : undefined
+  const refreshClaudeSkills = currentAgent === 'claude' && !running
   useEffect(() => {
-    if (currentTargetId && sessionOpened && session) void loadSkills(currentTargetId, currentAgent, currentCwd, session.rpc)
-  }, [currentTargetId, currentAgent, currentCwd, sessionOpened, session, loadSkills])
+    if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, refreshClaudeSkills)
+  }, [skillKey, currentCwd, skillRpc, loadSkills, refreshClaudeSkills])
 
   const slashItems = useMemo<SlashItem[]>(
     () => [
@@ -460,7 +453,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     else if (id === 'stop') void interrupt()
     else if (id === 'refresh') {
       void refreshThreads()
-      if (currentTargetId && session) void loadSkills(currentTargetId, currentAgent, currentCwd, session.rpc, true)
+      if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, true)
     }
   }
 
@@ -556,6 +549,8 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                   ) : entry.kind === 'work' ? (
                     <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries}
                       replyCompletedAtMs={entry.reply?.completedAtMs} onFork={canFork ? forkFromMessage : undefined} />
+                  ) : entry.kind === 'stopped' ? (
+                    <TurnStopped key={entry.key} durationMs={entry.durationMs} />
                   ) : (
                     <MessageItem
                       key={`${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`}
@@ -567,13 +562,15 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                     />
                   )
                 })}
-                {showProgress ? <TurnProgress activity={running ? view.activity : undefined} />
-                  : interrupted && <TurnProgress activity="interrupted" />}
-                {approvals.map((approval) => (
+                {showProgress && <TurnProgress activity={running ? view.activity : undefined} />}
+                {currentTargetId && currentThreadId && approvals.map((approval) => (
                   <ApprovalCard
                     key={String(approval.requestId)}
                     approval={approval}
-                    onDecide={(decision: ApprovalDecision) => respondApproval(approval.requestId as RequestId, decision)}
+                    onDecide={(decision) => respondApproval(
+                      { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId },
+                      approval.requestId, decision,
+                    )}
                   />
                 ))}
               </div>
@@ -665,7 +662,6 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           </>
         }
       />
-      <SideChat />
       {dragging && (
         <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-accent/60 bg-qn-bg/85 text-ui-md text-qn-text">
           <ImagePlus size={28} className="text-qn-accent" />

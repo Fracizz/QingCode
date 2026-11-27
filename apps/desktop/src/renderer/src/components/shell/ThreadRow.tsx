@@ -48,7 +48,7 @@ function ThreadStatusIcon({ status, label }: { status: ThreadRowStatus; label: s
   return (
     <Tip label={label}>
       <span
-        className="absolute left-[13px] top-1/2 mt-px flex size-[16px] -translate-y-1/2 items-center justify-center"
+        className="flex size-(--qn-tree-icon-size) shrink-0 items-center justify-center"
         role="img"
         aria-label={label}
       >
@@ -63,7 +63,7 @@ function ThreadPreview({ thread, statusLabel }: { thread: ThreadSummary; statusL
 
   return (
     <>
-      <span className="line-clamp-6 text-ui leading-5 font-medium wrap-anywhere">{thread.title}</span>
+      <span className="line-clamp-6 text-[length:var(--qn-session-font-size)] leading-[1.5] font-medium wrap-anywhere">{thread.title}</span>
       {preview && (
         <span className="mt-1 line-clamp-4 wrap-anywhere whitespace-pre-line text-qn-muted">{preview}</span>
       )}
@@ -96,28 +96,31 @@ function onMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
 /** 侧栏会话行：点击打开；悬停显示置顶/归档；右键菜单提供重命名、置顶、未读、分支、复制、归档、删除。 */
 export function ThreadRow({
   thread,
+  targetId,
   now,
   current,
   view,
+  onActivate,
 }: {
   thread: ThreadSummary
+  targetId: string
   now: number
   current: boolean
   view?: ThreadView
+  onActivate: () => void
 }) {
-  const targetId = useCodex((s) => s.currentTargetId)
   const openThread = useCodex((s) => s.openThread)
-  const opening = useCodex(({ openingThread }) => openingThread?.agent === thread.agent && openingThread.threadId === thread.id)
+  const opening = useCodex(({ openingThread }) => openingThread?.targetId === targetId
+    && openingThread.agent === thread.agent && openingThread.threadId === thread.id)
   const renameThread = useCodex((s) => s.renameThread)
   const archiveThread = useCodex((s) => s.archiveThread)
   const deleteThread = useCodex((s) => s.deleteThread)
   const forkThread = useCodex((s) => s.forkThread)
   const key = threadKey(thread.agent, thread.id)
-  const prefs = useThreadPrefs((s) => (targetId ? s.byTarget[targetId] : undefined))
+  const prefs = useThreadPrefs((s) => s.byTarget[targetId])
   const setPinned = useThreadPrefs((s) => s.setPinned)
   const setUnread = useThreadPrefs((s) => s.setUnread)
   const setLocalName = useThreadPrefs((s) => s.setLocalName)
-  const setHidden = useThreadPrefs((s) => s.setHidden)
   const forget = useThreadPrefs((s) => s.forget)
 
   const pinned = prefs?.pinned[key] !== undefined
@@ -142,9 +145,8 @@ export function ThreadRow({
     return () => clearTimeout(timer)
   }, [editing])
 
-  if (!targetId) return null
-
   const open = (): void => {
+    onActivate()
     void openThread(thread.id, thread.agent)
   }
 
@@ -165,9 +167,7 @@ export function ThreadRow({
   }
 
   const archive = async (): Promise<void> => {
-    if (!await archiveThread(thread.id, thread.agent)) return
-    if (!native) setHidden(targetId, key, true)
-    setPinned(targetId, key, false)
+    await archiveThread(thread.id, thread.agent)
   }
 
   const remove = async (): Promise<void> => {
@@ -183,12 +183,12 @@ export function ThreadRow({
 
   if (editing) {
     return (
-      <div className="flex h-8 items-center pl-[25px] pr-1">
+      <div className="flex min-h-8 items-center pl-(--qn-tree-title-start) pr-1">
         <input
           ref={inputRef}
           value={draft}
           aria-label="会话名称"
-          className="qn-input h-7 min-w-0 flex-1 px-1.5 py-0 text-ui"
+          className="qn-input min-h-7 min-w-0 flex-1 px-1.5 py-0 text-[length:var(--qn-session-font-size)] leading-tight"
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => void commitRename()}
           onKeyDown={(event) => {
@@ -205,13 +205,14 @@ export function ThreadRow({
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <div
-            className={`group relative h-8 w-full cursor-default rounded-lg text-ui data-[state=open]:bg-qn-hover ${
+            className={`group relative flex min-h-8 w-full cursor-default items-center gap-(--qn-tree-row-inset) rounded-lg pl-(--qn-tree-row-inset) text-[length:var(--qn-session-font-size)] leading-tight data-[state=open]:bg-qn-hover ${
               current ? 'bg-qn-active text-qn-text' : 'text-qn-text/80 hover:bg-qn-hover hover:text-qn-text'
             }`}
             onClick={(event) => {
               if (event.currentTarget.contains(event.target as Node)) open()
             }}
           >
+            <ThreadStatusIcon status={opening ? 'opening' : status} label={statusLabel} />
             <Tip
               label={<ThreadPreview thread={thread} statusLabel={statusLabel} />}
               side="right"
@@ -223,24 +224,23 @@ export function ThreadRow({
                 aria-busy={opening}
                 aria-current={current ? 'true' : undefined}
                 className={cn(
-                  'absolute inset-0 flex cursor-default items-center gap-2 rounded-lg pl-[31px] pr-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-accent',
+                  'flex min-w-0 flex-1 cursor-default items-center gap-2 self-stretch rounded-lg py-px pr-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-accent',
                   showActions && (running ? 'group-hover:pr-9' : 'group-hover:pr-15'),
                 )}
                 onKeyDown={(event) => {
                   if (event.key === 'F2') beginRename()
                 }}
               >
+                <span className={cn('min-w-0 flex-1 truncate', unread && 'text-qn-text')}>{thread.title}</span>
                 {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
                 {thread.agent !== DEFAULT_AGENT && <AgentIcon agent={thread.agent} size={12} className="pointer-events-none" />}
-                <span className={cn('min-w-0 flex-1 truncate', unread && 'text-qn-text')}>{thread.title}</span>
                 {showActions && (
-                  <span className="shrink-0 text-ui-sm text-qn-dim group-hover:hidden" aria-hidden="true">
+                  <span className="shrink-0 text-[length:var(--qn-session-detail-font-size)] text-qn-muted group-hover:hidden" aria-hidden="true">
                     {formatRelative(thread.updatedAt, now)}
                   </span>
                 )}
               </button>
             </Tip>
-            <ThreadStatusIcon status={opening ? 'opening' : status} label={statusLabel} />
             {showActions && (
               <span className="absolute inset-y-0 right-1 hidden items-center group-hover:flex" onClick={(e) => e.stopPropagation()}>
                 <IconButton
@@ -283,7 +283,10 @@ export function ThreadRow({
             icon={<GitBranch size={14} />}
             hint="X"
             disabled={!native || running}
-            onSelect={() => void forkThread(thread.id, thread.agent)}
+            onSelect={() => {
+              onActivate()
+              void forkThread(thread.id, thread.agent)
+            }}
           >
             {native ? '创建聊天分支' : '创建聊天分支（Claude 暂不支持）'}
           </ShortcutItem>

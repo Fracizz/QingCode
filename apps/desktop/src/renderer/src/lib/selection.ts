@@ -4,7 +4,7 @@ export type SelectionSnapshot = {
   text: string
   itemId?: string
   range: Range
-  position: ToolbarPosition
+  rangeText: string
 }
 
 /** above=true 时 top 是工具条的下沿（渲染时 translateY(-100%)），工具条变高也不会压住选区。 */
@@ -51,36 +51,68 @@ export function toolbarPosition(
   return { top: Math.round(box.top + box.height + gap), left, above: false }
 }
 
-export function clearDomSelection(): void {
-  if (typeof window === 'undefined') return
-  window.getSelection()?.removeAllRanges()
+function selectionRange(root: HTMLElement): Range | null {
+  const selection = root.ownerDocument.getSelection()
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return null
+  const range = selection.getRangeAt(0)
+  return root.contains(range.startContainer) && root.contains(range.endContainer) ? range : null
 }
 
-/** DOM 部分单独收口：纯逻辑（文本、坐标、浮层位置）保持可测。 */
-export function captureSelection(root: HTMLElement): SelectionSnapshot | null {
-  if (typeof window === 'undefined') return null
-  const selection = window.getSelection()
-  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null
-  if (!selection.anchorNode || !root.contains(selection.anchorNode)) return null
-  if (!selection.focusNode || !root.contains(selection.focusNode)) return null
-  const range = selection.getRangeAt(0)
-  const text = normalizeSelectionText(selection.toString())
-  if (!text) return null
+export function clearDomSelection(root: HTMLElement): void {
+  if (selectionRange(root)) root.ownerDocument.getSelection()?.removeAllRanges()
+}
 
-  const base = root.getBoundingClientRect()
-  const first = visibleSelectionBox(range.getClientRects(), {
-    top: base.top + root.clientTop,
-    left: base.left + root.clientLeft,
-    width: root.clientWidth,
-    height: root.clientHeight,
-  })
-  if (!first) return null
-  const position = toolbarPosition(first, root.clientWidth)
-  position.top += root.scrollTop
-  position.left += root.scrollLeft
-
+function rangeElement(range: Range): Element | null {
   const common = range.commonAncestorContainer
-  const element = common.nodeType === 1 ? common as Element : common.parentElement
-  const itemId = element?.closest<HTMLElement>('[data-chat-item]')?.dataset.chatItem
-  return { text, itemId, range: range.cloneRange(), position }
+  return common.nodeType === 1 ? common as Element : common.parentElement
+}
+
+export function captureSelection(root: HTMLElement): SelectionSnapshot | null {
+  const range = selectionRange(root)
+  if (!range) return null
+  const text = normalizeSelectionText(root.ownerDocument.getSelection()?.toString() ?? '')
+  if (!text) return null
+  const itemId = rangeElement(range)?.closest<HTMLElement>('[data-chat-item]')?.dataset.chatItem
+  return { text, itemId, range: range.cloneRange(), rangeText: range.toString() }
+}
+
+function clientBox(element: Element): Box {
+  const rect = element.getBoundingClientRect()
+  return {
+    top: rect.top + element.clientTop,
+    left: rect.left + element.clientLeft,
+    width: element.clientWidth,
+    height: element.clientHeight,
+  }
+}
+
+export function selectionPosition(root: HTMLElement, snapshot: SelectionSnapshot, commenting: boolean): ToolbarPosition | null {
+  const { range, rangeText } = snapshot
+  if (range.collapsed || !root.contains(range.startContainer) || !root.contains(range.endContainer)
+    || range.toString() !== rangeText) return null
+  if (!commenting) {
+    const current = selectionRange(root)
+    if (!current || current.startContainer !== range.startContainer || current.endContainer !== range.endContainer
+      || current.startOffset !== range.startOffset || current.endOffset !== range.endOffset) return null
+  }
+
+  const base = clientBox(root)
+  let viewport = base
+  // 命令输出和代码块也有自己的滚动区，选区被裁掉时工具条应一起消失。
+  for (let element = rangeElement(range); element && element !== root; element = element.parentElement) {
+    const { overflowX, overflowY } = getComputedStyle(element)
+    if (overflowX === 'visible' && overflowY === 'visible') continue
+    const clip = clientBox(element)
+    const top = overflowY === 'visible' ? viewport.top : Math.max(viewport.top, clip.top)
+    const left = overflowX === 'visible' ? viewport.left : Math.max(viewport.left, clip.left)
+    const right = overflowX === 'visible' ? viewport.left + viewport.width : Math.min(viewport.left + viewport.width, clip.left + clip.width)
+    const bottom = overflowY === 'visible' ? viewport.top + viewport.height : Math.min(viewport.top + viewport.height, clip.top + clip.height)
+    viewport = { top, left, width: right - left, height: bottom - top }
+  }
+  const first = visibleSelectionBox(range.getClientRects(), viewport)
+  if (!first) return null
+  const position = toolbarPosition({
+    ...first, top: first.top + viewport.top - base.top, left: first.left + viewport.left - base.left,
+  }, root.clientWidth)
+  return { ...position, top: position.top + root.scrollTop, left: position.left + root.scrollLeft }
 }
