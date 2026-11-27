@@ -56,6 +56,9 @@ describe('参数校验', () => {
     expect(codeOf(() => parseOpenParams({ cwd: 'relative' }, 'linux'))).toBe('params')
     expect(codeOf(() => parseOpenParams({ cwd: 'C:\\x' }, 'linux'))).toBe('params')
     expect(parseOpenParams({ cwd: 'C:\\x' }, 'win32').cwd).toBe('C:\\x')
+    // SFTP 风格项目根在 Windows 上转成盘符路径
+    expect(parseOpenParams({ cwd: '/D:/code/repo' }, 'win32').cwd).toBe('D:\\code\\repo')
+    expect(parseOpenParams({ cwd: 'D:/code/repo' }, 'win32').cwd).toBe('D:\\code\\repo')
     expect(codeOf(() => parseOpenParams({}, 'linux'))).toBe('params')
     expect(codeOf(() => parseOpenParams({ cwd: '/a\0b' }, 'linux'))).toBe('params')
   })

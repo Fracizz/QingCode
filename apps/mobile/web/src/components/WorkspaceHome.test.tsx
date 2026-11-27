@@ -37,11 +37,13 @@ it('连接状态跨标签页更新，持续失联只显示一条提示', async (
       root.render(<App />)
     })
 
+    // 会话页大标题上方显示当前电脑与延迟（同 rust 版首页）；失联后延迟隐藏。
     expect(activeTab()).toBe('会话')
-    expect(host.textContent).not.toContain('测试电脑')
-    expect(host.textContent).not.toContain('368 ms')
+    expect(host.textContent).toContain('测试电脑')
+    expect(host.textContent).toContain('368 ms')
     const refreshes = loadProjects.mock.calls.length
     await act(() => useApp.setState({ eventsConnected: false }))
+    expect(host.textContent).not.toContain('368 ms')
     expect(host.textContent).not.toContain(warning)
     expect(loadProjects).toHaveBeenCalledTimes(refreshes)
 
@@ -50,7 +52,7 @@ it('连接状态跨标签页更新，持续失联只显示一条提示', async (
     expect(notice?.textContent).toContain(warning)
     await act(() => selectTab('项目').click())
     expect(activeTab()).toBe('项目')
-    expect(host.textContent).not.toContain('测试电脑')
+    expect(host.textContent).toContain('测试电脑 · 0 个项目')
     expect(host.textContent).not.toContain('368 ms')
     await act(() => selectTab('连接').click())
     expect(activeTab()).toBe('连接')

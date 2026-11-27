@@ -1,27 +1,32 @@
 @import "tailwindcss";
 
 @theme {
-  /* 中性色与功能色对齐电脑版（apps/desktop/src/renderer/src/styles.css）；强调色沿用品牌青（旧版手机规范：不用蓝色）。 */
+  /* 深色配色照搬 rust 分支手机版（mobile/android/web/app.css :root）：纯中性灰表面 + 品牌青强调色。 */
   --color-qn-bg: #181818;
-  --color-qn-panel: #1f1f1f;
-  --color-qn-card: #242424;
-  --color-qn-raised: #303030;
-  --color-qn-field: #141414;
-  --color-qn-border: #383838;
+  --color-qn-panel: #222222;
+  --color-qn-card: #222222;
+  --color-qn-raised: #2e2e2e;
+  --color-qn-field: #181818;
+  --color-qn-border: #3a3a3a;
   --color-qn-border-strong: #4d4d4d;
+  /* 分组列表行间细线，比外框更淡（rust 版 --divider）。 */
+  --color-qn-divider: #2e2e2e;
   /* 可输入控件外框与对话输入框底色：对比度要求见 docs/design/contrast.md（强光下要能看清输入框边界）。 */
   --color-qn-outline: #7a7a7a;
   --color-qn-outline-hover: #858585;
   --color-qn-composer: #2a2a2a;
-  --color-qn-text: #e6e6e6;
-  --color-qn-muted: #a0a0a0;
+  --color-qn-text: #f3f3f5;
+  --color-qn-muted: #a1a1aa;
   --color-qn-dim: #8a8a8a;
-  --color-qn-accent: #4ecdb5;
-  --color-qn-danger: #ff6b63;
+  --color-qn-accent: #68dfc6;
+  --color-qn-accent-surface: #193a35;
+  --color-qn-danger: #ff9d8c;
   --color-qn-ok: #6fcf8f;
-  --color-qn-warn: #e2b55d;
-  --color-qn-primary-text: #102720;
-  --color-qn-diff-add: #6ee7b7;
+  --color-qn-warn: #edcb8d;
+  --color-qn-primary-text: #0c2923;
+  /* 项目来源按种类分色（rust 版）：本机辅助灰、SSH 豆沙绿。 */
+  --color-qn-source-ssh: #88af8e;
+  --color-qn-diff-add: #9adbb2;
   --color-qn-diff-remove: #fca5a5;
   --color-qn-claude: #f0a37f;
   --color-qn-archive: #7a4422;
@@ -46,7 +51,7 @@
   /* 状态栏高度：Android 壳让页面画到状态栏下方并下发 --qn-safe-top，浏览器里退回 env()。 */
   --qn-top: var(--qn-safe-top, env(safe-area-inset-top, 0px));
   --qn-radius: 12px;
-  --qn-accent-surface: color-mix(in srgb, var(--color-qn-accent) 16%, transparent);
+  --qn-accent-surface: var(--color-qn-accent-surface);
   --qn-press: rgb(255 255 255 / 5%);
   /* 表面层级：靠 1px 边缘高光与投影分层，不靠更多边框或卡片套卡片。 */
   --qn-edge: rgb(255 255 255 / 6%);
@@ -64,7 +69,8 @@
   font-size: 15px;
 }
 
-:root[data-theme="graphite"] {
+/* 灰色：与电脑版 html[data-theme="gray"] 同一组中性灰，比深色整体抬亮一档。 */
+:root[data-theme="gray"] {
   --color-qn-bg: #28292c;
   --color-qn-panel: #2f3033;
   --color-qn-card: #343538;
@@ -72,6 +78,7 @@
   --color-qn-field: #252629;
   --color-qn-border: #54555a;
   --color-qn-border-strong: #65666b;
+  --color-qn-divider: #3c3d40;
   --color-qn-outline: #94959b;
   --color-qn-outline-hover: #acadb3;
   --color-qn-composer: #37383b;
@@ -89,6 +96,7 @@
   --color-qn-field: #ffffff;
   --color-qn-border: #c6c6c6;
   --color-qn-border-strong: #a0a0a0;
+  --color-qn-divider: #e2e2e2;
   --color-qn-outline: #777777;
   --color-qn-outline-hover: #555555;
   --color-qn-composer: #ffffff;
@@ -103,6 +111,7 @@
   --color-qn-diff-add: #185a39;
   --color-qn-diff-remove: #9a2927;
   --color-qn-claude: #8a4527;
+  --color-qn-source-ssh: #3f6b46;
   --qn-accent-surface: color-mix(in srgb, var(--color-qn-accent) 9%, transparent);
   --qn-press: color-mix(in srgb, var(--color-qn-text) 5%, transparent);
   --qn-edge: color-mix(in srgb, var(--color-qn-text) 14%, transparent);
@@ -856,11 +865,14 @@ input[type="radio"] {
   touch-action: manipulation;
 }
 
+/* 底部导航照搬 rust 版 #dashboard-nav：选中项只在图标后放圆角指示块，切换时从中心横向展开并轻弹簧落定。 */
 .qn-nav {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
   flex-shrink: 0;
-  border-top: 1px solid var(--color-qn-border);
+  padding: 4px max(16px, calc((100% - 450px) / 2));
+  border-top: 1px solid var(--color-qn-divider);
   background: var(--color-qn-panel);
 }
 
@@ -868,43 +880,92 @@ input[type="radio"] {
   display: grid;
   justify-items: center;
   align-content: center;
-  gap: 3px;
-  min-height: 60px;
+  gap: 2px;
+  min-height: 46px;
   color: var(--color-qn-muted);
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 550;
 }
 
 .qn-nav-button span {
+  position: relative;
+  isolation: isolate;
   display: grid;
   place-items: center;
-  width: min(56px, 100%);
-  min-height: 27px;
+  width: 60px;
+  height: 32px;
   border-radius: var(--qn-radius);
-  transition: background-color var(--qn-motion-short) ease-out;
+  transition: background-color 160ms ease, color 160ms ease;
 }
+
+.qn-nav-button span::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--qn-accent-surface);
+  opacity: 0;
+  transform: scaleX(0.45);
+  transition: opacity var(--qn-motion-medium) ease, transform var(--qn-motion-long) var(--qn-ease-spring);
+  content: "";
+}
+
+.qn-nav-button span svg { width: 22px; height: 22px; }
+.qn-nav-button:active span { background: var(--color-qn-raised); }
 
 .qn-nav-button[aria-current="page"] {
   color: var(--color-qn-text);
-  font-weight: 650;
+  font-weight: 700;
 }
 
 .qn-nav-button[aria-current="page"] span {
-  background: var(--qn-accent-surface);
+  background: transparent;
   color: var(--color-qn-accent);
 }
+
+.qn-nav-button[aria-current="page"] span::before { opacity: 1; transform: none; }
+.qn-nav-button[aria-current="page"] span svg { animation: qn-nav-pop 460ms var(--qn-ease-spring); }
+@keyframes qn-nav-pop { from { transform: scale(0.8); } }
 
 .qn-workspace {
   padding: 0 16px 16px;
 }
 
 .qn-workspace-home {
-  padding-top: 12px;
+  padding-top: 0;
 }
 
+/* 首屏大标题（rust 版 .hero）：小字说明一行（右侧放操作），下方细体大标题。 */
 .qn-workspace-title {
   position: relative;
-  padding: 8px 0 18px;
+  padding: 8px 0 16px;
 }
+
+.qn-workspace-title .qn-hero-title {
+  margin-top: 2px;
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+
+.qn-host-pill {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-qn-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.qn-host-pill:active { color: var(--color-qn-text); }
+.qn-host-pill > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qn-host-pill .qn-dot[data-state="online"] { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-qn-accent) 15%, transparent); }
+.qn-host-pill .qn-dot[data-state="connecting"] { animation: qn-breathe 1.1s ease-in-out infinite; }
+.qn-host-latency { flex-shrink: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+.qn-host-latency::before { margin-right: 6px; content: "·"; }
 
 .qn-workspace-title[data-connected="true"]::before {
   position: absolute;
@@ -934,9 +995,9 @@ input[type="radio"] {
 .qn-search {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 46px;
-  padding: 0 10px;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 10px 0 16px;
   border: 1px solid var(--color-qn-outline);
   border-radius: var(--qn-radius);
   color: var(--color-qn-muted);
@@ -947,10 +1008,12 @@ input[type="radio"] {
   border-color: var(--color-qn-outline-hover);
 }
 
+.qn-search > svg { width: 18px; height: 18px; }
+
 .qn-search input {
   flex: 1;
   min-width: 0;
-  height: 44px;
+  height: 46px;
   color: var(--color-qn-text);
   font: inherit;
   outline: none;
@@ -994,19 +1057,64 @@ input[type="radio"] {
 }
 
 .qn-workspace-group {
-  margin-top: 16px;
+  margin-top: 12px;
 }
 
+/* 分组标题照搬 rust 版：文件夹图标 + 粗体名称 + 描边来源标签 + 数量，右侧强调色 + 与次要操作。 */
 .qn-group-heading {
   display: flex;
   align-items: center;
   gap: 2px;
-  min-height: 40px;
+  min-height: 44px;
   margin-bottom: 4px;
-  padding-left: 4px;
-  font-size: 14px;
-  font-weight: 650;
+  padding-left: 8px;
+  color: var(--color-qn-text);
+  font-size: 15px;
+  font-weight: 620;
 }
+
+.qn-group-icon { flex-shrink: 0; color: var(--color-qn-muted); }
+.qn-group-icon[data-kind="ssh"] { color: var(--color-qn-source-ssh); }
+
+.qn-group-count {
+  flex-shrink: 0;
+  color: var(--color-qn-muted);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.qn-source-tag {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border: 1px solid var(--color-qn-border-strong);
+  border-radius: 6px;
+  color: var(--color-qn-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.qn-source-tag[data-kind="ssh"] {
+  border-color: color-mix(in srgb, var(--color-qn-source-ssh) 45%, transparent);
+  color: var(--color-qn-source-ssh);
+}
+
+.qn-list-action.qn-new-session { color: var(--color-qn-accent); }
+.qn-group-heading h2 .qn-origin { color: inherit; font-size: inherit; font-weight: inherit; }
+
+/* 列表上方的小字说明（rust 版 .list-label）。 */
+.qn-list-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 4px 8px;
+  color: var(--color-qn-muted);
+  font-size: 13px;
+}
+
+.qn-search + .qn-list-label,
+.qn-project-filter ~ .qn-list-label { margin-top: 10px; }
 
 /* 分组标题本身可点进入项目：名称、来源、箭头一体，右侧只留 + 与 ⋯。 */
 .qn-group-title {
@@ -1060,14 +1168,14 @@ input[type="radio"] {
 }
 
 .qn-list-row {
-  min-height: 58px;
-  padding: 8px 10px 8px 13px;
+  min-height: 64px;
+  padding: 12px 14px 12px 16px;
 }
 
 .qn-list-row + .qn-list-row,
 .qn-thread-row + .qn-thread-row,
 .qn-sortable-item + .qn-sortable-item {
-  border-top: 1px solid var(--color-qn-border);
+  border-top: 1px solid var(--color-qn-divider);
 }
 
 /* 长按排序：禁止长按弹出系统菜单/选中文字；拖动中的行浮起，其余行平滑让位。 */
@@ -1092,7 +1200,7 @@ input[type="radio"] {
 
 .qn-session-more,
 .qn-session-overflow {
-  border-top: 1px solid var(--color-qn-border);
+  border-top: 1px solid var(--color-qn-divider);
 }
 
 .qn-session-more {
@@ -1192,9 +1300,11 @@ input[type="radio"] {
 }
 
 /* 名称最多两行：超长项目名不至于把一行撑得过高。 */
-/* 会话标题是长句，常规字重更易读；粗体只留给项目名等分组标题。 */
-.qn-list-primary.qn-thread-title {
-  font-weight: 400;
+/* 会话标题与 rust 版一致用粗体（620），下方说明行用次要色小字。 */
+.qn-list-row .qn-subtitle {
+  margin-top: 1px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .qn-list-primary.qn-clamp-2 {
@@ -1394,6 +1504,7 @@ input[type="radio"] {
   margin-inline-start: auto;
 }
 
+/* 触控区保持 44px，可见圆只画 36px（背景裁到内容区），避免按钮贴着输入框边缘、显得过重。 */
 .qn-send-button,
 .qn-stop-button {
   flex-shrink: 0;
@@ -1401,8 +1512,9 @@ input[type="radio"] {
   min-width: 44px;
   height: 44px;
   min-height: 44px;
-  padding: 0;
+  padding: 4px;
   border-radius: 999px;
+  background-clip: content-box;
 }
 
 .qn-send-button.qn-button-primary:disabled {
@@ -1414,8 +1526,12 @@ input[type="radio"] {
 
 .qn-stop-button.qn-button-danger {
   border-color: transparent;
-  background: color-mix(in srgb, var(--color-qn-danger) 18%, var(--color-qn-composer));
+  background: color-mix(in srgb, var(--color-qn-danger) 14%, var(--color-qn-composer));
+  background-clip: content-box;
+  box-shadow: inset 0 0 0 4px var(--color-qn-composer), inset 0 0 0 5px color-mix(in srgb, var(--color-qn-danger) 35%, transparent);
 }
+
+.qn-stop-button svg { border-radius: 2px; }
 
 .qn-image-thumbnail {
   display: inline-flex;
@@ -1561,11 +1677,39 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   color: var(--color-qn-muted);
 }
 
+/* 回复进度胶囊：须写在 .qn-thinking 之后并提高优先级，否则内边距与文字色会被上面的通用规则覆盖。 */
+.qn-thinking.qn-replying {
+  max-width: 100%;
+  min-height: 32px;
+  gap: 7px;
+  padding: 6px 14px 6px 11px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--color-qn-accent) 9%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-qn-accent) 18%, transparent);
+  color: var(--color-qn-text);
+  line-height: 1.4;
+}
+
+.qn-thinking.qn-replying > svg { color: var(--color-qn-accent); }
+
 /* ===== 表面层级 ===== */
 .qn-list-group {
   border: 0;
   background: var(--color-qn-card);
-  box-shadow: var(--qn-elev-1), inset 0 0 0 1px var(--qn-edge), inset 0 1px 0 var(--qn-edge-top);
+  /* rust 版 .rows：一层浅投影 + 1px 边缘高光。高光画在 ::after 上并盖住行面，行底色和左滑面板不会把它遮掉。 */
+  position: relative;
+  isolation: isolate;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 32%);
+}
+
+.qn-list-group::after {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 1px 0 var(--qn-edge-top), inset 0 0 0 1px var(--qn-edge);
+  pointer-events: none;
+  content: "";
 }
 
 .qn-card {
@@ -1590,10 +1734,11 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   position: fixed;
   z-index: 0;
   inset: 0 0 auto;
-  height: 260px;
+  height: 380px;
+  /* 照搬 rust 版 .dashboard::before：从屏幕上缘往下自然淡开的青光。 */
   background:
-    radial-gradient(120% 90% at 85% -10%, color-mix(in srgb, var(--color-qn-accent) 16%, transparent) 0%, transparent 62%),
-    radial-gradient(90% 70% at 10% -20%, color-mix(in srgb, var(--color-qn-accent) 7%, transparent) 0%, transparent 70%);
+    radial-gradient(75% 62% at 82% 0%, color-mix(in srgb, var(--color-qn-accent) 14%, transparent), transparent 100%),
+    radial-gradient(120% 70% at 30% 0%, color-mix(in srgb, var(--color-qn-accent) 5%, transparent), transparent 100%);
   opacity: 0;
   pointer-events: none;
   transition: opacity 600ms ease;

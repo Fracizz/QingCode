@@ -1,8 +1,8 @@
 import { sessionStatusLabels, type SessionStatus, t, translateMessage } from '@qn/codex-client'
-import { Archive, Check, ChevronDown, ChevronRight, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, X } from 'lucide-react'
+import { Archive, Check, ChevronDown, ChevronRight, Cloud, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, Settings, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { sessionKey } from '../agents'
-import { pageName } from '../names'
+import { connectionName, pageName } from '../names'
 import { useApp } from '../store'
 import type { Project, Target } from '../types'
 import {
@@ -29,6 +29,7 @@ import {
 import { formatTime, friendlyError } from '../state'
 import { ARCHIVE_ACTION_WIDTH, threadSwipeAxis, threadSwipeOffset } from '../threadSwipe'
 import { AgentTag, Badge, Button, Dialog, Empty, Loading, LoadingIcon, Note, SheetAction } from './ui'
+import { MobileSettings } from './MobileSettings'
 import { NewSessionButton } from './NewSessionButton'
 import { ProjectTools } from './ProjectTools'
 import { PullToRefresh } from './PullToRefresh'
@@ -113,6 +114,58 @@ export function ProjectOrigin({ target }: { target?: Target }) {
   const name = target?.kind === 'ssh' ? t('远端 · {name}', { name: target.name })
     : target?.kind === 'direct' ? t('直连 · {name}', { name: target.name }) : target?.name ?? t('目标已移除')
   return <span className="qn-origin" title={target?.kind === 'local' ? undefined : target?.host}>{name}</span>
+}
+
+/** 会话分组标题里的来源小标签（rust 版样式）：只写种类，主机名放在悬停提示里。 */
+function SourceTag({ target }: { target?: Target }) {
+  if (!target) return <span className="qn-source-tag">{t('目标已移除')}</span>
+  const label = target.kind === 'ssh' ? t('远端') : target.kind === 'direct' ? t('直连') : t('本机')
+  return <span className="qn-source-tag" data-kind={target.kind} title={target.kind === 'local' ? undefined : target.name}>{label}</span>
+}
+
+/** 工作台大标题（rust 版 .hero）：上方一行小字说明当前电脑与延迟，右侧放刷新与设置，下方细体大标题。 */
+function WorkspaceHero({ title, context, onRefresh, refreshing }: {
+  title: string
+  /** 省略时显示当前电脑、连接状态与延迟。 */
+  context?: string
+  onRefresh?: () => void
+  refreshing?: boolean
+}) {
+  const desktopId = useApp((s) => s.activeId)
+  const connection = useApp((s) => s.connections.find((item) => item.id === s.activeId))
+  const connected = useApp((s) => s.eventsConnected)
+  const latency = useApp((s) => s.activeId ? s.connectionLatencyMs[s.activeId] : undefined)
+  const setTab = useWorkspace((s) => s.setTab)
+  const [settings, setSettings] = useState(false)
+  const name = connection ? connectionName(connection.name) : ''
+  const state = !desktopId ? 'offline' : connected ? 'online' : 'connecting'
+  return (
+    <header className="qn-workspace-title">
+      <div className="qn-workspace-context">
+        {context === undefined ? (
+          <button type="button" className="qn-host-pill" onClick={() => setTab('connections')} aria-label={t('切换电脑')}>
+            <span className="qn-dot" data-state={state} aria-hidden
+              style={{ background: state === 'online' ? 'var(--color-qn-accent)' : state === 'connecting' ? 'var(--color-qn-warn)' : 'var(--color-qn-danger)' }} />
+            <span>{name}</span>
+            {state === 'online' && latency != null && <span className="qn-host-latency">{latency} ms</span>}
+            <ChevronRight size={14} aria-hidden />
+          </button>
+        ) : <span className="min-w-0 truncate text-[13px]">{context}</span>}
+        <div className="flex shrink-0">
+          {onRefresh && (
+            <Button variant="ghost" className="qn-list-action" onClick={onRefresh} disabled={refreshing} aria-label={t('刷新项目')}>
+              <RotateCw size={20} strokeWidth={1.75} className={refreshing ? 'qn-spin' : undefined} aria-hidden />
+            </Button>
+          )}
+          <Button variant="ghost" className="qn-list-action" onClick={() => setSettings(true)} aria-label={t('应用设置')}>
+            <Settings size={20} strokeWidth={1.75} aria-hidden />
+          </Button>
+        </div>
+      </div>
+      <h1 className="qn-hero-title">{title}</h1>
+      {settings && <MobileSettings onClose={() => setSettings(false)} />}
+    </header>
+  )
 }
 
 export function WorkspaceThreadRow({
@@ -377,7 +430,7 @@ export function WorkspaceProjectRow({ project, target, onOpen, sortable = false 
           <span className="qn-subtitle qn-mono block" title={project.path}>{displayPath(project.path)}</span>
         </span>
       </button>
-      {target && <NewSessionButton project={project} iconOnly className="qn-list-action" />}
+      {target && <NewSessionButton project={project} iconOnly className="qn-list-action qn-new-session" />}
       <ProjectTools project={project} compact sortable={sortable} />
     </div>
   )
@@ -420,6 +473,7 @@ export function WorkspaceHome() {
   const tab = useWorkspace((s) => s.tab)
   const setTab = useWorkspace((s) => s.setTab)
   const desktopId = useApp((s) => s.activeId)
+  const connection = useApp((s) => s.connections.find((item) => item.id === s.activeId))
   const archived = useApp((s) => s.archivedThreads)
   const connected = useApp((s) => s.eventsConnected)
   const repairReason = useApp((s) => s.activeId ? s.needsRepair[s.activeId] : undefined)
@@ -455,6 +509,8 @@ export function WorkspaceHome() {
 
   const isSessions = tab === 'sessions'
   const searching = query.trim().length > 0
+  const threadCount = groups.reduce((sum, group) => sum + group.threads.length, 0)
+  const projectCount = projectGroups.reduce((sum, group) => sum + group.rows.length, 0)
   const showTargets = () => {
     useApp.getState().cancelPendingNavigation()
     useApp.setState({ page: 'targets', targetsReturnPage: 'workspace' })
@@ -462,6 +518,10 @@ export function WorkspaceHome() {
   return (
     <PullToRefresh className="qn-body qn-scroll qn-workspace qn-workspace-home qn-rise"
       label={pageName(isSessions ? 'sessions' : 'projects')} disabled={!desktopId || projectList?.loading} onRefresh={refresh}>
+      {isSessions ? <WorkspaceHero title="QingCode" /> : (
+        <WorkspaceHero title={pageName('projects')} onRefresh={() => void refresh()} refreshing={projectList?.loading}
+          context={[connection ? connectionName(connection.name) : '', t('{count} 个项目', { count: projectCount })].filter(Boolean).join(' · ')} />
+      )}
       {repairReason && desktopId && (
         <Note message={repairReason === 'fingerprint' ? t('电脑证书已变化，请核对后重新配对。') : t('电脑已撤销此设备的授权。')}
           tone="error" actionLabel={t('重新配对')} onAction={() => beginRepair(desktopId)} />
@@ -474,6 +534,7 @@ export function WorkspaceHome() {
       {projectList?.loading && projects.length === 0 ? <Loading text={t('正在读取项目…')} /> : (
         <>
           {/* 新建会话从各项目分组标题的 + 进入，顶部不再放全局入口。 */}
+          {isSessions && <div className="qn-list-label"><span>{t('全部会话')}&nbsp;&nbsp;{threadCount}</span></div>}
           <WorkspaceSearch label={isSessions ? t('搜索会话或项目') : t('搜索项目、主机或路径')} query={query} onChange={setQuery} />
           {!isSessions && (
             <>
@@ -498,6 +559,7 @@ export function WorkspaceHome() {
                   </div>
                 </Dialog>
               )}
+              <div className="qn-list-label"><span>{t('{count} 个项目', { count: projectCount })}</span></div>
             </>
           )}
           {isSessions ? (
@@ -506,11 +568,12 @@ export function WorkspaceHome() {
                 <div className="qn-group-heading">
                   <button type="button" className="qn-group-title" onClick={() => void showWorkspaceProject(project)}
                     aria-label={t('进入 {name} 项目的会话', { name: project.name })}>
+                    <Folder size={18} strokeWidth={1.75} className="qn-group-icon" aria-hidden />
                     <h2 className="truncate">{project.name}</h2>
-                    <ProjectOrigin target={targets.find((item) => item.id === project.targetId)} />
-                    <ChevronRight size={15} className="shrink-0 text-qn-dim" aria-hidden />
+                    <SourceTag target={targets.find((item) => item.id === project.targetId)} />
+                    <span className="qn-group-count">{threads.length}</span>
                   </button>
-                  {targets.some((item) => item.id === project.targetId) && <NewSessionButton project={project} iconOnly className="qn-list-action" />}
+                  {targets.some((item) => item.id === project.targetId) && <NewSessionButton project={project} iconOnly className="qn-list-action qn-new-session" />}
                   <ProjectTools project={project} compact />
                 </div>
                 <WorkspaceThreadList threads={threads} projectName={project.name} searching={searching}
@@ -526,7 +589,11 @@ export function WorkspaceHome() {
             projectGroups.length ? projectGroups.map(({ target, rows }) => (
               <section key={target.id} className="qn-workspace-group">
                 <div className="qn-group-heading">
-                  <h2><ProjectOrigin target={target} /></h2>
+                  {target.kind === 'local'
+                    ? <Folder size={18} strokeWidth={1.75} className="qn-group-icon" aria-hidden />
+                    : <Cloud size={18} strokeWidth={1.75} className="qn-group-icon" data-kind={target.kind} aria-hidden />}
+                  <h2 className="ml-1.5 min-w-0 flex-1 truncate"><ProjectOrigin target={target} /></h2>
+                  <span className="qn-group-count px-3">{rows.length}</span>
                 </div>
                 <SortableList items={rows} itemKey={(project) => project.id} disabled={searching || !desktopId}
                   label={t('{name} 的项目', { name: target.name })} onMove={(from, to) => desktopId && placeWorkspaceProject(desktopId, rows, from, to)}>

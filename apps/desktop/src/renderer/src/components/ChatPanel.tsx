@@ -823,7 +823,6 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
         onSend={submit}
         onInterrupt={() => void interrupt()}
         running={running}
-        canSteer={!!view?.activeTurnId}
         compacting={compacting}
         sending={sending || preparingPi || compactionStarting}
         disabled={!currentTargetId}

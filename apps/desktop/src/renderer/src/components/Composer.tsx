@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref, type RefObject } from 'react'
 import { accessOptions, exactChatCommand, resolveAccessMode, t, translateMessage } from '@qn/codex-client'
-import { ArrowUp, ChevronDown, CircleAlert, FileText, ImageOff, Paperclip, Shield, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
+import { ArrowUp, CircleAlert, FileText, ImageOff, Paperclip, Shield, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
 import {
@@ -37,7 +37,7 @@ import { cn } from '../lib/cn'
 import type { SendMode } from '../store/codex'
 import { ListOption } from './ListOption'
 import { LoadingIcon } from './LoadingIcon'
-import { Menu, MenuContent, MenuItem, MenuTrigger, Tip } from './primitives'
+import { Tip } from './primitives'
 import { EmptyState, ErrorNote, IconButton } from './ui'
 
 /** 输入框最高占视口 40%，再长就内部滚动，不把消息区挤没。 */
@@ -84,7 +84,6 @@ export function Composer({
   onSend,
   onInterrupt,
   running,
-  canSteer,
   sending,
   disabled,
   error,
@@ -111,7 +110,6 @@ export function Composer({
   onSend: (text: string, mode: SendMode) => void | Promise<boolean>
   onInterrupt: () => void
   running: boolean
-  canSteer: boolean
   sending: boolean
   compacting?: boolean
   disabled?: boolean
@@ -513,6 +511,8 @@ export function Composer({
               )}
               rows={1}
               wrap="soft"
+              // 关闭系统拼写检查：中英混排和代码片段会被误标红色波浪线。
+              spellCheck={false}
               value={value}
               disabled={disabled}
               autoFocus={autoFocus}
@@ -593,14 +593,14 @@ export function Composer({
             {trailing}
             <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-1">
               {running && (
-                // 与发送钮同为圆形，形成“停止 / 发送”一组；描边保证在输入框底色上可辨识。
+                // 无描边的圆形幽灵按钮，与实心发送钮并排；悬停时用浅底提示可点击。
                 <IconButton
                   label={t('停止运行')}
-                  className="rounded-full border border-qn-border-strong text-qn-text hover:border-qn-outline-hover"
+                  className="rounded-full text-qn-text hover:bg-qn-fg/10"
                   disabled={sending}
                   onClick={onInterrupt}
                 >
-                  <Square size={10} fill="currentColor" strokeWidth={0} />
+                  <Square size={11} fill="currentColor" strokeWidth={0} className="rounded-[2px]" />
                 </IconButton>
               )}
               <Tip label={blocked ? translateMessage(blocked) : sendHint}>
@@ -621,24 +621,6 @@ export function Composer({
                   </button>
                 </span>
               </Tip>
-              {running && (
-                <Menu>
-                  <MenuTrigger asChild>
-                    <IconButton label={t('发送方式')} size="sm" disabled={!canSend}>
-                      <ChevronDown size={14} />
-                    </IconButton>
-                  </MenuTrigger>
-                  <MenuContent side="top" align="end">
-                    <MenuItem hint={t('默认 · 本轮结束后发送')} onSelect={() => submit('queue')}>{t('排队')}</MenuItem>
-                    <MenuItem
-                      disabled={!canSteer}
-                      hint={!canSteer ? t('等待当前轮次就绪') : agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
-                      onSelect={() => submit('steer')}
-                    >{t('引导')}</MenuItem>
-                    <MenuItem hint={t('中断当前一轮后发送')} onSelect={() => submit('immediate')}>{t('立即发送')}</MenuItem>
-                  </MenuContent>
-                </Menu>
-              )}
             </div>
           </div>
         </div>

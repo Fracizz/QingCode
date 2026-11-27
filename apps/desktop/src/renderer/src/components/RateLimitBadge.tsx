@@ -8,7 +8,7 @@ import {
   claudeQuotaSource,
   compactText,
   formatReset,
-  isClaudeStatusLine,
+  claudeHasWindows,
   remainingQuotaPercent,
   severity,
   severityForPercent,
@@ -90,7 +90,7 @@ function Body({
   now: number
 }) {
   const snapshot = entry?.snapshot ?? null
-  const liveClaude = isClaudeStatusLine(snapshot)
+  const liveClaude = claudeHasWindows(snapshot)
   const singleReset = claudeQuotaResetAt(snapshot)
   const reportedAt = claudeQuotaReportedAt(snapshot)
   const source = claudeQuotaSource(snapshot)

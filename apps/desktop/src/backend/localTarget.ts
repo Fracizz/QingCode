@@ -4,7 +4,9 @@ import { STALE_SERVER_NOTICE, parseEnsureResult, redactToken, type EnsureResult 
 import { ServerClient, toFramedStream } from './serverClient'
 import type { LocalLinkContext, TargetLink } from './types'
 
-const DEFAULT_ENSURE_TIMEOUT_MS = 15_000
+// 更新后首启要先等旧版 daemon 退出（最多 5s）再拉起新版（最多 10s），加上新安装的
+// 可执行文件首次启动较慢（杀软扫描），15s 不够，会误报"启动超时"且首连失败不重试。
+const DEFAULT_ENSURE_TIMEOUT_MS = 30_000
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
 
 /** ensure 用 Electron 自带 Node 运行，stdout 只含一行 JSON（含 token，绝不写日志）。 */
@@ -95,7 +97,7 @@ export async function connectLocalTarget(context: LocalLinkContext): Promise<Tar
     context.forceReplace ? 'deploying' : 'connecting',
     context.forceReplace ? '强制更新本机 Server' : '启动本机 daemon',
   )
-  const ensure = await runLocalEnsure(context.electronPath, context.serverScript, context.forceReplace ? 20_000 : undefined, context)
+  const ensure = await runLocalEnsure(context.electronPath, context.serverScript, undefined, context)
   context.signal?.throwIfAborted()
   // endpoint 由 ensure 直接给出，不在 backend 复制命名管道规则。
   const socket = await openEndpoint(ensure.endpoint)

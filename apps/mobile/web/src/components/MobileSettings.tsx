@@ -12,11 +12,11 @@ import { Button, Dialog, Field, Note } from './ui'
 type UpdateCheck = { available: boolean; versionName: string; versionCode: number; id?: string }
 const UPDATE_URL = 'mobile.updateUrl'
 
+// 与电脑版主题一致：深色（默认）、灰色、浅色。
 const themes: readonly { value: MobileTheme; label: string }[] = [
   { value: 'dark', label: t('深色') },
-  { value: 'graphite', label: t('石墨灰') },
+  { value: 'gray', label: t('灰色') },
   { value: 'light', label: t('浅色') },
-  { value: 'system', label: t('跟随系统') },
 ]
 
 const languages: readonly { value: LocalePreference; label: string }[] = [

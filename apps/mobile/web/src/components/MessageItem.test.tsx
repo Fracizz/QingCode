@@ -29,6 +29,24 @@ it('后台任务卡片支持触摸展开 Markdown 结果，只有摘要时直接
   }
 })
 
+it('后台任务摘要过长时标题只占两行，全文收进展开区', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const summary = `状态栏文档摘要 ${'很长的内容'.repeat(30)} **结尾**`
+  try {
+    await act(() => root.render(<MessageItem item={{ kind: 'backgroundTask', id: 'task', status: 'completed', summary, result: '' }} />))
+    const title = host.querySelector('summary span')!
+    expect(title.className).toContain('line-clamp-2')
+    expect(host.querySelector('strong')).toBeNull()
+    await toggle(host.querySelector('summary')!)
+    expect(host.querySelector('.qn-markdown strong')?.textContent).toBe('结尾')
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
+
 it('在回复上方显示完成时间，跨午夜后补上本地日期', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.useFakeTimers()

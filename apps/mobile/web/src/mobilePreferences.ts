@@ -3,29 +3,29 @@ import { create } from 'zustand'
 import { callDevice } from './client'
 import { getWindowNativePort } from './native'
 
-export type MobileTheme = 'dark' | 'graphite' | 'light' | 'system'
+/** 与电脑版主题一致：深色（默认）、灰色、浅色。 */
+export type MobileTheme = 'dark' | 'gray' | 'light'
 type MobilePreferences = {
   theme: MobileTheme
   reduceMotion: boolean
   sendKey: 'newline' | 'send'
 }
 
-declare global {
-  interface Window {
-    __qnSystemTheme?: (light: boolean) => void
-  }
-}
-
 const storageKey = 'qn.mobile.preferences'
 const defaults: MobilePreferences = { theme: 'dark', reduceMotion: false, sendKey: 'newline' }
+
+/** 旧版存过「石墨灰」（graphite）和「跟随系统」（system）：前者并入灰色，后者回到默认深色。 */
+export function parseTheme(value: unknown): MobileTheme {
+  if (value === 'gray' || value === 'graphite') return 'gray'
+  return value === 'light' ? 'light' : defaults.theme
+}
 
 function readPreferences(): MobilePreferences {
   if (typeof window === 'undefined') return defaults
   try {
-    const value: Partial<MobilePreferences> | null = JSON.parse(window.localStorage.getItem(storageKey) ?? 'null')
-    const theme = value?.theme
+    const value: Partial<Record<keyof MobilePreferences, unknown>> | null = JSON.parse(window.localStorage.getItem(storageKey) ?? 'null')
     return {
-      theme: theme === 'graphite' || theme === 'light' || theme === 'system' ? theme : defaults.theme,
+      theme: parseTheme(value?.theme),
       reduceMotion: value?.reduceMotion === true,
       sendKey: value?.sendKey === 'send' ? 'send' : defaults.sendKey,
     }
@@ -58,43 +58,12 @@ export function useMobileAppearance() {
   const reduceMotion = useMobilePreferences((state) => state.reduceMotion)
 
   useLayoutEffect(() => {
-    const native = Boolean(getWindowNativePort())
-    const system = window.matchMedia?.('(prefers-color-scheme: light)')
-    let systemLight = system?.matches ?? false
-    const apply = () => {
-      const resolved = theme === 'system' ? (systemLight ? 'light' : 'dark') : theme
-      document.documentElement.dataset.theme = resolved
-      if (native) {
-        // 原生桥并行处理请求，按设置顺序更新系统栏图标。
-        systemBarsSync = systemBarsSync.then(async () => {
-          await callDevice('appearance.systemBars', { light: resolved === 'light' })
-        }).catch(() => undefined)
-      }
-    }
-    apply()
-    if (theme !== 'system') return
-    const applySystem = (light: boolean) => {
-      if (systemLight === light) return
-      systemLight = light
-      apply()
-    }
-    if (native) {
-      let received = false
-      const onSystemTheme = (light: boolean) => {
-        received = true
-        applySystem(light)
-      }
-      window.__qnSystemTheme = onSystemTheme
-      void callDevice<boolean>('appearance.systemTheme').then((light) => {
-        if (window.__qnSystemTheme === onSystemTheme && !received) applySystem(light)
-      }).catch(() => undefined)
-      return () => {
-        if (window.__qnSystemTheme === onSystemTheme) delete window.__qnSystemTheme
-      }
-    }
-    const onSystemTheme = (event: MediaQueryListEvent) => applySystem(event.matches)
-    system?.addEventListener('change', onSystemTheme)
-    return () => system?.removeEventListener('change', onSystemTheme)
+    document.documentElement.dataset.theme = theme
+    if (!getWindowNativePort()) return
+    // 原生桥并行处理请求，按设置顺序更新系统栏图标。
+    systemBarsSync = systemBarsSync.then(async () => {
+      await callDevice('appearance.systemBars', { light: theme === 'light' })
+    }).catch(() => undefined)
   }, [theme])
 
   useLayoutEffect(() => {

@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import type { RateLimitSnapshot, RateLimitWindow } from './codex-types'
 import {
   applyRateLimitsUpdate,
+  claudeHasWindows,
   claudeQuotaBlocked,
   claudeQuotaResetAt,
+  claudeQuotaSource,
+  claudeQuotaSummary,
   compactText,
   emptySnapshot,
   formatReset,
@@ -279,5 +282,26 @@ describe('pickAccount', () => {
     expect(pickAccount({ account: { type: 'apiKey' } })?.email).toBeNull()
     expect(pickAccount({ account: null })).toBeNull()
     expect(pickAccount(null)).toBeNull()
+  })
+})
+
+describe('Claude 额度窗口', () => {
+  const windows = {
+    primary: makeWindow(15, { windowDurationMins: 300 }),
+    secondary: makeWindow(58, { windowDurationMins: 10080 }),
+  }
+
+  it('SDK unifiedWindows 与状态栏一样按窗口显示剩余额度', () => {
+    const sdk = snap({ limitId: 'claude-sdk-windows', ...windows })
+    expect(claudeHasWindows(sdk)).toBe(true)
+    expect(claudeQuotaSummary(sdk)).toBe(claudeQuotaSummary(snap({ limitId: 'claude-statusline', ...windows })))
+    expect(claudeQuotaSummary(sdk)).toContain('85%')
+    expect(claudeQuotaSummary(sdk)).toContain('42%')
+    expect(claudeQuotaSource(sdk)).toContain('SDK')
+  })
+
+  it('旧版单窗口事件和空快照不按窗口显示', () => {
+    expect(claudeHasWindows(snap({ limitId: 'claude', primary: makeWindow(90) }))).toBe(false)
+    expect(claudeHasWindows(snap({ limitId: 'claude-sdk-windows' }))).toBe(false)
   })
 })

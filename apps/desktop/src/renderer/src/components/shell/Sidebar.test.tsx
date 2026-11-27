@@ -36,9 +36,12 @@ it('从项目菜单收起和展开会话列表时保留当前会话', async () =
   const root = createRoot(host)
   const list = (name: string) => host.querySelector(`[aria-label="${name}会话列表"]`)
   const onSelectTarget = vi.fn()
+  const onConnect = vi.fn()
+  const onCollapseTarget = vi.fn()
+  const actions = { onAdd: vi.fn(), onEdit: vi.fn(), onSelect: vi.fn(), onConnect, onDisconnect: vi.fn(), onForgetSecret: vi.fn() }
 
   try {
-    await act(() => root.render(<TooltipProvider><ProjectTree target={target} onSelectTarget={onSelectTarget} /></TooltipProvider>))
+    await act(() => root.render(<TooltipProvider><ProjectTree target={target} onSelectTarget={onSelectTarget} mixed={{ actions, onCollapseTarget }} /></TooltipProvider>))
     const header = host.querySelector<HTMLElement>('[title="QingCode"]')!.closest('button')!
     const trigger = header.parentElement!.querySelector<HTMLButtonElement>('button[aria-label="更多操作"]')!
     const selectAction = async (label: string) => {
@@ -60,6 +63,12 @@ it('从项目菜单收起和展开会话列表时保留当前会话', async () =
     expect(list(project.name)).toBeTruthy()
     expect(select).not.toHaveBeenCalled()
     expect(onSelectTarget).not.toHaveBeenCalled()
+
+    // 散开时没有主机标题，主机级操作在项目菜单里。
+    await selectAction('连接')
+    expect(onConnect).toHaveBeenCalledWith(target.id)
+    await selectAction('折叠此主机')
+    expect(onCollapseTarget).toHaveBeenCalled()
   } finally {
     await act(() => root.unmount())
     host.remove()
@@ -139,6 +148,8 @@ it('用铃铛临时提前活动会话、项目和目标，再点恢复工作区�
     const firstThread = () => host.querySelector('[aria-label="活动项目会话列表"] button')?.textContent
     expect(bell.getAttribute('aria-pressed')).toBe('false')
     expect(targets()).toEqual(['本机', '远端'])
+    // 散开的目标不渲染分组标题，项目直接混排。
+    expect(host.querySelector('[title*="user@example"], [title*="这台电脑"]')).toBeNull()
     expect(projects()).toEqual(['空闲项目', '活动项目'])
     expect(firstThread()).toBe('会话 0')
     expect(host.textContent).not.toContain('会话 8')
@@ -181,7 +192,18 @@ it('用铃铛临时提前活动会话、项目和目标，再点恢复工作区�
     expect(bell.getAttribute('aria-pressed')).toBe('true')
     expect(targets()).toEqual(['本机', '远端'])
     expect(firstThread()).toBe('会话 0')
+
+    // 切回按主机分组：出现主机标题，项目行不再标注主机名；偏好写入本地存储。
+    const projectRow = () => host.querySelector('.qn-project-tree [title="空闲项目"]')!.closest('.flex.min-h-8')!
+    expect(projectRow().querySelector('[title^="远端 · "]')).toBeTruthy()
+    await act(() => host.querySelector<HTMLButtonElement>('button[aria-label="切换为按主机分组"]')!.click())
+    expect(host.querySelector('[title*="user@example"]')).toBeTruthy()
+    expect(projectRow().querySelector('[title^="远端 · "]')).toBeNull()
+    expect(localStorage.getItem('qn-sidebar-workspace-layout')).toBe('grouped')
+    await act(() => host.querySelector<HTMLButtonElement>('button[aria-label="切换为混排布局"]')!.click())
+    expect(host.querySelector('[title*="user@example"]')).toBeNull()
   } finally {
+    localStorage.removeItem('qn-sidebar-workspace-layout')
     await act(() => root.unmount())
     host.remove()
     rpc.dispose()

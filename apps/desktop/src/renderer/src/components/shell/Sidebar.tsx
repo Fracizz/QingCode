@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Archive, Bell, Settings, Smartphone, SquarePen, Upload } from 'lucide-react'
+import { Archive, Bell, List, ListTree, Settings, Smartphone, SquarePen, Upload } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { t } from '@qn/codex-client'
 import type { Project } from '../../../../shared/backendApi'
@@ -17,9 +17,20 @@ import { targetDisplayName } from '../targetName'
 import { ErrorNote, IconButton } from '../ui'
 import { ArchivedThreadsDialog } from './ArchivedThreadsDialog'
 import { ProjectTree } from './ProjectTree'
-import { ForceUpdateDialog, TargetPicker, TargetSectionHeader, type TargetActions } from './TargetSwitcher'
+import { ForceUpdateDialog, TargetConnectError, TargetPicker, TargetSectionHeader, type TargetActions } from './TargetSwitcher'
 
 const COLLAPSED_KEY = 'qn-sidebar-collapsed-targets'
+const LAYOUT_KEY = 'qn-sidebar-workspace-layout'
+/** grouped：按主机分组（旧版，每台主机一个标题）；mixed：去掉主机标题，项目混排并在行尾标注主机。 */
+export type WorkspaceLayout = 'grouped' | 'mixed'
+
+function readLayout(): WorkspaceLayout {
+  try {
+    return localStorage.getItem(LAYOUT_KEY) === 'grouped' ? 'grouped' : 'mixed'
+  } catch {
+    return 'mixed'
+  }
+}
 const noActivePaths = new Set<string>()
 
 function readCollapsed(): string[] {
@@ -98,6 +109,18 @@ export function Sidebar({
       }
       return next
     })
+  const expandedTargets = orderedTargets.filter((target) => !collapsed.includes(target.id))
+  const collapsedTargets = orderedTargets.filter((target) => collapsed.includes(target.id))
+  const [layout, setLayout] = useState(readLayout)
+  const toggleLayout = () => {
+    const next: WorkspaceLayout = layout === 'grouped' ? 'mixed' : 'grouped'
+    setLayout(next)
+    try {
+      localStorage.setItem(LAYOUT_KEY, next)
+    } catch {
+      // 存储不可用时只在本次运行内生效。
+    }
+  }
   const startDraft = useCodex((s) => s.startDraft)
   const isDraft = useCodex((s) => s.currentThreadId === null)
   const [version, setVersion] = useState('')
@@ -150,6 +173,13 @@ export function Sidebar({
           >
             <Bell size={15} aria-hidden />
           </IconButton>
+          <IconButton
+            label={layout === 'grouped' ? t('切换为混排布局') : t('切换为按主机分组')}
+            className="h-7 w-7"
+            onClick={toggleLayout}
+          >
+            {layout === 'grouped' ? <ListTree size={15} aria-hidden /> : <List size={15} aria-hidden />}
+          </IconButton>
           <TargetPicker {...targetActions} />
         </div>
       </div>
@@ -162,7 +192,7 @@ export function Sidebar({
             ))}
           </div>
         )}
-        {orderedTargets.map((target) => {
+        {layout === 'grouped' && orderedTargets.map((target) => {
           const isCollapsed = collapsed.includes(target.id)
           return (
             <section key={target.id} aria-label={targetDisplayName(target)}>
@@ -183,6 +213,30 @@ export function Sidebar({
             </section>
           )
         })}
+        {/* 混排：展开的主机不显示分组标题，项目连成一个列表；每行右侧标注主机名与状态，
+            主机级操作移到项目行菜单。只有折叠的主机保留一行标题，用于重新展开。 */}
+        {layout === 'mixed' && expandedTargets.map((target, index) => (
+          <section key={target.id} aria-label={targetDisplayName(target)} className={index > 0 ? 'mt-2' : 'pt-1'}>
+            <TargetConnectError targetId={target.id} withName onRetry={() => targetActions.onConnect(target.id)} />
+            <ProjectTree
+              target={target}
+              onSelectTarget={targetActions.onSelect}
+              mixed={{ actions: targetActions, onCollapseTarget: () => toggleCollapsed(target.id) }}
+              activeSessionPaths={activePaths ? activePaths.get(target.id) ?? noActivePaths : undefined}
+            />
+          </section>
+        ))}
+        {layout === 'mixed' && collapsedTargets.map((target) => (
+          <section key={target.id} aria-label={targetDisplayName(target)}>
+            <TargetSectionHeader
+              target={target}
+              actions={targetActions}
+              collapsed
+              hasActiveSessions={activePaths?.has(target.id)}
+              onToggle={() => toggleCollapsed(target.id)}
+            />
+          </section>
+        ))}
         <ErrorNote message={loadError} variant="compact" className="mx-1 mt-1.5" />
       </div>
       {/* 归档列表跟随活动目标：主区当前用的是哪台机器，就看哪台的归档。 */}

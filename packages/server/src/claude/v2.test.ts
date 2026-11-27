@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  activeSdkWindows,
   buildThread,
   buildTurn,
   emptyRateLimitsResponse,
+  nextSdkWindowReset,
   rateLimitSnapshot,
   tokenUsage,
   userMessageItem,
@@ -69,6 +71,51 @@ describe('v2 形状构造', () => {
     })
     expect(snapshot.rateLimitReachedType).toBe('rate_limit_reached')
     expect(String(snapshot.limitName)).toContain('仅接近')
+  })
+
+  it('unifiedWindows 映射为 5h/每周两个窗口，优先于顶层字段', () => {
+    const snapshot = rateLimitSnapshot({
+      status: 'allowed',
+      rateLimitType: 'five_hour',
+      resetsAt: 1_795_791_600,
+      unifiedWindows: {
+        five_hour: { utilization: 0.15, resetsAt: 1_795_791_600, status: 'allowed' },
+        seven_day: { utilization: 0.58, resetsAt: 1_796_090_400_000, status: 'allowed' },
+      },
+    })
+    expect(snapshot.limitId).toBe('claude-sdk-windows')
+    expect(snapshot.primary).toEqual({ usedPercent: 15, windowDurationMins: 300, resetsAt: 1_795_791_600 })
+    expect(snapshot.secondary).toEqual({ usedPercent: 58, windowDurationMins: 10080, resetsAt: 1_796_090_400 })
+    expect(snapshot.rateLimitReachedType).toBeNull()
+  })
+
+  it('unifiedWindows 缺失或格式不符时退回顶层 utilization', () => {
+    const snapshot = rateLimitSnapshot({
+      status: 'allowed_warning',
+      rateLimitType: 'five_hour',
+      utilization: 0.9,
+      resetsAt: 1_800_000_000,
+      unifiedWindows: { five_hour: { utilization: 'x' }, seven_day: { utilization: 0.5 } },
+    })
+    expect(snapshot.limitId).toBe('claude')
+    expect(snapshot.primary).toEqual({ usedPercent: 90, windowDurationMins: 300, resetsAt: 1_800_000_000 })
+    expect(snapshot.secondary).toBeNull()
+  })
+
+  it('只保留未过期的 SDK 窗口，并给出下一次重置时间', () => {
+    const snapshot = rateLimitSnapshot({
+      status: 'allowed',
+      unifiedWindows: {
+        five_hour: { utilization: 0.2, resetsAt: 1_000 },
+        seven_day: { utilization: 0.4, resetsAt: 2_000 },
+      },
+    })
+    expect(nextSdkWindowReset(snapshot, 500_000)).toBe(1_000)
+    const later = activeSdkWindows(snapshot, 1_500_000)
+    expect(later?.primary).toBeNull()
+    expect(later?.secondary).toMatchObject({ usedPercent: 40 })
+    expect(nextSdkWindowReset(snapshot, 1_500_000)).toBe(2_000)
+    expect(activeSdkWindows(snapshot, 2_000_000)).toBeNull()
   })
 
   it('tokenUsage 汇总 token 并把成本标为估算', () => {

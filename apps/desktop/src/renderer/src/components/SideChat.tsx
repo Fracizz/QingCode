@@ -239,7 +239,6 @@ export function SideChat() {
           }}
           onInterrupt={() => void interruptSide()}
           running={running}
-          canSteer={!!view?.activeTurnId}
           sending={sending || side.busy}
           disabled={side.expired || side.busy}
           error={sideError ?? null}

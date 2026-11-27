@@ -296,7 +296,6 @@ export function TargetSectionHeader({
 }) {
   const state = useTargets((s) => s.states[target.id]?.state ?? 'idle')
   const detail = useTargets((s) => s.states[target.id]?.detail)
-  const error = useTargets((s) => s.connectErrors[target.id])
   const current = useTargets((s) => s.selectedId === target.id)
   const openPicker = useUi((s) => s.openDirectoryPicker)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -357,14 +356,17 @@ export function TargetSectionHeader({
           <TargetMenu target={target} actions={actions} inSidebar onOpenChange={setMenuOpen} />
         </span>
       </div>
-      {error && (
-        <ErrorNote
-          message={error}
-          variant="compact"
-          className="mx-1 mb-1 mt-0.5"
-          onRetry={() => actions.onConnect(target.id)}
-        />
-      )}
+      <TargetConnectError targetId={target.id} onRetry={() => actions.onConnect(target.id)} />
     </div>
   )
+}
+
+/** 目标连接失败提示：主机标题下与混排列表里共用。 */
+export function TargetConnectError({ targetId, withName, onRetry }: { targetId: string; withName?: boolean; onRetry: () => void }) {
+  const error = useTargets((s) => s.connectErrors[targetId])
+  const target = useTargets((s) => s.targets.find((item) => item.id === targetId))
+  if (!error) return null
+  // 混排时没有分组标题，错误前缀主机名才知道是哪台机器连不上；先翻译再拼，否则整句匹配不到译文。
+  const message = withName && target ? `${targetDisplayName(target)}: ${translateMessage(error)}` : error
+  return <ErrorNote message={message} variant="compact" className="mx-1 mb-1 mt-0.5" onRetry={onRetry} />
 }

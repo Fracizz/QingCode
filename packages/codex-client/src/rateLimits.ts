@@ -172,6 +172,14 @@ export function isClaudeStatusLine(snapshot: RateLimitSnapshot | null | undefine
   return snapshot?.limitId === 'claude-statusline'
 }
 
+export const CLAUDE_SDK_WINDOWS_LIMIT_ID = 'claude-sdk-windows'
+
+/** 状态栏或 SDK unifiedWindows 提供了 5h/每周窗口时，界面按窗口逐行显示。 */
+export function claudeHasWindows(snapshot: RateLimitSnapshot | null | undefined): boolean {
+  const windowed = isClaudeStatusLine(snapshot) || snapshot?.limitId === CLAUDE_SDK_WINDOWS_LIMIT_ID
+  return windowed && Boolean(snapshot?.primary || snapshot?.secondary)
+}
+
 /** Claude 读取结果与通知都是完整快照，缺失窗口由 daemon 判定。 */
 export function pickClaudeSnapshot(message: unknown): ClaudeRateLimitSnapshot | null {
   const record = asRecord(message)
@@ -202,7 +210,7 @@ export const CLAUDE_WAITING_FOR_QUOTA = t('等待 Claude CLI 上报')
 
 export function claudeQuotaSummary(snapshot: RateLimitSnapshot | null | undefined): string | null {
   if (snapshot?.rateLimitReachedType || snapshot?.spendControlReached) return t('已达额度上限')
-  if (isClaudeStatusLine(snapshot) && (snapshot?.primary || snapshot?.secondary)) return compactText(snapshot, 'remaining')
+  if (claudeHasWindows(snapshot)) return compactText(snapshot, 'remaining')
   const used = snapshot?.primary?.usedPercent
   return used == null ? null : t('上报剩余 {percent}%', { percent: Math.round(remainingQuotaPercent(used)) })
 }

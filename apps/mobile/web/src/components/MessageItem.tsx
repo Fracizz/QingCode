@@ -560,22 +560,27 @@ export function MessageItem({
       return <FileChangeItem item={item} onQuote={onQuote} />
     case 'backgroundTask': {
       const label = backgroundTaskLabel(item.status)
+      // Claude 的后台任务通知可能把整段结果放进摘要：标题最多两行，全文收进展开区，避免一条通知占满屏幕。
+      const longSummary = item.summary.length > 80 || item.summary.includes('\n')
+      const body = item.result || (longSummary ? item.summary : '')
       const header = <>
         <ListChecks size={14} className="shrink-0" aria-hidden />
-        <span className="min-w-0 flex-1 wrap-anywhere">{item.summary ? `${label} · ${item.summary}` : label}</span>
+        <span className={`min-w-0 flex-1 wrap-anywhere line-clamp-2${item.result ? ' group-open:line-clamp-none' : ''}`}>
+          {item.summary ? `${label} · ${item.summary}` : label}
+        </span>
       </>
       const row = 'flex min-h-11 items-center gap-2 px-3 py-1.5 text-qn-muted'
       const surface = 'min-w-0 rounded-xl border border-qn-border bg-qn-card text-xs'
-      if (!item.result) return <div className={`${surface} ${row}`}>{header}</div>
+      if (!body) return <div className={`${surface} ${row}`}>{header}</div>
       return (
-        <LazyDetails className={surface} summary={
+        <LazyDetails className={`group ${surface}`} summary={
           <summary className={`${row} list-none [&::-webkit-details-marker]:hidden`}>
             {header}
-            <ChevronDown size={14} className="shrink-0" aria-hidden />
+            <ChevronDown size={14} className="shrink-0 transition-transform group-open:rotate-180" aria-hidden />
           </summary>
         }>
           <div className="qn-markdown min-w-0 wrap-anywhere border-t border-qn-border px-3 py-2 text-sm">
-            <Markdown text={item.result} streaming={false} />
+            <Markdown text={body} streaming={false} />
           </div>
         </LazyDetails>
       )

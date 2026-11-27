@@ -1,5 +1,5 @@
 import { t, isActiveThread, sessionStatus, sessionStatusLabels, type SessionStatus } from '@qn/codex-client'
-import { memo, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentProps, type ReactNode } from 'react'
+import { memo, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ComponentProps, type ReactNode } from 'react'
 import { ContextMenu } from 'radix-ui'
 import {
   Archive,
@@ -22,6 +22,7 @@ import { agentLabel, DEFAULT_AGENT, sessionKey } from '../../lib/agents'
 import { copyText } from '../../lib/clipboard'
 import { cn } from '../../lib/cn'
 import { formatTime, threadKey, threadPreviewText, type ThreadSummary } from '../../lib/threads'
+import { formatRelative } from '../../lib/time'
 import { useCodex } from '../../store/codex'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { AgentIcon } from '../AgentIcon'
@@ -56,6 +57,31 @@ function ThreadStatusIcon({ status, label }: { status: ThreadRowStatus | 'idle';
       </span>
     </Tip>
   )
+}
+
+// 所有会话行共用一个每分钟触发的时钟，避免每行各开一个定时器。
+let minuteNow = Date.now()
+const minuteListeners = new Set<() => void>()
+let minuteTimer: ReturnType<typeof setInterval> | null = null
+function subscribeMinute(listener: () => void): () => void {
+  minuteListeners.add(listener)
+  if (!minuteTimer) {
+    minuteNow = Date.now()
+    minuteTimer = setInterval(() => {
+      minuteNow = Date.now()
+      for (const notify of minuteListeners) notify()
+    }, 60_000)
+  }
+  return () => {
+    minuteListeners.delete(listener)
+    if (!minuteListeners.size && minuteTimer) {
+      clearInterval(minuteTimer)
+      minuteTimer = null
+    }
+  }
+}
+function useMinuteNow(): number {
+  return useSyncExternalStore(subscribeMinute, () => minuteNow)
 }
 
 function ThreadPreview({ thread, statusLabel }: { thread: ThreadSummary; statusLabel: string }) {
@@ -122,6 +148,7 @@ export const ThreadRow = memo(function ThreadRow({
   const setLocalName = useThreadPrefs((s) => s.setLocalName)
   const forget = useThreadPrefs((s) => s.forget)
 
+  const now = useMinuteNow()
   const pinned = prefs?.pinned[key] !== undefined
   const unread = prefs?.unread[key] === true && !current
   // 会话行只显示状态，正文增量无需重绘这一行。
@@ -250,6 +277,15 @@ export const ThreadRow = memo(function ThreadRow({
                     <Archive size={13} />
                   </IconButton>
                 )}
+              </span>
+            )}
+            {/* 悬停时让位给置顶/归档按钮。 */}
+            {showActions && thread.updatedAt > 0 && (
+              <span
+                className="shrink-0 text-[length:var(--qn-session-detail-font-size)] text-qn-muted group-hover:hidden group-has-focus-visible:hidden"
+                aria-hidden="true"
+              >
+                {formatRelative(thread.updatedAt, now)}
               </span>
             )}
             <AgentIcon agent={thread.agent} size={12} />

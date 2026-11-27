@@ -6,7 +6,7 @@ import {
   claudeQuotaSummary,
   compactText,
   formatReset,
-  isClaudeStatusLine,
+  claudeHasWindows,
   remainingQuotaPercent,
   severity,
   severityForPercent,
@@ -35,7 +35,7 @@ function ClaudeQuotaDetails({ targetId, snapshot, available }: {
   const [readFailed, setReadFailed] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const reset = claudeQuotaResetAt(snapshot)
-  const live = isClaudeStatusLine(snapshot)
+  const live = claudeHasWindows(snapshot)
   const source = claudeQuotaSource(snapshot)
 
   useEffect(() => {

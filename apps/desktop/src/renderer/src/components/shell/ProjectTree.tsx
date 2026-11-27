@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent } from 'react'
-import { ChevronDown, ChevronUp, Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, ShieldCheck, ShieldOff, SquarePen, X } from 'lucide-react'
+import { ChevronDown, ChevronsDownUp, ChevronUp, Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, ShieldCheck, ShieldOff, SquarePen, Unplug, Wifi, X } from 'lucide-react'
 import { t } from '@qn/codex-client'
 import { useShallow } from 'zustand/react/shallow'
 import { copyText } from '../../lib/clipboard'
 import type { Project, Target, TargetState } from '../../../../shared/backendApi'
 import { sessionKey } from '../../lib/agents'
-import { targetDotClass, targetStateLabel } from '../../lib/targetStatus'
+import { isTargetActive, targetDotClass, targetStateLabel } from '../../lib/targetStatus'
 import { applyThreadPrefs } from '../../lib/threadPrefs'
 import { activeFirst, isThreadInProgress, threadKey, type ThreadSummary } from '../../lib/threads'
 import { threadListFor, useCodex } from '../../store/codex'
@@ -13,10 +13,11 @@ import { projectListOf, useProjects, type ProjectPlacement } from '../../store/p
 import { useTargets } from '../../store/targets'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { useUi, type ThreadListReveal } from '../../store/ui'
-import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../primitives'
+import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '../primitives'
 import { StatusDot } from '../StatusDot'
 import { targetDisplayName } from '../targetName'
 import { ErrorNote, IconButton, Spinner } from '../ui'
+import type { TargetActions } from './TargetSwitcher'
 import { ThreadRow } from './ThreadRow'
 
 const THREAD_PREVIEW_LIMIT = 8
@@ -25,14 +26,24 @@ const PROJECT_DRAG_TYPE = 'application/x-qingcode-project'
 
 type ProjectDrop = { id: string; placement: ProjectPlacement }
 type SortProps = Pick<ComponentProps<'button'>, 'onDragStart' | 'onDragEnd' | 'onKeyDown'>
+/** 侧栏散开时没有主机分组标题，主机级操作挂在每个项目行的菜单里。 */
+type HostMenu = {
+  targetId: string
+  targetKind: Target['kind']
+  actions: TargetActions
+  onCollapseTarget: () => void
+}
 
 /**
  * 某个目标下的项目 → 会话两级树（参考 Codex 侧栏）：侧栏里每个铺开的目标各渲染一份。
+ * 分组布局下挂在主机标题下；混排布局（传 mixed）不带标题，多份首尾相接成一个列表，
+ * 此时项目行标注主机名，主机级操作放进项目菜单。
  * 每个展开的项目按自己的 cwd 读会话列表，可同时展开多个。
  */
-export function ProjectTree({ target, onSelectTarget, activeSessionPaths }: {
+export function ProjectTree({ target, onSelectTarget, mixed, activeSessionPaths }: {
   target: Target
   onSelectTarget: (id: string) => void
+  mixed?: { actions: TargetActions; onCollapseTarget: () => void }
   activeSessionPaths?: ReadonlySet<string>
 }) {
   const targetId = target.id
@@ -112,7 +123,7 @@ export function ProjectTree({ target, onSelectTarget, activeSessionPaths }: {
           className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[length:var(--qn-project-detail-font-size)] leading-tight text-qn-muted hover:bg-qn-hover hover:text-qn-text"
           onClick={() => openPicker(targetId)}
         >
-          <FolderPlus size={14} /> {t('添加项目')}
+          <FolderPlus size={14} /> {mixed ? t('在 {name} 添加项目', { name: targetName }) : t('添加项目')}
         </button>
       )}
 
@@ -181,6 +192,7 @@ export function ProjectTree({ target, onSelectTarget, activeSessionPaths }: {
               onOpen={() => onProjectClick(project, expanded)}
               onNewDraft={() => newDraftIn(project)}
               sortProps={sortProps}
+              host={mixed && { targetId, targetKind: target.kind, ...mixed }}
             />
             {expanded && (
               <ThreadList
@@ -211,6 +223,7 @@ function ProjectRow({
   onOpen,
   onNewDraft,
   sortProps,
+  host,
 }: {
   project: Project
   targetName: string
@@ -221,7 +234,11 @@ function ProjectRow({
   onOpen: () => void
   onNewDraft: () => void
   sortProps?: SortProps
+  host?: HostMenu | undefined
 }) {
+  const openPicker = useUi((s) => s.openDirectoryPicker)
+  const collapseAll = useProjects((s) => s.collapseAll)
+  const targetActive = isTargetActive(targetState)
   const pinned = useProjects((s) => s.pinned.includes(project.id))
   const togglePin = useProjects((s) => s.togglePin)
   const rename = useProjects((s) => s.rename)
@@ -288,7 +305,7 @@ function ProjectRow({
     >
       <button
         type="button"
-        className={`group flex min-w-0 flex-1 items-center gap-(--qn-tree-row-inset) self-stretch rounded-md py-px text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover ${sortProps && !active ? 'qn-cursor-drag' : 'cursor-default'}`}
+        className={`group flex min-w-0 flex-1 items-center gap-(--qn-tree-row-inset) self-stretch rounded-md py-px text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover cursor-default`}
         aria-expanded={expanded}
         aria-keyshortcuts={sortProps ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
         draggable={Boolean(sortProps)}
@@ -305,14 +322,14 @@ function ProjectRow({
           </span>
         )}
       </button>
-      <span
+      {host && <span
         className={`max-w-[36%] min-w-0 shrink-0 items-center gap-1.5 text-[length:var(--qn-sidebar-list-detail-font-size)] text-qn-muted group-hover/project:hidden group-has-focus-visible/project:hidden ${menuOpen ? 'hidden' : 'flex'}`}
         title={`${targetName} · ${targetStateLabel[targetState]}`}
       >
         <span className="truncate">{targetName}</span>
         <StatusDot className={targetDotClass[targetState]} />
         <span className="sr-only">{targetStateLabel[targetState]}</span>
-      </span>
+      </span>}
       <span className={`shrink-0 items-center group-hover/project:flex group-has-focus-visible/project:flex ${menuOpen ? 'flex' : 'hidden'}`}>
         <Menu open={menuOpen} onOpenChange={setMenuOpen}>
           <MenuTrigger asChild>
@@ -348,6 +365,29 @@ function ProjectRow({
             <MenuItem icon={<X size={14} />} title={t('不删除磁盘文件')} onSelect={() => void remove(project.id)}>
               {t('移除项目')}
             </MenuItem>
+            {host && <>
+            <MenuSeparator />
+            <MenuLabel className="truncate">{targetName}</MenuLabel>
+            {!targetActive && (
+              <MenuItem icon={<Wifi size={14} />} onSelect={() => host.actions.onConnect(host.targetId)}>
+                {t('连接')}
+              </MenuItem>
+            )}
+            {targetActive && host.targetKind !== 'local' && (
+              <MenuItem icon={<Unplug size={14} />} onSelect={() => host.actions.onDisconnect(host.targetId)}>
+                {t('断开')}
+              </MenuItem>
+            )}
+            <MenuItem icon={<FolderPlus size={14} />} onSelect={() => openPicker(host.targetId)}>
+              {t('添加项目')}
+            </MenuItem>
+            <MenuItem icon={<ChevronsDownUp size={14} />} onSelect={() => collapseAll(host.targetId)}>
+              {t('收起全部会话')}
+            </MenuItem>
+            <MenuItem icon={<ChevronUp size={14} />} onSelect={host.onCollapseTarget}>
+              {t('折叠此主机')}
+            </MenuItem>
+            </>}
           </MenuContent>
         </Menu>
         <IconButton label={t('在此项目新建会话')} className="h-7 w-7" onClick={onNewDraft}>

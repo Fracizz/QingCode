@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { WorkspaceErrorCode } from '@qn/protocol'
 import type { TermBackend, TermBackendPreference, TermErrorCode } from './types'
 import { WorkspaceError } from '../workspace/registry'
+import { fromWindowsSftpPath } from '../workspace/paths'
 
 /** term.write 单次上限（原始字节）。 */
 export const MAX_WRITE_BYTES = 1024 * 1024
@@ -101,7 +102,8 @@ export function parseOpenParams(
   platform: NodeJS.Platform = process.platform,
 ): OpenRequest {
   const termId = p.termId === undefined ? undefined : parseTermId(p.termId, 'term.open')
-  const cwd = p.cwd
+  // 项目根可能是 SFTP 风格 `/D:/code/repo`，Windows 上需转成盘符路径，否则 stat 会失败
+  const cwd = platform === 'win32' && typeof p.cwd === 'string' ? fromWindowsSftpPath(p.cwd) : p.cwd
   const pathApi = platform === 'win32' ? path.win32 : path.posix
   if (typeof cwd !== 'string' || cwd.length === 0 || hasNul(cwd) || !pathApi.isAbsolute(cwd)) {
     throw paramsError('term.open 需要绝对路径 cwd')

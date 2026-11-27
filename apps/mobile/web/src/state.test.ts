@@ -114,9 +114,11 @@ describe('toThreadSummaries / formatTime', () => {
       data: [
         { id: 'old', preview: '第一行\n第二行', cwd: '/a', updatedAt: 1_600_000_000 },
         { id: 'new', preview: 'new', name: '命名会话', cwd: '/b', updatedAt: 1_700_000_000_000 },
+        // 恢复会话会刷新 updatedAt；排序以 recencyAt 为准，不能因为点开过就排到最前。
+        { id: 'opened', preview: 'opened', cwd: '/c', updatedAt: 1_800_000_000, recencyAt: 1_500_000_000 },
       ],
     })
-    expect(summaries.map((item) => item.id)).toEqual(['new', 'old'])
+    expect(summaries.map((item) => item.id)).toEqual(['new', 'old', 'opened'])
     expect(summaries[1]?.title).toBe('第一行')
     expect(formatTime(0)).toBe('—')
     expect(formatTime(1_700_000_000_000)).not.toBe('—')

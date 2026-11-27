@@ -390,11 +390,7 @@ function SendButton({ running, sending, disabled, canSteer, steerHint = t('补�
         }}>
         {sending ? <LoadingIcon size={16} /> : <ArrowUp size={18} strokeWidth={2.25} aria-hidden />}
       </Button>
-      {running && !disabled && (
-        <Button variant="ghost" className="qn-icon-button" aria-label={t('发送方式')} aria-haspopup="dialog" onClick={() => setOpen(true)}>
-          <ChevronDown size={15} aria-hidden />
-        </Button>
-      )}
+      {/* 发送键旁不再放下拉箭头：手机上几乎不用，还挤占输入区；其他发送方式靠长按发送键。 */}
       {open && (
         <Dialog title={t('发送方式')} onClose={() => setOpen(false)}>
           <div className="grid gap-2">

@@ -345,7 +345,8 @@ export function toThreadSummaries(value: unknown, agent: AgentKind = 'codex'): T
       title: cleanThreadText(text(entry.name)) || preview.split('\n')[0]?.trim() || t('未命名会话'),
       preview: preview.length > 160 ? `${preview.slice(0, 160)}…` : preview,
       cwd: text(entry.cwd),
-      updatedAt: toTimestamp(entry.updatedAt ?? entry.recencyAt ?? entry.createdAt),
+      // 排序优先用 recencyAt（Codex 专供排序的时间）：恢复会话也会刷新 updatedAt，点开一下就被顶到最上面。
+      updatedAt: toTimestamp(entry.recencyAt ?? entry.updatedAt ?? entry.createdAt),
       agent,
       ...(activity ? { activity } : {}),
     })

@@ -594,6 +594,35 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
     const limits = await response(h, 'r-limits')
     expect(((limits.result as Json).rateLimits as Json).primary).toMatchObject({ usedPercent: 90 })
 
+    // 新版 CLI 每轮都在 unifiedWindows 里带 5h/7d 利用率，桥按两个窗口转发。
+    const fiveHourReset = Math.floor(Date.now() / 1000) + 3600
+    const sevenDayReset = fiveHourReset + 86_400
+    query?.emit({
+      type: 'rate_limit_event',
+      rate_limit_info: {
+        status: 'allowed',
+        rateLimitType: 'five_hour',
+        resetsAt: fiveHourReset,
+        unifiedWindows: {
+          five_hour: { utilization: 0.15, resetsAt: fiveHourReset, status: 'allowed' },
+          seven_day: { utilization: 0.58, resetsAt: sevenDayReset, status: 'allowed' },
+        },
+      },
+    })
+    await until(() => h.recv.some((entry) =>
+      ((entry.msg.params as Json | undefined)?.rateLimits as Json | undefined)?.limitId === 'claude-sdk-windows'))
+    request(h, 'r-windows', 'account/rateLimits/read', {})
+    expect(await response(h, 'r-windows')).toMatchObject({
+      result: {
+        rateLimits: {
+          limitId: 'claude-sdk-windows',
+          primary: { usedPercent: 15, windowDurationMins: 300, resetsAt: fiveHourReset },
+          secondary: { usedPercent: 58, windowDurationMins: 10080, resetsAt: sevenDayReset },
+          observedAt: expect.any(Number),
+        },
+      },
+    })
+
     const rejectionResetsAt = Math.floor(Date.now() / 1000) + 600
     query?.emit({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: rejectionResetsAt } })
     await until(() => h.recv.some((entry) => {

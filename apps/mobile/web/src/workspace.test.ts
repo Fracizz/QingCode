@@ -240,6 +240,16 @@ describe('最近会话的新结果标记', () => {
     expect(result?.unread).toBeFalsy()
   })
 
+  it('点开会话不改变排序：电脑列表以服务器时间为准，清除未读不抬高时间', async () => {
+    // 旧缓存里的时间曾被「恢复会话刷新 updatedAt」抬高到 9，电脑列表给出的排序时间是 5。
+    const result = await observe(thread(laptop, { updatedAt: 9, unread: true }), () => {
+      const { targetId: _target, projectId: _project, ...summary } = thread(laptop, { updatedAt: 5 })
+      useApp.setState({ selectedTargetId: 'local', selectedProjectId: laptop.id, threads: [summary] })
+      useApp.setState({ page: 'chat', selectedThreadId: 'same-id', selectedAgent: 'codex' })
+    })
+    expect(result).toMatchObject({ updatedAt: 5, unread: false })
+  })
+
   it('运行中的会话在后台结束时标记为有新结果', async () => {
     const running = await observe(thread(laptop, { activity: 'idle', updatedAt: 5 }), () => {
       useApp.setState({ sessions: session({ 'same-id': view('running') }) })

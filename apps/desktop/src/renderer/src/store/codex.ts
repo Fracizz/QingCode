@@ -368,6 +368,22 @@ export const useCodex = create<CodexState>((set, get) => {
     }
     return result
   }
+  /** 记下本地新建的会话，并立即插入已加载的匹配列表；不等 probe + thread/list 往返，侧栏马上可见。 */
+  const rememberLocalThread = (key: string, targetId: string, summary: ThreadSummary) => {
+    localThreads.set(key, { targetId, summary })
+    set((state) => {
+      let changed = false
+      const threadLists = { ...state.threadLists }
+      for (const [id, list] of Object.entries(state.threadLists)) {
+        if (list.targetId !== targetId) continue
+        const merged = withLocalThreads(list.threads, [summary], list.cwd)
+        if (merged === list.threads) continue
+        threadLists[id] = { ...list, threads: merged }
+        changed = true
+      }
+      return changed ? { threadLists } : {}
+    })
+  }
   let openThreadToken = 0
 
   const refreshThreadListsFor = (targetId: string, agent: AgentKind, threadId?: string, cwd?: string) => {
@@ -1555,14 +1571,14 @@ export const useCodex = create<CodexState>((set, get) => {
         addPendingUser(session.key, destinationId, pendingUser)
         const turnId = await startTurn(session, destinationId, input, overrides, pendingUser)
         useThreadPrefs.getState().setRevisionTurn(targetId, threadKey(agent, destinationId), turnId)
-        localThreads.set(pendingSendKey(destination), { targetId, summary: {
+        rememberLocalThread(pendingSendKey(destination), targetId, {
           id: destinationId,
           title: thread.name || thread.preview || pendingUser.text.split('\n')[0]?.trim() || t('未命名会话'),
           preview: thread.preview || pendingUser.text,
           cwd: thread.cwd || cwd || '',
           updatedAt: Date.now(),
           agent,
-        } })
+        })
         if (isCurrent()) {
           set({ currentThreadId: destinationId, error: null })
           useThreadPrefs.getState().setUnread(targetId, threadKey(agent, destinationId), false)
@@ -1721,14 +1737,14 @@ export const useCodex = create<CodexState>((set, get) => {
           chatKey = pendingSendKey(chat)
           // 首轮结束前 thread/list 可能查不到新会话，先用本地摘要占位，侧栏能立即看到。
           if (!options?.sideKey) {
-            localThreads.set(chatKey, { targetId, summary: {
+            rememberLocalThread(chatKey, targetId, {
               id: createdThreadId,
               title: trimmed.split('\n')[0]?.trim() || t('未命名会话'),
               preview: trimmed,
               cwd: created.thread.cwd || context.currentCwd || '',
               updatedAt: Date.now(),
               agent,
-            } })
+            })
           }
           submitting.add(chatKey)
           const current = get()
@@ -1901,6 +1917,17 @@ export const useCodex = create<CodexState>((set, get) => {
         patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }))
         pendingUser = userItemFromInput(globalThis.crypto.randomUUID(), item.input)
         addPendingUser(session.key, threadId, pendingUser)
+        // 侧栏先显示新会话，不等首轮落盘后 thread/list 才列出。
+        if (!sideKey) {
+          rememberLocalThread(pendingSendKey({ ...chat, threadId }), chat.targetId, {
+            id: threadId,
+            title: thread.name || pendingUser.text.split('\n')[0]?.trim() || t('未命名会话'),
+            preview: thread.preview || pendingUser.text,
+            cwd: thread.cwd || cwd || '',
+            updatedAt: Date.now(),
+            agent: chat.agent,
+          })
+        }
         if (sideKey) {
           patchSide(sideKey, { threadId, forked: true, open: true, expired: false, error: null, firstMessage: '' })
         } else if (token === openThreadToken && isMainChat(get(), chat)) {

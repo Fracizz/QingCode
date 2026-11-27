@@ -50,7 +50,13 @@ export function ModelPicker({ targetId, agent, open: controlledOpen, onOpenChang
         aria-label={t('选择模型与推理强度')} aria-haspopup="dialog" aria-expanded={open} title={label}>
         {list?.loading && models.length === 0 && <LoadingIcon size={13} />}
         {selection.fast && <Zap size={13} className="shrink-0 text-qn-warn" aria-hidden />}
-        <span className="truncate">{label}</span>
+        {/* 窄屏只截断模型名，推理强度始终可见，避免截成「Opus 5.5 ·…」。 */}
+        {selection.model ? (
+          <>
+            <span className="truncate">{translateMessage(selection.model.displayName)}</span>
+            {effortLabel(selection.effort) && <span className="shrink-0">· {effortLabel(selection.effort)}</span>}
+          </>
+        ) : <span className="truncate">{label}</span>}
         <ChevronDown size={14} className="shrink-0" aria-hidden />
       </Button>
       {open && (

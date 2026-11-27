@@ -141,12 +141,15 @@ const isThread = (row: unknown): row is WorkspaceThread => {
 
 function mergeThreads(
   desktopId: string, previous: WorkspaceThread[], next: WorkspaceThread[], archived: Record<string, true>,
+  /** 电脑刚返回的会话列表以服务器时间为准，旧缓存里被「点开即刷新」抬高的时间随之纠正。 */
+  serverTime = false,
 ): WorkspaceThread[] {
   const merged = new Map(previous.map((item) => [workspaceThreadKey(item), item]))
   for (const item of next) {
     const key = workspaceThreadKey(item)
     const old = merged.get(key)
-    merged.set(key, { ...old, ...item, activity: item.activity, updatedAt: Math.max(old?.updatedAt ?? 0, item.updatedAt) })
+    const updatedAt = serverTime ? item.updatedAt : Math.max(old?.updatedAt ?? 0, item.updatedAt)
+    merged.set(key, { ...old, ...item, activity: item.activity, updatedAt })
   }
   return visibleWorkspaceThreads([...merged.values()], desktopId, archived)
     .sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_SESSIONS)
@@ -343,9 +346,10 @@ export function startWorkspaceObserver(): () => void {
 
     if (!now.activeId) return
     const { activeId: desktopId, selectedTargetId: targetId, selectedProjectId: projectId } = now
-    const snapshots = targetId && projectId && now.threads !== before.threads
+    const listed = targetId && projectId && now.threads !== before.threads
       ? now.threads.map((thread): WorkspaceThread => ({ ...thread, targetId, projectId, activity: thread.activity }))
       : []
+    const snapshots: WorkspaceThread[] = []
     const desktopThreads = useWorkspace.getState().threads[desktopId] ?? []
     for (const cached of desktopThreads) {
       const key = sessionKey(cached.targetId, cached.agent)
@@ -356,16 +360,19 @@ export function startWorkspaceObserver(): () => void {
       // 首次读入历史时 activity 来自最后一轮的旧结果；只有列表里还在运行的会话，读入时已结束才算新结果。
       const changed = previous ? previous.activity !== activity : cached.activity !== undefined && isActiveThread(cached.activity)
       if (currentChat && cached.unread) {
-        snapshots.push({ ...cached, unread: false })
+        // 只清未读，不动排序时间（0 在合并时取较大值会被忽略）。
+        snapshots.push({ ...cached, unread: false, updatedAt: 0 })
       } else if (!currentChat && changed && isThreadOutcome(activity)) {
         snapshots.push({ ...cached, activity, unread: true, updatedAt: Date.now() })
       }
     }
 
-    if (snapshots.length) {
+    if (listed.length || snapshots.length) {
       const project = now.projects.find((item) => item.targetId === targetId && item.id === projectId)
       useWorkspace.setState((state) => {
-        const threads = { ...state.threads, [desktopId]: mergeThreads(desktopId, desktopThreads, snapshots, now.archivedThreads) }
+        // 先按服务器列表校正时间，再叠加本地的已读 / 新结果标记（新结果仍会把会话提到前面）。
+        const fromServer = mergeThreads(desktopId, desktopThreads, listed, now.archivedThreads, true)
+        const threads = { ...state.threads, [desktopId]: mergeThreads(desktopId, fromServer, snapshots, now.archivedThreads) }
         const list = state.projects[desktopId] ?? defaultProjects
         if (!project || list.items.some((item) => item.id === project.id && item.targetId === project.targetId)) return { threads }
         return { threads, projects: { ...state.projects, [desktopId]: { ...list, items: [...list.items, project] } } }

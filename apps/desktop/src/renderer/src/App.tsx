@@ -89,9 +89,11 @@ export default function App() {
 
   useEffect(() => {
     void load().then(() => {
-      // 本机目标无需凭据，启动即连，省去用户每次手动点一次"连接"。smoke 只验证通道，不拉起 daemon。
+      // 本机目标无需凭据且始终显示在侧栏，启动即连，省去用户每次手动点一次"连接"。smoke 只验证通道，不拉起 daemon。
+      // 不再以"当前选中本机"为前提：restoreLast 的 effect 可能先把选中项切到上次的远程目标，
+      // 这一竞态在更新后首启（加载变慢）时更容易出现，导致本机不再自动连接。
       const state = useTargets.getState()
-      if (!window.qn?.isSmoke && state.selectedId === 'local' && !state.states.local) {
+      if (!window.qn?.isSmoke && !state.states.local) {
         void state.connect('local')
       }
     })

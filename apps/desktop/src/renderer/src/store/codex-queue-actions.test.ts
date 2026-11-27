@@ -96,6 +96,26 @@ describe('排队消息操作', () => {
     expect(useCodex.getState().currentThreadId).toBe('new-thread')
   })
 
+  it('新会话创建后立即出现在已加载的会话列表，不等 thread/list 返回', async () => {
+    const reply = backend.send.getMockImplementation()
+    // thread/list 一直不返回，模拟服务端列表慢或首轮未落盘。
+    backend.send.mockImplementation((agent, request) => {
+      if (request.method !== 'thread/list') reply?.(agent, request)
+    })
+    const old = { id: 'old', title: '旧会话', preview: '', cwd: '/p', updatedAt: 1, agent: 'codex' as const }
+    useCodex.setState({
+      currentThreadId: null, currentCwd: '/p',
+      threadLists: {
+        all: { targetId, cwd: null, threads: [old], loading: false, error: null },
+        other: { targetId, cwd: '/q', threads: [], loading: false, error: null },
+      },
+    })
+    await useCodex.getState().send('第一句\n第二句', { targetId, agent: 'codex' })
+    const lists = useCodex.getState().threadLists
+    expect(lists.all?.threads.map((thread) => [thread.id, thread.title])).toEqual([['new-thread', '第一句'], ['old', '旧会话']])
+    expect(lists.other?.threads).toEqual([])
+  })
+
   it('新对话继续：在侧栏分叉到最后一个已结束的轮次，主会话不切换', async () => {
     await useCodex.getState().send('接着做', chat)
     const id = pending()[0]!.id

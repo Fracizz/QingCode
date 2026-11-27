@@ -585,6 +585,7 @@ export default {
   '当前轮次已结束或切换，请重新发送': 'The turn ended or changed. Send again',
   '请选择已结束的会话轮次': 'Choose a finished turn',
   'Claude CLI 状态栏': 'Claude CLI status line',
+  'Claude SDK 限额窗口': 'Claude SDK rate limit windows',
   'claude.statusline.publish 需要配置目录': 'claude.statusline.publish requires a config directory',
   'Claude 不支持创建会话分支': 'Claude cannot fork sessions',
   '在 Claude 历史中找不到所选轮次': 'The selected turn was not found in Claude history',

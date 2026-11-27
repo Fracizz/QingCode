@@ -302,19 +302,30 @@ export function rateLimitSnapshot(info: unknown = null): Json {
       rateLimitReachedType: null,
     }
   }
-  const utilization = finite(record.utilization)
+  const rejectedType = record.status === 'rejected' ? 'rate_limit_reached' : null
+  // 新版 CLI 每轮都在同一事件的 unifiedWindows 里带上 5h/7d 利用率（SDK 公开类型尚未声明），
+  // 只读取事件自带字段，缺失或格式不符时退回顶层 utilization。
+  const windows = asRecord(record.unifiedWindows)
+  const fiveHour = sdkWindow(windows?.five_hour, 300)
+  const sevenDay = sdkWindow(windows?.seven_day, 10080)
+  if (fiveHour || sevenDay) {
+    return {
+      limitId: CLAUDE_SDK_WINDOWS_LIMIT_ID,
+      limitName: 'Claude SDK 限额窗口',
+      normalModelSlug: null,
+      primary: fiveHour,
+      secondary: sevenDay,
+      credits: null,
+      individualLimit: null,
+      spendControlReached: null,
+      planType: null,
+      rateLimitReachedType: rejectedType,
+    }
+  }
   const type = typeof record.rateLimitType === 'string' ? record.rateLimitType : ''
   const mins = type === 'five_hour' ? 300 : type.startsWith('seven_day') ? 10080 : null
-  const reset = finite(record.resetsAt)
-  // Claude 只在接近/触发限额时上报，缺省窗口不虚构百分比。
-  const primary: Json | null =
-    utilization === null
-      ? null
-      : {
-          usedPercent: Math.max(0, Math.min(100, utilization * 100)),
-          windowDurationMins: mins,
-          resetsAt: reset === null ? null : Math.abs(reset) > 1e11 ? reset / 1000 : reset,
-        }
+  // 旧版只在接近/触发限额时上报顶层 utilization，缺省窗口不虚构百分比。
+  const primary = sdkWindow(record, mins, true)
   return {
     limitId: 'claude',
     limitName: 'Claude（仅接近/触发限额时上报）',
@@ -325,8 +336,44 @@ export function rateLimitSnapshot(info: unknown = null): Json {
     individualLimit: null,
     spendControlReached: null,
     planType: null,
-    rateLimitReachedType: record.status === 'rejected' ? 'rate_limit_reached' : null,
+    rateLimitReachedType: rejectedType,
   }
+}
+
+export const CLAUDE_SDK_WINDOWS_LIMIT_ID = 'claude-sdk-windows'
+
+function windowResetsAt(value: unknown): number | null {
+  return finite(asRecord(value)?.resetsAt)
+}
+
+/** 去掉已过重置时间的窗口；两个窗口都失效时返回 null。 */
+export function activeSdkWindows(snapshot: Json, now = Date.now()): Json | null {
+  const live = (value: unknown) => {
+    const reset = windowResetsAt(value)
+    return reset !== null && reset * 1000 > now ? value : null
+  }
+  const primary = live(snapshot.primary)
+  const secondary = live(snapshot.secondary)
+  return primary || secondary ? { ...snapshot, primary, secondary } : null
+}
+
+/** 下一个窗口重置的时间（秒），用于到点重新推送快照。 */
+export function nextSdkWindowReset(snapshot: Json, now = Date.now()): number | null {
+  const resets = [windowResetsAt(snapshot.primary), windowResetsAt(snapshot.secondary)]
+    .filter((reset): reset is number => reset !== null && reset * 1000 > now)
+  return resets.length ? Math.min(...resets) : null
+}
+
+/** utilization 为 0~1 的比例；resetsAt 兼容秒与毫秒。allowNullReset 仅用于旧版顶层字段。 */
+function sdkWindow(value: unknown, windowDurationMins: number | null, allowNullReset = false): Json | null {
+  const row = asRecord(value)
+  const utilization = finite(row?.utilization)
+  if (utilization === null || utilization < 0) return null
+  const reset = finite(row?.resetsAt)
+  const resetsAt = reset === null || reset <= 0 ? null : Math.abs(reset) > 1e11 ? reset / 1000 : reset
+  if (resetsAt === null && !allowNullReset) return null
+  // 比例换算成百分比时消除浮点误差（0.58 * 100 = 57.99…）
+  return { usedPercent: Math.min(100, Math.round(utilization * 10_000) / 100), windowDurationMins, resetsAt }
 }
 
 /** result.usage 是每次 API 调用的 token 计数；成本按 SDK 的 total_cost_usd 估算值透传。 */

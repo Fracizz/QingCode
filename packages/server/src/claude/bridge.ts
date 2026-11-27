@@ -41,13 +41,16 @@ import { ClaudeStatusLine, statusLineProfile } from './statusLine'
 import { resolveTurnInput, type ContentBlock, type TurnContent } from './userInput'
 import { resolveClaudeExecutable, type ClaudeExecutable } from './resolve'
 import {
+  activeSdkWindows,
   asRecord,
   buildThread,
+  CLAUDE_SDK_WINDOWS_LIMIT_ID,
   buildTurn,
   emptyRateLimitsResponse,
   finite,
   isRecord,
   itemCompleted,
+  nextSdkWindowReset,
   rateLimitSnapshot,
   scalarText,
   userMessageContentItem,
@@ -327,8 +330,12 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     if (rejected && active) {
       return { ...scope.sdkRateLimits, observedAt: scope.sdkObservedAt, rejectionResetsAt: scope.sdkResetsAt }
     }
+    const sdkWindows = scope.sdkRateLimits.limitId === CLAUDE_SDK_WINDOWS_LIMIT_ID
+      ? activeSdkWindows(scope.sdkRateLimits)
+      : null
     const { primary, secondary, observedAt } = scope.statusLine.snapshot()
-    if (primary || secondary) {
+    // 两个来源都是官方 CLI 的读数，取较新的一份。
+    if ((primary || secondary) && (!sdkWindows || (observedAt ?? 0) > (scope.sdkObservedAt ?? 0))) {
       return {
         ...rateLimitSnapshot(),
         limitId: 'claude-statusline',
@@ -338,6 +345,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         observedAt,
       }
     }
+    if (sdkWindows) return { ...sdkWindows, observedAt: scope.sdkObservedAt }
     return active && scope.sdkRateLimits.primary
       ? { ...scope.sdkRateLimits, observedAt: scope.sdkObservedAt }
       : rateLimitSnapshot()
@@ -349,19 +357,32 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   }
 
   private onRateLimitEvent(scope: ClaudeScope, info: unknown): void {
-    clearTimeout(scope.sdkResetTimer)
     const reset = finite(asRecord(info)?.resetsAt)
     scope.sdkRateLimits = rateLimitSnapshot(info)
     scope.sdkObservedAt = Date.now()
     scope.sdkResetsAt = reset === null ? null : Math.abs(reset) > 1e11 ? reset / 1000 : reset
-    if (scope.sdkResetsAt !== null && (scope.sdkRateLimits.rateLimitReachedType || scope.sdkRateLimits.primary)) {
-      const delay = scope.sdkResetsAt * 1000 - Date.now()
-      if (delay > 0 && delay <= 2_147_483_647) {
-        scope.sdkResetTimer = setTimeout(() => this.notifyRateLimits(scope), Math.ceil(delay))
-        scope.sdkResetTimer.unref()
-      }
-    }
+    this.scheduleSdkReset(scope)
     this.notifyRateLimits(scope)
+  }
+
+  /** 到达拒绝或窗口的重置时间时重新推送，让界面移除过期读数。 */
+  private scheduleSdkReset(scope: ClaudeScope): void {
+    clearTimeout(scope.sdkResetTimer)
+    const limits = scope.sdkRateLimits
+    const now = Date.now()
+    const candidates: number[] = []
+    if (limits.limitId === CLAUDE_SDK_WINDOWS_LIMIT_ID) {
+      const next = nextSdkWindowReset(limits, now)
+      if (next !== null) candidates.push(next)
+    }
+    if (scope.sdkResetsAt !== null && (limits.rateLimitReachedType || limits.primary)) candidates.push(scope.sdkResetsAt)
+    const delay = Math.min(...candidates.map((at) => at * 1000 - now).filter((ms) => ms > 0))
+    if (!Number.isFinite(delay) || delay > 2_147_483_647) return
+    scope.sdkResetTimer = setTimeout(() => {
+      this.notifyRateLimits(scope)
+      this.scheduleSdkReset(scope)
+    }, Math.ceil(delay))
+    scope.sdkResetTimer.unref()
   }
 
   private sessionReader(scope: ClaudeScope): ClaudeSessionReader {

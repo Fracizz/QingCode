@@ -100,7 +100,8 @@ export function App() {
 
   return (
     <div className="qn-app">
-      {(page === 'connections' || (workspace && tab === 'connections')) && <div className="qn-glow" data-state={glow} aria-hidden />}
+      {/* 工作台三个标签页都铺顶部氛围光（同 rust 版 .dashboard::before）。 */}
+      {(page === 'connections' || workspace) && <div className="qn-glow" data-state={glow} aria-hidden />}
       {connectionWarning && page !== 'form' && (
         <div className="shrink-0 border-b border-qn-border bg-qn-panel px-3 pt-2" role="status">
           <Note message={connectionWarning} tone="warn" />
