@@ -69,3 +69,53 @@ export function toolSummary(items: readonly ToolItem[]): string {
   if (failed) parts.push(`${failed} 个失败`)
   return parts.join(' · ') || `${items.length} 个步骤`
 }
+
+/** 手机消息流只保留对话本身、文件改动、子代理和上下文压缩提示。 */
+export function isChatVisible(item: ItemView): boolean {
+  if (item.kind === 'reasoning' || item.kind === 'command') return false
+  if (item.kind === 'other') return item.type === 'contextCompaction'
+  return true
+}
+
+/** 根据本轮最新一步推断回复阶段，命令被隐藏后仍让用户知道在忙什么。 */
+export function replyPhase(items: readonly ItemView[], activeIds: readonly string[] | undefined): string {
+  if (!activeIds?.length) return '正在思考'
+  const ids = new Set(activeIds)
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!
+    if (!ids.has(item.id) || item.kind === 'user') continue
+    if (item.kind === 'agent') return item.streaming ? '正在回复' : '正在思考'
+    if (item.kind === 'command') return '正在执行命令'
+    if (item.kind === 'fileChange') return '正在修改文件'
+    if (item.kind === 'reasoning') return '正在思考'
+    return '正在处理'
+  }
+  return '正在思考'
+}
+
+/**
+ * 被隐藏的命令等工具步骤按轮次收拢，挂在该轮最后一条可见消息后面，
+ * 平时只占一行摘要，排查问题时再点开看。activeIds 内的步骤属于进行中的一轮，先不显示。
+ */
+export function hiddenToolTrails(items: readonly ItemView[], activeIds?: readonly string[]): Map<string, ToolItem[]> {
+  const trails = new Map<string, ToolItem[]>()
+  const active = new Set(activeIds ?? [])
+  let anchor: string | undefined
+  let hidden: ToolItem[] = []
+  const flush = () => {
+    if (anchor && hidden.length) trails.set(anchor, hidden)
+    hidden = []
+  }
+  for (const item of items) {
+    if (item.kind === 'user') {
+      flush()
+      anchor = item.id
+    } else if (isChatVisible(item)) {
+      anchor = item.id
+    } else if (isTool(item) && !active.has(item.id)) {
+      hidden.push(item)
+    }
+  }
+  flush()
+  return trails
+}

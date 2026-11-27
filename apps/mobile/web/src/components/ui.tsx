@@ -1,4 +1,4 @@
-import { ChevronLeft, LoaderCircle, X, type LucideProps } from 'lucide-react'
+import { ChevronLeft, LoaderCircle, X, type LucideIcon, type LucideProps } from 'lucide-react'
 import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode, type TouchEvent } from 'react'
 import { agentLabel } from '../agents'
 import type { AgentKind } from '../types'
@@ -122,15 +122,15 @@ export function Note({
 }) {
   const cls = tone === 'error' ? 'qn-note-error' : tone === 'warn' ? 'qn-note-warn' : ''
   return (
-    <div className={`qn-note ${cls} mb-3 flex items-start gap-2`}>
+    <div className={`qn-note ${cls} mb-3 flex items-center gap-2`}>
       <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{message}</span>
       {actionLabel && onAction && (
-        <button type="button" className="qn-button qn-button-ghost px-3 py-1 text-xs" onClick={onAction}>
+        <button type="button" className="qn-note-action" onClick={onAction}>
           {actionLabel}
         </button>
       )}
       {onClose && (
-        <button type="button" className="qn-button qn-button-ghost px-3 py-1 text-xs" aria-label="关闭提示" onClick={onClose}>
+        <button type="button" className="qn-note-close" aria-label="关闭提示" onClick={onClose}>
           <X size={15} />
         </button>
       )}
@@ -151,11 +151,14 @@ export function Dialog({
   children,
   onClose,
   placement = 'bottom',
+  closeAt = placement === 'full' ? 'bottom' : 'top',
 }: {
   title: string
   children: ReactNode
   onClose: () => void
   placement?: 'bottom' | 'side' | 'full'
+  /** 全屏弹层默认把关闭按钮放在底部拇指区；底部已有输入区的（如终端）传 top；内容自己摆放关闭按钮时传 none。 */
+  closeAt?: 'top' | 'bottom' | 'none'
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const close = useRef(onClose)
@@ -204,15 +207,29 @@ export function Dialog({
         if (event.target === event.currentTarget) onClose()
       }}>
       <div className="qn-dialog-panel" {...(placement === 'bottom' ? swipe : {})}>
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-3 flex min-h-11 items-center gap-2">
           <h2 className="qn-title flex-1">{title}</h2>
-          <Button autoFocus variant="ghost" className="qn-header-icon" onClick={onClose} aria-label="关闭">
-            <X size={20} />
-          </Button>
+          {closeAt === 'top' && (
+            <Button autoFocus variant="ghost" className="qn-header-icon" onClick={onClose} aria-label="关闭">
+              <X size={20} />
+            </Button>
+          )}
         </div>
         {children}
+        {closeAt === 'bottom' && <BottomClose autoFocus onClick={onClose} />}
       </div>
     </dialog>
+  )
+}
+
+/** 手机单手操作时手在屏幕下方：全屏页面的关闭按钮放在底部居中。 */
+export function BottomClose({ onClick, autoFocus, label = '关闭' }: { onClick: () => void; autoFocus?: boolean; label?: string }) {
+  return (
+    <div className="qn-bottom-close">
+      <Button autoFocus={autoFocus} className="qn-bottom-close-button" onClick={onClick} aria-label={label}>
+        <X size={22} strokeWidth={1.9} aria-hidden />
+      </Button>
+    </div>
   )
 }
 
@@ -232,4 +249,15 @@ export function Loading({ text = '正在加载…' }: { text?: string }) {
 export function AgentTag({ agent }: { agent: AgentKind }) {
   const cls = agent === 'claude' ? 'qn-agent-tag-claude' : agent === 'pi' ? 'qn-agent-tag-pi' : ''
   return <span className={`qn-agent-tag ${cls}`}>{agentLabel(agent)}</span>
+}
+
+/** 底部弹层里的菜单行：左对齐图标 + 文字，整行可点。 */
+export function SheetAction({ icon: Icon, children, onClick, danger = false, disabled }: {
+  icon: LucideIcon; children: ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean
+}) {
+  return (
+    <button type="button" className={`qn-sheet-action${danger ? ' qn-sheet-action-danger' : ''}`} disabled={disabled} onClick={onClick}>
+      <Icon size={18} strokeWidth={1.75} aria-hidden />{children}
+    </button>
+  )
 }

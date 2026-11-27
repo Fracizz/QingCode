@@ -9,7 +9,8 @@ export function CredentialDialog() {
   const cancel = useApp((s) => s.cancelCredentials)
   const submit = useApp((s) => s.submitCredentials)
   const [password, setPassword] = useState('')
-  const [remember, setRemember] = useState(false)
+  // 默认记住：输入过一次密码后下次直接连，不必再勾选。
+  const [remember, setRemember] = useState(true)
 
   if (!prompt) return null
   return (

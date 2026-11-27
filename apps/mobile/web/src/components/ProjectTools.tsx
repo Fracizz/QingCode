@@ -1,4 +1,4 @@
-import { Ellipsis, FileText, Folder, Terminal } from 'lucide-react'
+import { Ellipsis, FileText, Folder, RotateCw, Terminal } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { callDevice } from '../client'
 import { getWindowNativePort, NativeRequestError } from '../native'
@@ -7,7 +7,7 @@ import { friendlyError } from '../state'
 import { useApp } from '../store'
 import type { Project } from '../types'
 import { formatBytes } from '../viewer'
-import { Button, Dialog, Note } from './ui'
+import { Button, Dialog, Note, SheetAction } from './ui'
 
 const CHUNK_BYTES = 256 * 1024
 const TerminalPanel = lazy(async () => ({ default: (await import('./TerminalPanel')).TerminalPanel }))
@@ -22,27 +22,22 @@ export function ProjectTools({ project, compact = false }: { project: Project; c
           <Folder size={19} strokeWidth={1.75} aria-hidden />
         </Button>
       )}
-      <Button variant="ghost" className={compact ? 'qn-header-icon' : 'px-2'} onClick={() => setTool('menu')}
+      <Button variant="ghost" className="qn-list-action" onClick={() => setTool('menu')}
         aria-label={`${project.name} 的项目工具`} aria-haspopup="dialog" title="项目工具">
         <Ellipsis size={19} strokeWidth={1.75} aria-hidden />
       </Button>
       {tool === 'menu' && (
         <Dialog title={project.name} onClose={() => setTool(null)}>
+          <p className="qn-mono -mt-1 mb-2 break-all text-xs text-qn-muted">{project.path}</p>
           <div className="qn-project-tools-menu">
-            {compact && (
-              <Button variant="ghost" onClick={() => setTool('files')}>
-                <Folder size={19} strokeWidth={1.75} aria-hidden /> 浏览项目文件
-              </Button>
-            )}
-            <Button variant="ghost" onClick={() => setTool('terminal')}>
-              <Terminal size={19} strokeWidth={1.75} aria-hidden /> 打开项目终端
-            </Button>
+            {compact && <SheetAction icon={Folder} onClick={() => setTool('files')}>浏览项目文件</SheetAction>}
+            <SheetAction icon={Terminal} onClick={() => setTool('terminal')}>打开项目终端</SheetAction>
           </div>
         </Dialog>
       )}
       {tool === 'files' && <ProjectFileBrowser key={`${desktopId}:${project.id}`} desktopId={desktopId} project={project} onClose={() => setTool(null)} />}
       {tool === 'terminal' && (
-        <Dialog title={`终端 · ${project.name}`} placement="full" onClose={() => setTool(null)}>
+        <Dialog title={`终端 · ${project.name}`} placement="full" closeAt="top" onClose={() => setTool(null)}>
           <Suspense fallback={<p className="py-4 text-center text-sm text-qn-muted" role="status">正在加载终端…</p>}>
             <TerminalPanel key={`${desktopId}:${project.id}`} project={project} />
           </Suspense>
@@ -50,6 +45,12 @@ export function ProjectTools({ project, compact = false }: { project: Project; c
       )}
     </>
   )
+}
+
+/** 目录在前，组内按名称自然排序；电脑端返回的顺序不保证。 */
+function sortEntries(entries: readonly ProjectFile[]): ProjectFile[] {
+  return [...entries].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'dir' ? -1 : 1)
+    || a.name.localeCompare(b.name, 'zh-CN', { numeric: true, sensitivity: 'base' }))
 }
 
 function ProjectFileBrowser({ project, desktopId, onClose }: {
@@ -169,7 +170,9 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
           <label className="flex min-h-11 items-center gap-1 px-1 whitespace-nowrap">
             <input type="checkbox" checked={hidden} onChange={(event) => setHidden(event.target.checked)} disabled={Boolean(progress)} /> 隐藏文件
           </label>
-          <Button variant="ghost" aria-label="刷新文件" onClick={() => setRefresh(refresh + 1)} disabled={Boolean(progress)}>⟳</Button>
+          <Button variant="ghost" className="qn-list-action" aria-label="刷新文件" onClick={() => setRefresh(refresh + 1)} disabled={Boolean(progress)}>
+            <RotateCw size={17} strokeWidth={1.75} aria-hidden />
+          </Button>
         </div>
         {message && <Note message={message} tone="error" onClose={() => setMessage(null)}
           actionLabel={needsTarget ? '连接目标' : undefined} onAction={needsTarget ? () => requestConnect(project.targetId) : undefined} />}
@@ -201,7 +204,7 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
         {listing?.truncated && <p className="text-xs text-qn-warn">结果较多，请缩小查询范围。</p>}
         {listing && listing.entries.length > 0 && (
           <div className="overflow-hidden rounded-xl border border-qn-border bg-qn-card">
-            {listing.entries.map((entry) => (
+            {(query.trim() ? listing.entries : sortEntries(listing.entries)).map((entry) => (
               <button key={entry.path} className="qn-row border-b border-qn-border px-3 py-2 last:border-0" type="button" disabled={Boolean(progress)}
                 onClick={() => entry.kind === 'dir' ? browse(entry.path) : setSelected(entry)}>
                 <span aria-hidden className={entry.kind === 'dir' ? 'text-qn-accent' : 'text-qn-muted'}>

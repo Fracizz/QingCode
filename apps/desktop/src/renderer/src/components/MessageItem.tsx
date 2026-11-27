@@ -496,7 +496,7 @@ function UserMessage({ item, onEdit }: {
           </div>
         </form>
       ) : parsed.text.trim() && (
-        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-qn-elevated px-4 py-2.5 text-[length:var(--qn-chat-font-size,14px)] leading-[1.7] text-qn-prose">
+        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-white/[0.06] bg-qn-bubble px-4 py-2.5 text-[length:var(--qn-chat-font-size,14px)] leading-[1.7] text-qn-text">
           {parsed.text}
         </div>
       )}

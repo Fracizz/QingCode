@@ -732,3 +732,22 @@ describe('流式光标收尾', () => {
     expect(itemOf(state, 'a1')).toMatchObject({ streaming: false })
   })
 })
+
+describe('进行中轮次的历史加载', () => {
+  it('只有最后一条回复保留流式光标', () => {
+    const turn = {
+      id: 'turn1',
+      status: 'inProgress',
+      items: [
+        { type: 'agentMessage', id: 'a1', text: '先看看路线图' },
+        { type: 'commandExecution', id: 'c1', command: 'ls', status: 'completed', aggregatedOutput: '', exitCode: 0 },
+        { type: 'agentMessage', id: 'a2', text: '我会更新进度表' },
+        { type: 'commandExecution', id: 'c2', command: 'cat', status: 'inProgress', aggregatedOutput: '' },
+      ],
+    }
+    const state = loadThread(emptyState(), { id: 't1', status: { type: 'active' }, turns: [turn] } as unknown as LoadableThread)
+    const agents = state.threads.t1!.items.filter((item) => item.kind === 'agent')
+    expect(agents.map((item) => item.kind === 'agent' && item.streaming)).toEqual([false, false])
+    expect(state.threads.t1!.status).toBe('running')
+  })
+})

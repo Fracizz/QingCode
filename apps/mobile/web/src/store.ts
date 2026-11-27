@@ -138,6 +138,8 @@ const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const STORAGE_CONNECTIONS = 'connections'
+/** 连接失败信息看起来像认证失败（密码错/过期）时，重新弹密码框。 */
+const AUTH_ERROR_RE = /auth|认证|密码|password/i
 const STORAGE_ACTIVE = 'active'
 const STORAGE_MODEL_PREFS = 'modelPrefs'
 const STORAGE_DESKTOP_MODEL_PREFS = 'desktopModelPrefs'
@@ -497,6 +499,9 @@ let viewerToken = 0
 const opening = new Map<string, Promise<boolean>>()
 const rateRefresh = new Map<string, Promise<void>>()
 const OPEN_THREAD_TIMEOUT_MS = 30_000
+/** 打开会话时等待事件流恢复的上限（整体仍受 OPEN_THREAD_TIMEOUT_MS 约束）。 */
+const EVENTS_WAIT_MS = 15_000
+const EVENTS_DOWN_MESSAGE = '电脑事件连接已断开，恢复后请重新打开会话'
 
 export const useApp = create<AppState>((set, get) => {
   let desktopEpoch = 0
@@ -1003,6 +1008,23 @@ export const useApp = create<AppState>((set, get) => {
     if (epoch === desktopEpoch && !get().queuedSends[key]?.[0]?.error) void flushQueue(address)
   }
 
+  /**
+   * 事件流短暂断开（手机切后台回来、网络切换）时先唤醒重连并等待，
+   * 而不是立刻报"事件连接已断开"让用户手动重开会话。
+   */
+  async function waitForEvents(desktopId: string, alive: () => boolean, timeoutMs = EVENTS_WAIT_MS): Promise<void> {
+    if (get().eventsConnected) return
+    controller?.wake(true)
+    const deadline = Date.now() + timeoutMs
+    while (!get().eventsConnected) {
+      if (!alive()) return
+      if (get().needsRepair[desktopId] || get().activeId !== desktopId || Date.now() >= deadline) {
+        throw new Error(EVENTS_DOWN_MESSAGE)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    }
+  }
+
   async function interruptAndWait(session: AgentSession, threadId: string, turnId: string): Promise<void> {
     let unsubscribe = () => {}
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -1417,7 +1439,12 @@ export const useApp = create<AppState>((set, get) => {
               for (const address of pendingQueueAddresses(desktopId)) void flushQueue(address)
             }, () => { if (reconnectTask === task) reconnectTask = null })
           }
-          set({ eventsConnected: true, eventsError: null })
+          set((state) => ({
+            eventsConnected: true,
+            eventsError: null,
+            // 断开提示已过时，恢复后自动收起。
+            ...(state.error?.includes(EVENTS_DOWN_MESSAGE) ? { error: null } : {}),
+          }))
           const conn = activeConnection(get())
           if (conn && pendingRestore) void restoreSavedChat(conn)
         },
@@ -1905,7 +1932,17 @@ export const useApp = create<AppState>((set, get) => {
       const target = get().targets.find((item) => item.id === id)
       if (!target) return
       if (target.kind === 'ssh' && target.auth.kind === 'password') {
-        set({ credential: { targetId: id, name: target.name } })
+        // 电脑上已保存密码时直接连（backend 合并已保存凭据）；认证失败再弹框让用户重输。
+        if (!target.hasSavedSecret) {
+          set({ credential: { targetId: id, name: target.name } })
+          return
+        }
+        void get().connect(id, {}).then(() => {
+          const info = get().targetStates[id]
+          if (info?.state === 'error' && AUTH_ERROR_RE.test(info.detail ?? '')) {
+            set({ credential: { targetId: id, name: target.name } })
+          }
+        })
         return
       }
       void get().connect(id, {})
@@ -1914,10 +1951,13 @@ export const useApp = create<AppState>((set, get) => {
     submitCredentials: async (password, remember) => {
       const prompt = get().credential
       if (!prompt) return
+      const saving = remember && Boolean(password)
       await get().connect(prompt.targetId, {
         ...(password ? { password } : {}),
-        ...(remember ? { remember: true } : {}),
+        ...(saving ? { remember: true } : {}),
       })
+      // 记住成功后刷新目标列表，让"已保存密码"立即生效，下次不再弹框。
+      if (saving && get().targetStates[prompt.targetId]?.state !== 'error') void get().loadTargets()
     },
 
     cancelCredentials: () => set({ credential: null }),
@@ -2464,8 +2504,9 @@ export const useApp = create<AppState>((set, get) => {
         if (!ready || !session) {
           throw new NativeRequestError(session?.openError ?? `${agentLabel(picked)} 未就绪`, session?.openErrorCode)
         }
-        if (!get().eventsConnected) throw new Error('电脑事件连接已断开，恢复后请重新打开会话')
-        const before = session.state.threads[id]
+        await waitForEvents(conn.id, shouldLoad)
+        if (!shouldLoad()) return false
+        const before = get().sessions[key]?.state.threads[id]
         let result: Awaited<ReturnType<typeof openThreadHistory>>
         let resumed = true
         try {
@@ -2473,7 +2514,8 @@ export const useApp = create<AppState>((set, get) => {
         } catch (err) {
           if (!shouldLoad()) return false
           if (isTargetDisconnected(err) || picked !== 'codex' || isOversizeHistoryResponse(err)) throw err
-          if (!get().eventsConnected) throw new Error('电脑事件连接已断开，恢复后请重新打开会话')
+          await waitForEvents(conn.id, shouldLoad)
+          if (!shouldLoad()) return false
           resumed = false
           result = await openThreadHistory(session.rpc, id, 'read', shouldLoad)
         }

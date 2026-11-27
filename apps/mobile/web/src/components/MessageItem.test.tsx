@@ -34,31 +34,49 @@ it('在回复上方显示完成时间，跨午夜后补上本地日期', async (
   }
 })
 
-it('消息图标可直接引用、复制纯文本或 Markdown，自己的消息另有编辑入口', async () => {
+it('消息操作菜单可引用、复制纯文本或 Markdown，自己的消息另有编辑入口', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const writeText = vi.fn().mockResolvedValue(undefined)
   vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const dialogMethods = Object.entries({
+    showModal(this: HTMLDialogElement) { this.open = true },
+    close(this: HTMLDialogElement) { this.open = false },
+  }).map(([name, value]) => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, name)
+    Object.defineProperty(HTMLDialogElement.prototype, name, { value, configurable: true })
+    return { name, descriptor }
+  })
   const host = document.createElement('div')
   const root = createRoot(host)
   const onQuote = vi.fn()
   const text = '**原文**'
   const buttons = () => [...host.querySelectorAll('button')]
-  const labels = () => buttons().map(button => button.ariaLabel)
+  const toolbar = () => host.querySelector<HTMLButtonElement>('button[aria-label="消息操作"]')!
+  const action = (label: string) => buttons().find((button) => button.textContent === label)!
   try {
     await act(() => root.render(<MessageItem item={{ kind: 'agent', id: 'reply', text, streaming: false }} onQuote={onQuote} />))
-    expect(labels()).toEqual(['复制纯文本', '引用到对话', '复制 Markdown'])
+    expect(buttons()).toEqual([toolbar()])
     Object.defineProperty(host.querySelector('.qn-markdown')!, 'innerText', { value: '原文' })
-    await act(async () => buttons()[0]!.click())
+    await act(() => toolbar().click())
+    await act(async () => action('复制纯文本').click())
     expect(writeText).toHaveBeenLastCalledWith('原文')
-    await act(() => buttons()[1]!.click())
-    expect(onQuote).toHaveBeenCalledWith(text)
-    await act(async () => buttons()[2]!.click())
+    await act(async () => action('复制 Markdown 源文').click())
     expect(writeText).toHaveBeenLastCalledWith(text)
     expect(host.querySelector('[role="status"]')?.textContent).toBe('已复制')
+    await act(() => action('引用到对话').click())
+    expect(onQuote).toHaveBeenCalledWith(text)
     await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'own', text }} onQuote={onQuote} onResend={vi.fn()} />))
-    expect(labels()).toEqual(['编辑并重发', '引用到对话', '复制文本'])
+    expect(buttons()).toHaveLength(0)
+    await act(() => {
+      host.querySelector('.qn-user-bubble')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    })
+    expect(buttons().map((button) => button.textContent)).toEqual(expect.arrayContaining(['编辑并重发', '引用到对话', '复制文本']))
   } finally {
     await act(() => root.unmount())
+    for (const { name, descriptor } of dialogMethods) {
+      if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, name, descriptor)
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, name)
+    }
     vi.unstubAllGlobals()
   }
 })
@@ -127,7 +145,7 @@ it('展开文件改动后可预览并打开完整差异', async () => {
     expect(host.querySelector('pre')).toBeNull()
     await toggle(summary)
     expect(host.querySelector('pre')?.textContent).toContain('+新内容')
-    const button = [...host.querySelectorAll('button')].find((item) => item.textContent === '查看差异')!
+    const button = host.querySelector<HTMLButtonElement>('button[aria-label="查看 test.txt 的差异"]')!
     await act(() => button.click())
     expect(openDiff).toHaveBeenCalledWith('/project/test.txt', diff)
     await toggle(summary)

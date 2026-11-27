@@ -58,7 +58,7 @@ function ProjectChoices({ projects, onPick }: { projects: readonly Project[]; on
         {shown.map((project) => (
           <button key={project.id} type="button" className="qn-row qn-list-row w-full text-left" onClick={() => onPick(project)}>
             <span className="qn-row-copy">
-              <span className="qn-list-primary truncate">{project.name}</span>
+              <span className="qn-list-primary qn-clamp-2">{project.name}</span>
               <span className="qn-subtitle block">{[targets.find((target) => target.id === project.targetId)?.name, project.path].filter(Boolean).join(' · ')}</span>
             </span>
             <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />

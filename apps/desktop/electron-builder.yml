@@ -1,5 +1,9 @@
 appId: com.qingcode.next
 productName: QingCode Next
+# 主程序沿用旧版的 qingcode.exe：安全软件/防火墙按进程名放行过的规则继续有效。
+# appId、产品名不变，安装目录、卸载项和数据目录仍与旧版（%LOCALAPPDATA%\QingCode）分开，安装不会覆盖旧版；
+# 安装器按安装目录路径结束运行中的进程，不会误关旧版的 qingcode.exe。
+executableName: qingcode
 extends: 'file:./build/package-config.mjs'
 # 直接用已解压的 Electron（经 10.87 中转），避免打包时再下载
 electronDist: node_modules/electron/dist

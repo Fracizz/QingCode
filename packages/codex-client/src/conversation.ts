@@ -682,7 +682,8 @@ function mergeTurnItems(thread: ThreadView, turn: unknown, streaming: boolean, p
   const startedAt = optionalNumber(record.startedAt)
   for (let index = 0; index < rawItems.length; index++) {
     const timestamp = index === 0 && startedAt ? startedAt * 1000 : undefined
-    const candidate = itemViewFromRaw(rawItems[index], index, streaming, timestamp)
+    // 进行中的轮次只有最后一条可能还在输出，前面的条目都已完成。
+    const candidate = itemViewFromRaw(rawItems[index], index, streaming && index === rawItems.length - 1, timestamp)
     ids.push(candidate.id)
     items = replaceItem(items, candidate.id, () => candidate, (existing) => mergeItemView(existing, candidate))
   }
@@ -770,7 +771,8 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   const appendItems = (rawItems: unknown[], streaming: boolean, startedAt?: number | null) =>
     rawItems.map((rawItem, index) => {
       const timestamp = index === 0 && startedAt ? startedAt * 1000 : undefined
-      const candidate = itemViewFromRaw(rawItem, index, streaming, timestamp)
+      // 历史里进行中的轮次只有最后一条可能还在输出，否则已完成的回复会一直挂着流式光标。
+      const candidate = itemViewFromRaw(rawItem, index, streaming && index === rawItems.length - 1, timestamp)
       if (candidate.kind === 'agent' && candidate.completedAtMs === undefined) {
         const recorded = replyTimes.get(candidate.id)
         if (recorded !== undefined) {

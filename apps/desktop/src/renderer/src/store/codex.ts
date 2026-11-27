@@ -212,6 +212,9 @@ type CodexState = {
   clearNotice: () => void
 }
 
+// 旧版 server 会丢弃超长回包，请求永远等不到响应；超时后释放“打开中”并允许重试。
+const OPEN_THREAD_TIMEOUT_MS = 30_000
+
 let subscribed = false
 let offEvents: Array<() => void> = []
 
@@ -992,7 +995,9 @@ export const useCodex = create<CodexState>((set, get) => {
       const key = sessionKey(targetId, picked)
       clearAllDrafts()
       set({ openingThread: chat, error: null })
-      try {
+      const timeout = new Error('打开会话超时，请检查目标连接后重试')
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const load = async (): Promise<void> => {
         const ready = await ensureOpen(targetId, picked)
         if (!isCurrent()) return
         const session = get().sessions[key]
@@ -1033,9 +1038,20 @@ export const useCodex = create<CodexState>((set, get) => {
         } else {
           void flushPending(chat)
         }
+      }
+      try {
+        const deadline = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(timeout), OPEN_THREAD_TIMEOUT_MS)
+        })
+        await Promise.race([load(), deadline])
       } catch (err) {
-        if (isCurrent()) set({ error: friendlyError(err, '打开会话失败') })
+        if (isCurrent()) {
+          set({ error: err === timeout ? timeout.message : friendlyError(err, '打开会话失败'), openingThread: null })
+          // 迟到的回包不能再切换到这条会话。
+          if (err === timeout) ++openThreadToken
+        }
       } finally {
+        clearTimeout(timer)
         if (isCurrent()) set({ openingThread: null })
       }
     },

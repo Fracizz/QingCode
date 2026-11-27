@@ -162,3 +162,84 @@ describe('displayPath', () => {
     expect(displayPath('/home/code/QingCode')).toBe('/home/code/QingCode')
   })
 })
+
+describe('最近会话的新结果标记', () => {
+  const conn: Connection = {
+    id: 'desktop-unread', name: '电脑', host: '192.168.1.2', port: 38500,
+    fp: MOCK_FP, token: 'mock-token', desktopName: '电脑', createdAt: 0,
+  }
+  const session = (threads: Record<string, unknown>) =>
+    ({ 'codex:local': { state: { threads } } }) as unknown as ReturnType<typeof useApp.getState>['sessions']
+  const view = (activity: string) => ({ id: 'same-id', status: 'idle', activeTurnId: null, items: [], pendingApprovals: [], activity })
+
+  async function observe(cached: WorkspaceThread, run: () => void): Promise<WorkspaceThread | undefined> {
+    const gateway = createGateway()
+    const app = useApp.getState()
+    const workspace = useWorkspace.getState()
+    setGateway(gateway)
+    useApp.setState({
+      connections: [conn], activeId: conn.id, page: 'workspace', sessions: session({}),
+      selectedTargetId: null, selectedProjectId: null, selectedThreadId: null, threads: [], archivedThreads: {},
+    })
+    useWorkspace.setState({ threads: { [conn.id]: [cached] }, projects: {} })
+    const stop = startWorkspaceObserver()
+    try {
+      run()
+      return useWorkspace.getState().threads[conn.id]?.[0]
+    } finally {
+      stop()
+      useApp.setState(app)
+      useWorkspace.setState(workspace)
+      setGateway(null)
+    }
+  }
+
+  it('首次读入的历史会话不算新结果，也不改动更新时间', async () => {
+    const result = await observe(thread(laptop, { activity: 'idle', updatedAt: 5 }), () => {
+      // 打开会话时先写入历史，再切到对话页；中间这一步不能被当成"刚完成"。
+      useApp.setState({ sessions: session({ 'same-id': view('completed') }) })
+      useApp.setState({ page: 'chat', selectedTargetId: 'local', selectedThreadId: 'same-id', selectedAgent: 'codex' })
+    })
+    expect(result).toMatchObject({ updatedAt: 5 })
+    expect(result?.unread).toBeFalsy()
+  })
+
+  it('运行中的会话在后台结束时标记为有新结果', async () => {
+    const running = await observe(thread(laptop, { activity: 'idle', updatedAt: 5 }), () => {
+      useApp.setState({ sessions: session({ 'same-id': view('running') }) })
+      useApp.setState({ sessions: session({ 'same-id': view('completed') }) })
+    })
+    expect(running).toMatchObject({ unread: true, activity: 'completed' })
+    // 列表里还是运行中、读入时已经结束，同样是用户还没看过的结果。
+    const listed = await observe(thread(laptop, { activity: 'running', updatedAt: 5 }), () => {
+      useApp.setState({ sessions: session({ 'same-id': view('failed') }) })
+    })
+    expect(listed).toMatchObject({ unread: true, activity: 'failed' })
+  })
+})
+
+it('重新配对换了证书指纹后丢弃该电脑的会话缓存，只改地址时保留', async () => {
+  const gateway = createGateway()
+  const app = useApp.getState()
+  const workspace = useWorkspace.getState()
+  const conn: Connection = {
+    id: 'desktop-repair', name: '电脑', host: '192.168.1.2', port: 38500,
+    fp: MOCK_FP, token: 'mock-token', desktopName: '电脑', createdAt: 0,
+  }
+  setGateway(gateway)
+  useApp.setState({ connections: [conn], activeId: null })
+  useWorkspace.setState({ threads: { [conn.id]: [thread(laptop)] }, projects: { [conn.id]: { items: [laptop], loading: false, error: false, loaded: true } } })
+  const stop = startWorkspaceObserver()
+  try {
+    useApp.setState({ connections: [{ ...conn, host: 'frp.example.com' }] })
+    expect(useWorkspace.getState().threads[conn.id]).toHaveLength(1)
+    useApp.setState({ connections: [{ ...conn, fp: 'ef'.repeat(32), token: 'new-token' }] })
+    expect(useWorkspace.getState().threads[conn.id]).toBeUndefined()
+    expect(useWorkspace.getState().projects[conn.id]).toBeUndefined()
+  } finally {
+    stop()
+    useApp.setState(app)
+    useWorkspace.setState(workspace)
+    setGateway(null)
+  }
+})

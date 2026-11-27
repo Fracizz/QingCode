@@ -1,12 +1,12 @@
 import { ArrowDown, ChevronDown, MessageCircleMore, PanelLeft, Square } from 'lucide-react'
 import { collectSubagents, sessionStatus, sessionStatusLabels, supportsSubagentRequests, type ItemView, type UserInput } from '@qn/codex-client'
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { bindChatPinch } from '../chatFont'
 import { nearBottom } from '../composerLogic'
 import { EMPTY_PREFS, resolveSelection } from '../models'
 import { currentCwd, displayedAccessMode, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
-import { groupChatItems, streamingReplyId } from '../chatGroups'
+import { groupChatItems, hiddenToolTrails, isChatVisible, replyPhase, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { ApprovalCard } from './ApprovalCard'
 import { AccessModePicker } from './AccessModePicker'
@@ -104,22 +104,38 @@ export function ChatPage() {
   const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
   const streamingId = streamingReplyId(view)
-  const progress = running && approvals.length === 0
-    ? view.activity === 'input' ? '等待输入…'
-      : view.activity === 'pending' ? '等待审批…' : `${agentLabel(selectedAgent)} 正在处理…`
-    : null
   const interrupted = !running && view?.activity === 'interrupted'
   const turnError = !running && !interrupted ? view?.error : undefined
   const currentStop = running && stopRequest?.chatKey === chatKey && stopRequest.turnId === view.activeTurnId ? stopRequest : null
   const stopping = currentStop !== null && currentStop.error === null
   const stopError = currentStop?.error
   const activeItemIds = running ? view.turns?.find((turn) => turn.id === view.activeTurnId)?.itemIds : undefined
+  const progress = running && approvals.length === 0
+    ? view.activity === 'input' ? '等待输入…'
+      : view.activity === 'pending' ? '等待审批…'
+        : `${agentLabel(selectedAgent)} ${replyPhase(items, activeItemIds)}…`
+    : null
   const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
     item.type === 'contextCompaction' && item.status === 'inProgress' && activeItemIds?.includes(item.id))
-  const shownItems = useMemo(
-    () => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'reasoning' && item.kind !== 'subagent'),
-    [items, view?.error, running],
-  )
+  const echoFree = useMemo(() => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'subagent'), [items, view?.error, running])
+  // 手机屏幕有限：推理摘要、命令和其它工具步骤都不进消息流，进度只在底部回复状态里体现。
+  const shownItems = useMemo(() => echoFree.filter(isChatVisible), [echoFree])
+  // 隐藏的命令每轮收成一行可展开的摘要，出错时还能查到跑了什么。
+  const trails = useMemo(() => hiddenToolTrails(echoFree, activeItemIds), [echoFree, activeItemIds])
+  // 每轮只有最后一条回复常驻操作入口：从后往前，遇到用户消息重置。
+  const finalReplies = useMemo(() => {
+    const ids = new Set<string>()
+    let seen = false
+    for (let index = shownItems.length - 1; index >= 0; index -= 1) {
+      const item = shownItems[index]!
+      if (item.kind === 'user') seen = false
+      else if (item.kind === 'agent' && !seen) {
+        ids.add(item.id)
+        seen = true
+      }
+    }
+    return ids
+  }, [shownItems])
   // index 记的是块里第一条在 shownItems 中的位置，用来判断是不是打开后新到的。
   const blocks = useMemo(() => {
     let index = 0
@@ -129,6 +145,8 @@ export function ChatPage() {
       return entry
     })
   }, [shownItems])
+  const trailOf = (block: (typeof blocks)[number]['block']) =>
+    trails.get(block.kind === 'item' ? block.item.id : block.items.at(-1)!.id)
   const defaultStart = Math.max(0, blocks.length - HISTORY_BATCH_SIZE)
   const firstVisible = historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart
   const historyLoading = historyLoad?.key === chatKey && historyLoad.error === undefined
@@ -146,6 +164,13 @@ export function ChatPage() {
   // 冷启动恢复会话时列表可能还没加载，先用首条用户消息顶上，避免标题只剩项目名。
   const firstUser = items.find((item) => item.kind === 'user')
   const thread = threads.find((item) => item.id === selectedThreadId && item.agent === selectedAgent)
+  // 冷启动直接恢复到对话页时会话列表为空：补拉一次，让标题换成真正的会话名。
+  const titleFetched = useRef('')
+  useEffect(() => {
+    if (!selectedThreadId || thread || !eventsConnected || titleFetched.current === chatKey) return
+    titleFetched.current = chatKey
+    void useApp.getState().refreshThreads({ skipFailed: true })
+  }, [chatKey, eventsConnected, selectedThreadId, thread])
   const threadTitle = thread?.title
     || (firstUser?.kind === 'user' ? firstUser.text.replace(/\s+/g, ' ').trim().slice(0, 60) : '')
   const statusLabel = selectedThreadId ? sessionStatusLabels[sessionStatus(view, thread?.activity)] : null
@@ -249,7 +274,14 @@ export function ChatPage() {
       <Header
         title={threadTitle || project?.name || '对话'}
         icon={<MessageCircleMore size={16} strokeWidth={1.75} className="shrink-0 text-qn-muted" aria-hidden />}
-        subtitle={[statusLabel, project?.name, agentLabel(selectedAgent)].filter(Boolean).join(' · ')}
+        subtitle={
+          // 项目名可能很长：只让项目名截断，状态与 Agent 始终可见。
+          <span className="flex min-w-0 items-center gap-1">
+            {statusLabel && <span className="shrink-0">{statusLabel} ·</span>}
+            {project?.name && <span className="min-w-0 truncate">{project.name}</span>}
+            <span className="shrink-0">{project?.name ? '· ' : ''}{agentLabel(selectedAgent)}</span>
+          </span>
+        }
         onBack={goBack}
         right={
           <>
@@ -306,13 +338,15 @@ export function ChatPage() {
                       ? <MessageItem item={block.item} onQuote={(text) => setQuote({ key: chatKey, text })} agentName={agentLabel(selectedAgent)}
                         active={activeItemIds?.includes(block.item.id)}
                         showStreamingDots={block.item.id === streamingId}
+                        showActions={finalReplies.has(block.item.id)}
                         onResend={selectedThreadId ? resend : undefined} />
                       : <ToolGroup items={block.items} onQuote={(text) => setQuote({ key: chatKey, text })} />}
+                    {trailOf(block) && <ToolGroup trail items={trailOf(block)!} onQuote={(text) => setQuote({ key: chatKey, text })} />}
                   </div>
                 ))}
               </FileActionsContext.Provider>
               {progress && (
-                <div className="qn-thinking" role="status"><LoadingIcon aria-hidden />{progress}</div>
+                <div className="qn-thinking qn-replying" role="status"><LoadingIcon aria-hidden />{progress}</div>
               )}
               {interrupted && <div className="qn-turn-interrupted" role="status"><Square size={13} aria-hidden />本轮已中断</div>}
               {turnError && <TurnErrorCard message={turnError} />}
@@ -336,7 +370,9 @@ export function ChatPage() {
             </Button>
           )}
           {!atBottom && (
-            <Button className="absolute right-3 bottom-3 bg-qn-panel shadow-lg" onClick={jumpToLatest}>回到最新 <ArrowDown size={15} aria-hidden /></Button>
+            <button type="button" className="qn-jump-latest" onClick={jumpToLatest} aria-label="回到最新">
+              <ArrowDown size={18} aria-hidden />{running && <span className="qn-jump-live" aria-hidden />}
+            </button>
           )}
         </div>
         {(error || notice || stopError) && (

@@ -1,8 +1,9 @@
+import { FolderOpen, PlugZap, Unplug } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { formatAddress } from '../link'
 import { useApp } from '../store'
 import type { TargetState } from '../types'
-import { Badge, Button, Dialog, Empty, Header, Loading, Note, StatusDot } from './ui'
+import { Badge, Button, Dialog, Empty, Header, Loading, Note, SheetAction, StatusDot } from './ui'
 import { TargetRateLimits } from './RateLimitView'
 import { WorkspaceIcon } from './WorkspaceHome'
 
@@ -67,7 +68,8 @@ export function TargetsPage() {
                 <div key={target.id} className="qn-list-row qn-row flex-wrap gap-y-1">
                   <button className="qn-row-trigger" type="button" disabled={busy || Boolean(repair)}
                     onClick={() => canOpen ? void selectTarget(target.id) : requestConnect(target.id)}>
-                    <StatusDot tone={stateTone(state)} />
+                    {/* 本机目标随电脑在线即可用，未单独连接时也不显示成灰色离线。 */}
+                    <StatusDot tone={target.kind === 'local' && state === 'idle' && eventsConnected ? 'ok' : stateTone(state)} />
                     <span className="qn-row-copy">
                       <span className="qn-list-primary">{target.name}</span>
                       {target.kind === 'ssh' && <span className="qn-subtitle block">{formatAddress(target.host, target.port)}</span>}
@@ -87,12 +89,12 @@ export function TargetsPage() {
       {selected && (
         <Dialog title={selected.name} onClose={() => setMenu(null)}>
           {selected.kind === 'ssh' && <p className="mb-2 text-xs text-qn-muted">{selected.username}@{formatAddress(selected.host, selected.port)}</p>}
-          <div className="grid gap-2">
-            <Button onClick={() => { setMenu(null); void selectTarget(selected.id) }}>查看项目</Button>
+          <div className="grid">
+            <SheetAction icon={FolderOpen} onClick={() => { setMenu(null); void selectTarget(selected.id) }}>查看项目</SheetAction>
             {states[selected.id]?.state === 'ready' ? (
-              <Button onClick={() => { setMenu(null); void disconnectTarget(selected.id) }}>断开目标</Button>
+              <SheetAction icon={Unplug} onClick={() => { setMenu(null); void disconnectTarget(selected.id) }}>断开目标</SheetAction>
             ) : (
-              <Button onClick={() => { setMenu(null); requestConnect(selected.id) }} disabled={connectingId === selected.id}>连接</Button>
+              <SheetAction icon={PlugZap} onClick={() => { setMenu(null); requestConnect(selected.id) }} disabled={connectingId === selected.id}>连接</SheetAction>
             )}
           </div>
         </Dialog>

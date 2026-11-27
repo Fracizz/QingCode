@@ -110,7 +110,7 @@ export function classifyDiffLine(line: string): DiffKind {
   return 'context'
 }
 
-const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/
+const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
 
 /** 统一 diff → 着色行，并按 hunk 头推算新旧行号。 */
 export function diffRows(text: string, maxRows = MAX_DIFF_ROWS): { rows: DiffRow[]; truncated: boolean } {
@@ -122,15 +122,27 @@ export function diffRows(text: string, maxRows = MAX_DIFF_ROWS): { rows: DiffRow
   let oldNo = 0
   let newNo = 0
   let inHunk = false
+  // hunk 头声明的剩余行数：未用完时 "----"（删掉的 Markdown 分隔线）、"+++i;" 这类行是内容，不是文件头。
+  let oldLeft = 0
+  let newLeft = 0
   for (const line of lines.slice(0, maxRows)) {
-    const kind = classifyDiffLine(line)
+    const inBody = inHunk && (oldLeft > 0 || newLeft > 0)
+    const kind: DiffKind = inBody && line.startsWith('-') ? 'remove'
+      : inBody && line.startsWith('+') ? 'add'
+        : classifyDiffLine(line)
     if (kind === 'hunk') {
       const match = HUNK.exec(line)
       oldNo = match ? Number(match[1]) : 0
-      newNo = match ? Number(match[2]) : 0
+      newNo = match ? Number(match[3]) : 0
+      oldLeft = match ? Number(match[2] ?? 1) : 0
+      newLeft = match ? Number(match[4] ?? 1) : 0
       inHunk = match !== null
       rows.push({ kind, text: line })
       continue
+    }
+    if (inHunk && kind !== 'meta') {
+      if (kind !== 'add') oldLeft -= 1
+      if (kind !== 'remove') newLeft -= 1
     }
     if (kind === 'meta' || !inHunk) {
       // hunk 之外的 +++/--- 等都是文件头；内容行只在 hunk 内计数。

@@ -57,6 +57,8 @@ const MOCK_TARGETS: Target[] = [
   },
 ]
 
+const LONG_PROJECT_PATH = String.raw`D:\workspace\clients\hospital-group\enterprise-medical-information-system-frontend-monorepo-v2`
+
 const MOCK_PROJECTS: Project[] = [
   {
     id: 'p-local',
@@ -66,6 +68,14 @@ const MOCK_PROJECTS: Project[] = [
     lastOpenedAt: Date.now(),
   },
   { id: 'p-93', targetId: 'ssh-93', name: 'srv', path: '/root/srv', lastOpenedAt: Date.now() - 86_400_000 },
+  // 超长名称与路径：用来检查列表、标题栏在窄屏上的截断。
+  {
+    id: 'p-long',
+    targetId: 'local',
+    name: 'enterprise-medical-information-system-frontend-monorepo-v2',
+    path: LONG_PROJECT_PATH,
+    lastOpenedAt: Date.now() - 3_600_000,
+  },
 ]
 
 type Stream = { id: string; heartbeat: ReturnType<typeof setInterval> | null }
@@ -245,6 +255,25 @@ function mockProjectFiles(method: string, params: JsonRecord): JsonRecord {
   return { entries: matches.slice(0, limit), truncated: matches.length > limit }
 }
 
+/** 浏览器预览里"选图"直接给一张横版示例图，便于检查附件缩略图与大图预览。 */
+function mockPickedImage(): { name: string; mime: string; dataUrl: string } {
+  const canvas = document.createElement('canvas')
+  canvas.width = 640
+  canvas.height = 400
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    const gradient = ctx.createLinearGradient(0, 0, 640, 400)
+    gradient.addColorStop(0, '#1f6f63')
+    gradient.addColorStop(1, '#2c2c2c')
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, 640, 400)
+    ctx.fillStyle = '#e6e6e6'
+    ctx.font = '40px sans-serif'
+    ctx.fillText('示例图片', 40, 80)
+  }
+  return { name: '示例图片.png', mime: 'image/png', dataUrl: canvas.toDataURL('image/png') }
+}
+
 export class MockNativePort implements NativePort {
   private readonly streams = new Map<string, Stream>()
   private readonly memory = new Map<string, string>()
@@ -261,6 +290,13 @@ export class MockNativePort implements NativePort {
           name: '示例会话',
           cwd: 'D:\\code\\qingcode-next',
           updatedAt: Math.floor(Date.now() / SECOND),
+        },
+        {
+          id: 't-long',
+          preview: '请把门诊挂号、收费、药房发药三个模块的接口统一改成新的鉴权中间件，并补齐所有单元测试和集成测试用例',
+          name: '',
+          cwd: LONG_PROJECT_PATH,
+          updatedAt: Math.floor(Date.now() / SECOND) - 7200,
         },
       ],
     ],
@@ -339,6 +375,8 @@ export class MockNativePort implements NativePort {
       }
       case 'clipboard.read':
         return MOCK_SAMPLE_TEXT
+      case 'images.pick':
+        return { images: [mockPickedImage()], skipped: 0 }
       case 'storage.get':
         return this.readStorage(str(params.key))
       case 'storage.set': {
@@ -761,17 +799,42 @@ export class MockNativePort implements NativePort {
 
     recv({ id, result: { turn: { id: turnId, status: 'inProgress', items: [] } } })
     recv({ method: 'turn/started', params: { threadId, turnId, turn } })
-    turn.items.push(change, reply)
-    recv({ method: 'item/completed', params: { threadId, turnId, itemId: changeId, item: change } })
-    recv({ method: 'item/started', params: { threadId, turnId, itemId, item: reply } })
+    // 消息含"慢"时先跑一条命令再放慢流式输出，便于在浏览器里看运行中的界面。
+    const slow = /慢|slow/i.test(userText)
+    const step = slow ? 900 : 35
     let delay = 60
+    const startReply = () => {
+      if (turn.status !== 'inProgress') return
+      turn.items.push(change, reply)
+      recv({ method: 'item/completed', params: { threadId, turnId, itemId: changeId, item: change } })
+      recv({ method: 'item/started', params: { threadId, turnId, itemId, item: reply } })
+    }
+    if (slow) {
+      const commandId = `cmd-${this.counter}`
+      const command = { type: 'commandExecution', id: commandId, command: 'pnpm test', cwd: '', status: 'inProgress', aggregatedOutput: '' }
+      turn.items.push(command)
+      recv({ method: 'item/started', params: { threadId, turnId, itemId: commandId, item: command } })
+      setTimeout(() => {
+        if (turn.status !== 'inProgress') return
+        // 消息再含"失败"时让命令以非零退出，用来看失败摘要的样式。
+        const failed = /失败|fail/i.test(userText)
+        Object.assign(command, failed
+          ? { status: 'failed', exitCode: 1, aggregatedOutput: 'FAIL store.test.ts\n  expected 1 to be 2' }
+          : { status: 'completed', exitCode: 0, aggregatedOutput: 'ok' })
+        recv({ method: 'item/completed', params: { threadId, turnId, itemId: commandId, item: command } })
+        startReply()
+      }, 2500)
+      delay += 2600
+    } else {
+      startReply()
+    }
     for (const chunk of chunks) {
       setTimeout(() => {
         if (turn.status !== 'inProgress') return
         reply.text += chunk
         recv({ method: 'item/agentMessage/delta', params: { threadId, itemId, delta: chunk } })
       }, delay)
-      delay += 35
+      delay += step
     }
     setTimeout(() => {
       if (turn.status !== 'inProgress') return

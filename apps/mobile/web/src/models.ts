@@ -1,5 +1,5 @@
 // 模型与推理强度的纯逻辑：model/list 归一化、偏好解析、turn/start 覆盖项。移植自桌面 lib/models.ts + store/models.ts。
-import type { TurnOverrides } from '@qn/codex-client'
+import { localizeModelDescription, type TurnOverrides } from '@qn/codex-client'
 import type { AgentKind } from './types'
 
 export type ModelOption = {
@@ -75,7 +75,7 @@ export function visibleModels(models: readonly ModelOption[], selected?: string 
   const term = query.trim().toLowerCase()
   if (!term) return visible
   return visible.filter((model) =>
-    [model.displayName, model.model, model.description].some((value) => value.toLowerCase().includes(term)),
+    [model.displayName, model.model, model.description, localizeModelDescription(model.description)].some((value) => value.toLowerCase().includes(term)),
   )
 }
 
@@ -90,6 +90,8 @@ const EFFORT_LABELS: Record<string, string> = {
   max: '极高',
   ultra: '极致',
 }
+
+export { effortHint } from '@qn/codex-client'
 
 export function effortLabel(effort: string | null | undefined): string {
   if (!effort) return ''
