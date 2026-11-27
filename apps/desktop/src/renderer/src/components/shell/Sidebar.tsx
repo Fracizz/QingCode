@@ -76,7 +76,7 @@ export function Sidebar({
         >
           <SquarePen size={16} className="text-qn-muted" />
           <span className="flex-1 text-left">新会话</span>
-          <kbd className="hidden rounded-md border border-qn-border-strong px-1 font-sans text-ui-xs text-qn-dim group-hover:inline">
+          <kbd className="hidden rounded-md border border-qn-border-strong px-1 font-sans text-[length:var(--qn-sidebar-list-detail-font-size)] text-qn-dim group-hover:inline">
             Ctrl N
           </kbd>
         </button>
@@ -91,7 +91,7 @@ export function Sidebar({
       </div>
 
       <div className="flex items-center justify-between pb-0.5 pl-4 pr-2 pt-3">
-        <span className="text-ui text-qn-muted">工作区</span>
+        <span className="text-[length:var(--qn-sidebar-list-font-size)] text-qn-muted">工作区</span>
         <TargetPicker {...targetActions} />
       </div>
 
@@ -142,7 +142,7 @@ export function Sidebar({
           </FooterButton>
         </div>
         {version && (
-          <span className="ml-auto max-w-full truncate px-1 text-ui-xs text-qn-dim" title={`v${version}`}>
+          <span className="ml-auto max-w-full truncate px-1 text-[length:var(--qn-sidebar-list-detail-font-size)] text-qn-dim" title={`v${version}`}>
             v{version}
           </span>
         )}

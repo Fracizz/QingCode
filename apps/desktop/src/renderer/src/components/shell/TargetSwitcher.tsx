@@ -300,13 +300,13 @@ export function TargetSectionHeader({
           />
           <TargetGlyph target={target} state={state} size={22} />
           <span
-            className={`min-w-0 flex-1 truncate text-ui font-semibold ${current ? 'text-qn-text' : 'text-qn-text/80'}`}
+            className={`min-w-0 flex-1 truncate text-[length:var(--qn-sidebar-list-font-size)] font-semibold ${current ? 'text-qn-text' : 'text-qn-text/80'}`}
           >
             {target.name}
           </span>
         </button>
         <span
-          className={`shrink-0 pr-1.5 text-ui-xs group-hover:hidden ${menuOpen ? 'hidden' : ''} ${
+          className={`shrink-0 pr-1.5 text-[length:var(--qn-sidebar-list-detail-font-size)] group-hover:hidden ${menuOpen ? 'hidden' : ''} ${
             state === 'error' ? 'text-qn-danger' : 'text-qn-dim'
           }`}
         >
