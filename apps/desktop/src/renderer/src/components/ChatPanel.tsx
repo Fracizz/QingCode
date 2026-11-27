@@ -1,16 +1,20 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
 import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
-import type { ItemView } from '@qn/codex-client'
-import { collectSubagents, DRAFT_THREAD_ID, supportsSubagentRequests } from '@qn/codex-client'
+import { useShallow } from 'zustand/react/shallow'
+import type { CodexRpcLike, ItemView, ThreadView } from '@qn/codex-client'
+import { collectSubagents, DRAFT_THREAD_ID } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { buildAnnotatedMessage, quoteBlock, sideChatExcerpt, type Annotation } from '../lib/annotations'
 import { agentLabel, sessionKey } from '../lib/agents'
 import {
   attachmentsBlocking,
   buildUserInput,
+  insertImagePlaceholders,
   isImageFile,
   MAX_ATTACHMENTS,
   MAX_FILE_BYTES,
+  removePlaceholder,
+  uniqueImageName,
   type Attachment,
   type SkillRef,
   type SlashItem,
@@ -20,11 +24,13 @@ import { screenFiles, useImageSupport } from '../features/composer'
 import { isAtBottom } from '../lib/diff'
 import { friendlyError } from '../lib/errors'
 import { targetDotClass } from '../lib/targetStatus'
+import { threadKey } from '../lib/threads'
 import { groupTurns, hasPendingSubmission, streamingReplyId } from '../lib/turnGroups'
 import { composerDraftKey, currentThreadApprovals, pendingSendKey, useCodex, type SendMode } from '../store/codex'
 import { useProjects } from '../store/projects'
 import { skillsKey, useSkills } from '../store/skills'
 import { useTargets } from '../store/targets'
+import { useThreadPrefs } from '../store/threadPrefs'
 import { useUi } from '../store/ui'
 import { AgentPicker } from './AgentPicker'
 import { AnnotationBar } from './AnnotationBar'
@@ -36,10 +42,12 @@ import { ContextRing, ModelPicker } from './ModelPicker'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
 import { StatusDot } from './StatusDot'
+import { TargetMetrics } from './TargetMetrics'
 import { MainHeader } from './shell/MainHeader'
 import { WelcomePane } from './shell/WelcomePane'
 import { SubagentLauncher } from './SubagentDetails'
 import { TurnErrorNote } from './TurnErrorNote'
+import { TurnNavigation } from './TurnNavigation'
 import { EmptyState, ErrorNote } from './ui'
 
 const HISTORY_BATCH_SIZE = 60
@@ -52,17 +60,52 @@ type Draft = {
 }
 const emptyDraft: Draft = { text: '', annotations: [], attachments: [], skills: {} }
 const emptySkills: SkillRef[] = []
+const noItems: ItemView[] = []
 
 function hasDraft(draft: Draft): boolean {
   return !!(draft.text || draft.annotations.length || draft.attachments.length ||
     Object.values(draft.skills).some((skills) => skills?.length))
 }
 
-export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) => void; onAddTarget: () => void }) {
+const ChatSubagents = memo(function ChatSubagents({ sessionId, threadId, items, rpc }: {
+  sessionId: string
+  threadId: string
+  items: readonly ItemView[]
+  rpc: CodexRpcLike | null
+}) {
+  const referenced = useMemo(() => {
+    const ids = new Set<string>()
+    for (const item of items) {
+      if (item.kind !== 'subagent') continue
+      for (const agent of item.agents ?? []) ids.add(agent.threadId)
+    }
+    return ids
+  }, [items])
+  // 子代理正文需要实时更新，但只影响入口和详情，主对话无需重绘。
+  const threads = useCodex(useShallow((s) => {
+    const all = s.sessions[sessionId]?.state.threads
+    if (!all) return undefined
+    const related: Record<string, ThreadView> = Object.create(null)
+    for (const id of Object.keys(all)) {
+      const thread = all[id]!
+      if (thread.subagent?.parentThreadId === threadId || referenced.has(id)) related[id] = thread
+    }
+    return related
+  }))
+  const entries = useMemo(() => collectSubagents(items, threadId, threads), [items, threadId, threads])
+  if (!entries.length) return null
+  return <SubagentLauncher entries={entries} threads={threads} rpc={rpc}
+    renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
+})
+
+export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
+  visible?: boolean
+  onConnect: (id: string) => void
+  onAddTarget: () => void
+}) {
   const targets = useTargets((s) => s.targets)
-  const targetState = useTargets((s) => s.states[s.selectedId]?.state ?? 'idle')
-  const sessions = useCodex((s) => s.sessions)
   const currentTargetId = useCodex((s) => s.currentTargetId)
+  const targetState = useTargets((s) => s.states[currentTargetId ?? '']?.state ?? 'idle')
   const currentThreadId = useCodex((s) => s.currentThreadId)
   const currentAgent = useCodex((s) => s.currentAgent)
   const openingThread = useCodex((s) => s.openingThread)
@@ -70,6 +113,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const error = useCodex((s) => s.error)
   const clearError = useCodex((s) => s.clearError)
   const send = useCodex((s) => s.send)
+  const sendRevision = useCodex((s) => s.sendRevision)
   const interrupt = useCodex((s) => s.interrupt)
   const respondApproval = useCodex((s) => s.respondApproval)
   const ensureOpen = useCodex((s) => s.ensureOpen)
@@ -85,6 +129,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const historyScroll = useRef<{ key: string | null; height: number; top: number } | null>(null)
+  const turnJump = useRef<{ key: string | null; id: string } | null>(null)
   const annotationCounter = useRef(0)
   const [pinned, setPinned] = useState(true)
   const [historyStart, setHistoryStart] = useState<{ key: string | null; index: number } | null>(null)
@@ -116,7 +161,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const setAttachments = (change: (items: Attachment[]) => Attachment[]) =>
     updateDraft((item) => ({ ...item, attachments: change(item.attachments) }))
   const [readingImages, setReadingImages] = useState(0)
-  const attachmentReads = useRef(new Map<string, number>())
+  const attachmentReads = useRef(new Map<string, Set<string>>())
   const attachmentsUploading = attachments.some((item) =>
     item.kind === 'file' && (item.status === 'pending' || item.status === 'uploading'),
   )
@@ -126,22 +171,35 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const dragDepth = useRef(0)
   const imageSupport = useImageSupport(currentTargetId, currentAgent, !!currentTargetId)
 
-  const session = currentTargetId ? sessions[sessionKey(currentTargetId, currentAgent)] : undefined
+  const sessionId = currentTargetId ? sessionKey(currentTargetId, currentAgent) : null
+  const { opening, opened, openError, directory, rpc } = useCodex(useShallow((s) => {
+    const session = sessionId ? s.sessions[sessionId] : undefined
+    return {
+      opening: session?.opening, opened: session?.opened, openError: session?.openError,
+      directory: session?.openedConfig?.directory, rpc: session?.rpc,
+    }
+  }))
   // 草稿态没有 threadId，发送中的用户消息先放在草稿线程里，避免对话区空白。
   const visibleThreadId = currentThreadId ?? DRAFT_THREAD_ID
   const chatKey = currentTargetId ? pendingSendKey({ targetId: currentTargetId, agent: currentAgent, threadId: visibleThreadId }) : null
   const sendingMessage = useCodex((s) => s.sendingMessage?.key === chatKey ? s.sendingMessage : null)
   const sendingQueued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.[0]?.sending))
-  const view = session?.state.threads[visibleThreadId]
+  const view = useCodex((s) => sessionId ? s.sessions[sessionId]?.state.threads[visibleThreadId] : undefined)
   const preview = sendingMessage?.preview
-  const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? []), preview] : view?.items ?? [], [preview, view?.items])
-  const subagents = useMemo(() => collectSubagents(view?.items ?? [], currentThreadId ?? undefined, session?.state.threads),
-    [view?.items, currentThreadId, session?.state.threads])
+  const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? noItems), preview] : view?.items ?? noItems, [preview, view?.items])
+  const revisionTurnId = useThreadPrefs((s) => currentTargetId && currentThreadId
+    ? s.byTarget[currentTargetId]?.revisionTurns[threadKey(currentAgent, currentThreadId)]
+    : undefined)
+  const revisionTurn = revisionTurnId ? view?.turns?.find((turn) => turn.id === revisionTurnId) : undefined
+  const revisionItemId = revisionTurn && (items.find((item) => item.kind === 'user' && revisionTurn.itemIds.includes(item.id))?.id
+    ?? (view?.activeTurnId === revisionTurn.id ? view.items.find((item) => item.kind === 'user' && item.pending)?.id : undefined))
+  const revisionChat = currentAgent === 'codex' && currentTargetId && currentThreadId
+    ? { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId } as const : null
   const approvals = useCodex(currentThreadApprovals)
   const running = view?.status === 'running'
   const streamingId = streamingReplyId(view)
   const interrupted = !running && view?.activity === 'interrupted'
-  const showProgress = approvals.length === 0 && !session?.openError
+  const showProgress = approvals.length === 0 && !openError
     && (running || hasPendingSubmission(items, !!sendingMessage || sendingQueued))
   const flow = useMemo(() => groupTurns(items, view?.turns, running),
     [items, view?.turns, running])
@@ -182,7 +240,24 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     historyScroll.current = null
     const scroll = scrollRef.current
     if (scroll && previous?.key === chatKey) scroll.scrollTop = previous.top + scroll.scrollHeight - previous.height
-  }, [chatKey, firstVisible, view?.historyCursor])
+
+    const jump = turnJump.current
+    turnJump.current = null
+    if (!scroll || !jump || jump.key !== chatKey) return
+    const anchor = [...scroll.querySelectorAll<HTMLElement>('[data-turn-anchor]')]
+      .find((node) => node.dataset.turnAnchor === jump.id)
+    if (anchor) {
+      // 只滚动消息区，保留外层工作区和其他面板的位置。
+      scroll.scrollTop += anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 12
+      setPinned(isAtBottom(scroll.scrollTop, scroll.scrollHeight, scroll.clientHeight, 1))
+    }
+  }, [chatKey, firstVisible, historyStart, view?.historyCursor])
+
+  const jumpToTurn = (id: string, index: number) => {
+    turnJump.current = { key: chatKey, id }
+    // 对应轮次可能在本地已读取，却还没渲染。挂载该轮次后再定位。
+    setHistoryStart({ key: chatKey, index: Math.min(firstVisible, index) })
+  }
 
   const showEarlier = async () => {
     if (historyLoading) return
@@ -315,11 +390,12 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const patchAttachment = (id: string, patch: Partial<Attachment>) =>
     setAttachments((prev) => prev.map((item) => (item.id === id ? ({ ...item, ...patch } as Attachment) : item)))
 
-  /** 图片读成 data URL 随消息发送；其他文件本机目标直接引用路径，远端目标先上传到目标机。 */
-  const addFiles = (files: File[]) => {
-    if (!currentTargetId || sending || (!currentThreadId && sendingDraftKey.current)) return
+  /** 返回通过附件校验的图片名，供输入框插入占位。 */
+  const addFiles = (files: File[]): string[] => {
+    if (!currentTargetId || sending || (!currentThreadId && sendingDraftKey.current)) return []
     const targetId = currentTargetId
-    const reads = attachmentReads.current.get(draftKey) ?? 0
+    const pending = attachmentReads.current.get(draftKey) ?? new Set<string>()
+    const reads = pending.size
     const { accepted, rejected } = screenFiles(files, {
       existingImages: attachments.filter((item) => item.kind === 'image').length + reads,
       imagesAllowed: imageSupport.allowed,
@@ -329,35 +405,42 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       const detail = rejected.map((item) => `${item.name}：${item.reason}`).join('；')
       notify(`未添加 ${rejected.length} 张图片（${detail}）`)
     }
-    if (accepted.length === 0) return
+    if (accepted.length === 0) return []
     const room = MAX_ATTACHMENTS - attachments.length - reads
     if (room <= 0) {
       notify('最多添加 ' + MAX_ATTACHMENTS + ' 个附件')
-      return
+      return []
     }
     if (accepted.length > room) notify('最多添加 ' + MAX_ATTACHMENTS + ' 个附件，已忽略多出的 ' + (accepted.length - room) + ' 个')
     // 只有本机目标能直接引用本机路径；SSH 与直连目标都要先上传。
     const isLocal = targets.find((item) => item.id === targetId)?.kind === 'local'
+    const taken = new Set([...pending, ...attachments.map((item) => item.name)])
+    for (const [, name] of draft.matchAll(/\[([^\]\n]+)\]/g)) if (name) taken.add(name)
+    const imageNames: string[] = []
     for (const file of accepted.slice(0, room)) {
       const id = 'att-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7)
       if (isImageFile(file)) {
-        const updateReads = (delta: number) => {
-          const count = (attachmentReads.current.get(draftKey) ?? 0) + delta
-          if (count) attachmentReads.current.set(draftKey, count)
-          else attachmentReads.current.delete(draftKey)
-          if (draftKey === composerDraftKey(useCodex.getState())) setReadingImages(count)
-        }
-        updateReads(1)
+        const name = uniqueImageName(file.name, taken)
+        taken.add(name)
+        imageNames.push(name)
+        pending.add(name)
+        attachmentReads.current.set(draftKey, pending)
+        setReadingImages(pending.size)
         void readImage(file)
           .then(({ dataUrl, size }) => {
-            setAttachments((prev) => [...prev, { id, kind: 'image', name: file.name || '粘贴的图片', size, dataUrl }])
+            setAttachments((prev) => [...prev, { id, kind: 'image', name, size, dataUrl }])
           })
           .catch((err: unknown) => {
+            updateDraft((item) => ({ ...item, text: removePlaceholder(item.text, name) }))
             if (draftKey === composerDraftKey(useCodex.getState())) {
-              notify((file.name || '图片') + '：' + (err instanceof Error ? err.message : '读取失败'))
+              notify(name + '：' + (err instanceof Error ? err.message : '读取失败'))
             }
           })
-          .finally(() => updateReads(-1))
+          .finally(() => {
+            pending.delete(name)
+            if (!pending.size) attachmentReads.current.delete(draftKey)
+            if (draftKey === composerDraftKey(useCodex.getState())) setReadingImages(pending.size)
+          })
         continue
       }
       if (file.size > MAX_FILE_BYTES) {
@@ -382,9 +465,17 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           patchAttachment(id, { status: 'error', error: err instanceof Error ? err.message : '上传失败' }),
         )
     }
+    return imageNames
   }
 
-  const removeAttachment = (id: string) => setAttachments((prev) => prev.filter((item) => item.id !== id))
+  const removeAttachment = (id: string) => updateDraft((item) => {
+    const attachment = item.attachments.find((entry) => entry.id === id)
+    return {
+      ...item,
+      text: attachment?.kind === 'image' ? removePlaceholder(item.text, attachment.name) : item.text,
+      attachments: item.attachments.filter((entry) => entry.id !== id),
+    }
+  })
 
   // 拖入文件：dragenter/leave 在子元素间会成对触发，用计数判断是否真正离开主区。
   const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes('Files')
@@ -401,10 +492,17 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   }
   const onDrop = (event: DragEvent) => {
     if (!hasFiles(event)) return
-    event.preventDefault()
     dragDepth.current = 0
     setDragging(false)
-    addFiles([...event.dataTransfer.files])
+    if (event.defaultPrevented) return
+    event.preventDefault()
+    const names = addFiles([...event.dataTransfer.files])
+    if (names.length > 0) {
+      updateDraft((item) => ({
+        ...item,
+        text: insertImagePlaceholders(item.text, names).value,
+      }))
+    }
   }
 
   // "从这里开始新会话"：回到草稿态并把引用填进输入框，用户补充后发送才真正建会话。
@@ -429,10 +527,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const isDraft = !currentThreadId
   const preparingPi = startingPiDraft === draftKey
 
-  const skillKey = currentTargetId ? skillsKey(currentTargetId, currentAgent, currentCwd, session?.openedConfig?.directory) : null
+  const skillKey = currentTargetId ? skillsKey(currentTargetId, currentAgent, currentCwd, directory) : null
   const skillList = useSkills((s) => skillKey ? s.lists[skillKey] : undefined)
   const loadSkills = useSkills((s) => s.load)
-  const skillRpc = session?.opened ? session.rpc : undefined
+  const skillRpc = opened ? rpc : undefined
   const refreshClaudeSkills = currentAgent === 'claude' && !running
   useEffect(() => {
     if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, refreshClaudeSkills)
@@ -459,7 +557,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
 
   // 切换草稿后只跟踪当前输入框的读图进度。
   useLayoutEffect(() => {
-    setReadingImages(attachmentReads.current.get(draftKey) ?? 0)
+    setReadingImages(attachmentReads.current.get(draftKey)?.size ?? 0)
     // 已开始发送的新草稿保留到 RPC 完成，以便把失败的输入留给刚创建的会话。
     const pendingKey = sendingDraftKey.current
     setDrafts((previous) => {
@@ -468,9 +566,9 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       return kept.length === entries.length ? previous : Object.fromEntries(kept)
     })
   }, [draftKey])
-  const agentStatus = session?.opening
+  const agentStatus = opening
     ? `${agentLabel(currentAgent)} 启动中…`
-    : session?.openError && !session.opened
+    : openError && !opened
       ? `${agentLabel(currentAgent)} 不可用`
       : null
 
@@ -485,9 +583,8 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <MainHeader subagents={currentThreadId && (subagents.length > 0 || supportsSubagentRequests(currentAgent)) && (
-        <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={session?.opened ? session.rpc : null}
-          renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
+      <MainHeader subagents={currentThreadId && sessionId && (
+        <ChatSubagents key={chatKey} sessionId={sessionId} threadId={currentThreadId} items={view?.items ?? noItems} rpc={skillRpc ?? null} />
       )} />
 
       {openingThread && (
@@ -508,10 +605,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           onSide={(text, itemId) => openSideChat(sideChatExcerpt(items, { text, itemId }))}
         >
           <div ref={contentRef} className={`mx-auto flex min-h-full flex-col ${contentWidthClassName}`}>
-            {session?.openError && (
+            {openError && (
               <div className="mb-3">
                 <ErrorNote
-                  message={session.openError}
+                  message={openError}
                   onRetry={() => {
                     if (currentTargetId) {
                       void ensureOpen(currentTargetId, currentAgent).then(() => void refreshThreads())
@@ -544,23 +641,30 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                 {historyError && <div role="alert" className="text-center text-ui-md text-qn-danger">{historyError}</div>}
                 {flow.slice(firstVisible).map((entry, index) => {
                   const previous = index > 0 ? flow[firstVisible + index - 1] : undefined
-                  return entry.kind === 'tools' ? (
-                    <ToolGroup key={entry.key} items={entry.items} />
-                  ) : entry.kind === 'work' ? (
-                    <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries}
+                  if (entry.kind === 'tools') return <ToolGroup key={entry.key} items={entry.items} />
+                  if (entry.kind === 'work') {
+                    return <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries}
                       replyCompletedAtMs={entry.reply?.completedAtMs} onFork={canFork ? forkFromMessage : undefined} />
-                  ) : entry.kind === 'stopped' ? (
-                    <TurnStopped key={entry.key} durationMs={entry.durationMs} />
-                  ) : (
+                  }
+                  if (entry.kind === 'stopped') return <TurnStopped key={entry.key} durationMs={entry.durationMs} />
+                  const key = `${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`
+                  const message = (
                     <MessageItem
-                      key={`${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`}
+                      key={key}
                       item={entry.item}
                       showStreamingDots={entry.item.id === streamingId}
                       replyTimeInSummary={previous?.kind === 'work' && previous.reply?.id === entry.item.id}
                       onFork={canFork ? forkFromMessage : undefined}
-                      onEdit={(text, input) => sendAndFollow(text, { input })}
+                      showRevisionMarker={entry.item.id === revisionItemId}
+                      editRestartsConversation={!!revisionChat}
+                      onEdit={revisionChat
+                        ? (_text, input) => sendRevision(revisionChat, entry.item.id, input)
+                        : (text, input) => sendAndFollow(text, { input })}
                     />
                   )
+                  return entry.item.kind === 'user' ? (
+                    <div key={key} data-turn-anchor={entry.key}>{message}</div>
+                  ) : message
                 })}
                 {showProgress && <TurnProgress activity={running ? view.activity : undefined} />}
                 {currentTargetId && currentThreadId && approvals.map((approval) => (
@@ -577,6 +681,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
             )}
           </div>
         </SelectionLayer>
+        {currentThreadId && (
+          <TurnNavigation key={chatKey} flow={flow} firstVisible={firstVisible} scrollRef={scrollRef}
+            contentRef={contentRef} onJump={jumpToTurn} />
+        )}
         {!pinned && (
           <button
             type="button"
@@ -602,6 +710,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       </div>
       <Composer
         key={draftKey}
+        suggestionBoundaryRef={scrollRef}
         contentWidthClassName={contentWidthClassName}
         onSend={submit}
         onInterrupt={() => void interrupt()}
@@ -659,12 +768,15 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
                 <span className="truncate font-mono text-ui-xs">{project.path}</span>
               </span>
             )}
+            {visible && currentTargetId && targetState === 'ready' && (
+              <TargetMetrics key={currentTargetId} targetId={currentTargetId} />
+            )}
             {agentStatus && <span className="shrink-0 text-qn-warn">{agentStatus}</span>}
           </>
         }
       />
       {dragging && (
-        <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-accent/60 bg-qn-bg/85 text-ui-md text-qn-text">
+        <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-outline bg-qn-bg/85 text-ui-md text-qn-text">
           <ImagePlus size={28} className="text-qn-accent" />
           松开以添加图片或文件
           <span className="text-ui-sm text-qn-muted">

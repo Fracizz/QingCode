@@ -243,7 +243,7 @@ export default function App() {
         )}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-end">
           <div className={view === 'chat' ? 'relative flex min-h-0 min-w-0 flex-1' : 'hidden'}>
-            <ChatPanel onConnect={requestConnect} onAddTarget={openAddTarget} />
+            <ChatPanel visible={view === 'chat' && !settingsOpen} onConnect={requestConnect} onAddTarget={openAddTarget} />
             <SideChat />
           </div>
           {view === 'files' && <ProjectFilesView onQuickOpen={() => setQuickOpen(true)} />}
@@ -288,6 +288,7 @@ export default function App() {
       )}
       {pickerOpen && (
         <DirectoryPicker
+          key={pickerTargetId}
           targetId={pickerTargetId}
           onClose={() => useUi.getState().closeDirectoryPicker()}
           onConfirm={(path) => {

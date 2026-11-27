@@ -641,6 +641,7 @@ export function messagesToThread(meta: SessionMeta, messages: unknown[]): Histor
       turn.itemIds.map((id) => state.items[id]).filter(isRecord),
       turn.error ? 'failed' : 'completed',
       turn.error ?? null,
+      'history',
     ),
   )
   const items = state.order.map((id) => state.items[id]).filter(isRecord)

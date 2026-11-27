@@ -324,6 +324,9 @@ describe('模拟网关全链路', () => {
     const claudeThread = state().selectedThreadId
     expect(state().claudeCosts[JSON.stringify(['local', claudeThread])]).toBeCloseTo(0.012)
     expect(state().claudeRateLimits.local?.primary?.usedPercent).toBe(81)
+    useApp.setState({ claudeRateLimits: {} })
+    await state().attachOpened('local')
+    await vi.waitFor(() => expect(state().claudeRateLimits.local?.primary?.usedPercent).toBe(81))
 
     await state().openThread(threadId!, 'codex')
     expect(selectedAccessMode(state())).toBe('readOnly')

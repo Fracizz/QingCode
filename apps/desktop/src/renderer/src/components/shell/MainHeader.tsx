@@ -2,7 +2,7 @@ import { sessionStatus } from '@qn/codex-client'
 import { Check, FileText, FolderGit2, ListTree, MessageCircleMore, MoreHorizontal, PanelRightOpen, RotateCw, SquarePen, Terminal } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useFiles } from '../../features/files'
-import { TERMINAL_SHORTCUT, useTerminalDock } from '../../features/terminal/dockState'
+import { useTerminalDock } from '../../features/terminal/dockState'
 import { useDock } from '../../store/dock'
 import { sideChatExcerpt } from '../../lib/annotations'
 import { sessionKey } from '../../lib/agents'
@@ -31,8 +31,12 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
   const agent = useCodex((s) => s.currentAgent)
   const threadId = useCodex((s) => s.currentThreadId)
   const side = useCodex(currentSideChat)
-  const sideView = useCodex((s) => side?.threadId
-    ? s.sessions[sessionKey(side.targetId, side.agent)]?.state.threads[side.threadId] : undefined)
+  const sideStatus = useCodex((s) => {
+    if (!side || side.open) return null
+    if (side.expired) return '已结束'
+    const view = side.threadId ? s.sessions[sessionKey(side.targetId, side.agent)]?.state.threads[side.threadId] : undefined
+    return view?.pendingApprovals.length ? '待审批' : view?.status === 'running' ? '运行中' : null
+  })
   const threads = useCodex(currentThreads)
   const startDraft = useCodex((s) => s.startDraft)
   const refreshThreads = useCodex((s) => s.refreshThreads)
@@ -54,9 +58,6 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
   const title = localName ?? thread?.title ?? (threadId ? '未命名会话' : '新会话')
   const listLabel = threadId ? '在侧栏定位当前会话' : '打开项目会话列表'
 
-  const sideStatus = side?.expired ? '已结束'
-    : sideView?.pendingApprovals.length ? '待审批' : sideView?.status === 'running' ? '运行中' : null
-
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 px-4 text-ui-md">
       {project ? (
@@ -64,7 +65,7 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
           <button
             type="button"
             aria-label={`${listLabel}：${title}`}
-            className="-ml-1.5 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left font-medium text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
+            className="-ml-1.5 flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left font-medium text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover"
             onClick={() => {
               useProjects.getState().setExpanded(project, true)
               useUi.getState().revealThreadList({ targetId: project.targetId, projectId: project.id, threadKey: key })
@@ -91,11 +92,12 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
       {subagents}
       {threadId && (
         <>
-          {sideStatus && <span role="status" className="text-ui-sm text-qn-muted">侧聊{sideStatus}</span>}
+          {sideStatus && <span role="status" className="shrink-0 whitespace-nowrap text-ui-sm text-qn-muted">侧聊{sideStatus}</span>}
           <IconButton
             label="侧边对话"
             tooltipSide="bottom"
             aria-expanded={!!side?.open}
+            className={side?.open ? 'bg-qn-active text-qn-text' : undefined}
             onClick={() => useCodex.getState().openSideChat(side ? undefined : sideChatExcerpt(view?.items ?? []))}
           >
             <PanelRightOpen size={15} />
@@ -124,11 +126,11 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
         </IconButton>
       ))}
       <IconButton
-        label={`终端（${TERMINAL_SHORTCUT}）`}
+        label="打开新终端"
         tooltipSide="bottom"
         aria-expanded={terminalOpen}
         className={terminalOpen ? 'bg-qn-active text-qn-text' : undefined}
-        onClick={useTerminalDock.getState().toggle}
+        onClick={() => useTerminalDock.getState().openNew(targetId && cwd ? { targetId, cwd } : null)}
       >
         <Terminal size={15} />
       </IconButton>

@@ -490,6 +490,8 @@ function mapMessage(
       out.push(...finishPendingItems(ctx, state, status === 'failed'))
       const items = state.order.map((id) => state.items[id]).filter(isRecord)
       const turn = buildTurn(ctx.turnId, items, status, error)
+      const durationMs = finite(msg.duration_ms)
+      if (durationMs !== null && durationMs >= 0) turn.durationMs = durationMs
       out.push(notification('turn/completed', { threadId: ctx.threadId, turn }))
       out.push(
         notification('thread/tokenUsage/updated', {

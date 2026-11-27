@@ -17,7 +17,7 @@
 1. **对话优先**：侧栏 + 主区两栏；消息与输入框同宽 `max-w-3xl` 居中。
 2. **一处一事**：同一错误只在最相关处出现一次（连接失败在目标切换器，Agent 打开失败在主区横幅）。
 3. **一个主操作**：每屏只有一个实心主按钮；草稿页只在走不下去时给主操作（未连接 → 连接；无项目 → 添加项目）。
-4. **青色克制**：`brand` 青只用于 Logo、青轨、展开的项目图标、运行中；按钮与焦点用 `accent` 蓝；发送键用 Codex 式白色圆钮。
+4. **青色克制**：`brand` 青只用于 Logo、青轨、展开的项目图标、运行中。主按钮用 `accent` 蓝，边框与焦点环用中性色。发送键用 Codex 式白色圆钮。
 
 ## 3. 布局
 
@@ -43,7 +43,7 @@
 | 标题栏 | 38px，`chrome` 底，整条可拖窗 | 侧栏开关、品牌；右侧"目标 · 额度"胶囊（Popover 看详情）；最右系统按钮占位 | `shell/TitleBar.tsx` |
 | 侧栏 | 默认 288，220–460，双击手柄复位，`Ctrl+B` 收起 | 新会话、工作区（多个目标同时铺开，每个目标下挂项目→会话树，可折叠）、旧版导入卡片、底部入口 + 版本号 | `shell/Sidebar.tsx` |
 | 工作区目标 | — | 每个目标一个分组头（图标+状态点、名称、状态），悬停：添加项目 / 连接或断开 / "…"（编辑、忘记密码、从侧栏移除、删除）。点哪个目标下的项目，主区就切到那个目标（未连接则发起连接）。"工作区"右侧 + 打开可搜索的全部目标列表，点选即加入侧栏并连接，底部"添加 SSH 连接"。侧栏目标存 `localStorage['qn-sidebar-targets']`，折叠状态存 `qn-sidebar-collapsed-targets` | `shell/TargetSwitcher.tsx` |
-| 项目树 | 行高 32 | 当前项目展开显示会话（默认 8 条）；当前会话青轨 + 选中底；运行中转圈、待审批琥珀标签；非 Codex 会话显示 Agent 图标；悬停换成"新会话 / 移除项目" | `shell/ProjectTree.tsx` |
+| 项目树 | 行高 32 | 当前项目展开显示会话（默认 8 条）；当前会话青轨 + 选中底；运行中转圈、待审批琥珀标签；每条会话行尾显示 Agent 图标；悬停换成"新会话 / 移除项目" | `shell/ProjectTree.tsx` |
 | 主区顶栏 | 44px | 会话标题、所在项目、运行中徽标、Agent、"…"菜单 | `shell/MainHeader.tsx` |
 | 消息流 | `max-w-3xl` 居中 | 草稿页 / 消息；连续 ≥2 个工具步骤折叠成摘要行；错误横幅；"回到底部"居中悬浮 | `ChatPanel.tsx`、`MessageItem.tsx`、`shell/WelcomePane.tsx` |
 | 输入框 | 圆角 20px 卡片 | 自动增高（≤40% 视口）；左：Agent 选择（仅草稿态）；右：上下文占用环、模型选择器、发送/停止；下方环境行 | `Composer.tsx`、`AgentPicker.tsx`、`ModelPicker.tsx` |
@@ -92,11 +92,11 @@
 | `qn-float` | `#262626` | 浮层底色（配合 `.qn-surface-float`，见下文“浮层”） |
 | `qn-hover` / `qn-active` | `#262626` / `#2c2c2c` | 悬停 / 选中 |
 | `qn-border` / `qn-border-strong` | `#383838` / `#4d4d4d` | 分隔线 / 控件与浮层边界 |
-| `qn-outline` / `qn-outline-hover` | `#6b6b6b` / `#858585` | 可输入控件外框（≥ 3:1）/ 悬停·聚焦 |
+| `qn-outline` / `qn-outline-hover` | `#7a7a7a` / `#858585` | 可输入控件外框（≥ 3:1）/ 悬停·聚焦 |
 | `qn-composer` | `#262626` | 对话输入框底色 |
 | `qn-text` / `qn-muted` / `qn-dim` | `#e6e6e6` / `#a0a0a0` / `#8a8a8a` | 正文 / 次要 / 辅助 |
 | `qn-brand` | `#4ecdb5` | 青轨、Logo、当前上下文、运行中 |
-| `qn-accent` | `#4f8cff` | 主按钮、焦点环、链接 |
+| `qn-accent` | `#4f8cff` | 主按钮、链接 |
 | `qn-ok` / `qn-warn` / `qn-danger` | `#6fcf8f` / `#e2b55d` / `#ff6b63` | 已就绪 / 连接中·待审批·Fast / 错误 |
 
 代码块与输出底色 `#141414`，主题 `github-dark-default`。

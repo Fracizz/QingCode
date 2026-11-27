@@ -281,6 +281,7 @@ export class MockNativePort implements NativePort {
   private readonly projects: Project[] = [...MOCK_PROJECTS]
   private readonly terminals = new Map<string, MockTerminal>()
   private readonly turns = new Map<string, MockTurn[]>()
+  private readonly claudeRateLimits = new Map<string, JsonRecord>()
   private readonly threads = new Map<AgentKind, JsonRecord[]>([
     [
       'codex',
@@ -771,6 +772,14 @@ export class MockNativePort implements NativePort {
         recv({ id, result: { data: MOCK_MODELS[agent], nextCursor: null } })
         return
       case 'account/rateLimits/read':
+        if (agent === 'claude') {
+          recv({ id, result: { rateLimits: this.claudeRateLimits.get(targetId) ?? { primary: null, secondary: null } } })
+          return
+        }
+        if (agent === 'pi') {
+          recv({ id, error: { code: -32601, message: 'Method not found' } })
+          return
+        }
         recv({
           id,
           result: {
@@ -882,7 +891,9 @@ export class MockNativePort implements NativePort {
         params: {
           threadId, turnId, tokenUsage: {
             total: { totalTokens: 128 },
-            ...(agent === 'claude' ? { estimatedCostUsd: 0.012 } : { last: { totalTokens: 128 }, modelContextWindow: 1024 }),
+            last: { totalTokens: 128 },
+            ...(agent === 'codex' ? { modelContextWindow: 1024 }
+              : { modelContextWindow: null, estimatedCostUsd: 0.012, estimated: true }),
           },
         },
       })
@@ -897,9 +908,11 @@ export class MockNativePort implements NativePort {
           },
         })
       } else if (agent === 'claude') {
+        const rateLimits = { primary: { usedPercent: 81, windowDurationMins: 300, resetsAt: nowSec + 2700 } }
+        this.claudeRateLimits.set(targetId, rateLimits)
         recv({
           method: 'account/rateLimits/updated',
-          params: { rateLimits: { primary: { usedPercent: 81, windowDurationMins: 300, resetsAt: nowSec + 2700 } } },
+          params: { rateLimits },
         })
       }
     }, delay + 40)

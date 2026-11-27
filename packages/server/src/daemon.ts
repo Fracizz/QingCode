@@ -13,10 +13,11 @@ import {
 import {
   AgentHostError,
   CodexHost,
+  parseAgentConfigDir,
   type AgentHost,
   type AgentHostHub,
 } from './codexHost'
-import { createClaudeHost } from './claude/bridge'
+import { ClaudeBridge, createClaudeHost } from './claude/bridge'
 import { createPiHost } from './pi/host'
 import { DirectListener } from './direct/listener'
 import { fsHome, fsList } from './fs'
@@ -30,6 +31,7 @@ import {
   type ServerPaths,
 } from './paths'
 import { SocketStream } from './socketStream'
+import { readSystemMetrics } from './systemMetrics'
 import { checkHello } from './validation'
 import { WorkspaceError, findWorkspaceHandler, type WorkspaceContext } from './workspace/index'
 import { terminalManager } from './terminal/index'
@@ -60,8 +62,8 @@ interface ClientSession {
   grantId?: string
 }
 
-// 只允许本机持主 token 的连接调用的管理方法；直连客户端不能关停 daemon 或改直连配置。
-const ADMIN_METHODS = new Set(['server.shutdown', 'direct.reload', 'direct.status'])
+// 管理方法和状态栏写入仅接受持有主 token 的 IPC 连接。
+const ADMIN_METHODS = new Set(['server.shutdown', 'direct.reload', 'direct.status', 'claude.statusline.publish'])
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000
 const DEFAULT_IDLE_CHECK_MS = 5_000
@@ -174,6 +176,8 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
       switch (method) {
         case 'ping':
           return sendOk(session, id, { serverVersion: options.version, protocol: PROTOCOL_VERSION })
+        case 'system.metrics':
+          return sendOk(session, id, await readSystemMetrics())
         case 'fs.home':
           return sendOk(session, id, fsHome())
         case 'fs.list': {
@@ -222,6 +226,12 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
         }
         case 'codex.status':
           return sendOk(session, id, hosts[agent].status())
+        case 'claude.statusline.publish': {
+          const directory = parseAgentConfigDir(p?.directory, 'CLAUDE_CONFIG_DIR')
+          if (!directory) return sendErr(session, id, 'params', 'claude.statusline.publish 需要配置目录')
+          if (hosts.claude instanceof ClaudeBridge) hosts.claude.ingestStatusLine(directory, p?.windows)
+          return sendOk(session, id, {})
+        }
         case 'direct.reload':
           return sendOk(session, id, await direct.reload().then(afterDirectReload))
         case 'direct.status':

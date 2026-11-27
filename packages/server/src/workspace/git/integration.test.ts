@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { GitCommit, GitStatusResult, WorkspaceMethod } from '@qn/protocol'
+import type { GitCommit, GitStatusResult, WorkspaceMethod, WorkspaceMethods } from '@qn/protocol'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { WorkspaceContext } from '../registry'
 import { gitHandlers } from './index'
@@ -75,6 +75,7 @@ describe('git.* 集成（os.tmpdir() 下的真实仓库）', () => {
       'git.commit',
       'git.branches',
       'git.switch',
+      'git.remotes',
       'git.fetch',
       'git.pull',
       'git.push',
@@ -83,6 +84,36 @@ describe('git.* 集成（os.tmpdir() 下的真实仓库）', () => {
     ]
     expect(methods.every((method) => typeof gitHandlers[method] === 'function')).toBe(true)
   })
+
+  it('git.remotes 按 cwd 查找最近的仓库并返回可复制的抓取地址', async () => {
+    const outer = makeRepo()
+    const inner = path.join(outer, 'nested repo')
+    fs.mkdirSync(inner)
+    git(inner, ['init', '-q', '-b', 'main'])
+    git(outer, ['remote', 'add', 'origin', 'https://example.invalid/outer.git'])
+    git(inner, ['remote', 'add', 'origin', 'https://example.invalid/inner.git'])
+    git(inner, ['remote', 'set-url', '--add', 'origin', 'https://fake-user:fake-token@example.invalid/mirror.git'])
+    git(inner, ['remote', 'set-url', '--push', 'origin', 'https://example.invalid/push.git'])
+    git(inner, ['remote', 'add', 'Team.Upstream', 'git@example.invalid:team/repo.git'])
+    const cwd = path.join(inner, 'src')
+    fs.mkdirSync(cwd)
+
+    type Result = WorkspaceMethods['git.remotes']['result']
+    expect(await call<Result>('git.remotes', { cwd: outer })).toEqual({
+      remotes: [{ name: 'origin', url: 'https://example.invalid/outer.git' }],
+    })
+    const { remotes } = await call<Result>('git.remotes', { cwd })
+    expect(remotes).toHaveLength(3)
+    expect(remotes).toEqual(expect.arrayContaining([
+      { name: 'origin', url: 'https://example.invalid/inner.git' },
+      { name: 'origin', url: 'https://example.invalid/mirror.git' },
+      { name: 'Team.Upstream', url: 'git@example.invalid:team/repo.git' },
+    ]))
+  }, 30_000)
+
+  it('git.remotes 对未配置远端的仓库返回空列表', async () => {
+    expect(await call('git.remotes', { cwd: makeRepo() })).toEqual({ remotes: [] })
+  }, 30_000)
 
   it('git.status：空仓库、root、分支头', async () => {
     const dir = makeRepo()
@@ -414,4 +445,33 @@ describe('git.* 集成（os.tmpdir() 下的真实仓库）', () => {
     },
     60_000,
   )
+
+  it.skipIf(process.platform !== 'win32')('旧 SSH 项目的 SFTP 盘符路径可查看和暂存改动', async () => {
+    const dir = makeRepo()
+    const cwd = `/${dir.replace(/\\/g, '/')}`
+    const name = '中文 文件.txt'
+    const file = `${cwd}/${name}`
+    write(dir, name, '新文件\n')
+
+    const status = await call<GitStatusResult>('git.status', { cwd })
+    expect(status.files).toMatchObject([{ path: name, index: '?' }])
+    const diff = await call<{ diff: string }>('git.diff', { cwd, path: file })
+    expect(diff.diff).toContain('+新文件')
+
+    await call('git.stage', { cwd, paths: [file] })
+    const staged = await call<GitStatusResult>('git.status', { cwd })
+    expect(staged.files).toMatchObject([{ path: name, index: 'A' }])
+  }, 30_000)
+
+  it.skipIf(process.platform !== 'win32')('过长的 Git 工作目录返回错误且后续请求仍可执行', async () => {
+    const dir = makeRepo()
+    const deep = path.join(dir, 'a'.repeat(140), 'b'.repeat(140))
+    fs.mkdirSync(deep, { recursive: true })
+
+    await expect(call('git.status', { cwd: deep })).rejects.toMatchObject({
+      code: 'git_failed',
+      message: expect.stringContaining('路径过长'),
+    })
+    await expect(call('git.status', { cwd: dir })).resolves.toMatchObject({ branch: 'main' })
+  }, 30_000)
 })

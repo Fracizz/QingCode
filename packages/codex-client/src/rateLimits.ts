@@ -161,6 +161,10 @@ export function pickSnapshot(resp: unknown): RateLimitSnapshot | null {
   return source === null ? null : mergeSnapshot(null, source)
 }
 
+export function isClaudeStatusLine(snapshot: RateLimitSnapshot | null | undefined): boolean {
+  return snapshot?.limitId === 'claude-statusline'
+}
+
 /** 从 account/rateLimits/updated 通知中把稀疏更新并入当前快照。 */
 export function applyRateLimitsUpdate(
   prev: RateLimitSnapshot | null,

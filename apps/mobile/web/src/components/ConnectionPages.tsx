@@ -1,11 +1,12 @@
 import { Check, KeyRound, Pencil, Plus, Settings, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { callDevice, getGateway } from '../client'
+import { callDevice } from '../client'
 import { formatAddress, isValidPairingCode, normalizeFingerprint, parseAddress, parsePairingLink } from '../link'
 import { getWindowNativePort } from '../native'
 import { friendlyError } from '../state'
 import { useApp } from '../store'
 import type { ConnectionStatus } from '../types'
+import { MobileSettings } from './MobileSettings'
 import { PullToRefresh } from './PullToRefresh'
 import { Badge, Button, Card, Dialog, Field, Header, Loading, Note, SheetAction, StatusDot } from './ui'
 import { WorkspaceIcon } from './WorkspaceHome'
@@ -23,133 +24,6 @@ function statusTone(status: ConnectionStatus): 'ok' | 'warn' | 'danger' | 'muted
   if (status === 'checking') return 'warn'
   if (status === 'mismatch') return 'danger'
   return 'muted'
-}
-
-type UpdateCheck = { available: boolean; versionName: string; versionCode: number; id?: string }
-const UPDATE_URL = 'mobile.updateUrl'
-
-function MobileSettings({ onClose }: { onClose: () => void }) {
-  const [version, setVersion] = useState<string | null>(null)
-  const [online, setOnline] = useState(false)
-  const [url, setUrl] = useState('')
-  const [busy, setBusy] = useState<'check' | 'install' | null>(null)
-  const [candidate, setCandidate] = useState<UpdateCheck | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const background = useApp((state) => state.backgroundConnectionEnabled)
-  const [savingBackground, setSavingBackground] = useState(false)
-  const native = Boolean(getWindowNativePort())
-
-  useEffect(() => {
-    if (!native) return
-    let cancelled = false
-    void callDevice<{ versionName: string; online: boolean }>('updates.status').then((result) => {
-      if (!cancelled) {
-        setVersion(result.versionName)
-        setOnline(result.online)
-      }
-    }).catch((err: unknown) => {
-      if (!cancelled) setError(friendlyError(err, '无法读取应用版本'))
-    })
-    void getGateway().storageGet(UPDATE_URL).then((value) => {
-      if (!cancelled && value) setUrl(value)
-    }).catch(() => undefined)
-    return () => { cancelled = true }
-  }, [native])
-
-  const changeBackground = async (enabled: boolean) => {
-    setError(null)
-    setSavingBackground(true)
-    try {
-      await callDevice<boolean>('background.set', { enabled })
-      useApp.setState({ backgroundConnectionEnabled: enabled })
-    } catch (err) {
-      setError(friendlyError(err, '无法保存后台连接设置'))
-    } finally {
-      setSavingBackground(false)
-    }
-  }
-
-  const check = async () => {
-    setNotice(null)
-    setError(null)
-    setCandidate(null)
-    let endpoint: URL
-    try {
-      endpoint = new URL(url.trim())
-      if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.hash) throw new Error()
-    } catch {
-      setError('请输入 HTTPS APK 下载地址。')
-      return
-    }
-    setBusy('check')
-    try {
-      await getGateway().storageSet(UPDATE_URL, endpoint.href)
-      const result = await callDevice<UpdateCheck>('updates.check', { url: endpoint.href }, 300_000)
-      setCandidate(result)
-      if (!result.available) setNotice('当前已是此地址提供的最新版本。')
-    } catch (err) {
-      setError(friendlyError(err, '检查更新失败'))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const install = async (id?: string) => {
-    setError(null)
-    setNotice(null)
-    setBusy('install')
-    try {
-      const result = await callDevice<{ started: boolean }>('updates.install', id ? { id } : {}, 300_000)
-      if (result.started) setNotice('在 Android 系统界面中确认安装。')
-    } catch (err) {
-      setError(friendlyError(err, '无法安装所选 APK'))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  return (
-    <Dialog title="应用设置" onClose={onClose}>
-      <p className="mb-3 text-sm">QingCode Next{version ? ` · ${version}` : ''}</p>
-      <p className="mb-4 text-xs text-qn-muted">QingCode Next 是第三方客户端，与 OpenAI、Anthropic 无隶属关系。Agent 用量计入你自己的账号。</p>
-      {error && <Note tone="error" message={error} />}
-      {notice && <Note message={notice} />}
-      {native && (
-        <label className="mb-3 flex min-h-11 items-center gap-3 text-sm">
-          <input type="checkbox" role="switch" checked={background} disabled={savingBackground}
-            onChange={(event) => void changeBackground(event.target.checked)} />
-          <span>
-            <span className="block">后台保持连接</span>
-            <span className="block text-xs text-qn-muted">切到后台或锁屏后保持电脑连接，继续处理已排队消息。</span>
-          </span>
-        </label>
-      )}
-      {online && (
-        <>
-          <Field label="更新地址" hint="填写你信任的 HTTPS APK 下载地址。">
-            <input className="qn-input" type="url" value={url} disabled={busy !== null}
-              onChange={(event) => { setUrl(event.target.value); setCandidate(null) }}
-              autoCapitalize="off" spellCheck={false} placeholder="https://…" />
-          </Field>
-          {candidate?.available && candidate.id ? (
-            <Button className="mb-2 w-full" variant="primary" disabled={busy !== null} onClick={() => void install(candidate.id)}>
-              {busy === 'install' ? '正在检查安装包…' : `安装 ${candidate.versionName}`}
-            </Button>
-          ) : (
-            <Button className="mb-2 w-full" variant="primary" disabled={busy !== null || !url.trim()} onClick={() => void check()}>
-              {busy === 'check' ? '正在下载并验证更新…' : '检查更新'}
-            </Button>
-          )}
-        </>
-      )}
-      {native && (
-        <Button className="w-full" disabled={busy !== null} onClick={() => void install()}>
-          从本地 APK 更新
-        </Button>
-      )}
-    </Dialog>
-  )
 }
 
 export function ConnectionsPage() {
@@ -387,7 +261,7 @@ export function ConnectionFormPage() {
                   onChange={(event) => updateDraft('port', event.target.value)} />
               </Field>
               <div className="qn-label">证书指纹</div>
-              <div className="qn-mono mb-3 rounded-xl border border-qn-border bg-black/20 p-2 text-xs">
+              <div className="qn-mono mb-3 rounded-xl border border-qn-border bg-qn-field p-2 text-xs">
                 {normalizeFingerprint(form.draft.fp) ?? '待导入'}
               </div>
             </details>

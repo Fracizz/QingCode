@@ -256,6 +256,20 @@ describe('server 端到端（daemon + connect --stdio + codex 中继）', () => 
     }
   }, 30_000)
 
+  it('system.metrics 返回目标机的 CPU 和内存占用', async () => {
+    const bridge = new Bridge(bundle, stateDir)
+    await bridge.hello(token)
+    const metrics = await bridge.req('system.metrics')
+    bridge.close()
+
+    expect(metrics.cpuThreads).toBe(os.cpus().length)
+    expect(metrics.cpuUsage).toBeGreaterThanOrEqual(0)
+    expect(metrics.cpuUsage).toBeLessThanOrEqual(100)
+    expect(metrics.memoryTotal).toBe(os.totalmem())
+    expect(metrics.memoryUsed).toBeGreaterThanOrEqual(0)
+    expect(metrics.memoryUsed).toBeLessThanOrEqual(os.totalmem())
+  })
+
   it('codex.open → 请求 id 还原 / 通知广播 / 审批首响应 / 重连 attach', async () => {
     const a = new Bridge(bundle, stateDir)
     expect((await a.hello(token)).t).toBe('welcome')

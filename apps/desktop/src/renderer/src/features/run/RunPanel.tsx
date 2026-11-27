@@ -46,7 +46,7 @@ import { configStatus, isRunning, runStatusText, runTabs, runsForConfig, type Co
 import type { RunInfo, RunOs } from './types'
 
 const statusDot: Record<ConfigStatus, string> = {
-  running: 'bg-qn-ok shadow-[0_0_0_3px_rgba(111,207,143,0.18)]',
+  running: 'bg-qn-ok ring-3 ring-qn-fg/15',
   failed: 'bg-qn-danger',
   ok: 'bg-qn-dim',
   idle: 'bg-qn-border-strong',
@@ -580,7 +580,7 @@ function RunOutputArea({
                 aria-selected={selected}
                 tabIndex={0}
                 className={cn(
-                  'flex max-w-[180px] shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-ui-sm outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+                  'flex max-w-[180px] shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-ui-sm outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
                   selected ? 'bg-qn-active text-qn-text' : 'text-qn-muted hover:bg-qn-hover',
                 )}
                 onClick={() => onSelect(run.runId)}

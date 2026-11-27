@@ -3,6 +3,7 @@ package com.qingcode.next;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.net.Uri;
@@ -13,6 +14,7 @@ import android.os.Looper;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.window.OnBackInvokedDispatcher;
 import android.webkit.PermissionRequest;
@@ -59,6 +61,7 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
   @Override protected void onCreate(Bundle saved) {
     super.onCreate(saved);
     configureWindow();
+    applyKeepScreenOn();
 
     FrameLayout root = new FrameLayout(this);
     root.setBackgroundColor(BACKGROUND);
@@ -94,6 +97,13 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
     resumed = false;
     if (webView != null && !connectionServiceStarted) webView.onPause();
     super.onPause();
+  }
+
+  @Override public void onConfigurationChanged(Configuration config) {
+    super.onConfigurationChanged(config);
+    if (webView == null) return;
+    boolean light = (config.uiMode & Configuration.UI_MODE_NIGHT_MASK) != Configuration.UI_MODE_NIGHT_YES;
+    webView.evaluateJavascript("if (typeof window.__qnSystemTheme === 'function') window.__qnSystemTheme(" + light + ")", null);
   }
 
   @Override protected void onNewIntent(Intent intent) {
@@ -137,6 +147,44 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
   @Override public void setBackgroundConnectionEnabled(boolean enabled) {
     getSharedPreferences("app_preferences", MODE_PRIVATE).edit().putBoolean("background_connection", enabled).apply();
     runOnUiThread(this::updateConnectionService);
+  }
+
+  @Override public boolean keepScreenOn() {
+    return getSharedPreferences("app_preferences", MODE_PRIVATE).getBoolean("keep_screen_on", false);
+  }
+
+  @Override public void setKeepScreenOn(boolean enabled) {
+    getSharedPreferences("app_preferences", MODE_PRIVATE).edit().putBoolean("keep_screen_on", enabled).apply();
+    runOnUiThread(this::applyKeepScreenOn);
+  }
+
+  private void applyKeepScreenOn() {
+    if (destroyed) return;
+    // 窗口标志只在 Activity 可见时生效，退到后台后由系统恢复熄屏行为。
+    if (keepScreenOn()) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+  }
+
+  @Override public void setLightSystemBars(boolean light) {
+    runOnUiThread(() -> {
+      if (destroyed) return;
+      Window window = getWindow();
+      if (Build.VERSION.SDK_INT >= 30) {
+        WindowInsetsController controller = window.getInsetsController();
+        if (controller == null) return;
+        int mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+        controller.setSystemBarsAppearance(light ? mask : 0, mask);
+        // 沉浸式窗口由 WebView 绘制顶部，侧边和底部的原生留白跟随系统栏图标。
+        if (webView != null && webView.getParent() instanceof View) {
+          ((View) webView.getParent()).setBackgroundColor(light ? Color.WHITE : BACKGROUND);
+        }
+      } else {
+        int flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        window.getDecorView().setSystemUiVisibility(light ? flags : 0);
+        window.setStatusBarColor(light ? Color.WHITE : BACKGROUND);
+        window.setNavigationBarColor(light ? Color.WHITE : BACKGROUND);
+      }
+    });
   }
 
   @Override public void setDesktopConnectionActive(boolean active) {
@@ -254,7 +302,7 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
       window.setStatusBarColor(BACKGROUND);
       window.setNavigationBarColor(BACKGROUND);
     }
-    // 深色页面需要浅色系统栏图标，这里不设置任何 LIGHT_* 标志。
+    // 冷启动先按默认深色显示，由 WebView 根据已保存主题同步系统栏。
     View decor = window.getDecorView();
     decor.setSystemUiVisibility(0);
   }

@@ -172,17 +172,24 @@ describe('跨端会话状态', () => {
     expect(threadOf(paged).turns?.[0]).toMatchObject({ ...expected, id: 'older' })
   })
 
-  it('缺少服务端用时则记录本地经过时间，重放结束事件时保留用时', () => {
+  it('实时、回放和历史读取使用服务端用时，缺少计时不按客户端时钟估算', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(1_796_000_000_050)
       const started = applyNotification(emptyState(), note('turn/started', { threadId: 't1', turn: { id: 't', status: 'inProgress', items: [] } }))
-      const stopped = note('turn/completed', { threadId: 't1', turn: { id: 't', status: 'interrupted', items: [] } })
+      const turn = { id: 't', status: 'interrupted', items: [], durationMs: 544_000 }
+      const stopped = note('turn/completed', { threadId: 't1', turn })
       vi.setSystemTime(1_796_000_000_450)
       const done = applyNotification(started, stopped)
       vi.setSystemTime(1_796_000_010_000)
-      expect(threadOf(applyNotification(done, stopped)).turns?.[0]).toMatchObject({ outcome: 'interrupted', durationMs: 400 })
-      expect(threadOf(applyNotification(emptyState(), stopped)).turns?.[0]).toMatchObject({ outcome: 'interrupted', durationMs: null })
+      const expected = { outcome: 'interrupted', durationMs: 544_000 }
+      expect(threadOf(done).turns?.[0]).toMatchObject(expected)
+      expect(threadOf(applyNotification(emptyState(), stopped)).turns?.[0]).toMatchObject(expected)
+      const read = (durationMs: number | null) => loadThread(emptyState(), { id: 't1', turns: [{ ...turn, durationMs }] } as unknown as LoadableThread)
+      expect(threadOf(read(544_000)).turns?.[0]).toMatchObject(expected)
+      expect(threadOf(read(null)).turns?.[0]?.durationMs).toBeNull()
+      const missing = note('turn/completed', { threadId: 't1', turn: { ...turn, durationMs: null } })
+      expect(threadOf(applyNotification(started, missing)).turns?.[0]?.durationMs).toBeNull()
     } finally {
       vi.useRealTimers()
     }

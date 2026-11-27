@@ -490,7 +490,7 @@ export function FileExplorer({
             }
             onKeyDown={onTreeKeyDown}
             onContextMenuCapture={onContextMenuCapture}
-            className="qn-scroll relative min-h-0 flex-1 overflow-y-auto outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-accent"
+            className="qn-scroll relative min-h-0 flex-1 overflow-y-auto outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover"
           >
             <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>
               {slice.map((row, offset) => renderRow(row, start + offset))}
@@ -605,7 +605,7 @@ export function FileExplorer({
             </p>
             {deleteTarget.kind !== 'file' && (
               <>
-                <p className="rounded-lg border border-qn-warn/30 bg-qn-warn/10 px-3 py-2 leading-6 text-qn-warn">
+                <p className="rounded-lg border border-qn-border bg-qn-warn/10 px-3 py-2 leading-6 text-qn-warn">
                   这是目录。勾选下面的选项将使用 recursive:true 连同其中所有内容一起删除；
                   不勾选且目录非空时服务端会拒绝删除。
                 </p>

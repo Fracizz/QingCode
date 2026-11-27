@@ -1,11 +1,13 @@
 import {
   compactText,
   formatReset,
+  isClaudeStatusLine,
   remainingQuotaPercent,
   severity,
   severityForPercent,
   tightestPercent,
   windowLabel,
+  type RateLimitSnapshot,
   type RateLimitWindow,
 } from '@qn/codex-client'
 import { useEffect, useState } from 'react'
@@ -14,6 +16,35 @@ import { useApp } from '../store'
 import { Badge, Button, Dialog } from './ui'
 
 type QuotaAgent = 'codex' | 'claude'
+
+function claudeQuotaSummary(snapshot: RateLimitSnapshot | undefined): string | null {
+  if (snapshot?.rateLimitReachedType || snapshot?.spendControlReached) return '已达额度上限'
+  if (isClaudeStatusLine(snapshot)) return compactText(snapshot, 'remaining')
+  const used = snapshot?.primary?.usedPercent
+  return used == null ? null : `上报剩余 ${Math.round(remainingQuotaPercent(used))}%`
+}
+
+const claudeQuotaNote = 'Claude 只在接近或触发限额时上报。'
+
+function ClaudeQuotaDetails({ snapshot }: { snapshot?: RateLimitSnapshot }) {
+  const now = Date.now()
+  if (isClaudeStatusLine(snapshot)) {
+    return (
+      <div>
+        {snapshot?.primary && <WindowRow label="5 小时" window={snapshot.primary} now={now} />}
+        {snapshot?.secondary && <WindowRow label="每周" window={snapshot.secondary} now={now} />}
+        <p className="text-xs text-qn-muted">来源为 Claude CLI 状态栏</p>
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-1 text-sm">
+      <p className={toneText(severity(snapshot))}>{claudeQuotaSummary(snapshot) ?? '暂无限额上报'}</p>
+      {snapshot?.primary?.resetsAt != null && <p className="text-xs text-qn-muted">{formatReset(snapshot.primary.resetsAt, now)}</p>}
+      <p className="text-xs text-qn-muted">{claudeQuotaNote}</p>
+    </div>
+  )
+}
 
 function toneText(level: 'ok' | 'warn' | 'danger'): string {
   return level === 'danger' ? 'text-qn-danger' : level === 'warn' ? 'text-qn-warn' : 'text-qn-muted'
@@ -50,17 +81,15 @@ export function TargetRateLimits({ targetId, targetName, available }: {
   const settings = useApp((s) => s.agentSettings)
   const codex = useApp((s) => s.rateLimits[targetId]?.snapshot)
   const claude = useApp((s) => s.claudeRateLimits[targetId])
+  const claudeOpened = useApp((s) => s.sessions[sessionKey(targetId, 'claude')]?.opened === true)
   const [open, setOpen] = useState<QuotaAgent | null>(null)
   const agents = enabledAgents(settings, targetId)
   const codexSummary = codex?.rateLimitReachedType || codex?.spendControlReached
     ? '已达额度上限'
     : codex?.primary || codex?.secondary ? compactText(codex, 'remaining') : null
-  const claudeUsed = claude?.primary?.usedPercent
-  const claudeSummary = claude?.rateLimitReachedType || claude?.spendControlReached
-    ? '已达额度上限'
-    : claudeUsed != null ? `上报剩余 ${Math.round(remainingQuotaPercent(claudeUsed))}%` : null
+  const claudeSummary = claudeQuotaSummary(claude)
   const showCodex = agents.includes('codex') && (available || codexSummary !== null)
-  const showClaude = agents.includes('claude') && claudeSummary !== null
+  const showClaude = agents.includes('claude') && (claudeOpened || claudeSummary !== null)
   if (!showCodex && !showClaude) return null
 
   return (
@@ -69,13 +98,7 @@ export function TargetRateLimits({ targetId, targetName, available }: {
       {showClaude && <QuotaButton agent="claude" summary={claudeSummary} level={severity(claude)} onClick={() => setOpen('claude')} />}
       {open && (open === 'codex' ? showCodex : showClaude) && (
         <Dialog title={`${targetName} · ${agentLabel(open)} 额度`} onClose={() => setOpen(null)}>
-          {open === 'codex' ? <RateLimitDetails targetId={targetId} available={available} /> : (
-            <div className="space-y-2 text-sm">
-              <p className={toneText(severity(claude))}>{claudeSummary}</p>
-              {claude?.primary?.resetsAt != null && <p>{formatReset(claude.primary.resetsAt, Date.now())}</p>}
-              <p className="text-xs text-qn-muted">Claude 只在接近或触发限额时上报。</p>
-            </div>
-          )}
+          {open === 'codex' ? <RateLimitDetails targetId={targetId} available={available} /> : <ClaudeQuotaDetails snapshot={claude} />}
         </Dialog>
       )}
     </div>
@@ -94,17 +117,11 @@ export function AgentQuota({ targetId, agent }: { targetId: string; agent: strin
       </section>
     )
   }
-  if (agent !== 'claude' || !claude) return null
-  const used = claude.primary?.usedPercent
-  const summary = claude.rateLimitReachedType || claude.spendControlReached
-    ? '已达额度上限'
-    : used != null ? `上报剩余 ${Math.round(remainingQuotaPercent(used))}%` : null
-  if (!summary) return null
+  if (agent !== 'claude') return null
   return (
     <section className="mb-3 space-y-1 text-sm" aria-label="Claude 额度">
       <div className="qn-label">额度</div>
-      <p className={toneText(severity(claude))}>{summary}</p>
-      {claude.primary?.resetsAt != null && <p className="text-xs text-qn-muted">{formatReset(claude.primary.resetsAt, Date.now())}</p>}
+      <ClaudeQuotaDetails snapshot={claude} />
     </section>
   )
 }

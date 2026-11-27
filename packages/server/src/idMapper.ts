@@ -4,6 +4,7 @@ export interface ForwardedRequest {
   clientId: number
   originalId: JsonRpcId
   daemonId: string
+  historyThreadId?: string
 }
 
 /**
@@ -18,9 +19,9 @@ export class IdMapper {
     return this.byDaemonId.size
   }
 
-  allocate(clientId: number, originalId: JsonRpcId): string {
+  allocate(clientId: number, originalId: JsonRpcId, historyThreadId?: string): string {
     const daemonId = `qn-c${++this.next}`
-    this.byDaemonId.set(daemonId, { clientId, originalId, daemonId })
+    this.byDaemonId.set(daemonId, { clientId, originalId, daemonId, ...(historyThreadId ? { historyThreadId } : {}) })
     return daemonId
   }
 

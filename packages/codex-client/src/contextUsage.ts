@@ -1,5 +1,21 @@
 export type ContextUsage = { percent: number; used: number; window: number }
 
+export type EstimatedTurnUsage = { tokens: number | null; costUsd: number | null }
+
+/** Claude 和 pi 上报单轮统计，工具调用可使一轮包含多次模型请求。 */
+export function estimatedTurnUsage(value: unknown): EstimatedTurnUsage | null {
+  if (typeof value !== 'object' || value === null) return null
+  const usage = value as { estimated?: unknown; last?: { totalTokens?: unknown }; estimatedCostUsd?: unknown }
+  if (usage.estimated !== true) return null
+  const tokens = nonnegative(usage.last?.totalTokens)
+  const costUsd = nonnegative(usage.estimatedCostUsd)
+  return tokens === null && costUsd === null ? null : { tokens, costUsd }
+}
+
+function nonnegative(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
 /** 缺少本轮 token 数或上下文窗口时无法估计占用。 */
 export function contextUsage(value: unknown): ContextUsage | null {
   if (typeof value !== 'object' || value === null) return null

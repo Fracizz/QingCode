@@ -900,10 +900,12 @@ export const useApp = create<AppState>((set, get) => {
     }
   }
 
-  function queueLimited(address: SendAddress): boolean {
+  function queueLimited(address: Pick<SendAddress, 'agent' | 'targetId'>): boolean {
     const state = get()
     const snapshot = address.agent === 'codex' ? state.rateLimits[address.targetId]?.snapshot
       : address.agent === 'claude' ? state.claudeRateLimits[address.targetId] : null
+    const reset = snapshot?.primary?.resetsAt
+    if (address.agent === 'claude' && reset != null && reset * 1000 <= Date.now()) return false
     return !!(snapshot?.rateLimitReachedType || snapshot?.spendControlReached)
   }
 
@@ -1274,9 +1276,12 @@ export const useApp = create<AppState>((set, get) => {
         })
       }
       if (agent === 'claude' && method === 'account/rateLimits/updated') {
-        const snapshot = applyRateLimitsUpdate(get().claudeRateLimits[targetId] ?? null, notification)
+        // Claude 推送完整的单次事件，不能沿用上一次事件的窗口或拒绝状态。
+        const snapshot = applyRateLimitsUpdate(null, notification)
         if (snapshot) set((state) => ({ claudeRateLimits: { ...state.claudeRateLimits, [targetId]: snapshot } }))
-        if (snapshot?.rateLimitReachedType) pauseQueues([conn.id, targetId, agent], '当前额度已用完，队列已暂停')
+        if (snapshot && queueLimited({ targetId, agent })) {
+          pauseQueues([conn.id, targetId, agent], '当前额度已用完，队列已暂停')
+        }
       } else if (agent === 'claude' && method === 'thread/tokenUsage/updated') {
         const threadId = params?.threadId
         const turnId = params?.turnId
@@ -1359,6 +1364,22 @@ export const useApp = create<AppState>((set, get) => {
       params: { agent: session.agent, sinceSeq },
     })
 
+  const readClaudeRateLimits = async (session: AgentSession): Promise<void> => {
+    const { key, targetId, rpc } = session
+    const epoch = desktopEpoch
+    const linkEpoch = targetLinkEpochs.get(targetId)
+    const previous = get().claudeRateLimits[targetId]
+    try {
+      // Claude 桥只返回已有事件的缓存。事件流可能在读取期间收到更新。
+      const snapshot = pickSnapshot(await rpc.request('account/rateLimits/read', {}))
+      if (epoch !== desktopEpoch || linkEpoch !== targetLinkEpochs.get(targetId)
+        || get().sessions[key]?.rpc !== rpc || get().claudeRateLimits[targetId] !== previous || !snapshot) return
+      set((state) => ({ claudeRateLimits: { ...state.claudeRateLimits, [targetId]: snapshot } }))
+    } catch {
+      // 旧版 daemon 或暂时断线时仍可等待下一次限额事件。
+    }
+  }
+
   const attachExisting = async (conn: Connection, targetId: string, agent: AgentKind, epoch: number): Promise<AgentSession | null> => {
     const status = await getGateway().rpc<unknown>(conn, 'server.req', { targetId, method: 'codex.status', params: { agent } })
     if (epoch !== desktopEpoch || !isRecord(status) || status.running !== true) return null
@@ -1382,6 +1403,7 @@ export const useApp = create<AppState>((set, get) => {
             openError: null,
             lastSeq: attached.lastSeq,
           }), session)
+          if (agent === 'claude') void readClaudeRateLimits(session)
           return true
         } catch (err) {
           markRepairError(conn, epoch, err)
@@ -2329,6 +2351,7 @@ export const useApp = create<AppState>((set, get) => {
           }), session)
           if (truncated) void reloadActiveConversation(session)
           if (agent === 'codex') void get().refreshRateLimits(targetId)
+          else if (agent === 'claude') void readClaudeRateLimits(session)
           return true
         } catch (err) {
           if (epoch !== desktopEpoch) return false
@@ -2405,6 +2428,7 @@ export const useApp = create<AppState>((set, get) => {
             openError: null,
             lastSeq: restarted ? info.lastSeq : maxSeq(value.lastSeq, info.lastSeq),
           }), session)
+          if (session.agent === 'claude') void readClaudeRateLimits(session)
           const queueAddresses = queued()
           const threadIds = new Set(queueAddresses.map((address) => address.threadId))
           const selected = get().selectedThreadId

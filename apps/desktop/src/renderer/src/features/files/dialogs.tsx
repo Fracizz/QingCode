@@ -100,7 +100,7 @@ function ConflictDialog({ prompt }: { prompt: Extract<FilePrompt, { kind: 'confl
       }
     >
       <div className="flex flex-col gap-2 text-ui leading-6 text-qn-muted">
-        <div className="flex items-start gap-2 rounded-lg border border-qn-warn/30 bg-qn-warn/10 px-3 py-2 text-qn-warn">
+        <div className="flex items-start gap-2 rounded-lg border border-qn-border bg-qn-warn/10 px-3 py-2 text-qn-warn">
           <TriangleAlert size={15} className="mt-1 shrink-0" />
           <span>磁盘上的版本与打开时不同（可能由 Agent 或其他编辑器修改）。</span>
         </div>

@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MobileAgentSettings } from '../agents'
 import type { RateLimitEntry } from '../store'
-import { RateLimitDetails, TargetRateLimits } from './RateLimitView'
+import { AgentQuota, RateLimitDetails, TargetRateLimits } from './RateLimitView'
 
 const state = vi.hoisted(() => ({
   rateLimits: {} as Record<string, RateLimitEntry>,
@@ -36,6 +36,29 @@ afterEach(() => {
 })
 
 describe('手机目标额度展示', () => {
+  it('状态栏推送分别显示 Claude 的 5 小时与每周额度', () => {
+    const snapshot = pickSnapshot({ rateLimits: {
+      limitId: 'claude-statusline',
+      primary: { usedPercent: 0, windowDurationMins: 300 },
+      secondary: { usedPercent: 58, windowDurationMins: 10_080 },
+    } })
+    if (!snapshot) throw new Error('缺少 Claude 状态栏额度')
+    state.claudeRateLimits.local = snapshot
+    const html = renderToStaticMarkup(<AgentQuota targetId="local" agent="claude" />)
+    expect(html).toContain('5 小时')
+    expect(html).toContain('每周')
+    expect(html).toContain('剩余 100%')
+    expect(html).toContain('剩余 42%')
+    expect(html).toContain('来源为 Claude CLI 状态栏')
+  })
+
+  it('Claude 未收到限额事件时在对话中说明状态，pi 没有账户额度入口', () => {
+    const claude = renderToStaticMarkup(<AgentQuota targetId="local" agent="claude" />)
+    expect(claude).toContain('暂无限额上报')
+    expect(claude).toContain('Claude 只在接近或触发限额时上报。')
+    expect(renderToStaticMarkup(<AgentQuota targetId="local" agent="pi" />)).toBe('')
+  })
+
   it('同一目标的 Codex 和 Claude 各自显示剩余额度，pi 不显示额度', () => {
     state.agentSettings = { defaultAgent: 'pi', agents: {} }
     state.rateLimits.local = {

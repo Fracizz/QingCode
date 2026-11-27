@@ -54,6 +54,13 @@ describe('Windows 根相对路径', () => {
     expect(toRepoRelative(winRoot, 'c:/repo/src/a.ts', 'linux')).toBe('src/a.ts')
   })
 
+  it('识别 SFTP 盘符路径并继续验证仓库边界', () => {
+    expect(toRepoRelative(winRoot, '/c:/repo/src/中文.ts', 'win32')).toBe('src/中文.ts')
+    expect(toRepoRelative('/C:/Repo', 'C:\\Repo\\src\\a.ts', 'win32')).toBe('src/a.ts')
+    expect(() => toRepoRelative(winRoot, '/D:/Other/a.ts', 'win32')).toThrow(/不在仓库内/)
+    expect(toRepoRelative('/C:/repo', '/C:/repo/src/a.ts', 'linux')).toBe('src/a.ts')
+  })
+
   it('越界路径仍报 params', () => {
     expect(() => toRepoRelative(winRoot, 'D:\\Other\\a.ts', 'win32')).toThrow(/不在仓库内/)
   })

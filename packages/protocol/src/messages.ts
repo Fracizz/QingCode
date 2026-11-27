@@ -51,6 +51,15 @@ export type FsEntry = { name: string; kind: 'dir' | 'file' | 'symlink' }
 
 export interface ServerMethods extends WorkspaceMethods {
   ping: { params: void; result: { serverVersion: string; protocol: number } }
+  'system.metrics': {
+    params: void
+    result: {
+      cpuThreads: number
+      cpuUsage: number | null
+      memoryUsed: number
+      memoryTotal: number
+    }
+  }
   'fs.home': { params: void; result: { path: string } }
   'fs.list': {
     params: { path: string; dirsOnly?: boolean }

@@ -26,7 +26,7 @@ export function AnnotationBar({
         <button
           type="button"
           aria-expanded={open}
-          className="flex min-h-8 w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-xl px-3 py-1 text-left text-qn-accent hover:bg-qn-elevated focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-qn-accent"
+          className="flex min-h-8 w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-xl px-3 py-1 text-left text-qn-accent hover:bg-qn-elevated focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-qn-outline-hover"
           onClick={() => setOpen((value) => !value)}
         >
           <span className="inline-flex items-center gap-1">

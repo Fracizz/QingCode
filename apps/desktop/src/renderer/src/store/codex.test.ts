@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { DRAFT_THREAD_ID } from '@qn/codex-client'
+import { DRAFT_THREAD_ID, type UserInput } from '@qn/codex-client'
 import { defaultAppSettings } from '../features/settings/settingsModel'
 import { useSettings } from '../features/settings/settingsStore'
 import { sessionKey } from '../lib/agents'
@@ -32,6 +32,7 @@ type CallParams = {
   method?: string
   agent?: string
   targetId?: string
+  params?: { agent?: string }
   msg?: { id?: number; method?: string; params?: { cursor?: string | null; cwd?: string; archived?: boolean; threadId?: string } }
 }
 
@@ -58,7 +59,7 @@ async function fakeCall(method: string, params?: CallParams): Promise<unknown> {
           : msg?.method === 'turn/start'
             ? { turn: { id: 'turn1', status: 'inProgress', items: [] } }
             : { data: [] }
-      emitRecv({ id: msg?.id, result }, agent)
+      emitRecv({ id: msg?.id, result }, agent, params?.targetId)
     })
     return {}
   }
@@ -87,6 +88,82 @@ beforeEach(() => {
     sending: false,
     error: null,
     notice: null,
+  })
+})
+
+describe('发送修订', () => {
+  const chat = { targetId: 'local', agent: 'codex', threadId: 'revision-source' } as const
+  const destination = 'revision-destination'
+  const input: UserInput[] = [{ type: 'text', text: '修订内容', text_elements: [] }, { type: 'localImage', path: '/project/image.png' }]
+  const makeTurn = (id: string, itemId: string, text: string) => ({
+    id, status: 'completed', items: [{ id: itemId, type: 'userMessage', content: [{ type: 'text', text, text_elements: [] }] }],
+  })
+  const prior = makeTurn('prior-turn', 'prior-message', '保留的历史')
+  const original = makeTurn('original-turn', 'original-message', '原来的消息')
+  const later = makeTurn('later-turn', 'later-message', '原会话后续消息')
+  const thread = (id: string, turns: ReturnType<typeof makeTurn>[]) => ({ id, cwd: '/project', status: { type: 'idle' }, turns })
+  const sent = () => callMock.mock.calls.filter(([method]) => method === 'codex.send').map(([, params]) => params.msg)
+
+  beforeEach(async () => {
+    useCodex.setState({ currentCwd: '/project', currentThreadId: chat.threadId })
+    await useCodex.getState().ensureOpen(chat.targetId, chat.agent)
+    emitRecv({ method: 'thread/started', params: { thread: thread(chat.threadId, [prior, original, later]) } })
+  })
+
+  it.each([false, true])('继承修订前的历史并仅发送到分支（源历史分页 %s）', async (paginated) => {
+    if (paginated) {
+      const key = sessionKey(chat.targetId, chat.agent)
+      const session = useCodex.getState().sessions[key]!
+      const source = session.state.threads[chat.threadId]!
+      useCodex.setState((state) => ({ sessions: { ...state.sessions, [key]: { ...session, state: { threads: {
+        ...session.state.threads,
+        [chat.threadId]: { ...source, turns: source.turns?.slice(1), items: source.items.slice(1), historyCursor: { turns: 'earlier' } },
+      } } } } }))
+    }
+    callMock.mockImplementation((method: string, params?: CallParams) => {
+      const msg = params?.msg
+      if (method !== 'codex.send' || !msg) return fakeCall(method, params)
+      let result
+      switch (msg.method) {
+        case 'thread/fork':
+        case 'thread/read': result = { thread: thread(destination, []) }; break
+        case 'thread/turns/list': result = { data: [prior], nextCursor: null }; break
+        case 'turn/start': result = { turn: { id: 'revised-turn', status: 'inProgress', items: [] } }; break
+        default: return fakeCall(method, params)
+      }
+      emitRecv({ id: msg.id, result })
+      return Promise.resolve({})
+    })
+
+    expect(await useCodex.getState().sendRevision(chat, 'original-message', input)).toBe(true)
+    expect(sent().find((msg) => msg.method === 'thread/fork')?.params).toEqual({
+      threadId: chat.threadId, lastTurnId: 'prior-turn', excludeTurns: true,
+    })
+    expect(sent().filter((msg) => msg.method === 'turn/start')).toMatchObject([{ params: { threadId: destination, input } }])
+    expect(useCodex.getState().currentThreadId).toBe(destination)
+    expect(viewItems(destination).map((item) => item.kind === 'user' && item.text)).toEqual(['保留的历史', '修订内容'])
+    expect(viewItems(chat.threadId).map((item) => item.id)).toContain('later-message')
+    expect(useThreadPrefs.getState().byTarget.local?.revisionTurns).toMatchObject({ [`codex:${destination}`]: 'revised-turn' })
+  })
+
+  it('修订第一条消息时从原工作目录新建，发送失败后留在原会话', async () => {
+    callMock.mockImplementation((method: string, params?: CallParams) => {
+      const msg = params?.msg
+      if (method !== 'codex.send' || !msg) return fakeCall(method, params)
+      if (msg.method === 'thread/read') emitRecv({ id: msg.id, result: { thread: thread(chat.threadId, []) } })
+      else if (msg.method === 'thread/start') emitRecv({ id: msg.id, result: { thread: thread(destination, []) } })
+      else if (msg.method === 'turn/start') emitRecv({ id: msg.id, error: { code: -32603, message: '发送失败' } })
+      else return fakeCall(method, params)
+      return Promise.resolve({})
+    })
+
+    expect(await useCodex.getState().sendRevision(chat, 'prior-message', input)).toBe(false)
+    expect(sent().find((msg) => msg.method === 'thread/start')?.params).toEqual({ cwd: '/project' })
+    expect(sent().some((msg) => msg.method === 'thread/fork')).toBe(false)
+    expect(useCodex.getState()).toMatchObject({ currentThreadId: chat.threadId, error: expect.stringContaining('发送失败') })
+    expect(viewItems(chat.threadId).map((item) => item.id)).toEqual(['prior-message', 'original-message', 'later-message'])
+    expect(viewItems(destination)).toEqual([])
+    expect(useThreadPrefs.getState().byTarget.local?.revisionTurns?.[`codex:${destination}`]).toBeUndefined()
   })
 })
 
@@ -345,6 +422,62 @@ describe('输入框草稿标识', () => {
     expect(key()).not.toBe(first)
     useCodex.setState({ currentThreadId: 'first' })
     expect(key()).toBe(first)
+  })
+})
+
+describe('输入框 Agent 错误', () => {
+  const store = useCodex.getState
+
+  it('远端缺少 Codex 时，切到 Claude 会清除 Codex 的发送错误并保留草稿', async () => {
+    let finishClaude!: () => void
+    const claude = new Promise((resolve) => {
+      finishClaude = () => resolve({ initialize: {}, lastSeq: 0 })
+    })
+    callMock.mockImplementation(async (method: string, params?: CallParams) => {
+      if (method === 'server.req' && params?.method === 'codex.open') {
+        if (params.params?.agent === 'claude') return claude
+        throw new Error(`${params.params?.agent} not found`)
+      }
+      return fakeCall(method, params)
+    })
+    store().setContext('remote', '/project')
+    const draftKey = composerDraftKey(store())
+    const probing = store().probeAgents('remote')
+    const sending = store().send('你好')
+
+    await expect(sending).resolves.toBe(false)
+    expect(store().error).toContain('远端未找到 codex')
+    finishClaude()
+    await probing
+
+    expect(store().currentAgent).toBe('claude')
+    expect(store().error).toBeNull()
+    expect(composerDraftKey(store())).toBe(draftKey)
+    await expect(store().send('你好')).resolves.toBe(true)
+    expect(callMock.mock.calls.filter(([, params]) => params?.msg?.method === 'turn/start')
+      .map(([, params]) => [params.targetId, params.agent])).toEqual([['remote', 'claude']])
+    await store().refreshThreads()
+  })
+
+  it('切到另一个目标的 Claude 草稿后忽略旧 Codex 发送的迟到错误', async () => {
+    let failCodex!: () => void
+    const opening = new Promise<never>((_, reject) => {
+      failCodex = () => reject(new Error('codex not found'))
+    })
+    callMock.mockImplementation((method: string, params?: CallParams) =>
+      method === 'server.req' && params?.method === 'codex.open' ? opening : fakeCall(method, params))
+    useCodex.setState({ agents: {
+      local: { codex: { state: 'unavailable' }, claude: { state: 'ready' }, pi: { state: 'unavailable' } },
+    } })
+    store().setContext('remote', '/old')
+    const sending = store().send('你好')
+    store().setContext('local', '/new')
+    expect(store().currentAgent).toBe('claude')
+    failCodex()
+
+    await expect(sending).resolves.toBe(false)
+    expect(store().sessions[sessionKey('remote', 'codex')]?.openError).toContain('远端未找到 codex')
+    expect(store().error).toBeNull()
   })
 })
 

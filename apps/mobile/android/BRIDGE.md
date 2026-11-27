@@ -41,6 +41,10 @@
 | `background.get` | `{}` | 本机后台保持连接开关，默认 `true` |
 | `background.set` | `{enabled}` | 保存并返回开关值 |
 | `background.connection` | `{active}` | 同步当前是否有选中的电脑，返回 `active`。开关开启且有电脑时，由前台 Activity 启动连接服务。 |
+| `screen.get` | `{}` | 本机屏幕常亮开关，默认 `false` |
+| `screen.set` | `{enabled}` | 保存并返回屏幕常亮开关。应用窗口可见时生效。 |
+| `appearance.systemTheme` | `{}` | 返回 Android 当前是否使用浅色主题。系统主题变化时调用 `window.__qnSystemTheme(light)`。 |
+| `appearance.systemBars` | `{light}` | 根据 WebView 当前配色设置系统栏，返回 `light`。浅色配色使用深色系统图标。 |
 | `clipboard.read` | `{}` | 剪贴板文本字符串（无内容时 `""`） |
 | `clipboard.write` | `{text}` | `{ok:true}`。文本上限 256 Ki UTF-16 字符。 |
 | `images.pick` | `{maxCount?, maxBytes?}` | `{images:[{name,mime,dataUrl}], skipped}`。系统选择器支持选取最多四张图，返回的压缩后总字节数不超过 700 KiB。 |

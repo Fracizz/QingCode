@@ -2,7 +2,7 @@
  * daemon 层端到端：注入假 query 工厂，验证两个 agent 的 req 路由、seq/回放隔离、
  * codex.recv 的 agent 标签、status 与非法 agent 的处理。
  */
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -24,6 +24,7 @@ const fakeCodex = path.resolve(srcDir, '../../test/fake-codex.mjs')
 const TEST_ENTRY = `
 import { runDaemon } from './daemon'
 import { createClaudeHost } from './claude/bridge'
+import { publishClaudeStatusLine } from './claude/statusLineCli'
 
 class FakeQuery {
   async *[Symbol.asyncIterator]() {
@@ -43,7 +44,7 @@ const deps = {
 const args = process.argv.slice(2)
 const at = args.indexOf('--state-dir')
 const stateDir = at >= 0 ? args[at + 1] : undefined
-runDaemon({
+const task = args[0] === 'claude-statusline' ? publishClaudeStatusLine(stateDir) : runDaemon({
   stateDir,
   version: '0.0.1',
   createClaudeHost: (hub, version) =>
@@ -51,7 +52,8 @@ runDaemon({
       deps,
       resolve: () => ({ path: 'C:/fake/claude.exe', version: '2.1.331' }),
     }),
-}).catch((err) => {
+})
+task.catch((err) => {
   process.stderr.write(String(err) + '\\n')
   process.exit(1)
 })
@@ -289,6 +291,59 @@ describe('daemon 的 agent 分发与协议扩展', () => {
     expect(codexAttach.lastSeq).toBeGreaterThan(0)
     client.close()
   }, 30_000)
+
+  it('官方 CLI 状态栏通过本机 IPC 推送两个窗口，并按配置目录隔离', async () => {
+    const client = new Client(endpoint)
+    try {
+      await client.hello(token)
+      const directory = path.join(root, 'claude-profile')
+      const resetsAt = Math.floor(Date.now() / 1000) + 600
+      const publish = (profile: string) => {
+        const result = spawnSync(process.execPath, [bundle, 'claude-statusline', '--state-dir', stateDir], {
+          env: { ...process.env, CLAUDE_CONFIG_DIR: profile },
+          input: JSON.stringify({
+            rate_limits: {
+              five_hour: { used_percentage: 0, resets_at: resetsAt },
+              seven_day: { used_percentage: 35, resets_at: resetsAt + 604_800 },
+            },
+          }),
+          encoding: 'utf8',
+          timeout: 5_000,
+        })
+        expect(result.status).toBe(0)
+        expect(result.stdout).toBe('')
+      }
+      publish(directory)
+
+      const opened = await client.req('codex.open', { agent: 'claude', claudeConfigDir: directory })
+      await client.req('codex.attach', { agent: 'claude', sinceSeq: opened.lastSeq })
+      const snapshot = {
+        limitId: 'claude-statusline',
+        primary: { usedPercent: 0, resetsAt, windowDurationMins: 300 },
+        secondary: { usedPercent: 35, resetsAt: resetsAt + 604_800, windowDurationMins: 10_080 },
+      }
+      const readQuota = async (id: string) => {
+        client.send({ t: 'codex.send', agent: 'claude', msg: { id, method: 'account/rateLimits/read' } })
+        const response = await client.wait((frame) => frame.t === 'codex.recv' && (frame.msg as Frame)?.id === id)
+        return (response.msg as Frame).result
+      }
+      expect(await readQuota('cli-quota')).toMatchObject({ rateLimits: snapshot })
+
+      const otherProfile = path.join(root, 'other-claude-profile')
+      await client.req('codex.open', { agent: 'claude', claudeConfigDir: otherProfile })
+      expect(await readQuota('other-quota')).toMatchObject({ rateLimits: { primary: null, secondary: null } })
+      publish(otherProfile)
+      const pushed = await client.wait((frame) => {
+        const message = frame.msg as Frame | undefined
+        const snapshot = (message?.params as Frame | undefined)?.rateLimits as Frame | undefined
+        return frame.t === 'codex.recv' && frame.agent === 'claude'
+          && message?.method === 'account/rateLimits/updated' && snapshot?.limitId === 'claude-statusline'
+      })
+      expect(pushed.msg).toMatchObject({ params: { rateLimits: snapshot } })
+    } finally {
+      client.close()
+    }
+  }, 15_000)
 
   it('非法 agent 参数返回 params 错误，非法 codex.send.agent 触发协议错误帧', async () => {
     const client = new Client(endpoint)

@@ -20,7 +20,7 @@ export function HostKeyDialog({
             取消
           </button>
           <button
-            className={changed ? 'qn-button-subtle border-qn-danger/60 text-qn-danger' : 'qn-button'}
+            className={changed ? 'qn-button-subtle text-qn-danger' : 'qn-button'}
             type="button"
             onClick={() => onRespond(true)}
           >

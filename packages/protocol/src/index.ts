@@ -57,6 +57,7 @@ export type {
   GitFileStatus,
   GitStatusResult,
   GitBranch,
+  GitRemoteAddress,
   GitCommit,
   WorkspaceMethods,
   WorkspaceMethod,

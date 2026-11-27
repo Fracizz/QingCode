@@ -36,6 +36,7 @@ import {
 } from './models'
 import { commandMetadata, SkillsCatalog } from './skills'
 import { isolatedClaudeSessionReader, type ClaudeSessionReader } from './sessionReader'
+import { ClaudeStatusLine, statusLineProfile } from './statusLine'
 import { resolveTurnInput, type ContentBlock, type TurnContent } from './userInput'
 import { resolveClaudeExecutable, type ClaudeExecutable } from './resolve'
 import {
@@ -43,6 +44,7 @@ import {
   buildThread,
   buildTurn,
   emptyRateLimitsResponse,
+  finite,
   isRecord,
   rateLimitSnapshot,
   scalarText,
@@ -96,7 +98,10 @@ interface ClaudeScope {
   sessions: Map<string, BridgeSession>
   metas: Map<string, SessionMeta>
   historyPages: HistoryPageCache
-  rateLimits: Json
+  sdkRateLimits: Json
+  sdkResetsAt: number | null
+  sdkResetTimer?: ReturnType<typeof setTimeout>
+  statusLine: ClaudeStatusLine
   realModels: Json | null
   modelListRequest: Promise<Json> | null
 }
@@ -178,6 +183,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private deps: ClaudeDeps | null = null
   private configDir: string | undefined
   private readonly scopes = new Map<string | undefined, ClaudeScope>()
+  private readonly statusLines = new Map<string, ClaudeStatusLine>()
   private readonly approvals = new Map<JsonRpcId, PendingApproval>()
   private readonly idleTimeoutMs: number
   private requestCounter = 0
@@ -200,10 +206,12 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const previous = this.opened ? this.currentScope() : undefined
     this.configDir = directory
     if (this.opened) {
-      if (previous && previous !== this.currentScope()) {
+      const current = this.currentScope()
+      if (previous && previous !== current) {
         for (const session of previous.sessions.values()) {
           if (session.meta.ephemeral) this.touch(session)
         }
+        this.notifyRateLimits(current)
       }
       return { initialize: this.initializeResult, agentVersion: this.claude?.version }
     }
@@ -240,7 +248,10 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 
   protected closeAgent(): void {
     this.opened = false
+    for (const feed of this.statusLines.values()) feed.close()
+    this.statusLines.clear()
     for (const scope of this.scopes.values()) {
+      clearTimeout(scope.sdkResetTimer)
       scope.historyPages.clear()
       for (const session of scope.sessions.values()) {
         if (session.idleTimer) clearTimeout(session.idleTimer)
@@ -256,13 +267,81 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 
   private currentScope(): ClaudeScope {
     const directory = (this.configDir ?? process.env.CLAUDE_CONFIG_DIR) || undefined
+    return this.scopeFor(directory)
+  }
+
+  private scopeFor(directory: string | undefined): ClaudeScope {
     let scope = this.scopes.get(directory)
     if (!scope) {
-      scope = { directory, sessions: new Map(), metas: new Map(), historyPages: new HistoryPageCache(),
-        rateLimits: emptyRateLimitsResponse(), realModels: null, modelListRequest: null }
-      this.scopes.set(directory, scope)
+      const created: ClaudeScope = {
+        directory,
+        sessions: new Map(),
+        metas: new Map(),
+        historyPages: new HistoryPageCache(),
+        sdkRateLimits: rateLimitSnapshot(),
+        sdkResetsAt: null,
+        statusLine: this.statusLineFor(statusLineProfile(directory)),
+        realModels: null,
+        modelListRequest: null,
+      }
+      this.scopes.set(directory, created)
+      scope = created
     }
     return scope
+  }
+
+  ingestStatusLine(directory: string, windows: unknown): void {
+    this.statusLineFor(statusLineProfile(directory)).ingest(windows)
+  }
+
+  private statusLineFor(profile: string): ClaudeStatusLine {
+    const existing = this.statusLines.get(profile)
+    if (existing) return existing
+    const feed = new ClaudeStatusLine(() => {
+      if (!this.opened) return
+      const scope = this.currentScope()
+      if (scope.statusLine === feed) this.notifyRateLimits(scope)
+    })
+    this.statusLines.set(profile, feed)
+    return feed
+  }
+
+  private quotaSnapshot(scope: ClaudeScope): Json {
+    const rejected = scope.sdkRateLimits.rateLimitReachedType
+    if (rejected && (scope.sdkResetsAt === null || scope.sdkResetsAt * 1000 > Date.now())) {
+      return scope.sdkRateLimits
+    }
+    const { primary, secondary } = scope.statusLine.snapshot()
+    if (primary || secondary) {
+      return {
+        ...rateLimitSnapshot(),
+        limitId: 'claude-statusline',
+        limitName: 'Claude CLI 状态栏',
+        primary,
+        secondary,
+      }
+    }
+    return rejected ? rateLimitSnapshot() : scope.sdkRateLimits
+  }
+
+  private notifyRateLimits(scope: ClaudeScope): void {
+    if (!this.opened || scope !== this.currentScope()) return
+    this.notify({ method: 'account/rateLimits/updated', params: { rateLimits: this.quotaSnapshot(scope) } })
+  }
+
+  private onRateLimitEvent(scope: ClaudeScope, info: unknown): void {
+    clearTimeout(scope.sdkResetTimer)
+    const reset = finite(asRecord(info)?.resetsAt)
+    scope.sdkRateLimits = rateLimitSnapshot(info)
+    scope.sdkResetsAt = reset === null ? null : Math.abs(reset) > 1e11 ? reset / 1000 : reset
+    if (scope.sdkRateLimits.rateLimitReachedType && scope.sdkResetsAt !== null) {
+      const delay = scope.sdkResetsAt * 1000 - Date.now()
+      if (delay > 0 && delay <= 2_147_483_647) {
+        scope.sdkResetTimer = setTimeout(() => this.notifyRateLimits(scope), Math.ceil(delay))
+        scope.sdkResetTimer.unref()
+      }
+    }
+    this.notifyRateLimits(scope)
   }
 
   private sessionReader(scope: ClaudeScope): ClaudeSessionReader {
@@ -302,8 +381,10 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         return this.initializeResult
       case 'account/read':
         return { account: null }
-      case 'account/rateLimits/read':
-        return scope.rateLimits
+      case 'account/rateLimits/read': {
+        const snapshot = this.quotaSnapshot(scope)
+        return { ...emptyRateLimitsResponse(), rateLimits: snapshot, rateLimitsByLimitId: { claude: snapshot } }
+      }
       case 'thread/unsubscribe': {
         const threadId = scalarText(params.threadId)
         const session = scope.sessions.get(threadId)
@@ -636,12 +717,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const record = asRecord(message)
     // 新 SDK 是顶层 rate_limit_event；旧 CLI 也可能把它塞进 system 消息。
     if (record?.type === 'rate_limit_event' || record?.subtype === 'rate_limit_event') {
-      const snapshot = rateLimitSnapshot(record.rate_limit_info)
-      session.scope.rateLimits = {
-        ...emptyRateLimitsResponse(),
-        rateLimits: snapshot,
-        rateLimitsByLimitId: { claude: snapshot },
-      }
+      this.onRateLimitEvent(session.scope, record.rate_limit_info)
     }
     const ctx = {
       threadId: session.meta.id,
@@ -651,7 +727,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const mapped = mapSdkMessage(message, ctx, session.state)
     session.state = mapped.state
     for (const note of mapped.notifications) {
-      if (note.method !== 'account/rateLimits/updated' || session.scope === this.currentScope()) this.notify(note)
+      if (note.method !== 'account/rateLimits/updated') this.notify(note)
     }
     if (record?.type === 'result') {
       session.turnId = null

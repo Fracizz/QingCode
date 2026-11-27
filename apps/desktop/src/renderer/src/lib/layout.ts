@@ -6,7 +6,7 @@ export const SIDEBAR_MIN_WIDTH = 220
 export const SIDEBAR_MAX_WIDTH = 460
 /** 主对话区至少保留的宽度，侧栏再宽也不能把对话挤没。 */
 export const MAIN_MIN_WIDTH = 480
-export const SIDE_CHAT_DEFAULT_WIDTH = 420
+export const SIDE_CHAT_DEFAULT_WIDTH = 540
 const SIDE_CHAT_MIN_WIDTH = 320
 const SIDE_CHAT_MAX_WIDTH = 720
 

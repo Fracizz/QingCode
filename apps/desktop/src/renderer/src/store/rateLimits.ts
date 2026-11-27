@@ -218,10 +218,9 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
       const kind = notificationKind(msg)
       if (kind === 'updated') {
         const key = sessionKey(targetId, agent)
-        const prev =
-          get().byAgent[key]?.snapshot ??
-          (agent === DEFAULT_AGENT ? get().byTarget[targetId]?.snapshot : null) ??
-          null
+        // Claude 的最近一次限额事件是完整快照，允许覆盖之前的拒绝状态。
+        const prev = agent === 'claude' ? null
+          : get().byAgent[key]?.snapshot ?? get().byTarget[targetId]?.snapshot ?? null
         patch(targetId, agent, {
           snapshot: applyRateLimitsUpdate(prev, msg),
           updatedAt: Date.now(),

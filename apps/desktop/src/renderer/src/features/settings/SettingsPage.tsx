@@ -158,7 +158,7 @@ export function SettingsPage({
                   openSettings(section.id)
                 }}
                 className={cn(
-                  'flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+                  'flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
                   current
                     ? 'border-qn-border bg-qn-active font-medium text-qn-text'
                     : 'border-transparent text-qn-muted hover:bg-qn-hover hover:text-qn-text',

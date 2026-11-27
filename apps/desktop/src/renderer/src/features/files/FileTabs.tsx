@@ -44,7 +44,7 @@ export function FileTabs({ tabs, activeId }: { tabs: Tab[]; activeId: string | u
                   }
                 }}
                 className={cn(
-                  'group/tab flex h-7 min-w-0 max-w-56 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-ui-sm outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+                  'group/tab flex h-7 min-w-0 max-w-56 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-ui-sm outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
                   tab.id === activeId ? 'bg-qn-active text-qn-text' : 'text-qn-muted hover:bg-qn-hover',
                 )}
               >

@@ -7,6 +7,7 @@ import { IdMapper } from './idMapper'
 import { redact } from './log'
 import { PendingRequests } from './pendingRequests'
 import { ReplayBuffer } from './replayBuffer'
+import { TurnTiming } from './turnTiming'
 import { VERSION } from './version'
 
 export interface CodexHostHub {
@@ -165,6 +166,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
   private readonly ids = new IdMapper()
   private readonly buffer = new ReplayBuffer()
   private readonly pending = new PendingRequests()
+  private readonly turnTiming = new TurnTiming()
 
   constructor(
     protected readonly hub: AgentHostHub,
@@ -239,7 +241,8 @@ export abstract class JsonRpcAgentHost implements AgentHost {
         })
         return
       }
-      const daemonId = this.ids.allocate(clientId, originalId)
+      const threadId = msg.method === 'thread/turns/list' && isRecord(msg.params) ? msg.params.threadId : undefined
+      const daemonId = this.ids.allocate(clientId, originalId, typeof threadId === 'string' ? threadId : undefined)
       this.sendToAgent({ ...msg, id: daemonId })
       return
     }
@@ -264,6 +267,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
     this.turns = 0
     this.pending.clear()
     this.ids.clear()
+    this.turnTiming.clear()
     this.closeAgent()
   }
 
@@ -278,11 +282,13 @@ export abstract class JsonRpcAgentHost implements AgentHost {
     if (kind === 'response') {
       const forwarded = this.ids.take(msg.id)
       if (!forwarded) return
+      const result = this.turnTiming.history(msg.result, forwarded.historyThreadId)
+      const response = result === msg.result ? msg : { ...msg, result }
       try {
         this.hub.send(forwarded.clientId, {
           t: 'codex.recv',
           seq: null,
-          msg: { ...msg, id: forwarded.originalId },
+          msg: { ...response, id: forwarded.originalId },
         })
       } catch (err) {
         if (!(err instanceof FrameError) || err.code !== 'oversize') throw err
@@ -295,6 +301,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
       return
     }
 
+    if (kind === 'notification') msg = this.turnTiming.notification(msg)
     const seq = this.buffer.push(msg).seq
     if (kind === 'request') {
       this.pending.add(msg.id as JsonRpcId, msg, seq)
@@ -317,6 +324,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
   protected emitExit(info: AgentExitInfo): void {
     this.turns = 0
     this.pending.clear()
+    this.turnTiming.clearRunning()
     for (const forwarded of this.ids.clear()) {
       this.hub.send(forwarded.clientId, {
         t: 'codex.recv',
@@ -342,6 +350,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
 
   protected clearReplay(): void {
     this.buffer.clear()
+    this.turnTiming.clear()
   }
 
   private trackTurn(msg: Record<string, unknown>): void {

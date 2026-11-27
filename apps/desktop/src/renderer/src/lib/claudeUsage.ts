@@ -1,4 +1,4 @@
-import type { RateLimitSnapshot } from '@qn/codex-client'
+import { compactText, isClaudeStatusLine, type RateLimitSnapshot } from '@qn/codex-client'
 
 export type ClaudeCostEvent = { threadId: string; usd: number; estimated: boolean }
 
@@ -64,9 +64,11 @@ export function claudeCompactText(snapshot: RateLimitSnapshot | null, costUsd: n
   const limit =
     snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true
       ? '已达上限'
-      : typeof percent === 'number' && Number.isFinite(percent)
-        ? `限额 ${Math.round(percent)}%`
-        : '暂无限额事件'
+      : isClaudeStatusLine(snapshot)
+        ? compactText(snapshot, 'remaining')
+        : typeof percent === 'number' && Number.isFinite(percent)
+          ? `限额 ${Math.round(percent)}%`
+          : '暂无限额事件'
   const cost = costUsd > 0 ? `≈${formatCost(costUsd)}（估算）` : ''
   return cost ? `${limit} · ${cost}` : limit
 }

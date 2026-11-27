@@ -1,8 +1,9 @@
-import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, PanelLeft, Square, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, Square, X } from 'lucide-react'
 import type { UserInput } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
 import { attachmentBytes, IMAGE_BYTES, insertFileMention, isDraftImage, MAX_IMAGES, mentionAt, type DraftImage } from '../composerLogic'
+import { useMobilePreferences } from '../mobilePreferences'
 import { suggestFiles, type ProjectFile } from '../projectApi'
 import { friendlyError, type Annotation } from '../state'
 import type { SendMode } from '../store'
@@ -16,7 +17,6 @@ export type ComposerProps = {
   onChangeText: (text: string) => void
   onSend: (text: string, attachments: UserInput[], mode: SendMode) => Promise<boolean>
   onInterrupt: () => void
-  onSwitchSession: () => void
   interrupting?: boolean
   running: boolean
   sending: boolean
@@ -46,10 +46,11 @@ function rememberImages(key: string, images: DraftImage[]) {
 }
 
 export function Composer({
-  draftKey, text, onChangeText, onSend, onInterrupt, onSwitchSession, interrupting, running, sending, compacting, disabled, imageUnavailable,
+  draftKey, text, onChangeText, onSend, onInterrupt, interrupting, running, sending, compacting, disabled, imageUnavailable,
   project, annotations, onUpdateAnnotation, onRemoveAnnotation, quoteDraft, onConfirmQuote,
   onCancelQuote, placeholder = '和 Codex 一起工作', toolbar, canSteer,
 }: ComposerProps) {
+  const sendKey = useMobilePreferences((state) => state.sendKey)
   const [comment, setComment] = useState('')
   const [showAnnotations, setShowAnnotations] = useState(false)
   const [images, setImages] = useState(() => photoDrafts.get(draftKey) ?? NO_IMAGES)
@@ -137,10 +138,11 @@ export function Composer({
       setCaret(null)
       return
     }
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
-      event.preventDefault()
-      void submit()
-    }
+    if (event.key !== 'Enter' || event.shiftKey || event.altKey ||
+      event.nativeEvent.isComposing || composing.current) return
+    if (!event.ctrlKey && !event.metaKey && sendKey !== 'send') return
+    event.preventDefault()
+    if (!event.repeat) void submit()
   }
 
   function confirmQuote() {
@@ -232,6 +234,7 @@ export function Composer({
           value={text}
           disabled={disabled}
           aria-label="消息"
+          enterKeyHint={sendKey === 'send' ? 'send' : 'enter'}
           placeholder={running ? '输入下一条，发送后排队' : placeholder}
           onChange={(event) => { onChangeText(event.target.value); setCaret(event.target.selectionStart) }}
           onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
@@ -242,9 +245,6 @@ export function Composer({
         />
         <div className="qn-composer-toolbar">
           <div className="qn-composer-tools">
-            <Button variant="ghost" className="qn-icon-button" onClick={onSwitchSession} aria-label="切换会话" aria-haspopup="dialog">
-              <PanelLeft size={19} strokeWidth={1.75} aria-hidden />
-            </Button>
             <Button variant="ghost" className="qn-icon-button" aria-label="添加图片" title={imageUnavailable}
               onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
               <ImagePlus size={19} strokeWidth={1.75} aria-hidden />
@@ -330,7 +330,7 @@ function SendButton({ running, sending, disabled, canSteer, onSend }: {
         {sending ? <LoadingIcon size={16} /> : <ArrowUp size={18} strokeWidth={2.25} aria-hidden />}
       </Button>
       {running && !disabled && (
-        <Button variant="ghost" className="qn-icon-button qn-send-options" aria-label="发送方式" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+        <Button variant="ghost" className="qn-icon-button" aria-label="发送方式" aria-haspopup="dialog" onClick={() => setOpen(true)}>
           <ChevronDown size={15} aria-hidden />
         </Button>
       )}

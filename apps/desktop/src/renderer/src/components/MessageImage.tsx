@@ -13,7 +13,7 @@ export function MessageImage({ src, label, compact = false }: { src: string; lab
           type="button"
           aria-label={`查看${label}`}
           aria-haspopup="dialog"
-          className="inline-flex h-6 max-w-40 shrink-0 cursor-zoom-in items-center gap-1.5 rounded-md border border-qn-border-strong bg-qn-panel pl-0.5 pr-2 text-ui-sm text-qn-muted hover:bg-qn-hover hover:text-qn-text focus-visible:outline-2 focus-visible:outline-qn-accent"
+          className="inline-flex h-6 max-w-40 shrink-0 cursor-zoom-in items-center gap-1.5 rounded-md border border-qn-border-strong bg-qn-panel pl-0.5 pr-2 text-ui-sm text-qn-muted hover:bg-qn-hover hover:text-qn-text focus-visible:outline-2 focus-visible:outline-qn-outline-hover"
           onClick={() => previewRef.current?.showModal()}
         >
           <img src={src} alt="" className="size-5 shrink-0 rounded-sm bg-qn-bg object-cover" />
@@ -24,7 +24,7 @@ export function MessageImage({ src, label, compact = false }: { src: string; lab
           type="button"
           aria-label={`查看${label}`}
           aria-haspopup="dialog"
-          className="max-w-[min(100%,16rem)] cursor-zoom-in overflow-hidden rounded-xl border border-qn-border focus-visible:outline-2 focus-visible:outline-qn-accent focus-visible:outline-offset-2"
+          className="max-w-[min(100%,16rem)] cursor-zoom-in overflow-hidden rounded-xl border border-qn-border focus-visible:outline-2 focus-visible:outline-qn-outline-hover focus-visible:outline-offset-2"
           onClick={() => previewRef.current?.showModal()}
         >
           <img src={src} alt={label} className="max-h-48 max-w-full object-contain" />

@@ -7,7 +7,7 @@ function FeedbackAction({ className, ...props }: ComponentPropsWithoutRef<'butto
     <button
       type="button"
       className={cn(
-        'inline-flex h-[1lh] min-w-5 shrink-0 items-center justify-center rounded-sm hover:bg-qn-hover focus-visible:outline-1 focus-visible:outline-current',
+        'inline-flex h-[1lh] min-w-5 shrink-0 items-center justify-center rounded-sm hover:bg-qn-hover focus-visible:outline-1 focus-visible:outline-qn-outline-hover',
         className,
       )}
       {...props}
@@ -54,7 +54,7 @@ export function FeedbackRow({
 }
 
 const errorNoteVariants = {
-  default: 'rounded-lg border border-qn-danger/30 px-3 py-2 text-ui leading-5',
+  default: 'rounded-lg border border-qn-border px-3 py-2 text-ui leading-5',
   compact: 'rounded-lg px-2.5 py-1.5 text-ui-sm leading-4',
   inline: 'shrink-0 border-b border-qn-border px-3 py-2 text-ui-sm leading-5',
 }

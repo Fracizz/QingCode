@@ -10,7 +10,8 @@
   --color-qn-border: #383838;
   --color-qn-border-strong: #4d4d4d;
   /* 可输入控件外框与对话输入框底色：对比度要求见 docs/design/contrast.md（强光下要能看清输入框边界）。 */
-  --color-qn-outline: #6b6b6b;
+  --color-qn-outline: #7a7a7a;
+  --color-qn-outline-hover: #858585;
   --color-qn-composer: #2a2a2a;
   --color-qn-text: #e6e6e6;
   --color-qn-muted: #a0a0a0;
@@ -19,6 +20,12 @@
   --color-qn-danger: #ff6b63;
   --color-qn-ok: #6fcf8f;
   --color-qn-warn: #e2b55d;
+  --color-qn-primary-text: #102720;
+  --color-qn-diff-add: #6ee7b7;
+  --color-qn-diff-remove: #fca5a5;
+  --color-qn-claude: #f0a37f;
+  --color-qn-archive: #7a4422;
+  --color-qn-archive-text: #ffffff;
 }
 
 /*
@@ -48,6 +55,51 @@
   font-size: 15px;
 }
 
+:root[data-theme="graphite"] {
+  --color-qn-bg: #28292c;
+  --color-qn-panel: #2f3033;
+  --color-qn-card: #343538;
+  --color-qn-raised: #3c3d40;
+  --color-qn-field: #252629;
+  --color-qn-border: #54555a;
+  --color-qn-border-strong: #65666b;
+  --color-qn-outline: #94959b;
+  --color-qn-outline-hover: #acadb3;
+  --color-qn-composer: #37383b;
+  --color-qn-text: #ececec;
+  --color-qn-muted: #b4b4b8;
+  --color-qn-dim: #a0a0a5;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-qn-bg: #ffffff;
+  --color-qn-panel: #fafafa;
+  --color-qn-card: #f4f4f4;
+  --color-qn-raised: #eaeaea;
+  --color-qn-field: #ffffff;
+  --color-qn-border: #c6c6c6;
+  --color-qn-border-strong: #a0a0a0;
+  --color-qn-outline: #777777;
+  --color-qn-outline-hover: #555555;
+  --color-qn-composer: #ffffff;
+  --color-qn-text: #1a1a1a;
+  --color-qn-muted: #555555;
+  --color-qn-dim: #666666;
+  --color-qn-accent: #00584b;
+  --color-qn-danger: #a02725;
+  --color-qn-ok: #20633a;
+  --color-qn-warn: #785016;
+  --color-qn-primary-text: #ffffff;
+  --color-qn-diff-add: #185a39;
+  --color-qn-diff-remove: #9a2927;
+  --color-qn-claude: #8a4527;
+  --qn-accent-surface: color-mix(in srgb, var(--color-qn-accent) 9%, transparent);
+  --qn-press: color-mix(in srgb, var(--color-qn-text) 5%, transparent);
+  --qn-edge: color-mix(in srgb, var(--color-qn-text) 14%, transparent);
+  --qn-edge-top: color-mix(in srgb, var(--color-qn-bg) 78%, transparent);
+}
+
 html,
 body,
 #root {
@@ -58,10 +110,10 @@ body,
   -webkit-tap-highlight-color: transparent;
 }
 
-/* 原生复选框跟随品牌青，不再是系统蓝。 */
+/* 原生复选框和单选框沿用控件的中性色。 */
 input[type="checkbox"],
 input[type="radio"] {
-  accent-color: var(--color-qn-accent);
+  accent-color: var(--color-qn-outline-hover);
 }
 
 * {
@@ -219,7 +271,7 @@ input[type="radio"] {
 
 .qn-input:focus,
 .qn-textarea:focus {
-  border-color: var(--color-qn-accent);
+  border-color: var(--color-qn-outline-hover);
   outline: none;
 }
 
@@ -248,12 +300,12 @@ input[type="radio"] {
 .qn-button-primary {
   border-color: transparent;
   background: var(--color-qn-accent);
-  color: #102720;
+  color: var(--color-qn-primary-text);
   font-weight: 600;
 }
 
 .qn-button-danger {
-  border-color: color-mix(in srgb, var(--color-qn-danger) 50%, transparent);
+  border-color: var(--color-qn-border-strong);
   color: var(--color-qn-danger);
 }
 
@@ -350,12 +402,10 @@ input[type="radio"] {
 .qn-note-close:active { background: var(--qn-press); }
 
 .qn-note-error {
-  border-color: color-mix(in srgb, var(--color-qn-danger) 50%, transparent);
   color: var(--color-qn-danger);
 }
 
 .qn-note-warn {
-  border-color: color-mix(in srgb, var(--color-qn-warn) 50%, transparent);
   color: var(--color-qn-warn);
 }
 
@@ -431,6 +481,51 @@ input[type="radio"] {
   border: 0;
   border-radius: 0;
   padding-top: max(12px, var(--qn-top));
+}
+
+.qn-settings {
+  align-self: center;
+  width: min(100%, 560px);
+}
+
+.qn-settings > section + section {
+  margin-top: 24px;
+}
+
+.qn-settings h3 {
+  margin: 0 0 12px;
+  border-bottom: 1px solid var(--color-qn-border);
+  padding-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.qn-setting {
+  min-width: 0;
+  margin: 0 0 16px;
+}
+
+.qn-setting legend {
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.qn-setting .qn-segment {
+  border-color: var(--color-qn-outline);
+}
+
+.qn-setting .qn-segment button,
+.qn-setting .qn-button {
+  min-height: 44px;
+}
+
+.qn-setting button:disabled {
+  opacity: 0.6;
+}
+
+.qn-settings-icon {
+  min-width: 44px;
+  padding: 0;
 }
 
 /* 底部关闭：圆形按钮居中，落在单手拇指能够到的区域。 */
@@ -679,12 +774,12 @@ input[type="radio"] {
 
 .qn-diff-add {
   background: rgb(16 185 129 / 12%);
-  color: #6ee7b7;
+  color: var(--color-qn-diff-add);
 }
 
 .qn-diff-remove {
   background: rgb(239 68 68 / 12%);
-  color: #fca5a5;
+  color: var(--color-qn-diff-remove);
 }
 
 .qn-diff-hunk {
@@ -712,7 +807,7 @@ input[type="radio"] {
 }
 
 .qn-chip-active {
-  border-color: var(--color-qn-accent);
+  border-color: var(--color-qn-border-strong);
   color: var(--color-qn-text);
   background: color-mix(in srgb, var(--color-qn-accent) 18%, var(--color-qn-card));
 }
@@ -730,19 +825,17 @@ input[type="radio"] {
 }
 
 .qn-agent-tag-claude {
-  border-color: color-mix(in srgb, #d97757 60%, transparent);
-  color: #f0a37f;
+  color: var(--color-qn-claude);
 }
 
 .qn-agent-tag-pi {
-  border-color: color-mix(in srgb, var(--color-qn-ok) 60%, transparent);
   color: var(--color-qn-ok);
 }
 
 
-:where(button, input, textarea, a, summary):focus-visible {
-  outline: 2px solid var(--color-qn-accent);
-  outline-offset: -2px;
+:where(button, input, textarea, select, a[href], summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-qn-outline-hover);
+  outline-offset: 2px;
 }
 
 :where(button, input, textarea, summary) {
@@ -837,7 +930,7 @@ input[type="radio"] {
 }
 
 .qn-search:focus-within {
-  border-color: var(--color-qn-accent);
+  border-color: var(--color-qn-outline-hover);
 }
 
 .qn-search input {
@@ -876,7 +969,7 @@ input[type="radio"] {
 }
 
 .qn-project-filter-option[aria-pressed="true"] {
-  border-color: var(--color-qn-accent);
+  border-color: var(--color-qn-border-strong);
   background: var(--qn-accent-surface);
   font-weight: 650;
 }
@@ -1041,8 +1134,8 @@ input[type="radio"] {
   display: grid;
   place-content: center;
   gap: 2px;
-  background: #7a4422;
-  color: #fff;
+  background: var(--color-qn-archive);
+  color: var(--color-qn-archive-text);
   text-align: center;
   font-size: 14px;
   font-weight: 600;
@@ -1141,7 +1234,7 @@ input[type="radio"] {
 .qn-segment button:active { background: var(--qn-press); }
 
 .qn-segment button:is([aria-pressed="true"], [aria-checked="true"]) {
-  border-color: color-mix(in srgb, var(--color-qn-accent) 45%, transparent);
+  border-color: var(--color-qn-border-strong);
   background: var(--qn-accent-surface);
   color: var(--color-qn-accent);
   font-weight: 600;
@@ -1188,7 +1281,7 @@ input[type="radio"] {
 }
 
 .qn-composer:focus-within {
-  border-color: color-mix(in srgb, var(--color-qn-accent) 70%, var(--color-qn-outline));
+  border-color: var(--color-qn-outline-hover);
 }
 
 .qn-composer .qn-textarea {
@@ -1205,19 +1298,18 @@ input[type="radio"] {
   outline: none;
 }
 
-/* 左侧工具在窄屏换行，发送与停止按钮留在右下方。 */
+/* 空间不足时让右侧操作整组换行，给模型和访问模式留出空间。 */
 .qn-composer-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  min-height: 46px;
-  padding: 2px 6px 6px 4px;
+  gap: 4px;
+  padding: 0 4px 4px;
 }
 
 .qn-composer-tools {
   display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
+  flex: 1 1 min-content;
   min-width: 0;
   align-items: center;
   gap: 2px;
@@ -1225,18 +1317,20 @@ input[type="radio"] {
 }
 
 .qn-composer-tools > .qn-composer-model {
-  flex: 1 1 4.5rem;
-  min-width: 4.5rem;
+  flex: 1 1 auto;
+  width: 5rem;
+  min-width: 0;
   max-width: 14rem;
 }
 
-/* 只改输入框里的触发按钮；弹出的选择面板也渲染在这个容器里，其中的芯片保持原样。 */
-.qn-composer-model > .qn-chip {
+.qn-composer-model > .qn-button {
   width: 100%;
-  min-height: 34px;
-  padding: 0 8px;
-  border-color: transparent;
-  background: transparent;
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 0 4px;
+  color: var(--color-qn-muted);
   font-size: 12.5px;
 }
 
@@ -1251,16 +1345,17 @@ input[type="radio"] {
 }
 
 .qn-access-chip[data-tone="warn"] {
-  border-color: var(--color-qn-warn);
   color: var(--color-qn-warn);
 }
 
 .qn-access-chip[data-tone="danger"] {
-  border-color: var(--color-qn-danger);
   color: var(--color-qn-danger);
 }
 
-.qn-composer-model > .qn-chip:active { background: var(--qn-press); }
+/* 回复期间无法切换权限，当前权限提示仍需清晰可见。 */
+.qn-access-chip[data-tone]:disabled {
+  opacity: 1;
+}
 
 .qn-composer-tools > * { flex-shrink: 0; }
 
@@ -1271,43 +1366,28 @@ input[type="radio"] {
 }
 
 .qn-composer-toolbar .qn-icon-button {
-  min-width: 34px;
-  min-height: 34px;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .qn-composer-actions {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  align-self: flex-end;
-  gap: 6px;
+  gap: 4px;
   margin-inline-start: auto;
-}
-
-.qn-composer-actions .qn-send-options {
-  min-width: 24px;
-  margin-inline-start: -4px;
 }
 
 .qn-send-button,
 .qn-stop-button {
-  position: relative;
   flex-shrink: 0;
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
-  min-height: 34px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
   padding: 0;
   border-radius: 999px;
 }
-
-.qn-composer-toolbar :is(.qn-send-button, .qn-stop-button, .qn-icon-button)::before {
-  position: absolute;
-  inset: -5px;
-  content: "";
-}
-
-.qn-composer-toolbar .qn-icon-button { position: relative; }
 
 .qn-send-button.qn-button-primary:disabled {
   border-color: transparent;
@@ -1676,6 +1756,17 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 @keyframes qn-spin { to { transform: rotate(360deg); } }
 
 /* ===== 减少动效：入场与弹跳不播放，指示块直接切换 ===== */
+:root[data-reduce-motion] *,
+:root[data-reduce-motion] *::before,
+:root[data-reduce-motion] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+:root[data-reduce-motion] dialog::backdrop {
+  animation: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1870,10 +1961,9 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   font-size: 13.5px;
 }
 
-/* 待审批卡片：琥珀色描边 + 淡底，在消息流里一眼可见。 */
+/* 待审批卡片通过浅琥珀色底区分。 */
 .qn-card.qn-approval {
   background: color-mix(in srgb, var(--color-qn-warn) 6%, var(--color-qn-card));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-qn-warn) 45%, transparent);
 }
 
 /* 排队列表：每行操作收成 34px 小图标，正文优先占宽。 */

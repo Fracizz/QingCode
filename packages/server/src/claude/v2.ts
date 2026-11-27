@@ -220,6 +220,7 @@ export function buildTurn(
   items: V2Item[],
   status: string,
   error?: string | null,
+  source: 'live' | 'history' = 'live',
 ): Json {
   return {
     id,
@@ -230,8 +231,9 @@ export function buildTurn(
     error: error
       ? { message: error, codexErrorInfo: null, additionalDetails: null, misalignment: null }
       : null,
-    startedAt: nowSeconds(),
-    completedAt: status === 'inProgress' ? null : nowSeconds(),
+    // 历史没有计时时不能用读取时间；实时结束对象也不能把结束时刻填为起点。
+    startedAt: source === 'live' && status === 'inProgress' ? nowSeconds() : null,
+    completedAt: source === 'live' && status !== 'inProgress' ? nowSeconds() : null,
     durationMs: null,
   }
 }

@@ -10,7 +10,7 @@ import { Button, Dialog, Loading, LoadingIcon, Note } from './ui'
 import { WorkspaceSearch } from './WorkspaceHome'
 
 /**
- * 输入框上方的"模型 · 推理强度"入口 + 底部弹层（参考桌面 ModelPicker）。
+ * 输入区的"模型 · 推理强度"入口 + 底部弹层。
  * 数据来自当前会话 Agent 的 model/list，快速档只对 Codex 显示。
  */
 export function ModelPicker({ targetId, agent }: { targetId: string; agent: AgentKind }) {
@@ -33,6 +33,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
 
   if (!opened || (!open && models.length === 0 && !list?.loading && !list?.error)) return null
   const showFast = agent === 'codex' && selection.fastTier !== null
+  const label = triggerLabel(selection) || '模型'
   const close = () => {
     setOpen(false)
     setQuery('')
@@ -41,12 +42,13 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
   return (
     <div className="qn-composer-model">
       {/* 打开时补拉一次：首次列表为空（如 pi 刚启动）时，靠这里触发 store 的过期重取。 */}
-      <button type="button" className="qn-chip" onClick={() => { setOpen(true); void load(targetId, agent) }} aria-label="选择模型与推理强度">
+      <Button variant="ghost" onClick={() => { setOpen(true); void load(targetId, agent) }}
+        aria-label="选择模型与推理强度" aria-haspopup="dialog" aria-expanded={open} title={label}>
         {list?.loading && models.length === 0 && <LoadingIcon size={13} />}
         {selection.fast && <Zap size={13} className="shrink-0 text-qn-warn" aria-hidden />}
-        <span className="truncate">{triggerLabel(selection) || '模型'}</span>
+        <span className="truncate">{label}</span>
         <ChevronDown size={14} className="shrink-0" aria-hidden />
-      </button>
+      </Button>
       {open && (
         <Dialog title="模型与推理强度" onClose={close}>
           {list?.error && <Note tone="error" message={list.error} actionLabel="重试" onAction={() => void load(targetId, agent, true)} />}
@@ -66,7 +68,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                   type="button"
                   role="option"
                   aria-selected={selected}
-                  className={`qn-row qn-option rounded-xl border px-3 py-2.5 ${selected ? 'border-qn-accent bg-qn-accent/10' : 'border-qn-border'}`}
+                  className={`qn-row qn-option rounded-xl border px-3 py-2.5 ${selected ? 'border-qn-outline-hover bg-qn-accent/10' : 'border-qn-border'}`}
                   onClick={() => setPrefs(targetId, agent, pickModel(models, prefs, model.model))}
                 >
                   <span className="min-w-0 flex-1">

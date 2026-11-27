@@ -128,6 +128,13 @@ export function parseRenameParams(p: RecordParams): { from: string; to: string }
   return { from: requireAbsolutePath(p.from, 'from'), to: requireAbsolutePath(p.to, 'to') }
 }
 
+export function parseMkdirParams(p: RecordParams): { path: string; recursive: boolean } {
+  return {
+    path: requireAbsolutePath(p.path),
+    recursive: optionalBoolean(p.recursive, 'recursive') ?? true,
+  }
+}
+
 export function parseDeleteParams(p: RecordParams): { path: string; recursive: boolean } {
   return {
     path: requireAbsolutePath(p.path),

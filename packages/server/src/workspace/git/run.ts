@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { normalizePathForCompare } from '../paths'
+import { fromWindowsSftpPath, normalizePathForCompare, stripLongPathPrefix } from '../paths'
 import { WorkspaceError } from '../registry'
 import { classifyGitFailure, redactCredentials, type GitFailureCode } from './errors'
 
@@ -166,6 +166,7 @@ export async function runGit(
   let truncated = false
   let stderrRaw: Buffer = Buffer.alloc(0)
   let spawnError: NodeJS.ErrnoException | null = null
+  let outputError: NodeJS.ErrnoException | null = null
   let timedOut = false
 
   const buildResult = (code: number | null, signal: NodeJS.Signals | null): GitRunResult => {
@@ -213,13 +214,20 @@ export async function runGit(
       settled = true
       clearTimeout(timer)
       const result = buildResult(code, signal)
+      const cwdMissing = spawnError !== null && !fs.existsSync(cwd)
+      // Git 能处理仓库内的长文件路径；Windows 创建进程时的工作目录另有限制。
+      if (
+        process.platform === 'win32' && spawnError?.code === 'ENOENT' && !cwdMissing &&
+        stripLongPathPrefix(cwd).length >= 260
+      ) {
+        reject(new GitRunError('git_failed', 'Git 工作目录路径过长，Windows 无法启动 Git 进程', result))
+        return
+      }
       const failure = classifyGitFailure({
         args,
         cwd,
-        spawnError: spawnError
-          ? { code: spawnError.code, message: spawnError.message }
-          : null,
-        cwdMissing: spawnError ? !fs.existsSync(cwd) : false,
+        spawnError: spawnError ?? outputError,
+        cwdMissing,
         timedOut,
         exitCode: code,
         signal,
@@ -258,6 +266,13 @@ export async function runGit(
         : Buffer.concat([stderrRaw, chunk]).subarray(-MAX_STDERR)
     })
 
+    // Windows 启动失败时，stdout/stderr 也可能发出 ENOTCONN。
+    const recordOutputError = (err: NodeJS.ErrnoException): void => {
+      outputError ??= err
+    }
+    child.stdout?.on('error', recordOutputError)
+    child.stderr?.on('error', recordOutputError)
+
     // 命令提前退出时写 stdin 会 EPIPE，不能让它变成未处理异常。
     child.stdin?.on('error', () => {})
     if (opts.input !== undefined) child.stdin?.end(Buffer.from(opts.input, 'utf8'))
@@ -294,6 +309,7 @@ function forgetRoot(dir: string): void {
 
 /** 所有 git.* 方法先取仓库根，后续命令都在根下执行，保证路径是根相对路径。 */
 export async function gitRoot(cwd: string): Promise<string> {
+  if (process.platform === 'win32') cwd = fromWindowsSftpPath(cwd)
   const now = Date.now()
   const cached = rootCache.get(cwd)
   if (cached && now - cached.at < ROOT_TTL_MS) return cached.root

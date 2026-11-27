@@ -180,7 +180,7 @@ export function DiffView({
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
       {notice && (
-        <div className="shrink-0 border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-ui-sm text-qn-warn">
+        <div className="shrink-0 border-b border-qn-border bg-qn-warn/10 px-3 py-1.5 text-ui-sm text-qn-warn">
           {notice}
         </div>
       )}
@@ -213,7 +213,7 @@ export function DiffView({
         </div>
       )}
       {mergeError && (
-        <div className="shrink-0 border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-ui-sm text-qn-warn">
+        <div className="shrink-0 border-b border-qn-border bg-qn-warn/10 px-3 py-1.5 text-ui-sm text-qn-warn">
           {mergeError} · 已退回 diff 文本
         </div>
       )}

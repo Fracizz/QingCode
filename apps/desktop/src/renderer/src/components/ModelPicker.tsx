@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, Zap } from 'lucide-react'
+import { estimatedTurnUsage } from '@qn/codex-client'
+import { Check, ChevronDown, Gauge, Zap } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { sessionKey } from '../lib/agents'
+import { formatCost } from '../lib/claudeUsage'
 import { cn } from '../lib/cn'
 import {
   contextUsage,
@@ -21,9 +23,9 @@ import { LoadingIcon } from './LoadingIcon'
 import { ProgressRing } from './ProgressRing'
 import { PopoverContent, PopoverRoot, PopoverTrigger, Tip } from './primitives'
 import { SearchField } from './SearchField'
-import { EmptyState, ErrorNote, Spinner } from './ui'
+import { EmptyState, ErrorNote, IconButton, Spinner } from './ui'
 
-const triggerClass = 'inline-flex h-8 max-w-[16rem] items-center gap-1 rounded-lg px-2 text-ui text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover data-[state=open]:text-qn-text'
+const triggerClass = 'inline-flex h-8 max-w-[16rem] items-center gap-1 rounded-lg px-2 text-ui text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover data-[state=open]:bg-qn-hover data-[state=open]:text-qn-text'
 
 /**
  * 输入框里的模型选择器（参考 Codex）：搜索模型 → 选模型 → 推理强度分段 → 速度（Fast）开关。
@@ -37,7 +39,13 @@ export function ModelPicker({ targetId, agent, threadId, piDraft }: {
   piDraft?: { start: () => void; starting: boolean; disabled: boolean }
 }) {
   const key = sessionKey(targetId, agent)
-  const session = useCodex((s) => s.sessions[key])
+  const rpc = useCodex((s) => {
+    const session = s.sessions[key]
+    return session?.opened ? session.rpc : undefined
+  })
+  const directory = useCodex((s) => s.sessions[key]?.openedConfig?.directory)
+  const hasClaudeTurn = useCodex((s) => agent === 'claude' && threadId !== null &&
+    s.sessions[key]?.state.threads[threadId]?.turns?.some((turn) => turn.outcome !== undefined) === true)
   const list = useModels((s) => s.lists[key])
   const prefs = useModels((s) => s.prefs[agent] ?? EMPTY_PREFS)
   const load = useModels((s) => s.load)
@@ -46,10 +54,6 @@ export function ModelPicker({ targetId, agent, threadId, piDraft }: {
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
 
-  const rpc = session?.opened ? session.rpc : undefined
-  const directory = session?.openedConfig?.directory
-  const hasClaudeTurn = agent === 'claude' && threadId !== null &&
-    session?.state.threads[threadId]?.turns?.some((turn) => turn.outcome !== undefined) === true
   useEffect(() => {
     if (rpc) void load(targetId, agent, rpc, agent === 'claude' || (agent === 'pi' && threadId !== null))
   }, [rpc, threadId, directory, hasClaudeTurn, load, targetId, agent])
@@ -187,7 +191,7 @@ export function ModelPicker({ targetId, agent, threadId, piDraft }: {
                         role="radio"
                         aria-checked={active}
                         className={cn(
-                          'h-8 rounded-lg px-2.5 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+                          'h-8 rounded-lg px-2.5 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
                           active ? 'bg-qn-active font-medium text-qn-text' : 'text-qn-muted hover:bg-qn-hover hover:text-qn-text',
                         )}
                         onClick={() => setPrefs(agent, { effort: effort.value })}
@@ -215,10 +219,10 @@ export function ModelPicker({ targetId, agent, threadId, piDraft }: {
                   type="button"
                   aria-pressed={selection.fast}
                   className={cn(
-                    'inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+                    'inline-flex h-8 items-center gap-1.5 rounded-lg border border-qn-border-strong px-3 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
                     selection.fast
-                      ? 'border-qn-warn/50 bg-qn-warn/10 text-qn-warn'
-                      : 'border-qn-border-strong text-qn-muted hover:bg-qn-hover hover:text-qn-text',
+                      ? 'bg-qn-warn/10 text-qn-warn'
+                      : 'text-qn-muted hover:bg-qn-hover hover:text-qn-text',
                   )}
                   onClick={() => setPrefs(agent, { fast: !selection.fast })}
                 >
@@ -234,10 +238,27 @@ export function ModelPicker({ targetId, agent, threadId, piDraft }: {
   )
 }
 
-/** 上下文窗口占用环（参考 Codex 输入框右下角）；拿不到窗口大小时不显示。 */
+/** 有窗口大小时显示占用环；Claude 和 pi 只有单轮统计时显示用量详情。 */
 export function ContextRing({ tokenUsage }: { tokenUsage: unknown }) {
   const usage = contextUsage(tokenUsage)
-  if (!usage) return null
+  if (!usage) {
+    const turn = estimatedTurnUsage(tokenUsage)
+    if (!turn) return null
+    return (
+      <PopoverRoot>
+        <PopoverTrigger asChild>
+          <IconButton label="查看最近一轮用量"><Gauge size={15} /></IconButton>
+        </PopoverTrigger>
+        <PopoverContent align="end">
+          <div className="min-w-44 space-y-1 px-3 py-2 text-ui">
+            <p className="font-medium">最近上报的单轮用量</p>
+            {turn.tokens !== null && <p className="text-qn-muted">{formatTokens(turn.tokens)} tokens</p>}
+            {turn.costUsd !== null && <p className="text-qn-muted">费用估算 {formatCost(turn.costUsd)}</p>}
+          </div>
+        </PopoverContent>
+      </PopoverRoot>
+    )
+  }
   const tone = usage.percent >= 90 ? 'var(--color-qn-danger)' : usage.percent >= 75 ? 'var(--color-qn-warn)' : 'var(--color-qn-muted)'
   return (
     <Tip label={`上下文已用 ${usage.percent}% · ${formatTokens(usage.used)} / ${formatTokens(usage.window)} tokens`}>

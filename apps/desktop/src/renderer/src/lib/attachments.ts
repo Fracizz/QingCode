@@ -80,13 +80,13 @@ export function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path
 }
 
-/** 粘贴图片在正文里的占位，和附件卡片上的名字一致。 */
+/** 输入框内的图片文件名占位。 */
 export function imagePlaceholder(name: string): string {
   return `[${name}]`
 }
 
 /**
- * 给粘贴的图片取不重名的名字：截图通常都叫 image.png，重名时占位无法对应到具体附件，
+ * 给图片附件取不重名的名字：截图通常都叫 image.png，重名时占位无法对应到具体附件，
  * 所以依次改成 image-2.png、image-3.png。
  */
 export function uniqueImageName(name: string, taken: Iterable<string>): string {
@@ -112,13 +112,30 @@ export function insertAtSelection(value: string, start: number, end: number, tex
   return { value: left + inserted + right, caret: left.length + inserted.length }
 }
 
-/** 移除附件时去掉正文里对应的第一个占位，连带吃掉它后面的一个空格。 */
+export function insertImagePlaceholders(
+  value: string,
+  names: string[],
+  selection = { start: value.length, end: value.length },
+  pastedText = '',
+): { value: string; caret: number } {
+  const { start, end } = selection
+  // 剪贴板同时有文件和文字时，先插入文字，再接上图片名。
+  const plain = pastedText.replace(/\r\n?/g, '\n')
+  const nextText = plain ? value.slice(0, start) + plain + value.slice(end) : value
+  const position = start + plain.length
+  if (!names.length) return { value: nextText, caret: position }
+  return insertAtSelection(nextText, position, plain ? position : end, names.map(imagePlaceholder).join(' '))
+}
+
+/** 去掉对应的第一个占位及一个分隔空格，保留原有换行。 */
 export function removePlaceholder(value: string, name: string): string {
   const token = imagePlaceholder(name)
   const index = value.indexOf(token)
   if (index < 0) return value
   const end = index + token.length
-  return value.slice(0, index) + value.slice(value[end] === ' ' ? end + 1 : end)
+  if (value[end] === ' ') return value.slice(0, index) + value.slice(end + 1)
+  const start = value[index - 1] === ' ' ? index - 1 : index
+  return value.slice(0, start) + value.slice(end)
 }
 
 export type SkillRef = { name: string; path: string }

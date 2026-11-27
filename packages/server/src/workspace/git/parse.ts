@@ -2,6 +2,7 @@ import type {
   GitBranch,
   GitCommit,
   GitFileStatus,
+  GitRemoteAddress,
   GitStatusResult,
 } from '@qn/protocol'
 
@@ -15,6 +16,23 @@ export function splitNul(text: string): string[] {
   const parts = text.split('\0')
   if (parts.at(-1) === '') parts.pop()
   return parts
+}
+
+export function parseRemoteAddresses(output: string): GitRemoteAddress[] {
+  const remotes: GitRemoteAddress[] = []
+  const seen = new Set<string>()
+  for (const entry of splitNul(output)) {
+    const match = /^remote\.(.+)\.url\n/.exec(entry)
+    if (!match?.[1]) continue
+    const name = match[1]
+    // HTTP 地址中的 userinfo 可能是令牌。SSH 的 git@ 属于连接地址，保留。
+    const url = entry.slice(match[0].length).replace(/^((?:https?|ftps?):\/\/)[^/?#\s]*@/i, '$1')
+    const key = `${name}\0${url}`
+    if (!url || seen.has(key)) continue
+    seen.add(key)
+    remotes.push({ name, url })
+  }
+  return remotes
 }
 
 /** 跳过前 count 个以空格分隔的固定字段，其余整体是路径（路径可含空格，不能按空格切）。 */

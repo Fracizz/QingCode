@@ -65,7 +65,7 @@ export function SearchPanel({
       <ErrorNote message={search.error} />
       <FeedbackRow
         message={truncated ? '结果已截断，请缩小查询范围或使用 glob 过滤' : null}
-        className="border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-ui-sm leading-5 text-qn-warn"
+        className="border-b border-qn-border bg-qn-warn/10 px-3 py-1.5 text-ui-sm leading-5 text-qn-warn"
       />
       <div className="qn-scroll min-h-0 flex-1 overflow-y-auto">
         {groups.length === 0 && (

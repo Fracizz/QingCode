@@ -9,6 +9,7 @@ import {
   formatBytes,
   imagePlaceholder,
   insertAtSelection,
+  insertImagePlaceholders,
   isImageFile,
   removePlaceholder,
   uniqueImageName,
@@ -149,7 +150,7 @@ describe('splitUserText', () => {
 })
 
 
-describe('粘贴图片占位', () => {
+describe('输入框图片占位', () => {
   it('重名截图依次编号，无名时用 image.png', () => {
     expect(uniqueImageName('image.png', [])).toBe('image.png')
     expect(uniqueImageName('image.png', ['image.png', 'image-2.png'])).toBe('image-3.png')
@@ -168,6 +169,31 @@ describe('粘贴图片占位', () => {
 
   it('移除附件时删掉对应占位', () => {
     expect(removePlaceholder('新增 [image.png] 自动', 'image.png')).toBe('新增 自动')
+    expect(removePlaceholder('新增 [image.png]', 'image.png')).toBe('新增')
+    expect(removePlaceholder('新增\n[image.png]\n自动', 'image.png')).toBe('新增\n\n自动')
     expect(removePlaceholder('无占位', 'image.png')).toBe('无占位')
+  })
+
+  it('按选区放置图片占位，拖入时追加到末尾，多张图片之间有空格', () => {
+    expect(insertImagePlaceholders('看这里', ['image.png'], { start: 1, end: 1 })).toEqual({
+      value: '看 [image.png] 这里',
+      caret: 14,
+    })
+    expect(insertImagePlaceholders('看图', ['image.png', 'image-2.png']).value).toBe('看图 [image.png] [image-2.png]')
+  })
+
+  it('超长文件名完整保留，重名图片仍可单独移除', () => {
+    const stem = 'long-file-name-'.repeat(15) + '截图'
+    const name = `${stem}.png`
+    const duplicate = uniqueImageName(name, [name])
+    const { value } = insertImagePlaceholders('请看图', [name, duplicate])
+    expect(value).toBe(`请看图 [${stem}.png] [${stem}-2.png]`)
+    expect(removePlaceholder(value, duplicate)).toBe(`请看图 [${name}]`)
+  })
+
+  it('混合粘贴保留文字，只有通过校验的图片才会生成占位', () => {
+    const selection = { start: 1, end: 2 }
+    expect(insertImagePlaceholders('甲乙丙', ['image.png'], selection, '内容\r\n').value).toBe('甲内容\n[image.png] 丙')
+    expect(insertImagePlaceholders('甲乙丙', [], selection, '内容').value).toBe('甲内容丙')
   })
 })

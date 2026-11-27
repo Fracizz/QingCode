@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { cn } from '../../lib/cn'
 
 export function Suggestions({
@@ -17,20 +17,39 @@ export function Suggestions({
   children: ReactNode
 }) {
   const listRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    listRef.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' })
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list) return
+
+    const revealActive = () => {
+      const option = list.querySelector<HTMLElement>(`[data-index="${active}"]`)
+      if (!option) return
+      const listTop = list.scrollTop
+      const top = option.offsetTop
+      const bottom = top + option.offsetHeight
+      // 只滚动候选列表，避免 scrollIntoView 带动外层聊天布局。
+      if (top < listTop) list.scrollTop = top
+      else if (bottom > listTop + list.clientHeight) {
+        list.scrollTop = Math.min(top, bottom - list.clientHeight)
+      }
+    }
+    revealActive()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(revealActive)
+    observer.observe(list)
+    return () => observer.disconnect()
   }, [active])
 
   return (
     <div
-      className="qn-no-drag qn-pop qn-surface-float absolute inset-x-0 bottom-full z-30 mb-2 overflow-hidden"
+      className="qn-no-drag qn-pop qn-surface-float absolute inset-x-0 bottom-full z-30 mb-2 flex max-h-[var(--qn-suggestions-max-height)] flex-col overflow-hidden"
       role="listbox"
       aria-label={label}
     >
-      <div ref={listRef} className={cn('qn-scroll max-h-[min(320px,45vh)] overflow-y-auto p-1.5', listClassName)}>
+      <div ref={listRef} className={cn('qn-scroll relative min-h-0 max-h-[min(320px,45vh)] overflow-y-auto overscroll-contain p-1.5', listClassName)}>
         {children}
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-qn-border px-3 py-1.5 text-ui-xs text-qn-dim">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-qn-border px-3 py-1.5 text-ui-xs text-qn-dim">
         <span>↑↓ 选择</span>
         <span>Enter / Tab {confirmHint}</span>
         <span>Esc 关闭</span>

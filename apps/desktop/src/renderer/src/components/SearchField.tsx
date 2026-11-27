@@ -39,7 +39,7 @@ export function SearchField({
         <button
           type="button"
           aria-label="清空搜索"
-          className="absolute right-1.5 inline-flex size-6 items-center justify-center rounded-md text-qn-muted hover:bg-qn-hover hover:text-qn-text focus-visible:outline-1 focus-visible:outline-current"
+          className="absolute right-1.5 inline-flex size-6 items-center justify-center rounded-md text-qn-muted hover:bg-qn-hover hover:text-qn-text focus-visible:outline-1 focus-visible:outline-qn-outline-hover"
           onClick={onClear}
         >
           <X size={14} aria-hidden="true" />

@@ -31,17 +31,51 @@ vi.mock('../ui', () => ({
   ),
 }))
 
+const target: SshTarget = {
+  id: 'remote', kind: 'ssh', name: 'hy-Ubuntu26', host: 'host', port: 22, username: 'user', auth: { kind: 'agent' },
+}
+const noop = () => {}
+const actions = { onAdd: noop, onEdit: noop, onSelect: noop, onConnect: noop, onDisconnect: noop, onForgetSecret: noop }
+
+it('目标展开后只在标题行显示未就绪的连接状态', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const original = useTargets.getState()
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  const onToggle = vi.fn()
+  const render = (collapsed: boolean) => root.render(
+    <TargetSectionHeader target={target} actions={actions} collapsed={collapsed} onToggle={onToggle} />,
+  )
+  const visibleStatus = () => container.querySelector('button[aria-expanded] + span:not(:has(*))')?.textContent
+
+  try {
+    useTargets.setState({ states: { [target.id]: { id: target.id, state: 'ready' } } })
+    await act(() => render(true))
+    expect(visibleStatus()).toBe('已就绪')
+
+    await act(() => render(false))
+    expect(visibleStatus()).toBeUndefined()
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')!
+    expect(toggle.querySelector('.sr-only')?.textContent).toBe('已就绪')
+    await act(() => toggle.click())
+    expect(onToggle).toHaveBeenCalledOnce()
+
+    await act(() => useTargets.setState({ states: { [target.id]: { id: target.id, state: 'deploying' } } }))
+    expect(visibleStatus()).toBe('部署中')
+  } finally {
+    await act(() => root.unmount())
+    useTargets.setState(original)
+    vi.unstubAllGlobals()
+  }
+})
+
 it('选中强制更新菜单项后，只有确认才提交目标 id', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  const target: SshTarget = {
-    id: 'remote', kind: 'ssh', name: 'hy-Ubuntu26', host: 'host', port: 22, username: 'user', auth: { kind: 'agent' },
-  }
   const forceUpdate = vi.fn(async () => undefined)
   const original = useTargets.getState()
   useTargets.setState({ targets: [target], states: { [target.id]: { id: target.id, state: 'ready' } }, forceUpdate })
   const container = document.createElement('div')
   const root = createRoot(container)
-  const noop = () => {}
   const click = async (text: string) => {
     const button = Array.from(container.querySelectorAll('button')).find((item) => item.textContent?.trim() === text)
     expect(button).toBeDefined()
@@ -49,7 +83,6 @@ it('选中强制更新菜单项后，只有确认才提交目标 id', async () =
   }
 
   try {
-    const actions = { onAdd: noop, onEdit: noop, onSelect: noop, onConnect: noop, onDisconnect: noop, onForgetSecret: noop }
     await act(() => root.render(<>
       <TargetSectionHeader target={target} actions={actions} collapsed={false} onToggle={noop} />
       <ForceUpdateDialog />

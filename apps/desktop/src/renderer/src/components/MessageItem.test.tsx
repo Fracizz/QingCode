@@ -6,12 +6,19 @@ import { expect, it, vi } from 'vitest'
 import { LoadingIcon } from './LoadingIcon'
 import { MessageItem, ToolGroup, TurnProgress, TurnStopped, WorkGroup } from './MessageItem'
 
+const renderCodeBlock = vi.hoisted(() => vi.fn())
+
 vi.mock('../features/files', () => ({
   createMarkdownLink: () => 'a', FileChangeActions: () => null, PathText: () => null, qnUrlTransform: (url: string) => url,
 }))
 vi.mock('../lib/cn', () => ({ cn: (...classes: unknown[]) => classes.filter(Boolean).join(' ') }))
 vi.mock('../store/codex', () => ({ useCodex: () => null }))
-vi.mock('./CodeBlock', () => ({ CodeBlock: () => null }))
+vi.mock('./CodeBlock', () => ({
+  CodeBlock: ({ code }: { code: string }) => {
+    renderCodeBlock(code)
+    return null
+  },
+}))
 vi.mock('./MessageActions', () => ({ MessageActions: () => null }))
 vi.mock('./SubagentDetails', () => ({ SubagentDetails: () => null }))
 vi.mock('./ui', () => ({
@@ -24,6 +31,26 @@ vi.mock('./ui', () => ({
 const toggle = (summary: HTMLElement) => act(async () => {
   summary.click()
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
+})
+
+it('对话更新操作回调时复用历史回复的 Markdown，正文变化时重新渲染', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  renderCodeBlock.mockClear()
+  const root = createRoot(document.createElement('div'))
+  const reply: ItemView = { kind: 'agent', id: 'reply', text: '```text\n历史内容\n```', streaming: false }
+  const render = (item: ItemView) => act(() => root.render(
+    <MessageItem item={item} onFork={() => {}} onEdit={async () => true} />,
+  ))
+  try {
+    await render(reply)
+    await render(reply)
+    expect(renderCodeBlock.mock.calls).toEqual([['历史内容\n']])
+    await render({ ...reply, text: '```text\n更新后的内容\n```' })
+    expect(renderCodeBlock.mock.calls).toEqual([['历史内容\n'], ['更新后的内容\n']])
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
 })
 
 it('收到无效的发送时间时仍显示用户消息', async () => {
@@ -80,10 +107,11 @@ it('编辑消息时保留输入框的选区和焦点，并用修订后的文字�
   const onEdit = vi.fn().mockResolvedValue(true)
   const item: ItemView = { kind: 'user', id: 'message', text: '五分钟刷一次' }
   try {
-    await act(() => root.render(<div onMouseUp={onMessageMouseUp}><MessageItem item={item} onEdit={onEdit} /></div>))
+    await act(() => root.render(<div onMouseUp={onMessageMouseUp}><MessageItem item={item} onEdit={onEdit} editRestartsConversation /></div>))
     await act(() => host.querySelector<HTMLButtonElement>('[aria-label="编辑消息"]')!.click())
     const area = host.querySelector('textarea')!
     const send = host.querySelector<HTMLButtonElement>('button[type="submit"]')!
+    expect(send.textContent).toBe('发送修订')
     expect(document.activeElement).toBe(area)
     expect(send.disabled).toBe(false)
 
@@ -110,6 +138,23 @@ it('编辑消息时保留输入框的选区和焦点，并用修订后的文字�
   } finally {
     await act(() => root.unmount())
     host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('把重新开始标记显示在修订消息的上方', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  try {
+    await act(() => root.render(<>
+      <MessageItem item={{ kind: 'user', id: 'earlier', text: '前一条消息' }} />
+      <MessageItem item={{ kind: 'user', id: 'revised', text: '修订后的消息' }} showRevisionMarker />
+    </>))
+    expect(host.textContent).toContain('前一条消息从这里重新开始修订后的消息')
+    expect(host.querySelector('[data-chat-item="revised"]')?.textContent).toContain('从这里重新开始')
+  } finally {
+    await act(() => root.unmount())
     vi.unstubAllGlobals()
   }
 })

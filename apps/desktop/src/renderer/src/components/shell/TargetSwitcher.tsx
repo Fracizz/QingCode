@@ -260,18 +260,19 @@ export function TargetPicker(actions: TargetActions) {
 }
 
 /**
- * 侧栏里一个目标分组的标题行：折叠箭头 + 图标/状态点 + 名称 + 状态；
- * 悬停显出"添加项目 / 连接或断开 / 更多"。活动目标（主区正在用的）高亮。
+ * 展开时用紧凑标题保留折叠入口，连接提示与目标操作仍放在这一行。
  */
 export function TargetSectionHeader({
   target,
   actions,
   collapsed,
+  hasActiveSessions,
   onToggle,
 }: {
   target: Target
   actions: TargetActions
   collapsed: boolean
+  hasActiveSessions?: boolean
   onToggle: () => void
 }) {
   const state = useTargets((s) => s.states[target.id]?.state ?? 'idle')
@@ -281,16 +282,17 @@ export function TargetSectionHeader({
   const openPicker = useUi((s) => s.openDirectoryPicker)
   const [menuOpen, setMenuOpen] = useState(false)
   const active = isTargetActive(state)
+  const showState = collapsed || state !== 'ready'
 
   return (
     <div className="pt-1">
       <div
-        className={`group flex h-9 items-center gap-1 rounded-lg pl-1 pr-1 ${menuOpen ? 'bg-qn-hover' : 'hover:bg-qn-hover'}`}
+        className={`group flex items-center gap-1 rounded-lg pl-1 pr-1 ${collapsed ? 'h-9' : 'h-7'} ${menuOpen ? 'bg-qn-hover' : 'hover:bg-qn-hover'}`}
         title={`${target.name} · ${targetSubtitle(target)}${detail && state !== 'error' ? ` · ${detail}` : ''}`}
       >
         <button
           type="button"
-          className="flex h-full min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent rounded-lg"
+          className="flex h-full min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover rounded-lg"
           aria-expanded={!collapsed}
           onClick={onToggle}
         >
@@ -298,20 +300,26 @@ export function TargetSectionHeader({
             size={13}
             className={`shrink-0 text-qn-dim transition-transform ${collapsed ? '' : 'rotate-90'}`}
           />
-          <TargetGlyph target={target} state={state} size={22} />
+          {collapsed && <TargetGlyph target={target} state={state} size={22} />}
           <span
-            className={`min-w-0 flex-1 truncate text-[length:var(--qn-sidebar-list-font-size)] font-semibold ${current ? 'text-qn-text' : 'text-qn-text/80'}`}
+            className={`min-w-0 flex-1 truncate ${collapsed
+              ? `text-[length:var(--qn-sidebar-list-font-size)] font-semibold ${current ? 'text-qn-text' : 'text-qn-text/80'}`
+              : `text-[length:var(--qn-sidebar-list-detail-font-size)] ${current ? 'text-qn-text' : 'text-qn-muted'}`}`}
           >
             {target.name}
           </span>
+          {hasActiveSessions && <StatusDot className="bg-qn-brand" title="有活动会话" />}
+          {!showState && <span className="sr-only">{targetStateLabel[state]}</span>}
         </button>
-        <span
-          className={`shrink-0 pr-1.5 text-[length:var(--qn-sidebar-list-detail-font-size)] group-hover:hidden ${menuOpen ? 'hidden' : ''} ${
-            state === 'error' ? 'text-qn-danger' : 'text-qn-dim'
-          }`}
-        >
-          {targetStateLabel[state]}
-        </span>
+        {showState && (
+          <span
+            className={`shrink-0 pr-1.5 text-[length:var(--qn-sidebar-list-detail-font-size)] group-hover:hidden ${menuOpen ? 'hidden' : ''} ${
+              state === 'error' ? 'text-qn-danger' : collapsed ? 'text-qn-dim' : 'text-qn-muted'
+            }`}
+          >
+            {targetStateLabel[state]}
+          </span>
+        )}
         <span className={`shrink-0 items-center group-hover:flex ${menuOpen ? 'flex' : 'hidden'}`}>
           <IconButton label="添加项目" size="sm" onClick={() => openPicker(target.id)}>
             <FolderPlus size={14} />

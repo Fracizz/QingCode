@@ -2,7 +2,7 @@
 
 /* 色彩分层优先参考 Codex 桌面版石墨灰，辅以旧版 QingCode 的"青轨"：
    chrome（标题栏）< bg（对话区）< sidebar < panel（卡片/输入框/弹窗）< elevated（菜单浮层），相邻层只差一点明暗，靠细线分割。
-   brand 青色只表达产品身份与"当前上下文"（青轨、当前会话），accent 蓝色用于主操作、焦点与链接。 */
+   brand 青色表达产品身份与当前上下文，accent 蓝色用于主操作和链接，边框与焦点轮廓使用中性色。 */
 @theme {
   --color-qn-chrome: #141414;
   --color-qn-bg: #181818;
@@ -15,7 +15,7 @@
   --color-qn-border: #383838;
   --color-qn-border-strong: #4d4d4d;
   /* 可输入控件（输入框、对话输入框、复选框）的外框：与所在表面对比度 ≥ 3:1，强光下也能看清边界。见 docs/design/contrast.md。 */
-  --color-qn-outline: #6b6b6b;
+  --color-qn-outline: #7a7a7a;
   --color-qn-outline-hover: #858585;
   --color-qn-composer: #262626;
   --color-qn-text: #e6e6e6;
@@ -27,6 +27,7 @@
   --color-qn-dim: #8a8a8a;
   --color-qn-brand: #4ecdb5;
   --color-qn-accent: #4f8cff;
+  --color-qn-composer-attachment: color-mix(in srgb, var(--color-qn-accent) 76%, var(--color-qn-text));
   --color-qn-ok: #6fcf8f;
   --color-qn-warn: #e2b55d;
   --color-qn-danger: #ff6b63;
@@ -257,6 +258,11 @@ button:disabled {
 
 /* 组件类放进 components 层：调用处的 Tailwind 工具类（px-2、text-[12px] 等）才能覆盖它们。 */
 @layer components {
+  :where(button, input, textarea, select, a[href], summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-qn-outline-hover);
+    outline-offset: 2px;
+  }
+
   .qn-input {
     width: 100%;
     border: 1px solid var(--color-qn-outline);
@@ -279,7 +285,7 @@ button:disabled {
   }
 
   .qn-input:focus {
-    border-color: var(--color-qn-accent);
+    border-color: var(--color-qn-outline-hover);
   }
 
   .qn-button {

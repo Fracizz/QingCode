@@ -31,7 +31,7 @@ export const qnEditorTheme = EditorView.theme(
     },
     '.cm-selectionMatch': {
       backgroundColor: 'color-mix(in srgb, var(--color-qn-accent) 13%, transparent)',
-      outline: '1px solid color-mix(in srgb, var(--color-qn-accent) 27%, transparent)',
+      outline: '1px solid var(--color-qn-border-strong)',
     },
     '.cm-gutters': {
       backgroundColor: 'var(--color-qn-code)',
@@ -56,18 +56,18 @@ export const qnEditorTheme = EditorView.theme(
     },
     '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
       backgroundColor: 'color-mix(in srgb, var(--color-qn-brand) 20%, transparent)',
-      outline: '1px solid color-mix(in srgb, var(--color-qn-brand) 53%, transparent)',
+      outline: '1px solid var(--color-qn-border-strong)',
       color: 'inherit',
     },
     '.cm-nonmatchingBracket': { color: 'var(--color-qn-danger)' },
     '.cm-searchMatch': {
       backgroundColor: 'color-mix(in srgb, var(--color-qn-warn) 20%, transparent)',
-      outline: '1px solid color-mix(in srgb, var(--color-qn-warn) 53%, transparent)',
+      outline: '1px solid var(--color-qn-border-strong)',
       borderRadius: '2px',
     },
     '.cm-searchMatch-selected': {
       backgroundColor: 'color-mix(in srgb, var(--color-qn-accent) 40%, transparent)',
-      outlineColor: 'var(--color-qn-accent)',
+      outlineColor: 'var(--color-qn-outline-hover)',
     },
     '.cm-panels': {
       backgroundColor: 'var(--color-qn-panel)',
@@ -85,14 +85,14 @@ export const qnEditorTheme = EditorView.theme(
     '.cm-panel.cm-search label': { color: 'var(--color-qn-muted)', fontSize: '12px' },
     '.cm-textfield': {
       backgroundColor: 'var(--color-qn-field)',
-      border: '1px solid var(--color-qn-border-strong)',
+      border: '1px solid var(--color-qn-outline)',
       borderRadius: '6px',
       color: 'var(--color-qn-text)',
       fontSize: '13px',
       padding: '3px 8px',
       outline: 'none',
     },
-    '.cm-textfield:focus': { borderColor: 'var(--color-qn-accent)' },
+    '.cm-textfield:focus': { borderColor: 'var(--color-qn-outline-hover)' },
     '.cm-button': {
       backgroundColor: 'var(--color-qn-active)',
       border: '1px solid var(--color-qn-border-strong)',

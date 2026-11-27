@@ -1,6 +1,6 @@
 import path from 'node:path'
 import type { GitBranch } from '@qn/protocol'
-import { looksWindowsPath, pickPathImpl, stripLongPathPrefix } from '../paths'
+import { fromWindowsSftpPath, looksWindowsPath, pickPathImpl, stripLongPathPrefix } from '../paths'
 import { WorkspaceError } from '../registry'
 
 /**
@@ -14,10 +14,10 @@ export function toRepoRelative(
 ): string {
   if (input.includes('\0')) throw new WorkspaceError('params', '路径不能包含 NUL 字节')
   const p = pickPathImpl(root, input, platform)
-  const absolute = p.isAbsolute(stripLongPathPrefix(input))
-  let rel = absolute
-    ? p.relative(stripLongPathPrefix(root), stripLongPathPrefix(input))
-    : input
+  const nativeRoot = stripLongPathPrefix(p === path.win32 ? fromWindowsSftpPath(root) : root)
+  const nativeInput = stripLongPathPrefix(p === path.win32 ? fromWindowsSftpPath(input) : input)
+  const absolute = p.isAbsolute(nativeInput)
+  let rel = absolute ? p.relative(nativeRoot, nativeInput) : input
   if (absolute && p.isAbsolute(rel)) {
     throw new WorkspaceError('params', `路径不在仓库内: ${input}`)
   }

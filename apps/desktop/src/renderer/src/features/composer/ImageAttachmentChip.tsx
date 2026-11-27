@@ -34,8 +34,8 @@ export function ImageAttachmentChip({
   return (
     <div
       className={cn(
-        'flex h-14 max-w-[min(100%,15rem)] items-center gap-1 rounded-lg border bg-qn-fg/[0.03] p-1',
-        problem ? 'border-qn-danger/70' : 'border-qn-border',
+        'relative inline-flex shrink-0 rounded-lg border bg-qn-fg/[0.03] p-1.5',
+        problem ? 'border-qn-border-strong' : 'border-qn-border',
       )}
     >
       <Tip label={`${item.name} · ${problem ?? formatBytes(item.size)}`}>
@@ -43,17 +43,21 @@ export function ImageAttachmentChip({
           type="button"
           aria-label={`查看图片 ${item.name}`}
           aria-haspopup="dialog"
-          className="flex min-w-0 cursor-zoom-in items-center gap-2 rounded-md text-left text-ui text-qn-accent focus-visible:outline-2 focus-visible:outline-qn-accent"
+          className="block cursor-zoom-in rounded-md focus-visible:outline-2 focus-visible:outline-qn-outline-hover"
           onClick={() => {
             setCopyState((state) => state === 'copying' ? state : 'idle')
             previewRef.current?.showModal()
           }}
         >
           <img src={item.dataUrl} alt="" className="size-11 shrink-0 rounded-md bg-qn-bg object-contain" />
-          <span className="truncate underline underline-offset-2">{item.name}</span>
         </button>
       </Tip>
-      <IconButton label={`移除 ${item.name}`} size="sm" onClick={onRemove}>
+      <IconButton
+        label={`移除 ${item.name}`}
+        size="sm"
+        className="absolute -right-1.5 -top-1.5 size-5 border border-qn-border-strong bg-qn-panel"
+        onClick={onRemove}
+      >
         <X size={12} />
       </IconButton>
       <dialog
@@ -69,7 +73,7 @@ export function ImageAttachmentChip({
             type="button"
             aria-label="复制图片"
             disabled={copyState === 'copying'}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-qn-panel px-2.5 text-ui text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-qn-panel px-2.5 text-ui text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover"
             onClick={() => void copyPreview()}
           >
             {copyState === 'copied' ? <Check size={14} /> : <Copy size={14} />}

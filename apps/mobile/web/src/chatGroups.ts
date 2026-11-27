@@ -1,4 +1,4 @@
-import type { ItemView, ThreadView, TurnMeta } from '@qn/codex-client'
+import { groupTurns, type ItemView, type ThreadView, type TurnMeta } from '@qn/codex-client'
 
 /** 子代理单独显示，便于从消息流直接查看。 */
 export type ToolItem = Exclude<ItemView, { kind: 'user' | 'agent' | 'reasoning' | 'subagent' }>
@@ -75,6 +75,26 @@ export function isChatVisible(item: ItemView): boolean {
   if (item.kind === 'reasoning' || item.kind === 'command') return false
   if (item.kind === 'other') return item.type === 'contextCompaction'
   return true
+}
+
+export type WorkSummary = { durationMs: number | null; reply?: { id: string; completedAtMs?: number } }
+
+/** 工作摘要沿用桌面分轮，挂在对应的最后一条回复或最近的可见步骤上。 */
+export function chatWorkSummaries(items: ItemView[], turns: TurnMeta[] | undefined, running: boolean): Map<string, WorkSummary> {
+  const summaries = new Map<string, WorkSummary>()
+  let anchor: string | undefined
+  for (const entry of groupTurns(items, turns, running)) {
+    if (entry.kind === 'stopped') anchor = undefined
+    if (entry.kind === 'item' && isChatVisible(entry.item)) anchor = entry.item.id
+    if (entry.kind !== 'work') continue
+    for (const step of entry.entries) {
+      const visible = step.kind === 'item' ? (isChatVisible(step.item) ? step.item : undefined) : step.items.findLast(isChatVisible)
+      if (visible) anchor = visible.id
+    }
+    const id = entry.reply?.id ?? anchor
+    if (id) summaries.set(id, { durationMs: entry.durationMs, reply: entry.reply })
+  }
+  return summaries
 }
 
 export function interruptedTurnPositions(items: readonly ItemView[], shown: readonly ItemView[], turns?: readonly TurnMeta[]) {

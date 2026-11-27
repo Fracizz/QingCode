@@ -616,24 +616,20 @@ export function mergeSubagentHistory(
   return [...items.values()]
 }
 
-type TurnPhase = 'started' | 'completed' | 'loaded'
-
 function positive(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
 }
 
-/** 部分适配器在结束时才填 startedAt，优先沿用 turn/started 时记下的起点。 */
 function turnMeta(
   existing: TurnMeta | undefined,
   turnId: string,
-  patch: { record?: JsonRecord | null; phase?: TurnPhase; itemIds?: string[] },
+  patch: { record?: JsonRecord | null; itemIds?: string[] },
 ): TurnMeta {
   const record = patch.record ?? null
   const outcome = isThreadOutcome(record?.status) ? record.status : existing?.outcome
   const startedSec = positive(record?.startedAt)
   const completedSec = positive(record?.completedAt)
-  const startedAtMs =
-    existing?.startedAtMs ?? (startedSec ? startedSec * 1000 : patch.phase === 'started' ? Date.now() : null)
+  const startedAtMs = startedSec === null ? existing?.startedAtMs ?? null : startedSec * 1000
 
   let durationMs = existing?.durationMs ?? null
   const explicit = record?.durationMs
@@ -641,9 +637,6 @@ function turnMeta(
   else if (durationMs === null && startedAtMs !== null) {
     const completedAtMs = completedSec === null ? null : completedSec * 1000
     if (completedAtMs !== null && completedAtMs >= startedAtMs) durationMs = completedAtMs - startedAtMs
-    else if (patch.phase === 'completed' && existing?.startedAtMs != null) {
-      durationMs = Math.max(0, Date.now() - startedAtMs)
-    }
   }
 
   const itemIds = new Set(existing?.itemIds)
@@ -677,7 +670,7 @@ function upsertTurnMeta(
   return { ...thread, turns: next }
 }
 
-function mergeTurnItems(thread: ThreadView, turn: unknown, streaming: boolean, phase?: TurnPhase): ThreadView {
+function mergeTurnItems(thread: ThreadView, turn: unknown, streaming: boolean): ThreadView {
   const record = asRecord(turn)
   if (!record) return thread
   const ids: string[] = []
@@ -692,7 +685,7 @@ function mergeTurnItems(thread: ThreadView, turn: unknown, streaming: boolean, p
     items = replaceItem(items, candidate.id, () => candidate, (existing) => mergeItemView(existing, candidate))
   }
   const next = items === thread.items ? thread : { ...thread, items }
-  return phase ? upsertTurnMeta(next, idValue(record.id), { record, phase, itemIds: ids }) : next
+  return upsertTurnMeta(next, idValue(record.id), { record, itemIds: ids })
 }
 
 function finalizeItems(thread: ThreadView): ThreadView {
@@ -806,7 +799,7 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
     const itemIds = appendItems(arrayOf(turn.items), turnStreaming, optionalNumber(turn.startedAt))
     if (turnId) {
       turns.set(turnId, turnMeta(turns.get(turnId), turnId, {
-        record: turn, phase: turnStreaming ? 'started' : 'loaded', itemIds,
+        record: turn, itemIds,
       }))
     }
   }
@@ -911,7 +904,7 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         if (subagent) next.subagent = subagent
         if (status !== 'error') next = clearError(next)
         if (thread && Array.isArray(thread.turns)) {
-          for (const turn of thread.turns) next = mergeTurnItems(next, turn, false, 'loaded')
+          for (const turn of thread.turns) next = mergeTurnItems(next, turn, false)
         }
         return next
       })
@@ -932,10 +925,7 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
           activity: current.activity === 'pending' || current.activity === 'input' ? current.activity : 'running',
           activeTurnId: turnId || current.activeTurnId,
         }
-        next = mergeTurnItems(next, params.turn, true, 'started')
-        // turn/started 可能不带 turn 对象，计时起点仍要记下。
-        if (turnId) next = upsertTurnMeta(next, turnId, { phase: 'started' })
-        return next
+        return mergeTurnItems(next, params.turn, true)
       })
     }
     case 'turn/completed': {
@@ -948,9 +938,9 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         errorText(turn?.error) ??
         (turnStatus === 'interrupted' ? 'Turn interrupted' : turnStatus === 'failed' ? 'Turn failed' : undefined)
       return withThread(s, id, (current) => {
-        let next = mergeTurnItems(current, params.turn, false, 'completed')
+        let next = mergeTurnItems(current, params.turn, false)
         const completedId = idValue(turn?.id) || idValue(params.turnId) || current.activeTurnId || ''
-        if (completedId && !turn) next = upsertTurnMeta(next, completedId, { phase: 'completed' })
+        if (completedId && !turn) next = upsertTurnMeta(next, completedId, { record: { status: turnStatus } })
         // 旧轮次的中断结果可能迟到，此时只合并历史，保留当前轮的运行状态和审批。
         if (current.status === 'running' && current.activeTurnId && completedId !== current.activeTurnId) return next
         next = finalizeItems(next)

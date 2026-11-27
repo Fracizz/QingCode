@@ -3,6 +3,7 @@ import { ChevronDown } from 'lucide-react'
 import {
   compactText,
   formatReset,
+  isClaudeStatusLine,
   remainingQuotaPercent,
   severity,
   severityForPercent,
@@ -84,6 +85,7 @@ function Body({
   now: number
 }) {
   const snapshot = entry?.snapshot ?? null
+  const liveClaude = isClaudeStatusLine(snapshot)
   const refresh = useRateLimits((s) => s.refresh)
 
   return (
@@ -104,19 +106,26 @@ function Body({
 
       {agent === 'claude' ? (
         <div className="space-y-2">
-          <div className="rounded-lg border border-qn-border/70 p-2">
-            <div className="flex items-center justify-between">
-              <span>最近限额事件</span>
-              <span className={percentClass(snapshot?.primary?.usedPercent ?? 0)}>
-                {claudeRateLimitStatus(snapshot)}
-              </span>
-            </div>
-            {snapshot?.primary?.resetsAt !== null && snapshot?.primary?.resetsAt !== undefined && (
-              <div className="mt-1.5 text-ui-sm text-qn-muted">
-                {formatReset(snapshot.primary.resetsAt, now)}
+          {liveClaude ? (
+            <>
+              {snapshot?.primary && <WindowRow label="5 小时" value={snapshot.primary} now={now} />}
+              {snapshot?.secondary && <WindowRow label="每周" value={snapshot.secondary} now={now} />}
+            </>
+          ) : (
+            <div className="rounded-lg border border-qn-border/70 p-2">
+              <div className="flex items-center justify-between">
+                <span>最近限额事件</span>
+                <span className={percentClass(snapshot?.primary?.usedPercent ?? 0)}>
+                  {claudeRateLimitStatus(snapshot)}
+                </span>
               </div>
-            )}
-          </div>
+              {snapshot?.primary?.resetsAt != null && (
+                <div className="mt-1.5 text-ui-sm text-qn-muted">
+                  {formatReset(snapshot.primary.resetsAt, now)}
+                </div>
+              )}
+            </div>
+          )}
           <div className="rounded-lg border border-qn-border/70 p-2">
             <div className="flex items-center justify-between">
               <span>{threadId ? '本会话累计费用' : '累计费用'}</span>
@@ -124,7 +133,7 @@ function Body({
                 ≈{formatCost(sumCost(entry?.costByThread, threadId))}（估算）
               </span>
             </div>
-            <div className="mt-1 text-ui-sm text-qn-muted">{CLAUDE_RATE_LIMIT_NOTE}</div>
+            <div className="mt-1 text-ui-sm text-qn-muted">{liveClaude ? '来源为 Claude CLI 状态栏' : CLAUDE_RATE_LIMIT_NOTE}</div>
           </div>
         </div>
       ) : (
@@ -178,7 +187,7 @@ function Body({
 
       <div className="mt-3 flex items-center justify-between border-t border-qn-border pt-2 text-ui-sm text-qn-muted">
         <span>{updatedAtText(entry?.updatedAt, now)}</span>
-        <span>窗口可见时每 {RATE_LIMIT_REFRESH_MINUTES} 分钟刷新</span>
+        {agent === 'codex' && <span>窗口可见时每 {RATE_LIMIT_REFRESH_MINUTES} 分钟刷新</span>}
       </div>
     </div>
   )

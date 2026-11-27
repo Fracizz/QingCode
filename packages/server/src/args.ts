@@ -1,4 +1,4 @@
-export type ServerCommand = 'version' | 'ensure' | 'daemon' | 'connect' | 'serve' | 'direct'
+export type ServerCommand = 'version' | 'ensure' | 'daemon' | 'connect' | 'serve' | 'direct' | 'claude-statusline'
 export type DirectAction = 'enable' | 'disable' | 'grant' | 'revoke' | 'status'
 
 export interface CliArgs {
@@ -28,7 +28,7 @@ export class CliError extends Error {
   }
 }
 
-const COMMANDS: readonly string[] = ['version', 'ensure', 'daemon', 'connect', 'serve', 'direct']
+const COMMANDS: readonly string[] = ['version', 'ensure', 'daemon', 'connect', 'serve', 'direct', 'claude-statusline']
 const DIRECT_ACTIONS: readonly string[] = ['enable', 'disable', 'grant', 'revoke', 'status']
 const STATE_DIR_FLAG = '--state-dir'
 

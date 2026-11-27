@@ -1,4 +1,4 @@
-import { ChevronDown, MessageCircleMore, Square } from 'lucide-react'
+import { ChevronDown, PanelLeft, Square } from 'lucide-react'
 import { collectSubagents, resolveAccessMode, sessionStatus, sessionStatusLabels, type ItemView, type UserInput } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
@@ -6,14 +6,14 @@ import { bindChatPinch } from '../chatFont'
 import { nearBottom } from '../composerLogic'
 import { EMPTY_PREFS, resolveSelection } from '../models'
 import { currentCwd, displayedAccessMode, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
-import { groupChatItems, hiddenToolTrails, interruptedTurnPositions, isChatVisible, replyPhase, streamingReplyId } from '../chatGroups'
+import { chatWorkSummaries, groupChatItems, hiddenToolTrails, interruptedTurnPositions, isChatVisible, replyPhase, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { threadPreferenceKey, useWorkspacePreferences } from '../workspace'
 import { ApprovalCard } from './ApprovalCard'
 import { AccessModePicker } from './AccessModePicker'
 import { Composer } from './Composer'
 import { ContextUsage } from './ContextUsage'
-import { FileActionsContext, MessageItem, ToolGroup, type FileActions } from './MessageItem'
+import { FileActionsContext, MessageItem, ToolGroup, WorkSummaryLine, type FileActions } from './MessageItem'
 import { ModelPicker } from './ModelSheet'
 import { QueuedMessages } from './QueuedMessages'
 import { SessionSwitcher } from './SessionSwitcher'
@@ -127,6 +127,7 @@ export function ChatPage() {
   const renderStops = (position: number) => stopPositions.get(position)?.map((id) => <TurnInterrupted key={id} announce={id === latestStop} />)
   // 隐藏的命令每轮收成一行可展开的摘要，出错时还能查到跑了什么。
   const trails = useMemo(() => hiddenToolTrails(echoFree, activeItemIds), [echoFree, activeItemIds])
+  const workSummaries = useMemo(() => chatWorkSummaries(echoFree, view?.turns, running), [echoFree, view?.turns, running])
   // 每轮只有最后一条回复常驻操作入口：从后往前，遇到用户消息重置。
   const finalReplies = useMemo(() => {
     const ids = new Set<string>()
@@ -150,8 +151,6 @@ export function ChatPage() {
       return entry
     })
   }, [shownItems])
-  const trailOf = (block: (typeof blocks)[number]['block']) =>
-    trails.get(block.kind === 'item' ? block.item.id : block.items.at(-1)!.id)
   const defaultStart = Math.max(0, blocks.length - HISTORY_BATCH_SIZE)
   const firstVisible = historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart
   const historyLoading = historyLoad?.key === chatKey && historyLoad.error === undefined
@@ -179,6 +178,7 @@ export function ChatPage() {
   const threadTitle = (selectedTargetId && selectedThreadId
     ? preferences?.threads[threadPreferenceKey(selectedTargetId, selectedAgent, selectedThreadId)]?.title : undefined) || thread?.title
     || (firstUser?.kind === 'user' ? firstUser.text.replace(/\s+/g, ' ').trim().slice(0, 60) : '')
+  const subtitleProject = threadTitle ? project?.name : undefined
   const statusLabel = selectedThreadId ? sessionStatusLabels[sessionStatus(view, thread?.activity)] : null
   const cwd = currentCwd({ projects, selectedProjectId })
   const imageUnavailable = resolveSelection(models ?? [], modelPrefs).model?.imageInput === false
@@ -272,26 +272,29 @@ export function ChatPage() {
 
   return (
     <>
-      {subagents.length > 0 && (
-        <Header
-          title={threadTitle || project?.name || '对话'}
-          icon={<MessageCircleMore size={16} strokeWidth={1.75} className="shrink-0 text-qn-muted" aria-hidden />}
-          subtitle={
-            // 项目名可能很长：只让项目名截断，状态与 Agent 始终可见。
-            <span className="flex min-w-0 items-center gap-1">
-              {statusLabel && <span className="shrink-0">{statusLabel} ·</span>}
-              {project?.name && <span className="min-w-0 truncate">{project.name}</span>}
-              <span className="shrink-0">{project?.name ? '· ' : ''}{agentLabel(selectedAgent)}</span>
-            </span>
-          }
-          right={
-            <FileActionsContext.Provider value={fileActions}>
-              <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={eventsConnected && session?.opened ? session.rpc : null}
-                renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
-            </FileActionsContext.Provider>
-          }
-        />
-      )}
+      <Header
+        title={threadTitle || project?.name || '对话'}
+        icon={
+          <Button variant="ghost" className="qn-header-icon size-[44px] shrink-0" onClick={() => setSwitching(true)}
+            aria-label="切换会话" aria-haspopup="dialog" aria-expanded={switching}>
+            <PanelLeft size={20} strokeWidth={1.75} aria-hidden />
+          </Button>
+        }
+        subtitle={
+          // 项目名可能很长：只让项目名截断，状态与 Agent 始终可见。
+          <span className="flex min-w-0 items-center gap-1">
+            {statusLabel && <span className="shrink-0">{statusLabel} ·</span>}
+            {subtitleProject && <span className="min-w-0 truncate">{subtitleProject}</span>}
+            <span className="shrink-0">{subtitleProject ? '· ' : ''}{agentLabel(selectedAgent)}</span>
+          </span>
+        }
+        right={subagents.length > 0 && (
+          <FileActionsContext.Provider value={fileActions}>
+            <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={eventsConnected && session?.opened ? session.rpc : null}
+              renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
+          </FileActionsContext.Provider>
+        )}
+      />
       {needsRepair && activeId && (
         <div className="border-b border-qn-border bg-qn-panel px-3 pt-2">
           <Note
@@ -326,20 +329,30 @@ export function ChatPage() {
               {historyError && <Note message={historyError} tone="error" />}
               <FileActionsContext.Provider key={chatKey} value={fileActions}>
                 {firstVisible === 0 && renderStops(0)}
-                {blocks.slice(firstVisible).map(({ block, index }) => (
-                  <div key={block.kind === 'item' ? block.item.id : block.id}
-                    className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
-                    {block.kind === 'item'
-                      ? <MessageItem item={block.item} onQuote={(text) => setQuote({ key: chatKey, text })} agentName={agentLabel(selectedAgent)}
-                        active={activeItemIds?.includes(block.item.id)}
-                        showStreamingDots={block.item.id === streamingId}
-                        showActions={finalReplies.has(block.item.id)}
-                        onResend={selectedThreadId ? resend : undefined} />
-                      : <ToolGroup items={block.items} onQuote={(text) => setQuote({ key: chatKey, text })} />}
-                    {trailOf(block) && <ToolGroup trail items={trailOf(block)!} onQuote={(text) => setQuote({ key: chatKey, text })} />}
-                    {renderStops(index + (block.kind === 'item' ? 1 : block.items.length))}
-                  </div>
-                ))}
+                {blocks.slice(firstVisible).map(({ block, index }) => {
+                  const anchor = block.kind === 'item' ? block.item.id : block.items.at(-1)!.id
+                  const work = workSummaries.get(anchor)
+                  const trail = trails.get(anchor)
+                  const onQuote = (text: string) => setQuote({ key: chatKey, text })
+                  const summary = trail ? <ToolGroup trail items={trail} work={work} onQuote={onQuote} />
+                    : work ? <WorkSummaryLine work={work} /> : null
+                  return (
+                    <div key={block.kind === 'item' ? block.item.id : block.id}
+                      className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
+                      {work?.reply && summary}
+                      {block.kind === 'item'
+                        ? <MessageItem item={block.item} onQuote={onQuote} agentName={agentLabel(selectedAgent)}
+                          active={activeItemIds?.includes(block.item.id)}
+                          showStreamingDots={block.item.id === streamingId}
+                          showActions={finalReplies.has(block.item.id)}
+                          replyTimeInSummary={work?.reply?.completedAtMs !== undefined}
+                          onResend={selectedThreadId ? resend : undefined} />
+                        : <ToolGroup items={block.items} onQuote={onQuote} />}
+                      {!work?.reply && summary}
+                      {renderStops(index + (block.kind === 'item' ? 1 : block.items.length))}
+                    </div>
+                  )
+                })}
               </FileActionsContext.Provider>
               {progress && (
                 <div className="qn-thinking qn-replying" role="status"><LoadingIcon aria-hidden />{progress}</div>
@@ -385,7 +398,6 @@ export function ChatPage() {
             return sent
           }}
           onInterrupt={() => void stopTurn()}
-          onSwitchSession={() => setSwitching(true)}
           interrupting={stopping}
           running={running}
           sending={sending}
@@ -412,7 +424,7 @@ export function ChatPage() {
                   onChange={setAccessMode} />
               )}
               {selectedTargetId && <ModelPicker targetId={selectedTargetId} agent={selectedAgent} />}
-              <ContextUsage tokenUsage={view?.tokenUsage} estimatedCostUsd={claudeCost} compact={selectedAgent === 'codex' && selectedThreadId ? {
+              <ContextUsage key={`context:${chatKey}`} tokenUsage={view?.tokenUsage} estimatedCostUsd={claudeCost} compact={selectedAgent === 'codex' && selectedThreadId ? {
                 busy: compacting,
                 blockedReason: compactionBlockedReason,
                 onConfirm: () => void compactConversation(),
