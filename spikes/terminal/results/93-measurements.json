@@ -1,0 +1,373 @@
+{
+  "meta": {
+    "host": "192.168.10.93",
+    "uname": "Linux 7.0.0-44-generic",
+    "node": "v26.13.0",
+    "python3": "Python 3.14.4",
+    "python3ProbeVersion": "3.14.4",
+    "script": "script from util-linux 2.41.3",
+    "utilLinuxFlags": "ok",
+    "bash": "GNU bash, version 5.3.9(1)-release (x86_64-pc-linux-gnu)",
+    "locale": "en_US.UTF-8",
+    "term": "xterm-256color",
+    "tools": {
+      "vim": null,
+      "htop": null,
+      "vi": "/usr/bin/vi",
+      "nano": "/usr/bin/nano",
+      "top": "/usr/bin/top",
+      "less": "/usr/bin/less",
+      "screen": "/usr/bin/screen",
+      "python3": "/usr/bin/python3",
+      "script": "/usr/bin/script"
+    },
+    "scratch": "/tmp/qn-spike-vSPrTl6r/work"
+  },
+  "cases": [
+    {
+      "name": "中文 UTF-8",
+      "backend": "python",
+      "ok": true,
+      "ms": 167.5,
+      "detail": {
+        "utf8Intact": true,
+        "nonAsciiIntact": true,
+        "outputBytes": 245
+      }
+    },
+    {
+      "name": "Ctrl+C",
+      "backend": "python",
+      "ok": true,
+      "ms": 468.97,
+      "detail": {
+        "interrupted": true,
+        "backToPromptMs": 151.68
+      }
+    },
+    {
+      "name": "resize / SIGWINCH",
+      "backend": "python",
+      "ok": true,
+      "ms": 415.56,
+      "detail": {
+        "resizeSupported": true,
+        "controlAck": 120,
+        "sizeAfter": "40x120",
+        "sigwinchDelivered": true
+      }
+    },
+    {
+      "name": "exit 退出码 7",
+      "backend": "python",
+      "ok": true,
+      "ms": 15.15,
+      "detail": {
+        "code": 7,
+        "signal": null,
+        "source": "control",
+        "okCode": true
+      }
+    },
+    {
+      "name": "10MB 吞吐",
+      "backend": "python",
+      "ok": true,
+      "ms": 227.94,
+      "detail": {
+        "outputBytes": 10485958,
+        "elapsedMs": 61.49,
+        "mibPerSec": 162.62,
+        "megabytesPerSec": 170.52,
+        "frameLimitNote": "单帧上限 16MiB，10MiB 原始字节 base64 后约 13.3MiB，仍在一帧内"
+      }
+    },
+    {
+      "name": "往返延迟",
+      "backend": "python",
+      "ok": true,
+      "ms": 171.59,
+      "detail": {
+        "shellRttMs": [
+          0.25,
+          0.22,
+          0.17,
+          0.17,
+          0.35,
+          0.15,
+          0.18,
+          0.16,
+          0.14,
+          0.14,
+          0.14,
+          0.14
+        ],
+        "shellP50Ms": 0.16,
+        "shellP95Ms": 0.35,
+        "controlRttMs": [
+          0.16,
+          0.1,
+          0.07,
+          0.06,
+          0.05,
+          0.05,
+          0.05,
+          0.05
+        ],
+        "controlP50Ms": 0.05
+      }
+    },
+    {
+      "name": "全屏 vim",
+      "backend": "python",
+      "ok": false,
+      "skipped": true,
+      "error": "93 未安装 vim（按约束不安装）"
+    },
+    {
+      "name": "全屏 htop",
+      "backend": "python",
+      "ok": false,
+      "skipped": true,
+      "error": "93 未安装 htop（按约束不安装）"
+    },
+    {
+      "name": "全屏 less",
+      "backend": "python",
+      "ok": true,
+      "ms": 419.07,
+      "detail": {
+        "altScreen": true,
+        "startupMs": 1.04,
+        "quitMs": 250.43,
+        "outputBytes": 861
+      }
+    },
+    {
+      "name": "全屏 vi(vim.tiny)",
+      "backend": "python",
+      "ok": true,
+      "ms": 420.38,
+      "detail": {
+        "altScreen": true,
+        "startupMs": 1.58,
+        "quitMs": 251.36,
+        "outputBytes": 1000
+      }
+    },
+    {
+      "name": "全屏 nano",
+      "backend": "python",
+      "ok": true,
+      "ms": 420,
+      "detail": {
+        "altScreen": true,
+        "startupMs": 1.62,
+        "quitMs": 250.81,
+        "outputBytes": 1408
+      }
+    },
+    {
+      "name": "全屏 top",
+      "backend": "python",
+      "ok": true,
+      "ms": 628.61,
+      "detail": {
+        "altScreen": true,
+        "startupMs": 210.54,
+        "quitMs": 251.12,
+        "outputBytes": 3446
+      }
+    },
+    {
+      "name": "全屏 python curses",
+      "backend": "python",
+      "ok": true,
+      "ms": 985.9,
+      "detail": {
+        "altScreen": true,
+        "startupMs": 7.69,
+        "quitMs": 806.61,
+        "outputBytes": 494,
+        "resizeDelivered": true
+      }
+    },
+    {
+      "name": "探测与兜底顺序",
+      "backend": "python",
+      "ok": true,
+      "ms": 26.93,
+      "detail": {
+        "autoBackend": "python",
+        "pythonUsable": true,
+        "scriptUsable": true,
+        "scriptResizeReturnsFalse": true,
+        "bothMissingMessage": "未找到可用的 PTY 后端：需要 python3（pty.fork + fcntl.ioctl）或 util-linux script"
+      }
+    },
+    {
+      "name": "中文 UTF-8",
+      "backend": "script",
+      "ok": true,
+      "ms": 156.91,
+      "detail": {
+        "utf8Intact": true,
+        "nonAsciiIntact": true,
+        "outputBytes": 275
+      }
+    },
+    {
+      "name": "Ctrl+C",
+      "backend": "script",
+      "ok": true,
+      "ms": 459.62,
+      "detail": {
+        "interrupted": true,
+        "backToPromptMs": 151.13
+      }
+    },
+    {
+      "name": "resize / SIGWINCH",
+      "backend": "script",
+      "ok": true,
+      "ms": 284.52,
+      "detail": {
+        "resizeSupported": false,
+        "controlAck": null,
+        "sizeAfter": "24x80",
+        "sigwinchDelivered": false
+      }
+    },
+    {
+      "name": "exit 退出码 7",
+      "backend": "script",
+      "ok": true,
+      "ms": 16.71,
+      "detail": {
+        "code": 7,
+        "signal": null,
+        "source": "process",
+        "okCode": true
+      }
+    },
+    {
+      "name": "10MB 吞吐",
+      "backend": "script",
+      "ok": true,
+      "ms": 220.83,
+      "detail": {
+        "outputBytes": 10485996,
+        "elapsedMs": 64,
+        "mibPerSec": 156.25,
+        "megabytesPerSec": 163.84,
+        "frameLimitNote": "单帧上限 16MiB，10MiB 原始字节 base64 后约 13.3MiB，仍在一帧内"
+      }
+    },
+    {
+      "name": "往返延迟",
+      "backend": "script",
+      "ok": true,
+      "ms": 159.79,
+      "detail": {
+        "shellRttMs": [
+          0.22,
+          0.15,
+          0.17,
+          0.14,
+          0.13,
+          0.13,
+          0.13,
+          0.11,
+          0.12,
+          0.16,
+          0.14,
+          0.13
+        ],
+        "shellP50Ms": 0.13,
+        "shellP95Ms": 0.22,
+        "controlRttMs": [],
+        "controlP50Ms": null
+      }
+    },
+    {
+      "name": "全屏 vim",
+      "backend": "script",
+      "ok": false,
+      "skipped": true,
+      "error": "93 未安装 vim（按约束不安装）"
+    },
+    {
+      "name": "全屏 htop",
+      "backend": "script",
+      "ok": false,
+      "skipped": true,
+      "error": "93 未安装 htop（按约束不安装）"
+    },
+    {
+      "name": "全屏 less",
+      "backend": "script",
+      "ok": true,
+      "ms": 410.02,
+      "detail": {
+        "altScreen": true,
+        "startupMs": 0.91,
+        "quitMs": 251.3,
+        "outputBytes": 909
+      }
+    },
+    {
+      "name": "全屏 vi(vim.tiny)",
+      "backend": "script",
+      "ok": true,
+      "ms": 409.71,
+      "detail": {
+        "altScreen": true,
+        "startupMs": 1.42,
+        "quitMs": 251.32,
+        "outputBytes": 1040
+      }
+    },
+    {
+      "name": "全屏 nano",
+      "backend": "script",
+      "ok": true,
+      "ms": 411.37,
+      "detail": {
+        "altScreen": true,
+        "startupMs": 1.51,
+        "quitMs": 250.65,
+        "outputBytes": 1430
+      }
+    },
+    {
+      "name": "全屏 top",
+      "backend": "script",
+      "ok": true,
+      "ms": 619,
+      "detail": {
+        "altScreen": true,
+        "startupMs": 210.71,
+        "quitMs": 250.64,
+        "outputBytes": 3486
+      }
+    },
+    {
+      "name": "全屏 python curses",
+      "backend": "script",
+      "ok": true,
+      "ms": 416.06,
+      "detail": {
+        "altScreen": true,
+        "startupMs": 7.27,
+        "quitMs": 250.6,
+        "outputBytes": 438
+      }
+    }
+  ],
+  "summary": {
+    "total": 27,
+    "ok": 23,
+    "failed": 0,
+    "skipped": 4
+  }
+}

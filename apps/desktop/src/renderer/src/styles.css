@@ -1,0 +1,513 @@
+@import "tailwindcss";
+
+/* 色彩分层优先参考 Codex 桌面版石墨灰，辅以旧版 QingCode 的"青轨"：
+   chrome（标题栏）< bg（对话区）< sidebar < panel（卡片/输入框/弹窗）< elevated（菜单浮层），相邻层只差一点明暗，靠细线分割。
+   brand 青色只表达产品身份与"当前上下文"（青轨、当前会话），accent 蓝色用于主操作、焦点与链接。 */
+@theme {
+  --color-qn-chrome: #141414;
+  --color-qn-bg: #181818;
+  --color-qn-sidebar: #1b1b1b;
+  --color-qn-panel: #1f1f1f;
+  --color-qn-elevated: #242424;
+  --color-qn-float: #262626;
+  --color-qn-hover: #262626;
+  --color-qn-active: #2c2c2c;
+  --color-qn-border: #2a2a2a;
+  --color-qn-border-strong: #3a3a3a;
+  --color-qn-text: #e6e6e6;
+  /* 对话正文比界面文字再暗一档：大段阅读时纯亮白太刺眼，参考 Codex 的柔和灰。 */
+  --color-qn-prose: #d0d0d0;
+  --color-qn-muted: #939393;
+  --color-qn-dim: #6b6b6b;
+  --color-qn-brand: #4ecdb5;
+  --color-qn-accent: #4f8cff;
+  --color-qn-ok: #6fcf8f;
+  --color-qn-warn: #e2b55d;
+  --color-qn-danger: #ff6b63;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", "Consolas", "Microsoft YaHei", monospace;
+}
+
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  /* 保持浏览器默认 16px 根字号：Tailwind 尺寸全是 rem，根字号缩小会让 text-xs 只剩 10.5px。 */
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 紧凑密度：Tailwind v4 的间距工具类都按 --spacing 计算，整体收紧约 12%；字号不动，避免小字难读。 */
+html[data-density="compact"] {
+  --spacing: 0.22rem;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--color-qn-bg);
+  color: var(--color-qn-text);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  border: 2px solid var(--color-qn-border-strong);
+  pointer-events: none;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* 组件类放进 components 层：调用处的 Tailwind 工具类（px-2、text-[12px] 等）才能覆盖它们。 */
+@layer components {
+  .qn-input {
+    width: 100%;
+    border: 1px solid var(--color-qn-border-strong);
+    border-radius: 8px;
+    background: #161616;
+    color: var(--color-qn-text);
+    padding: 7px 10px;
+    font-size: 13px;
+    line-height: 20px;
+    outline: none;
+    transition:
+      border-color 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  html[data-density="compact"] .qn-input {
+    padding: 5px 9px;
+  }
+
+  .qn-input:hover:not(:disabled, :focus) {
+    border-color: #505050;
+  }
+
+  .qn-input:focus {
+    border-color: var(--color-qn-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-qn-accent) 22%, transparent);
+  }
+
+  .qn-button {
+    border-radius: 8px;
+    background: var(--color-qn-accent);
+    color: #fff;
+    font-size: 13px;
+    line-height: 20px;
+    padding: 6px 12px;
+  }
+
+  .qn-button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-qn-accent) 88%, white);
+  }
+
+  .qn-button-subtle {
+    border: 1px solid var(--color-qn-border-strong);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--color-qn-text);
+    font-size: 13px;
+    line-height: 20px;
+    padding: 6px 12px;
+  }
+
+  .qn-button-subtle:hover:not(:disabled) {
+    background: var(--color-qn-hover);
+  }
+
+  /*
+   * 浮层表面（菜单、弹出面板、提示、斜杠菜单、划词工具条、Toast）：浮在正文之上，必须和下面的内容拉开层次。
+   * 比 elevated 再亮一档 + 亮描边 + 外圈暗边 + 大投影；并在子树内把 hover/active/border 重定向到更亮的值，
+   * 否则 bg-qn-hover 这类工具类在浮层里会和底色几乎一样，看不出高亮。
+   */
+  .qn-surface-float {
+    border: 1px solid rgb(255 255 255 / 0.1);
+    border-radius: 12px;
+    background: var(--color-qn-float);
+    color: var(--color-qn-text);
+    box-shadow:
+      0 0 0 1px rgb(0 0 0 / 0.55),
+      0 16px 40px rgb(0 0 0 / 0.55);
+    --color-qn-hover: #313131;
+    --color-qn-active: #383838;
+    --color-qn-border: #343434;
+  }
+
+  /* 菜单焦点可以和已展开的子菜单同时高亮，保留行间底色。 */
+  .qn-surface-float :where([role="menuitem"] + [role="menuitem"], [role="group"] > [role="option"] + [role="option"]) {
+    margin-block-start: 0.125rem;
+  }
+}
+
+.qn-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.qn-scroll::-webkit-scrollbar-thumb {
+  background: #3d3d3d;
+  border-radius: 4px;
+}
+
+.qn-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+
+/* ---------- 外壳 ---------- */
+
+/* 自绘标题栏：整条可拖动窗口，交互控件挖空。 */
+.qn-drag {
+  -webkit-app-region: drag;
+}
+
+.qn-drag button,
+.qn-drag a,
+.qn-drag input,
+.qn-drag select,
+.qn-drag [data-no-drag],
+.qn-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* 系统窗口按钮（titleBarOverlay）占位：支持 Window Controls Overlay 时用精确值，否则按 Windows 三个按钮 46px 估算。 */
+.qn-wco-spacer {
+  flex: none;
+  width: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)));
+}
+
+.qn-traffic-spacer {
+  flex: none;
+  width: 76px;
+}
+
+/* 进场页淡出时主界面分区错峰入场。 */
+.qn-shell[data-entered="false"] .qn-enter {
+  opacity: 0;
+}
+
+.qn-shell[data-entered="true"] .qn-enter {
+  animation: qn-enter 560ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: calc(var(--qn-enter-order, 0) * 85ms);
+}
+
+@keyframes qn-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.qn-pop {
+  animation: qn-pop 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: top center;
+}
+
+@keyframes qn-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/*
+ * 拖拽分隔条（components/ResizeHandle.tsx，全局唯一实现，沿用旧版 QingCode）：
+ * 双向箭头光标；平时隐形，悬停显示细线和三圆点，拖动/聚焦变青色；拖动时 body.qn-resizing 锁定全局光标。
+ */
+body.qn-resizing,
+body.qn-resizing * {
+  cursor: ew-resize !important;
+  user-select: none !important;
+}
+
+body.qn-resizing[data-qn-resize="horizontal"],
+body.qn-resizing[data-qn-resize="horizontal"] * {
+  cursor: ns-resize !important;
+}
+
+/* 拖动时避免 iframe / webview 吞掉指针事件。 */
+body.qn-resizing iframe,
+body.qn-resizing webview {
+  pointer-events: none;
+}
+
+.qn-resizer {
+  z-index: 20;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+  touch-action: none;
+}
+
+.qn-resizer[data-orientation="vertical"] {
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.qn-resizer[data-orientation="horizontal"] {
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.qn-resizer-line {
+  position: absolute;
+  background: var(--color-qn-border-strong);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, background 160ms ease;
+}
+
+.qn-resizer[data-orientation="vertical"] .qn-resizer-line {
+  inset-block: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.qn-resizer[data-orientation="horizontal"] .qn-resizer-line {
+  inset-inline: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.qn-resizer-grip {
+  position: relative;
+  display: flex;
+  flex: none;
+  gap: 4px;
+  border: 1px solid var(--color-qn-border-strong);
+  border-radius: 999px;
+  /* 托底遮住分隔线，避免细线从圆点之间穿过。 */
+  background: var(--color-qn-elevated);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.qn-resizer[data-orientation="vertical"] .qn-resizer-grip {
+  flex-direction: column;
+  padding: 5px 2px;
+}
+
+.qn-resizer[data-orientation="horizontal"] .qn-resizer-grip {
+  padding: 2px 5px;
+}
+
+.qn-resizer-grip > span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-qn-muted);
+  transition: background 120ms ease;
+}
+
+.qn-resizer:hover .qn-resizer-line,
+.qn-resizer:hover .qn-resizer-grip,
+.qn-resizer:focus-visible .qn-resizer-line,
+.qn-resizer:focus-visible .qn-resizer-grip,
+.qn-resizer[data-active="true"] .qn-resizer-line,
+.qn-resizer[data-active="true"] .qn-resizer-grip {
+  opacity: 1;
+}
+
+.qn-resizer:focus-visible .qn-resizer-line,
+.qn-resizer[data-active="true"] .qn-resizer-line {
+  background: var(--color-qn-brand);
+}
+
+.qn-resizer[data-active="true"][data-orientation="vertical"] .qn-resizer-line {
+  width: 2px;
+}
+
+.qn-resizer[data-active="true"][data-orientation="horizontal"] .qn-resizer-line {
+  height: 2px;
+}
+
+.qn-resizer:focus-visible .qn-resizer-grip > span,
+.qn-resizer[data-active="true"] .qn-resizer-grip > span {
+  background: var(--color-qn-brand);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qn-shell[data-entered="true"] .qn-enter,
+  .qn-pop {
+    animation: none;
+  }
+}
+
+.qn-pre {
+  margin: 0;
+  overflow-x: auto;
+  white-space: pre;
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.qn-pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+
+.qn-markdown .qn-pre {
+  font-size: 0.9em;
+}
+
+.qn-markdown > :first-child {
+  margin-top: 0;
+}
+
+.qn-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+/* 流式光标挂在最后一个段落/列表项文字之后，而不是 Markdown 块之后另起一行。 */
+.qn-streaming > p:last-child::after,
+.qn-streaming > :is(ul, ol):last-child > li:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.875rem;
+  margin-left: 0.125rem;
+  border-radius: 2px;
+  vertical-align: middle;
+  background: var(--color-qn-brand);
+  animation: qn-caret-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes qn-caret-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.qn-markdown p,
+.qn-markdown ul,
+.qn-markdown ol,
+.qn-markdown blockquote {
+  margin: 0.6rem 0;
+}
+
+.qn-markdown li + li {
+  margin-top: 0.2rem;
+}
+
+.qn-markdown ul {
+  list-style: disc;
+  padding-left: 1.4rem;
+}
+
+.qn-markdown ol {
+  list-style: decimal;
+  padding-left: 1.4rem;
+}
+
+.qn-markdown h1,
+.qn-markdown h2,
+.qn-markdown h3,
+.qn-markdown h4 {
+  margin: 0.7rem 0 0.3rem;
+  font-weight: 600;
+}
+
+/* 加粗只略提亮、字重 600：避免中文粗体在深色底上发糊、过重。 */
+.qn-markdown strong,
+.qn-markdown b {
+  font-weight: 600;
+  color: #e4e4e4;
+}
+
+.qn-markdown blockquote {
+  border-left: 2px solid var(--color-qn-border);
+  padding-left: 0.6rem;
+  color: var(--color-qn-muted);
+}
+
+.qn-markdown hr {
+  border-color: var(--color-qn-border);
+  margin: 0.6rem 0;
+}
+
+.qn-markdown h1 {
+  font-size: 1.25em;
+}
+
+.qn-markdown h2 {
+  font-size: 1.12em;
+}
+
+/* ---------- Radix 浮层动效（读 data-state / data-side） ---------- */
+
+.qn-overlay[data-state="open"] {
+  animation: qn-fade-in 160ms ease-out both;
+}
+
+.qn-overlay[data-state="closed"] {
+  animation: qn-fade-out 120ms ease-in both;
+}
+
+.qn-dialog[data-state="open"] {
+  animation: qn-dialog-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.qn-dialog[data-state="closed"] {
+  animation: qn-fade-out 120ms ease-in both;
+}
+
+.qn-float[data-state="open"],
+.qn-float[data-state="delayed-open"] {
+  animation: qn-pop 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.qn-float[data-side="top"] {
+  transform-origin: bottom center;
+}
+
+.qn-float[data-state="closed"] {
+  animation: qn-fade-out 100ms ease-in both;
+}
+
+@keyframes qn-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes qn-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes qn-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qn-overlay,
+  .qn-dialog,
+  .qn-float {
+    animation: none !important;
+  }
+}

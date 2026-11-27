@@ -1,49 +1,14 @@
-# Logs
-logs
+node_modules/
+dist/
+out/
+release/
+.dev/
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
-coverage
-*.local
-
-# 构建产物（单文件 exe 归档目录）
-release
-src-tauri/target
-src-tauri/gen
-
-# 包管理器 lock（使用 pnpm）
-package-lock.json
-
-# dev 环境本地数据库（项目内，不提交）
-.dev
-
-# 终端/移动端粘贴的临时图片（运行期缓存，不提交）
-.qingcode/terminal-paste/
-
-# 本机 AI 助手的会话/计划临时目录（不提交）
-.workbuddy
-.zcode
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-# Python 运行缓存
-__pycache__/
-
-# 沙箱中被转义的 Windows 盘符临时目录（如 C_\Users\...，测试残留，不提交）
-src-tauri/qingcode-server/[A-Z]_/
+*.tsbuildinfo
+apps/desktop/resources/server/
+.deps-stage/
+apps/mobile/android/.debug.keystore
+apps/mobile/release/
+apps/mobile/android/build/
+apps/mobile/android/assets/web/
+.qingcode/

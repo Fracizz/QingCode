@@ -1,0 +1,47 @@
+appId: com.qingcode.next
+productName: QingCode Next
+# 主程序沿用旧版的 qingcode.exe：安全软件/防火墙按进程名放行过的规则继续有效。
+# appId、产品名不变，安装目录、卸载项和数据目录仍与旧版（%LOCALAPPDATA%\QingCode）分开，安装不会覆盖旧版；
+# 安装器按安装目录路径结束运行中的进程，不会误关旧版的 qingcode.exe。
+executableName: qingcode
+extends: 'file:./build/package-config.mjs'
+# 直接用已解压的 Electron（经 10.87 中转），避免打包时再下载
+electronDist: node_modules/electron/dist
+electronVersion: 45.5.0
+# ssh2 的原生加速模块 cpu-features 是可选的，不编译（ssh2 自动回退纯 JS）
+npmRebuild: false
+nodeGypRebuild: false
+
+directories:
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+
+extraResources:
+  - from: resources/server
+    to: server
+    filter:
+      - '**/*'
+
+# ssh2 的可选原生模块（cpu-features）不能在 asar 内加载。
+asarUnpack:
+  - '**/node_modules/ssh2/**'
+  - '**/node_modules/cpu-features/**'
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+artifactName: QingCode-Next-${version}-${arch}.${ext}
