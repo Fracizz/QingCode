@@ -15,7 +15,8 @@ import {
   MAX_ATTACHMENTS,
   MAX_FILE_BYTES,
   removePlaceholder,
-  stripImagePlaceholders,
+  composeMessageText,
+  stripAttachmentPlaceholders,
   uniqueImageName,
   type Attachment,
   type SkillRef,
@@ -341,7 +342,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   }
 
   const submit = async (text: string, mode: SendMode): Promise<boolean> => {
-    const message = buildAnnotatedMessage(annotations, stripImagePlaceholders(text, attachments))
+    const message = buildAnnotatedMessage(annotations, composeMessageText(text, attachments))
     const input = buildUserInput(message, attachments, skills)
     const newDraft = currentThreadId === null
     if (input.length === 0 || (newDraft && sendingDraftKey.current)) return false
@@ -363,7 +364,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
       const next = { ...previous }
       delete next[draftKey]
       const unsent = accepted ? {
-        text: source.text === text ? '' : stripImagePlaceholders(source.text, attachments),
+        text: source.text === text ? '' : stripAttachmentPlaceholders(source.text, attachments),
         annotations: source.annotations.filter((item) => !annotations.includes(item)),
         attachments: source.attachments.filter((item) => !attachments.includes(item)),
         skills: {
@@ -418,7 +419,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const patchAttachment = (id: string, patch: Partial<Attachment>) =>
     setAttachments((prev) => prev.map((item) => (item.id === id ? ({ ...item, ...patch } as Attachment) : item)))
 
-  /** 返回通过附件校验的图片名，供输入框插入占位。 */
+  /** 返回通过校验的附件名（图片与文件），供输入框插入蓝色占位。 */
   const addFiles = (files: File[]): string[] => {
     if (!currentTargetId || sending || (!currentThreadId && sendingDraftKey.current)) return []
     const targetId = currentTargetId
@@ -448,13 +449,13 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
     const isLocal = targets.find((item) => item.id === targetId)?.kind === 'local'
     const taken = new Set([...pending, ...attachments.map((item) => item.name)])
     for (const [, name] of draft.matchAll(/\[([^\]\n]+)\]/g)) if (name) taken.add(name)
-    const imageNames: string[] = []
+    const names: string[] = []
     for (const file of accepted.slice(0, room)) {
       const id = 'att-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7)
       if (isImageFile(file)) {
         const name = uniqueImageName(file.name, taken)
         taken.add(name)
-        imageNames.push(name)
+        names.push(name)
         pending.add(name)
         attachmentReads.current.set(draftKey, pending)
         setReadingImages(pending.size)
@@ -482,17 +483,21 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
         notify(t('{name} 超过 {size} MB，未添加', { name: file.name, size: MAX_FILE_BYTES / 1024 / 1024 }))
         continue
       }
+      // 文件也要不重名：模型靠占位里的名字去附件说明里找路径。
+      const name = uniqueImageName(file.name, taken)
+      taken.add(name)
+      names.push(name)
       const localPath = window.qn?.pathForFile?.(file) ?? ''
       if (isLocal && localPath) {
         setAttachments((prev) => [
           ...prev,
-          { id, kind: 'file', name: file.name, size: file.size, localPath, targetPath: localPath, status: 'ready' },
+          { id, kind: 'file', name, size: file.size, localPath, targetPath: localPath, status: 'ready' },
         ])
         continue
       }
       setAttachments((prev) => [
         ...prev,
-        { id, kind: 'file', name: file.name, size: file.size, localPath, targetPath: null, status: 'uploading' },
+        { id, kind: 'file', name, size: file.size, localPath, targetPath: null, status: 'uploading' },
       ])
       uploadToTarget(targetId, file)
         .then((path) => patchAttachment(id, { status: 'ready', targetPath: path }))
@@ -500,14 +505,14 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
           patchAttachment(id, { status: 'error', error: err instanceof Error ? err.message : t('上传失败') }),
         )
     }
-    return imageNames
+    return names
   }
 
   const removeAttachment = (id: string) => updateDraft((item) => {
     const attachment = item.attachments.find((entry) => entry.id === id)
     return {
       ...item,
-      text: attachment?.kind === 'image' ? removePlaceholder(item.text, attachment.name) : item.text,
+      text: attachment ? removePlaceholder(item.text, attachment.name) : item.text,
       attachments: item.attachments.filter((entry) => entry.id !== id),
     }
   })

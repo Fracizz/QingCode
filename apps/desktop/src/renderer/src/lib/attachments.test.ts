@@ -3,6 +3,7 @@ import {
   attachmentsBlocking,
   basename,
   buildUserInput,
+  composeMessageText,
   consumeSlashToken,
   dirname,
   filterSlashItems,
@@ -140,12 +141,49 @@ describe('splitUserText', () => {
       text: '看下这个',
       files: ['/tmp/a.log', 'C:\\x\\b c.txt'],
       skills: ['review', 'deploy'],
+      images: [],
     })
   })
 
   it('普通文字原样返回', () => {
-    expect(splitUserText('你好 /tmp 路径')).toEqual({ text: '你好 /tmp 路径', files: [], skills: [] })
-    expect(splitUserText('/commit-push')).toEqual({ text: '', files: [], skills: ['commit-push'] })
+    expect(splitUserText('你好 /tmp 路径')).toEqual({ text: '你好 /tmp 路径', files: [], skills: [], images: [] })
+    expect(splitUserText('/commit-push')).toEqual({ text: '', files: [], skills: ['commit-push'], images: [] })
+  })
+
+  it('拆出附图编号与附件说明，编辑时两段都保留', () => {
+    const notes = '附图编号（按本条消息中图片的先后顺序）：\n1. [a.png]\n2. [a-2.png]\n\n附件文件（请按需读取）：\n- x.log: /t/x.log'
+    const original = `对比 [a.png] 和 [a-2.png]\n\n${notes}`
+    expect(splitUserText(original)).toEqual({
+      text: '对比 [a.png] 和 [a-2.png]',
+      files: ['/t/x.log'],
+      skills: [],
+      images: ['a.png', 'a-2.png'],
+    })
+    expect(editUserText(original, '只看 [a-2.png]')).toBe(`只看 [a-2.png]\n\n${notes}`)
+  })
+
+  it('格式不符的编号段按用户原文处理', () => {
+    const text = '附图编号（按本条消息中图片的先后顺序）：\n随便写的'
+    expect(splitUserText(text).text).toBe(text)
+  })
+})
+
+describe('composeMessageText', () => {
+  const image = (id: string, name: string): Attachment => ({ id, kind: 'image', name, size: 1, dataUrl: 'data:image/png;base64,AA' })
+  const file: Attachment = { id: 'f', kind: 'file', name: 'x.log', size: 1, localPath: '', targetPath: '/t/x.log', status: 'ready' }
+
+  it('保留占位并按图片发送顺序追加编号', () => {
+    expect(composeMessageText('第二张 [image-2.png] 的按钮', [image('1', 'image.png'), image('2', 'image-2.png')])).toBe(
+      '第二张 [image-2.png] 的按钮\n\n附图编号（按本条消息中图片的先后顺序）：\n1. [image.png]\n2. [image-2.png]',
+    )
+  })
+
+  it('没引用图片时不加编号，文件占位原样保留', () => {
+    expect(composeMessageText('看 [x.log] 的报错', [file, image('1', 'image.png')])).toBe('看 [x.log] 的报错')
+  })
+
+  it('正文只有占位时发空正文，与只发附件一致', () => {
+    expect(composeMessageText(' [image.png] [x.log] ', [image('1', 'image.png'), file])).toBe('')
   })
 })
 

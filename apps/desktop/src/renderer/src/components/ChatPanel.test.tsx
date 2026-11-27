@@ -340,7 +340,8 @@ it.each(['paste', 'drop', 'picker'])('图片占位可以预览且随附件单独
     }
     await act(() => host.querySelector<HTMLButtonElement>('[aria-label="发送"]')!.click())
     const image = { type: 'image', url: 'data:image/png;base64,aW1hZ2UgY29udGVudA==' }
-    const body = '看 图 [其他.png]'
+    // 占位保留在正文里，并追加附图编号，模型才能知道用户指的是哪张图。
+    const body = '看 [image.png] 图 [其他.png]\n\n附图编号（按本条消息中图片的先后顺序）：\n1. [image.png]'
     expect(send).toHaveBeenCalledExactlyOnceWith(source === 'paste' ? '' : body, expect.objectContaining({
       input: source === 'paste' ? [image] : [{ type: 'text', text: body, text_elements: [] }, image],
     }))

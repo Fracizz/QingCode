@@ -1,4 +1,4 @@
-import { isActiveThread, isThreadOutcome, sessionStatus, t } from '@qn/codex-client'
+import { isActiveThread, isThreadOutcome, sessionStatus, t, type SessionStatus } from '@qn/codex-client'
 import { create } from 'zustand'
 import { archivedThreadKey, sessionKey } from './agents'
 import { getGateway } from './client'
@@ -84,11 +84,26 @@ export function filterProjects(projects: Project[], targets: Target[], query: st
   })
 }
 
-export function groupWorkspaceThreads(threads: WorkspaceThread[], projects: Project[], query: string, preferences?: WorkspacePreferences): WorkspaceGroup[] {
+/**
+ * 会话按「需要关注程度」分档（参考 Orca 手机版 sort-stamps）：
+ * 0 待审批 / 待输入 > 1 有新结果（未读） > 2 运行中 > 3 其余；看过的结果不再压过运行中的会话。
+ */
+export function threadAttentionTier(status: SessionStatus, unread = false): number {
+  if (status === 'pending' || status === 'input') return 0
+  if (status === 'unread' || (unread && status !== 'running')) return 1
+  return status === 'running' ? 2 : 3
+}
+
+export function groupWorkspaceThreads(
+  threads: WorkspaceThread[], projects: Project[], query: string, preferences?: WorkspacePreferences,
+  /** 当前状态（含对话页实时状态）；省略时按列表缓存的状态计算。 */
+  statusOf: (thread: WorkspaceThread) => SessionStatus = (thread) => recentThreadStatus(thread),
+): WorkspaceGroup[] {
   const needle = query.trim().toLocaleLowerCase()
   const groups = new Map<string, WorkspaceGroup>()
   const byId = new Map(projects.map((project) => [JSON.stringify([project.targetId, project.id]), project]))
-  for (const entry of [...threads].sort((a, b) => b.updatedAt - a.updatedAt)) {
+  const tier = new Map(threads.map((thread) => [thread, threadAttentionTier(statusOf(thread), thread.unread)]))
+  for (const entry of [...threads].sort((a, b) => tier.get(a)! - tier.get(b)! || b.updatedAt - a.updatedAt)) {
     const title = preferences?.threads[preferenceKey(entry)]?.title
     const thread = title ? { ...entry, title } : entry
     const key = JSON.stringify([thread.targetId, thread.projectId])
@@ -101,6 +116,24 @@ export function groupWorkspaceThreads(threads: WorkspaceThread[], projects: Proj
   }
   return [...groups.values()].map((group) => ({ ...group, threads: group.threads.sort((a, b) =>
     Number(Boolean(preferences?.threads[preferenceKey(b)]?.pinned)) - Number(Boolean(preferences?.threads[preferenceKey(a)]?.pinned))) }))
+}
+
+/** 把分组列表摊平成会话键序列，供 applyThreadOrder 稳定排序用。 */
+export function workspaceThreadOrder(groups: WorkspaceGroup[]): string[] {
+  return groups.flatMap((group) => group.threads.map(workspaceThreadKey))
+}
+
+/**
+ * 按已稳定的顺序重排分组：状态频繁变化时列表不跟着跳，等一段时间后再统一换成最新顺序。
+ * 不在旧顺序里的新会话排在最前，分组按其中最靠前的会话排序。
+ */
+export function applyThreadOrder(groups: WorkspaceGroup[], order: readonly string[]): WorkspaceGroup[] {
+  if (!order.length) return groups
+  const rank = new Map(order.map((key, index) => [key, index]))
+  const rankOf = (thread: WorkspaceThread) => rank.get(workspaceThreadKey(thread)) ?? -1
+  return groups
+    .map((group) => ({ ...group, threads: [...group.threads].sort((a, b) => rankOf(a) - rankOf(b)) }))
+    .sort((a, b) => rankOf(a.threads[0]!) - rankOf(b.threads[0]!))
 }
 
 export function orderWorkspaceProjects(projects: Project[], ids: string[] = []): Project[] {

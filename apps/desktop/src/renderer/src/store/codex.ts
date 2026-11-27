@@ -1381,8 +1381,8 @@ export const useCodex = create<CodexState>((set, get) => {
         if (
           state.currentTargetId !== targetId || state.currentAgent !== agent || state.currentThreadId !== threadId ||
           !session?.opened || (mode !== 'default' && mode !== 'inherit' && session.openedConfig?.accessModes !== true) ||
-          state.sending || (threadId === null && state.access.draftRevision !== draftRevision) ||
-          (threadId !== null && (session.state.threads[threadId]?.status === 'running' || submitting.has(pendingSendKey({ targetId, agent, threadId }))))
+          // 运行中允许修改，新档位从下一轮 turn/start 开始生效。
+          state.sending || (threadId === null && state.access.draftRevision !== draftRevision)
         ) return state
         return { access: rememberAccessMode(state.access, address, mode) }
       })

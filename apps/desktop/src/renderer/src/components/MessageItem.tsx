@@ -479,6 +479,11 @@ function UserMessage({ item, onEdit, editRestartsConversation, showRevisionMarke
   const images = item.images ?? []
   const visible = images.filter((src) => src.startsWith('data:image/'))
   const named = images.filter((src) => !src.startsWith('data:image/'))
+  // 发送时带了附图编号就用原文件名，和输入框里的蓝色标签一致；旧消息按格式和序号生成。
+  const imageLabel = (src: string, index: number) => {
+    const name = parsed.images[images.indexOf(src)]
+    return name ? `[${name}]` : embeddedImageLabel(src, index)
+  }
   const revisedText = edit === null || edit === parsed.text ? item.text : editUserText(item.text, edit)
   const hasText = Boolean(revisedText.trim())
   const canSave = Boolean(onEdit) && edit !== null && (hasText || Boolean(item.inputExtras?.length))
@@ -515,7 +520,7 @@ function UserMessage({ item, onEdit, editRestartsConversation, showRevisionMarke
       {visible.length > 0 && (
         <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
           {visible.map((src, index) => (
-            <MessageImage key={index} src={src} label={embeddedImageLabel(src, index)} />
+            <MessageImage key={index} src={src} label={imageLabel(src, index)} />
           ))}
         </div>
       )}

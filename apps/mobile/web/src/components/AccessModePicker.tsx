@@ -4,13 +4,15 @@ import { useState } from 'react'
 import type { AgentKind } from '../types'
 import { Button, Dialog } from './ui'
 
-export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, supported, disabled, onChange }: {
+export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, supported, disabled, deferred = false, onChange }: {
   agent: AgentKind
   mode: AccessSelection
   effectiveMode: AccessMode
   inheritedMode?: AccessMode
   supported: boolean
   disabled: boolean
+  /** 当前一轮仍在运行：修改从下一轮开始生效，弹窗里说明。 */
+  deferred?: boolean
   onChange: (mode: AccessSelection) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -43,7 +45,7 @@ export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, su
         <Dialog title={pending ? t('启用{label}？', { label: pending.label }) : t('访问模式')} onClose={close}>
           {pending ? (
             <>
-              <p className="mb-4 text-sm">{pending.warning} {t('仅应用于当前会话。')}</p>
+              <p className="mb-4 text-sm">{pending.warning} {deferred ? t('仅应用于当前会话，从下一轮开始生效。') : t('仅应用于当前会话。')}</p>
               <div className="flex justify-end gap-2">
                 <Button onClick={() => setConfirm(null)}>{t('取消')}</Button>
                 <Button variant="danger" disabled={disabled || !supported} onClick={() => select(pending.mode)}>{t('启用')}</Button>
@@ -52,6 +54,7 @@ export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, su
           ) : (
             <div className="space-y-2">
               {!supported && <p className="text-xs text-qn-muted">{t('当前电脑或目标服务版本暂不支持会话权限覆盖。')}</p>}
+              {deferred && <p className="text-xs text-qn-muted">{t('本轮仍在运行，修改从下一轮开始生效。')}</p>}
               {available.map((option) => {
                 // 选中与总控相同的档位即恢复跟随总控；总控未知时保持显式选择。
                 const next: AccessSelection = option.mode === inheritedMode ? 'inherit' : option.mode

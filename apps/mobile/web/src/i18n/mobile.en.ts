@@ -187,6 +187,7 @@ export default {
   '远端 {host}': 'Remote {host}',
   '直连 {host}': 'Direct {host}',
   '远端': 'Remote',
+  '展开全文': 'Show all',
   '直连': 'Direct',
   '全部会话': 'All sessions',
   '{count} 个项目': '{count} projects',
@@ -440,6 +441,8 @@ export default {
   '启用{label}？': 'Enable {label}?',
   '启用': 'Enable',
   '仅应用于当前会话。': 'Applies to this session only.',
+  '仅应用于当前会话，从下一轮开始生效。': 'Applies to this session only, starting from the next turn.',
+  '本轮仍在运行，修改从下一轮开始生效。': 'This turn is still running. Changes take effect from the next turn.',
   '当前电脑或目标服务版本暂不支持会话权限覆盖。': 'This computer or target service version doesn’t support per-session access modes.',
 
   // 输入框与发送队列

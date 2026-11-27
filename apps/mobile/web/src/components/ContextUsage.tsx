@@ -28,9 +28,9 @@ export function ContextUsage({ tokenUsage, estimatedCostUsd, compact, panel: con
       <Button variant="ghost" className="qn-icon-button px-1!"
         aria-label={busy ? t('正在压缩会话') : sessionUsage ? t('查看会话用量') : t('查看上下文，{label}', { label })}
         aria-haspopup="dialog" onClick={() => setPanel('usage')}>
-        <span className={`flex items-center gap-1 text-[11px] ${color}`} aria-hidden>
-          {busy ? <LoadingIcon size={16} /> : <Gauge size={16} />}
-          {usage && `${percent}%`}
+        {/* 与电脑版输入区的上下文环一致：有窗口大小时显示占用环，否则显示仪表图标。 */}
+        <span className={`flex items-center ${color}`} aria-hidden>
+          {busy ? <LoadingIcon size={16} /> : usage ? <ProgressRing percent={percent} size={16} /> : <Gauge size={16} />}
         </span>
       </Button>
       {panel && (
@@ -81,6 +81,17 @@ export function ContextUsage({ tokenUsage, estimatedCostUsd, compact, panel: con
         </Dialog>
       )}
     </>
+  )
+}
+
+/** 与电脑版 ProgressRing 相同的占用环，颜色跟随文字色。 */
+function ProgressRing({ percent, size }: { percent: number; size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 13 13" className="shrink-0 -rotate-90" data-testid="context-ring">
+      <circle cx="6.5" cy="6.5" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.25" />
+      <circle cx="6.5" cy="6.5" r="5" pathLength="100" fill="none" stroke="currentColor" strokeWidth="1.5"
+        strokeDasharray={`${percent} 100`} />
+    </svg>
   )
 }
 

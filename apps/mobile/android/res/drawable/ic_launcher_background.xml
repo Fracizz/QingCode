@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标背景层：与桌面母版 branding/icon.svg 同为上浅下深的冷黑渐变。
+<!-- 自适应图标背景层：与桌面母版 branding/icon.svg 同为上浅下深的近纯黑渐变。
      启动器会按各自形状裁切，母版里的顶部高光描边在这里省略。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
@@ -15,8 +15,8 @@
                 android:startY="0"
                 android:endX="0"
                 android:endY="108"
-                android:startColor="#FF1D2126"
-                android:endColor="#FF0A0C0E" />
+                android:startColor="#FF0F1114"
+                android:endColor="#FF000000" />
         </aapt:attr>
     </path>
 </vector>

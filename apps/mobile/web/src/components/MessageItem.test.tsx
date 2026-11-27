@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
-import { FileActionsContext, MessageItem, ToolGroup } from './MessageItem'
+import { FileActionsContext, isLongUserText, MessageItem, ToolGroup } from './MessageItem'
 
 const toggle = (summary: HTMLElement) => act(async () => {
   summary.click()
@@ -41,6 +41,29 @@ it('后台任务摘要过长时标题只占两行，全文收进展开区', asyn
     expect(host.querySelector('strong')).toBeNull()
     await toggle(host.querySelector('summary')!)
     expect(host.querySelector('.qn-markdown strong')?.textContent).toBe('结尾')
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
+
+it('用户长消息超过 8 行或 600 字折叠，可展开收起；短消息不折叠', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  expect(isLongUserText('短消息')).toBe(false)
+  expect(isLongUserText('行\n'.repeat(8))).toBe(true)
+  expect(isLongUserText('字'.repeat(601))).toBe(true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  try {
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'u', text: '日志\n'.repeat(20) }} />))
+    const toggle = host.querySelector<HTMLButtonElement>('.qn-fold-toggle')!
+    expect(host.querySelector('.line-clamp-8')).not.toBeNull()
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    await act(() => toggle.click())
+    expect(host.querySelector('.line-clamp-8')).toBeNull()
+    expect(toggle.textContent).toBe('收起')
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'short', text: '你好' }} />))
+    expect(host.querySelector('.qn-fold-toggle')).toBeNull()
   } finally {
     await act(() => root.unmount())
     vi.unstubAllGlobals()

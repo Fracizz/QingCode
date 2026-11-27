@@ -6,7 +6,7 @@ import { bindChatPinch } from '../chatFont'
 import { copyText } from '../client'
 import { nearBottom } from '../composerLogic'
 import { EMPTY_PREFS, resolveSelection } from '../models'
-import { currentCwd, displayedAccessMode, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
+import { currentCwd, displayedAccessMode, selectedAccessMode, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
 import { chatTimeline, replyPhase, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { changeThreadPreference, threadPreferenceKey, useWorkspacePreferences } from '../workspace'
@@ -38,7 +38,9 @@ export function ChatPage() {
   const openDiff = useApp((s) => s.openDiff)
   const key = selectedTargetId ? sessionKey(selectedTargetId, selectedAgent) : ''
   const session = useApp((s) => s.sessions[key])
+  // accessMode 是本轮实际生效的档位；选择器显示已选档位（运行中修改时下一轮才生效）。
   const accessMode = useApp(displayedAccessMode)
+  const nextAccessMode = useApp(selectedAccessMode)
   const accessSelection = useApp(selectedAccessPreference) ?? 'inherit'
   const inheritedAccessMode = useApp((s) => s.agentSettings || s.legacyAgentSettings
     ? resolveAccessMode(s.selectedAgent, s.agentSettings?.globalAccessMode) : undefined)
@@ -456,10 +458,12 @@ export function ChatPage() {
             <>
               {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">{t('无审批：工具直接执行')}</span>}
               {selectedTargetId && selectedThreadId && selectedAgent !== 'pi' && (
-                <AccessModePicker key={chatKey} agent={selectedAgent} mode={accessSelection} effectiveMode={accessMode}
+                <AccessModePicker key={chatKey} agent={selectedAgent} mode={accessSelection} effectiveMode={nextAccessMode}
                   inheritedMode={inheritedAccessMode}
                   supported={session?.accessSupported === true}
-                  disabled={!eventsConnected || !session?.opened || running || sending || compacting}
+                  // 运行中也可修改：手机网关在每轮发送时读取访问模式，当前这一轮不受影响。
+                  disabled={!eventsConnected || !session?.opened || sending || compacting}
+                  deferred={running}
                   onChange={setAccessMode} />
               )}
               {selectedTargetId && <ModelPicker targetId={selectedTargetId} agent={selectedAgent}

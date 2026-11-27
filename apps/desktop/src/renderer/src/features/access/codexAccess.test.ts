@@ -93,6 +93,23 @@ describe('桌面会话访问模式和配置目录', () => {
     expect(sentTurns()[1]?.params).not.toHaveProperty('sandboxPolicy')
   })
 
+  it('运行中可以修改访问模式，下一轮使用新档位', async () => {
+    const { ensureOpen, setAccessMode, send } = useCodex.getState()
+    expect(await ensureOpen(targetId, agent)).toBe(true)
+    expect(await send('开始对话')).toBe(true)
+    const first = sentTurns()[0]!
+    expect(first.params).not.toHaveProperty('qingcodeAccessOverride')
+    expect(session()?.state.threads[threadId]?.status).toBe('running')
+
+    setAccessMode(address, 0, 'fullAccess')
+    expect(getAccessMode(useCodex.getState().access, address)).toBe('fullAccess')
+
+    receive({ method: 'turn/completed', params: { threadId, turn: { id: first.id, status: 'completed', items: [] } } })
+    expect(await send('第二轮')).toBe(true)
+    await vi.waitFor(() => expect(sentTurns()).toHaveLength(2))
+    expect(sentTurns()[1]?.params).toMatchObject({ approvalPolicy: 'never', qingcodeAccessOverride: true })
+  })
+
   it('首条消息带入草稿权限，恢复队列时使用会话当前选择', async () => {
     const { ensureOpen, setAccessMode, send, retryPendingSend } = useCodex.getState()
     expect(await ensureOpen(targetId, agent)).toBe(true)

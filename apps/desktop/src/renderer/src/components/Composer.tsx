@@ -147,11 +147,14 @@ export function Composer({
   const [active, setActive] = useState(0)
   // composing 是 ref，组合期间要让菜单收起需要一个能触发重渲染的状态。
   const [imeActive, setImeActive] = useState(false)
-  const imageTextPattern = useMemo(() => {
-    const tokens = attach?.attachments.flatMap((item) => item.kind === 'image'
-      ? [imagePlaceholder(item.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')]
-      : [])
-    return tokens?.length ? new RegExp(`(${tokens.join('|')})`) : null
+  // 图片和文件占位都高亮成蓝色标签；只有图片标签可点击预览。
+  const { imageTextPattern, imageTokens } = useMemo(() => {
+    const items = attach?.attachments ?? []
+    const tokens = items.map((item) => imagePlaceholder(item.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    return {
+      imageTextPattern: tokens.length ? new RegExp(`(${tokens.join('|')})`) : null,
+      imageTokens: new Set(items.flatMap((item) => item.kind === 'image' ? [imagePlaceholder(item.name)] : [])),
+    }
   }, [attach?.attachments])
   const imageTextParts = !imeActive && imageTextPattern ? value.split(imageTextPattern) : []
   const highlightImages = imageTextParts.length > 1
@@ -472,7 +475,7 @@ export function Composer({
           )}
           {context}
           <div className="relative">
-            {/* 只有图片标签接收点击，普通文字仍由 textarea 处理选区和编辑。 */}
+            {/* 只有图片标签接收点击，文件标签和普通文字仍由 textarea 处理选区和编辑。 */}
             {highlightImages && (
               <div
                 ref={imageTextRef}
@@ -480,6 +483,8 @@ export function Composer({
               >
                 {imageTextParts.map((part, index) => index % 2 === 0 ? (
                   <span key={index} aria-hidden="true">{part}</span>
+                ) : !imageTokens.has(part) ? (
+                  <span key={index} aria-hidden="true" className="text-qn-composer-attachment">{part}</span>
                 ) : (
                   <span
                     key={index}
@@ -586,7 +591,9 @@ export function Composer({
                 inheritedMode={inheritedMode}
                 supported={accessSupported}
                 lockedReason={untrusted ? t('项目未信任') : undefined}
-                disabled={Boolean(disabled || sending || running || sendingPending)}
+                // 运行中也可修改：访问模式在每轮 turn/start 时读取，当前这一轮不受影响。
+                disabled={Boolean(disabled || sending)}
+                deferred={running || sendingPending}
                 onChange={(mode) => setAccessMode(accessAddress, draftRevision, mode)}
               />
             )}

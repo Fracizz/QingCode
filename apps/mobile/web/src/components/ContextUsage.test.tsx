@@ -42,6 +42,14 @@ it('无用量数据也能打开压缩入口，只有确认按钮发送请求', a
     expect(usage?.textContent).toContain('128 tokens')
     expect(usage?.textContent).toMatch(/费用估算 .*0\.012/)
     expect(usage?.querySelector('progress')).toBeNull()
+    expect(host.querySelector('[data-testid="context-ring"]')).toBeNull()
+
+    // 有窗口大小时按钮与电脑版一样显示占用环，不再显示百分比文字。
+    await act(() => root.render(<ContextUsage tokenUsage={{ last: { totalTokens: 160_000 }, modelContextWindow: 200_000 }} />))
+    const ring = host.querySelector('[data-testid="context-ring"]')
+    expect(ring?.querySelectorAll('circle')[1]?.getAttribute('stroke-dasharray')).toBe('80 100')
+    expect(ring?.parentElement?.className).toContain('text-qn-warn')
+    expect(button('查看上下文，上下文已用 80%')?.textContent).toBe('')
   } finally {
     await act(() => root.unmount())
     host.remove()

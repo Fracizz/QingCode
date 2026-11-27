@@ -2916,7 +2916,8 @@ export const useApp = create<AppState>((set, get) => {
       const session = state.sessions[key]
       const view = session?.state.threads[threadId]
       if (!session?.opened || agent === 'pi' || (mode !== 'default' && mode !== 'inherit' && !session.accessSupported) ||
-          !view || view.status === 'running' || state.compactingThreads[threadKey] ||
+          // 运行中允许修改，新档位从下一轮开始生效。
+          !view || state.compactingThreads[threadKey] ||
           (mode !== 'inherit' && !accessOptions[agent].some((option) => option.mode === mode))) return
       const preferenceKey = accessPreferenceKey(address, connection.fp)
       saveAccessPrefs({ ...state.threadAccessModes, [preferenceKey]: mode })

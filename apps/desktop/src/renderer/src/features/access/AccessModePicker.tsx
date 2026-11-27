@@ -7,13 +7,15 @@ import type { AgentKind } from '../../../../shared/backendApi'
 import { t, accessOptions, type AccessMode, type AccessSelection } from '@qn/codex-client'
 
 export function AccessModePicker({
-  agent, mode, inheritedMode, supported, disabled, lockedReason, onChange,
+  agent, mode, inheritedMode, supported, disabled, deferred = false, lockedReason, onChange,
 }: {
   agent: AgentKind
   mode: AccessSelection
   inheritedMode: AccessMode
   supported: boolean
   disabled: boolean
+  /** 当前一轮仍在运行：修改从下一轮开始生效，提示里说明。 */
+  deferred?: boolean
   /** 有值时锁定为默认档位（如项目未信任），提示里说明原因。 */
   lockedReason?: string
   onChange: (mode: AccessSelection) => void
@@ -31,17 +33,20 @@ export function AccessModePicker({
   const label = lockedReason
     ? t('{mode}（{reason}）', { mode: current.label, reason: lockedReason })
     : mode === 'inherit' ? t('{mode}（跟随总控）', { mode: current.label }) : current.label
+  const tip = deferred
+    ? t('访问模式：{mode}，修改从下一轮开始生效', { mode: label })
+    : t('访问模式：{mode}', { mode: label })
 
   return (
     <>
       <Menu>
         {/* 仅显示图标节省输入区空间，完整模式名放在悬停提示和无障碍标签里。 */}
-        <Tip label={t('访问模式：{mode}', { mode: label })}>
+        <Tip label={tip}>
           <MenuTrigger asChild>
             <button
               ref={trigger}
               type="button"
-              aria-label={t('访问模式：{mode}', { mode: label })}
+              aria-label={tip}
               disabled={disabled || Boolean(lockedReason)}
               className={cn(
                 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg outline-none enabled:hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
@@ -114,7 +119,7 @@ export function AccessModePicker({
             </div>
           )}
         >
-          {t('仅应用于当前会话。')}
+          {deferred ? t('仅应用于当前会话，从下一轮开始生效。') : t('仅应用于当前会话。')}
         </Modal>
       )}
     </>

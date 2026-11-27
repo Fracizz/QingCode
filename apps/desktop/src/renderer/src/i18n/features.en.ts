@@ -40,6 +40,8 @@ export default {
   '访问模式': 'Access mode',
   '启用{mode}？': 'Enable {mode}?',
   '仅应用于当前会话。': 'Applies to this session only.',
+  '仅应用于当前会话，从下一轮开始生效。': 'Applies to this session only, starting from the next turn.',
+  '访问模式：{mode}，修改从下一轮开始生效': 'Access mode: {mode}. Changes take effect from the next turn',
 
   // 附件与引用
   '复制图片': 'Copy image',

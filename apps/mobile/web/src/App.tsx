@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useCalmWarning } from './calmWarning'
 import { callDevice } from './client'
 import { ChatPage } from './components/ChatPage'
 import { ConnectionFormPage, ConnectionsPage } from './components/ConnectionPages'
@@ -43,7 +44,11 @@ export function App() {
   const pageRef = useRef<HTMLDivElement>(null)
   const [pairLink, setPairLink] = useState<string | null>(null)
   const eventsConnected = useApp((s) => s.eventsConnected)
-  const connectionWarning = useApp((s) => s.activeId && !s.needsRepair[s.activeId] ? s.eventsError : null)
+  const rawConnectionWarning = useApp((s) => s.activeId && !s.needsRepair[s.activeId] ? s.eventsError : null)
+  // 记录当前电脑本次是否连上过：连上过的短暂失联延迟提示，从未连上则立即提示。
+  const [connectedDesktop, setConnectedDesktop] = useState<string | null>(null)
+  useEffect(() => { if (eventsConnected && activeId) setConnectedDesktop(activeId) }, [eventsConnected, activeId])
+  const connectionWarning = useCalmWarning(rawConnectionWarning, connectedDesktop !== null && connectedDesktop === activeId)
 
   useEffect(() => {
     const stopObserving = startWorkspaceObserver()

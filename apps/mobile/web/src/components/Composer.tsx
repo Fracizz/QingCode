@@ -312,13 +312,14 @@ export function Composer({
             {toolbar}
           </div>
           <div className="qn-composer-actions">
-            {running && (
+            {/* 停止与发送共用一个位置（参考 Orca 手机版）：没有可发送内容时是停止键，一输入就换成发送键（排队）。 */}
+            {running && !canSend && !sending && (
               <Button variant="danger" className="qn-stop-button" aria-label={interrupting ? t('正在中断') : t('停止运行')}
                 aria-busy={interrupting} disabled={sending || interrupting} onClick={onInterrupt}>
                 {interrupting ? <LoadingIcon size={14} /> : <Square size={11} fill="currentColor" aria-hidden />}
               </Button>
             )}
-            {/* 运行中且没有内容时只留停止键；有内容后再出现发送键（排队），长按选其他发送方式。 */}
+            {/* 长按发送键可选「立即发送」（停止本轮后发送），输入后仍能中断当前轮。 */}
             {(!running || canSend || sending) && (
               <SendButton running={running && !compacting} sending={sending} disabled={!canSend} canSteer={canSteer}
                 steerHint={steerHint} onSend={(mode) => void submit(mode)} />

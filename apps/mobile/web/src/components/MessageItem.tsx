@@ -442,11 +442,18 @@ function FileChangeDetails({ item, onQuote }: {
 
 type Resend = (text: string, attachments: UserInput[]) => Promise<boolean>
 
+/** 用户消息超过 8 行或 600 字时折叠（参考 Orca 手机版），粘贴的大段日志不再占满屏幕。 */
+export function isLongUserText(text: string): boolean {
+  return text.length > 600 || text.split('\n').length > 8
+}
+
 function UserMessage({ item, onQuote, onResend }: {
   item: Extract<ItemView, { kind: 'user' }>
   onQuote?: (text: string) => void
   onResend?: Resend
 }) {
+  const long = isLongUserText(item.text)
+  const [expanded, setExpanded] = useState(false)
   const [edit, setEdit] = useState<string | null>(null)
   const [menu, setMenu] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -480,7 +487,12 @@ function UserMessage({ item, onQuote, onResend }: {
         navigator.vibrate?.(10)
         setMenu(true)
       }}>
-        <div className="whitespace-pre-wrap break-words">{item.text}</div>
+        <div className={`whitespace-pre-wrap break-words${long && !expanded ? ' line-clamp-8' : ''}`}>{item.text}</div>
+        {long && (
+          <button type="button" className="qn-fold-toggle" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+            {expanded ? t('收起') : t('展开全文')}
+          </button>
+        )}
         {item.images && item.images.length > 0 && <div className="mt-1 flex flex-wrap gap-2">
           {item.images.map((url, index) => <MessageImage key={index} src={url} alt={t('附件图片 {index}', { index: index + 1 })} />)}
         </div>}
@@ -597,6 +609,21 @@ export function MessageItem({
         if (busy && !active) return null
         const Icon = item.status === 'failed' ? CircleX : item.status === 'interrupted' ? Terminal : Check
         return <div className="qn-thinking" role="status">{busy ? <LoadingIcon /> : <Icon size={14} aria-hidden />}{translateMessage(item.summary)}</div>
+      }
+      // 其他系统提示：长文本只显示一行摘要，点开看全文（参考 Orca 手机版 notice disclosure）。
+      if (item.summary.length > 80 || item.summary.includes('\n')) {
+        return (
+          <LazyDetails className="group qn-tool text-xs" summary={
+            <summary className="qn-tool-row list-none [&::-webkit-details-marker]:hidden">
+              <span className="shrink-0 text-[11px]">{item.type}</span>
+              <span className="min-w-0 flex-1 truncate">{item.summary.split('\n')[0]}</span>
+              <ChevronDown size={14} className="shrink-0 transition-transform group-open:rotate-180" aria-hidden />
+            </summary>
+          }>
+            <div className="qn-tool-body whitespace-pre-wrap break-words">{item.summary}</div>
+            <MessageActions text={item.summary} onQuote={onQuote} />
+          </LazyDetails>
+        )
       }
       return (
         <div className="qn-tool qn-tool-open text-xs">

@@ -1055,6 +1055,13 @@ describe('模拟网关全链路', () => {
       state().setAccessMode('auto')
       expect(selectedAccessMode(state())).toBe('auto')
       await expect(state().send('第一轮')).resolves.toBe(true)
+      // 运行中也能修改：选择立即保存，本轮仍显示实际生效的档位。
+      expect(state().sessions['codex:local']?.state.threads['t-demo']?.status).toBe('running')
+      state().setAccessMode('default')
+      expect(selectedAccessMode(state())).toBe('default')
+      expect(displayedAccessMode(state())).toBe('auto')
+      state().setAccessMode('auto')
+      expect(selectedAccessMode(state())).toBe('auto')
       await expect(state().send('等待发送的消息')).resolves.toBe(true)
       expect(selectedQueuedSends(state())?.[0]?.accessMode).toBeUndefined()
       controller.stop()

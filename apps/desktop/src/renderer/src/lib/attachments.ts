@@ -1,6 +1,6 @@
 // 输入框附件（图片 / 文件）与斜杠菜单的纯逻辑。IO（读文件、压缩、上传）在 lib/attachmentIo.ts。
 
-import { t } from '@qn/codex-client'
+import { appendImageNote, t } from '@qn/codex-client'
 import type { UserInput } from '@qn/codex-client'
 
 export const MAX_ATTACHMENTS = 8
@@ -81,14 +81,14 @@ export function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path
 }
 
-/** 输入框内的图片文件名占位。 */
+/** 输入框内的附件（图片 / 文件）名占位，显示为蓝色标签，发送时保留在正文里供模型对应附件。 */
 export function imagePlaceholder(name: string): string {
   return `[${name}]`
 }
 
 /**
- * 给图片附件取不重名的名字：截图通常都叫 image.png，重名时占位无法对应到具体附件，
- * 所以依次改成 image-2.png、image-3.png。
+ * 给附件取不重名的名字：截图通常都叫 image.png，重名时占位无法对应到具体附件，
+ * 所以依次改成 image-2.png、image-3.png。文件附件同理。
  */
 export function uniqueImageName(name: string, taken: Iterable<string>): string {
   const used = new Set(taken)
@@ -139,12 +139,19 @@ export function removePlaceholder(value: string, name: string): string {
   return value.slice(0, start) + value.slice(end)
 }
 
-/** 图片名单独显示，正文只保留用户输入的内容。 */
-export function stripImagePlaceholders(value: string, attachments: readonly Attachment[]): string {
-  for (const item of attachments) {
-    if (item.kind === 'image') value = removePlaceholder(value, item.name)
-  }
+/** 去掉这些附件在正文里的占位（发送后恢复未发送的草稿时用）。 */
+export function stripAttachmentPlaceholders(value: string, attachments: readonly Attachment[]): string {
+  for (const item of attachments) value = removePlaceholder(value, item.name)
   return value
+}
+
+/**
+ * 发送用的正文：保留附件占位，让模型知道用户指的是哪张图、哪个文件；
+ * 图片再追加编号说明（文件由附件说明给出名字和路径）。正文只有占位时照旧去掉，避免空发标签。
+ */
+export function composeMessageText(value: string, attachments: readonly Attachment[]): string {
+  if (!stripAttachmentPlaceholders(value, attachments).trim()) return ''
+  return appendImageNote(value, attachments.flatMap((item) => item.kind === 'image' ? [item.name] : []))
 }
 
 /** 历史消息的内嵌图片只带数据，用格式和序号生成预览标签。 */

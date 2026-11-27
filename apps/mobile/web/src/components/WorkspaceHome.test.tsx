@@ -9,6 +9,7 @@ import { WorkspaceHome } from './WorkspaceHome'
 
 it('连接状态跨标签页更新，持续失联只显示一条提示', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
   const app = useApp.getState()
   const workspace = useWorkspace.getState()
   const host = document.createElement('div')
@@ -47,7 +48,17 @@ it('连接状态跨标签页更新，持续失联只显示一条提示', async (
     expect(host.textContent).not.toContain(warning)
     expect(loadProjects).toHaveBeenCalledTimes(refreshes)
 
+    // 连上过的电脑短暂失联不打扰：5 秒内恢复就不提示，持续 5 秒才显示。
     await act(() => useApp.setState({ eventsError: warning }))
+    await act(() => vi.advanceTimersByTime(4000))
+    expect(host.textContent).not.toContain(warning)
+    await act(() => useApp.setState({ eventsError: null }))
+    await act(() => vi.advanceTimersByTime(5000))
+    expect(host.textContent).not.toContain(warning)
+    await act(() => useApp.setState({ eventsError: warning }))
+    await act(() => vi.advanceTimersByTime(4999))
+    expect(host.textContent).not.toContain(warning)
+    await act(() => vi.advanceTimersByTime(1))
     const notice = host.querySelector('[role="status"]')
     expect(notice?.textContent).toContain(warning)
     await act(() => selectTab('项目').click())
@@ -60,13 +71,18 @@ it('连接状态跨标签页更新，持续失联只显示一条提示', async (
     expect(host.textContent).not.toContain('368 ms')
     expect(host.querySelector('[role="status"]')).toBe(notice)
     expect(host.textContent?.split(warning)).toHaveLength(2)
+    // 恢复后提示至少停留 2 秒再消失。
+    await act(() => vi.advanceTimersByTime(500))
     await act(() => useApp.setState({ eventsConnected: true, eventsError: null }))
-    expect(host.textContent).not.toContain(warning)
+    expect(host.textContent).toContain(warning)
     expect(host.textContent).toContain('368 ms')
+    await act(() => vi.advanceTimersByTime(1500))
+    expect(host.textContent).not.toContain(warning)
   } finally {
     await act(() => root.unmount())
     useApp.setState(app)
     useWorkspace.setState(workspace)
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   }
 })

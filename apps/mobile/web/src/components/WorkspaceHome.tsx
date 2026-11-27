@@ -8,8 +8,10 @@ import type { Project, Target } from '../types'
 import {
   filterProjects,
   changeThreadPreference,
+  applyThreadOrder,
   groupWorkspaceThreads,
   isWorkspaceTabDoubleTap,
+  workspaceThreadOrder,
   openWorkspaceThread,
   orderWorkspaceProjects,
   placeWorkspaceProject,
@@ -58,6 +60,30 @@ const workspaceIcons = {
   refresh: RotateCw,
   more: Ellipsis,
 } as const
+
+/** 列表重排的稳定窗口（参考 Orca 手机版 SORT_SETTLE_MS）。 */
+export const SORT_SETTLE_MS = 3000
+
+/** 顺序变化时先沿用旧顺序，SORT_SETTLE_MS 后一次换成最新顺序；resetKey 变化时立即生效。 */
+function useSettledOrder(fresh: string[], resetKey: string): string[] {
+  const [settled, setSettled] = useState<{ order: string[]; resetKey: string }>({ order: fresh, resetKey })
+  const latest = useRef(fresh)
+  latest.current = fresh
+  const freshKey = fresh.join('\n')
+  const settledKey = settled.order.join('\n')
+  const reset = settled.resetKey !== resetKey
+  useEffect(() => {
+    if (reset) {
+      setSettled({ order: latest.current, resetKey })
+      return
+    }
+    if (freshKey === settledKey) return
+    const timer = window.setTimeout(() => setSettled({ order: latest.current, resetKey }), SORT_SETTLE_MS)
+    return () => window.clearTimeout(timer)
+    // 依赖里只放「是否有差异」而不是 freshKey：同一窗口内的后续变化不重置计时，最多 3 秒就更新一次。
+  }, [reset, resetKey, settledKey, freshKey === settledKey])
+  return reset ? fresh : settled.order
+}
 
 export function WorkspaceIcon({ name }: { name: WorkspaceTab | 'search' | 'refresh' | 'more' }) {
   const Icon = workspaceIcons[name]
@@ -370,7 +396,8 @@ export function WorkspaceThreadRow({
             {opening ? (
               <span className="qn-row-status text-qn-accent" role="status"><LoadingIcon />{t('打开中…')}</span>
             ) : status === 'running' ? (
-              <span className="qn-row-status text-qn-accent"><LoadingIcon role="img" aria-hidden />{sessionStatusLabels[status]}</span>
+              // 与未读圆点一致只留图标，文字交给读屏。
+              <LoadingIcon className="text-qn-accent" role="img" aria-hidden={false} aria-label={sessionStatusLabels[status]} />
             ) : status === 'unread' ? (
               <span className="qn-unread-dot shrink-0" role="img" aria-label={sessionStatusLabels[status]} />
             ) : QUIET_STATUS.has(status) ? null : <Badge tone={statusTone[status]}>{sessionStatusLabels[status]}</Badge>}
@@ -452,7 +479,7 @@ function WorkspaceThreadList({ threads, projectName, searching, onOpen }: {
   )
 
   return (
-    <div className="qn-list-group">
+    <div className="qn-list-group qn-list-plain">
       {preview.map(renderRow)}
       {remaining > 0 && (
         <>
@@ -498,8 +525,18 @@ export function WorkspaceHome() {
     return targets.map((target) => ({ target, rows: orderWorkspaceProjects(matched.filter((item) => item.targetId === target.id), preferences?.projectOrders[target.id]) }))
       .filter(({ rows }) => rows.length > 0)
   }, [projects, targets, query, activeProjectTarget, preferences])
-  const groups = useMemo(() => groupWorkspaceThreads(visibleWorkspaceThreads(threadList, desktopId, archived), projects, query, preferences),
-    [threadList, desktopId, archived, projects, query, preferences])
+  // 对话页的实时状态（待审批、运行中）参与分档；只订阅拼好的状态串，流式增量不会让整页重渲染。
+  const statusKey = useApp((s) => threadList.map((thread) =>
+    recentThreadStatus(thread, s.sessions[sessionKey(thread.targetId, thread.agent)]?.state.threads[thread.id])).join(','))
+  const freshGroups = useMemo(() => {
+    const statuses = statusKey.split(',')
+    const byThread = new Map(threadList.map((thread, index) => [thread, statuses[index] as SessionStatus]))
+    return groupWorkspaceThreads(visibleWorkspaceThreads(threadList, desktopId, archived), projects, query, preferences,
+      (thread) => byThread.get(thread) ?? recentThreadStatus(thread))
+  }, [threadList, statusKey, desktopId, archived, projects, query, preferences])
+  // 换电脑或改搜索词是用户主动操作，立即按新顺序排；其余变化攒 3 秒再统一重排，避免列表来回跳。
+  const order = useSettledOrder(workspaceThreadOrder(freshGroups), JSON.stringify([desktopId, query]))
+  const groups = useMemo(() => applyThreadOrder(freshGroups, order), [freshGroups, order])
 
   const refresh = useCallback(async () => {
     if (desktopId) await Promise.all([loadTargets(), loadProjects(desktopId)])

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 主体占启动器 72dp 可见区域的约六成，按尖括号和光标条的整体外框居中。
-     渐变与 branding/icon.svg 一致：尖括号上臂亮银、下臂暗银，光标条上亮下暗；渐变坐标沿用 pathData 坐标系。 -->
+<!-- 主体占启动器 72dp 可见区域的约三分之二，外框四角仍在 66dp 安全圆内，按尖括号和光标条的整体外框居中。
+     渐变与 branding/icon.svg 一致：尖括号整块亮银斜向渐变，光标条上亮下暗；渐变坐标沿用 pathData 坐标系。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
@@ -8,10 +8,10 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <group
-        android:scaleX="0.135"
-        android:scaleY="0.135"
-        android:translateX="19.44"
-        android:translateY="20.18">
+        android:scaleX="0.145"
+        android:scaleY="0.145"
+        android:translateX="16.88"
+        android:translateY="17.68">
         <path android:pathData="M108,344h296a12,12 0,0 1,12 12v40a12,12 0,0 1,-12 12h-296a12,12 0,0 1,-12 -12v-40a12,12 0,0 1,12 -12z">
             <aapt:attr name="android:fillColor">
                 <gradient
@@ -20,22 +20,21 @@
                     android:startY="344"
                     android:endX="0"
                     android:endY="408"
-                    android:startColor="#FF63E3CA"
-                    android:endColor="#FF2FA791" />
+                    android:startColor="#FF7CF5DC"
+                    android:endColor="#FF25C6A8" />
             </aapt:attr>
         </path>
         <path android:pathData="M130,93H262Q264,93 267,95L385,194Q389,197 385,200L267,299Q264,301 262,301H130Q124,301 128,297L247,197L128,97Q124,93 130,93Z">
             <aapt:attr name="android:fillColor">
                 <gradient
                     android:type="linear"
-                    android:startX="0"
+                    android:startX="130"
                     android:startY="93"
-                    android:endX="0"
+                    android:endX="389"
                     android:endY="301">
                     <item android:offset="0" android:color="#FFFFFFFF" />
-                    <item android:offset="0.5" android:color="#FFE6EAEE" />
-                    <item android:offset="0.5" android:color="#FFB4BCC4" />
-                    <item android:offset="1" android:color="#FF8E98A2" />
+                    <item android:offset="0.5" android:color="#FFF2F4F6" />
+                    <item android:offset="1" android:color="#FFD3D9DF" />
                 </gradient>
             </aapt:attr>
         </path>

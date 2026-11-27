@@ -84,7 +84,7 @@ export function ThreadsPage() {
           <Empty>{query ? t('没有匹配的会话。') : t('还没有会话。点「新建会话」开始。')}</Empty>
         )}
         {shown.length > 0 && (
-          <div className="qn-list-group mt-3">
+          <div className="qn-list-group qn-list-plain mt-3">
             {shown.map((thread) => (
               <WorkspaceThreadRow key={threadKey(thread.agent, thread.id)} thread={thread}
                 onOpen={() => void openThread(thread.id, thread.agent)} />

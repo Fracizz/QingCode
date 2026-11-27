@@ -1712,6 +1712,15 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   content: "";
 }
 
+/* 项目下的会话列表：去掉卡片外圈的圆角描边和投影，只保留底色与行间分隔线。 */
+.qn-list-group.qn-list-plain {
+  box-shadow: none;
+}
+
+.qn-list-group.qn-list-plain::after {
+  content: none;
+}
+
 .qn-card {
   border-color: transparent;
   box-shadow: inset 0 0 0 1px var(--qn-edge), inset 0 1px 0 var(--qn-edge-top);
@@ -1949,6 +1958,16 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 
 /* ===== 对话 ===== */
 /* 用户消息：右侧灰色气泡，回复无边框（同电脑版）。 */
+/* 长消息折叠开关：气泡内的强调色小字，命中区补到 32px。 */
+.qn-fold-toggle {
+  display: block;
+  min-height: 32px;
+  margin: 2px 0 -6px;
+  color: var(--color-qn-accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .qn-user-bubble {
   max-width: 86%;
   padding: 9px 13px;
