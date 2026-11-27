@@ -378,7 +378,7 @@ export function FileExplorer({
         >
           <input
             autoFocus
-            className="qn-input h-[20px] min-w-0 flex-1 px-1.5 py-0 text-[12px]"
+            className="qn-input h-[20px] min-w-0 flex-1 px-1.5 py-0 text-ui-sm"
             value={editing?.name ?? ''}
             placeholder={row.draft.mode === 'create' ? (row.draft.kind === 'file' ? '新文件名' : '新文件夹名') : '新名称'}
             onChange={(event) =>
@@ -412,7 +412,7 @@ export function FileExplorer({
             <X size={13} />
           </button>
           {editing?.error && (
-            <span className="truncate text-[11px] text-qn-danger">{editing.error}</span>
+            <span className="truncate text-ui-xs text-qn-danger">{editing.error}</span>
           )}
         </div>
       )
@@ -430,7 +430,7 @@ export function FileExplorer({
         style={{ ...position, paddingLeft: 6 + node.depth * 14 }}
         title={node.kind === 'placeholder' ? undefined : node.path}
         className={cn(
-          'flex cursor-default select-none items-center gap-1 pr-2 text-[12px] outline-none',
+          'flex cursor-default select-none items-center gap-1 pr-2 text-ui-sm outline-none',
           selected ? 'bg-qn-accent/20' : 'hover:bg-qn-fg/5',
           node.kind === 'placeholder' && 'text-qn-muted',
         )}
@@ -457,7 +457,7 @@ export function FileExplorer({
         )}
         {entryIcon(node.name, node.kind, node.expanded)}
         <span className="min-w-0 flex-1 truncate">{node.name}</span>
-        {node.kind === 'symlink' && <span className="shrink-0 text-[10px] text-qn-dim">链接</span>}
+        {node.kind === 'symlink' && <span className="shrink-0 text-ui-2xs text-qn-dim">链接</span>}
       </div>
     )
   }
@@ -484,9 +484,9 @@ export function FileExplorer({
           {tree.showHidden ? <Eye size={14} /> : <EyeOff size={14} />}
         </IconButton>
         <span className="min-w-0 flex-1" />
-        {notice && <span className="truncate text-[11px] text-qn-muted">{notice}</span>}
+        {notice && <span className="truncate text-ui-xs text-qn-muted">{notice}</span>}
       </div>
-      <div className="truncate border-b border-qn-border px-3 py-1 font-mono text-[11px] text-qn-dim" title={root}>
+      <div className="truncate border-b border-qn-border px-3 py-1 font-mono text-ui-xs text-qn-dim" title={root}>
         {root}
       </div>
       {scope?.error && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_FONT_SIZES } from '../../shared/fontSizes'
+import { DEFAULT_FONT_SIZES, FONT_SIZES_VERSION } from '../../shared/fontSizes'
 import {
   defaultAppSettings,
   isSettingsAgent,
@@ -22,6 +22,7 @@ describe('defaultAppSettings', () => {
         density: 'comfortable',
         theme: 'dark',
         ...DEFAULT_FONT_SIZES,
+        fontSizesVersion: FONT_SIZES_VERSION,
       },
       agents: {},
     })
@@ -73,6 +74,7 @@ describe('sanitizeAppSettings', () => {
       density: 'compact',
       theme: 'light',
       ...DEFAULT_FONT_SIZES,
+      fontSizesVersion: FONT_SIZES_VERSION,
     })
     expect(sanitizeAppSettings({ general: { theme: 'sepia' } }).general.theme).toBe('dark')
     expect(result.agents.local).toEqual({
@@ -155,6 +157,7 @@ describe('mergeAppSettings', () => {
       density: 'compact',
       theme: 'dark',
       ...DEFAULT_FONT_SIZES,
+      fontSizesVersion: FONT_SIZES_VERSION,
     })
     expect(next.agents.local?.codex).toEqual({
       enabled: false,

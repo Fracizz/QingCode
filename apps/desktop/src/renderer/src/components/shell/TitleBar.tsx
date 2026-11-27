@@ -24,7 +24,7 @@ export function TitleBar() {
 
   return (
     <header
-      className="qn-drag qn-enter relative z-30 flex h-[38px] shrink-0 items-center gap-1 bg-qn-chrome pl-2 text-[13px] select-none"
+      className="qn-drag qn-enter relative z-30 flex h-[38px] shrink-0 items-center gap-1 bg-qn-chrome pl-2 text-ui select-none"
       style={{ ['--qn-enter-order' as string]: 0 }}
     >
       {side === 'left' && <div className="qn-traffic-spacer" />}
@@ -39,7 +39,7 @@ export function TitleBar() {
       <div className="ml-1.5 flex items-center gap-2">
         <Logo size={16} />
         <span className="font-semibold tracking-wide text-qn-text">QingCode</span>
-        <span className="rounded-md border border-qn-brand/40 px-1 text-[11px] leading-4 text-qn-brand">Next</span>
+        <span className="rounded-md border border-qn-brand/40 px-1 text-ui-xs leading-4 text-qn-brand">Next</span>
       </div>
 
       <div className="flex-1" />

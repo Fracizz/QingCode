@@ -84,7 +84,7 @@ export function RunConfigEditor({
       onClose={onClose}
       footer={
         <div className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-[12px] text-qn-danger">
+          <span className="min-w-0 flex-1 truncate text-ui-sm text-qn-danger">
             {touched && errors.length > 0 ? errors[0] : ''}
           </span>
           <button type="button" className="qn-button-subtle" onClick={onClose}>
@@ -112,10 +112,10 @@ export function RunConfigEditor({
         </FormField>
 
         <div className="flex items-center justify-between">
-          <span className="text-[12px] text-qn-muted">任务（同时启动）</span>
+          <span className="text-ui-sm text-qn-muted">任务（同时启动）</span>
           <button
             type="button"
-            className="qn-button-subtle flex items-center gap-1 px-2 py-1 text-[12px]"
+            className="qn-button-subtle flex items-center gap-1 px-2 py-1 text-ui-sm"
             onClick={() => setDraft((d) => ({ ...d, tasks: [...d.tasks, emptyTaskDraft()] }))}
           >
             <Plus size={13} /> 添加任务
@@ -135,7 +135,7 @@ export function RunConfigEditor({
         ))}
 
         {touched && errors.length > 1 && (
-          <ul className="list-disc pl-5 text-[12px] leading-5 text-qn-danger">
+          <ul className="list-disc pl-5 text-ui-sm leading-5 text-qn-danger">
             {errors.map((error) => (
               <li key={error}>{error}</li>
             ))}
@@ -187,7 +187,7 @@ function TaskCard({
         {(control) => (
           <input
             {...control}
-            className="qn-input font-mono text-[12px]"
+            className="qn-input font-mono text-ui-sm"
             value={task.target}
             placeholder={task.type === 'command' ? 'pnpm dev' : 'scripts/start.ps1'}
             spellCheck={false}
@@ -200,7 +200,7 @@ function TaskCard({
           {(control) => (
             <input
               {...control}
-              className="qn-input font-mono text-[12px]"
+              className="qn-input font-mono text-ui-sm"
               value={task.cwd}
               placeholder="相对项目根，留空为项目根"
               spellCheck={false}
@@ -209,7 +209,7 @@ function TaskCard({
           )}
         </FormField>
         <label className="flex w-40 flex-col gap-1">
-          <span className="text-[12px] text-qn-muted">系统限制</span>
+          <span className="text-ui-sm text-qn-muted">系统限制</span>
           <Select
             aria-label="系统限制"
             value={task.restriction}
@@ -220,10 +220,10 @@ function TaskCard({
         </label>
       </div>
       {offPlatform && (
-        <div className="text-[12px] text-qn-warn">当前目标是 {OS_LABEL[platform]}，此任务不会在这里运行。</div>
+        <div className="text-ui-sm text-qn-warn">当前目标是 {OS_LABEL[platform]}，此任务不会在这里运行。</div>
       )}
       {overrideOs.length > 0 && (
-        <div className="flex items-center gap-2 rounded-lg bg-qn-fg/[0.04] px-2 py-1.5 text-[12px] text-qn-muted">
+        <div className="flex items-center gap-2 rounded-lg bg-qn-fg/[0.04] px-2 py-1.5 text-ui-sm text-qn-muted">
           <span className="min-w-0 flex-1">
             含按系统覆盖（{overrideOs.map((os) => OS_LABEL[os]).join('、')}），保存时原样保留。
           </span>
@@ -243,10 +243,10 @@ function EnvTable({ rows, onChange }: { rows: TaskDraft['env']; onChange: (rows:
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
-        <span className="text-[12px] text-qn-muted">环境变量</span>
+        <span className="text-ui-sm text-qn-muted">环境变量</span>
         <button
           type="button"
-          className="flex items-center gap-1 text-[12px] text-qn-muted hover:text-qn-text"
+          className="flex items-center gap-1 text-ui-sm text-qn-muted hover:text-qn-text"
           onClick={() => onChange([...rows, { key: '', value: '' }])}
         >
           <Plus size={12} /> 添加
@@ -255,7 +255,7 @@ function EnvTable({ rows, onChange }: { rows: TaskDraft['env']; onChange: (rows:
       {rows.map((row, index) => (
         <div key={index} className="flex items-center gap-1.5">
           <input
-            className="qn-input h-7 w-40 py-0 font-mono text-[12px]"
+            className="qn-input h-7 w-40 py-0 font-mono text-ui-sm"
             value={row.key}
             placeholder="名称"
             spellCheck={false}
@@ -263,7 +263,7 @@ function EnvTable({ rows, onChange }: { rows: TaskDraft['env']; onChange: (rows:
           />
           <span className="text-qn-dim">=</span>
           <input
-            className="qn-input h-7 min-w-0 flex-1 py-0 font-mono text-[12px]"
+            className="qn-input h-7 min-w-0 flex-1 py-0 font-mono text-ui-sm"
             value={row.value}
             placeholder="值"
             spellCheck={false}

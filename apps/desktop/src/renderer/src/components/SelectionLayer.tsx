@@ -146,7 +146,7 @@ export function SelectionLayer({
             transform: snapshot.position.above ? 'translateY(-100%)' : undefined,
           }}
         >
-        <div className="qn-pop qn-surface-float flex items-center gap-1 p-1 text-[12px]">
+        <div className="qn-pop qn-surface-float flex items-center gap-1 p-1 text-ui-sm">
           {!commenting ? (
             <>
               <button
@@ -172,7 +172,7 @@ export function SelectionLayer({
             <>
               <input
                 autoFocus
-                className="qn-input h-7 w-52 px-2.5 py-0 text-[12px]"
+                className="qn-input h-7 w-52 px-2.5 py-0 text-ui-sm"
                 placeholder="添加可选评论…"
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}

@@ -25,7 +25,7 @@ export function AgentIcon({
       ) : (
         <Cpu size={size} className="text-qn-muted" aria-hidden="true" />
       )}
-      {label && <span className="text-[11px] text-qn-muted">{agentLabel(agent)}</span>}
+      {label && <span className="text-ui-xs text-qn-muted">{agentLabel(agent)}</span>}
     </span>
   )
 }

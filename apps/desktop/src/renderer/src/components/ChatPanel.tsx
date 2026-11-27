@@ -360,7 +360,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       <MainHeader />
 
       {openingThread && (
-        <div className="flex items-center gap-2 border-b border-qn-border px-6 py-2 text-sm text-qn-muted" role="status">
+        <div className="flex items-center gap-2 border-b border-qn-border px-6 py-2 text-ui-md text-qn-muted" role="status">
           <LoadingIcon size={14} aria-hidden /> 正在加载会话历史…
         </div>
       )}
@@ -405,7 +405,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
             ) : (
               <div className="space-y-4 pt-4">
                 {firstVisible > 0 && (
-                  <button type="button" className="mx-auto block rounded-full px-3 py-1.5 text-sm text-qn-muted hover:bg-qn-hover" onClick={showEarlier}>
+                  <button type="button" className="mx-auto block rounded-full px-3 py-1.5 text-ui-md text-qn-muted hover:bg-qn-hover" onClick={showEarlier}>
                     查看更早消息
                   </button>
                 )}
@@ -441,7 +441,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         {!pinned && (
           <button
             type="button"
-            className="qn-surface-float absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] hover:bg-qn-hover"
+            className="qn-surface-float absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5 text-ui-sm hover:bg-qn-hover"
             onClick={scrollToBottom}
           >
             <ArrowDown size={14} /> 回到底部
@@ -506,7 +506,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
             {project && (
               <span className="flex min-w-0 items-center gap-1.5" title={project.path}>
                 <FolderGit2 size={13} className="shrink-0" />
-                <span className="truncate font-mono text-[11.5px]">{project.path}</span>
+                <span className="truncate font-mono text-ui-xs">{project.path}</span>
               </span>
             )}
             {agentStatus && <span className="shrink-0 text-qn-warn">{agentStatus}</span>}
@@ -515,10 +515,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       />
       <SideChat />
       {dragging && (
-        <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-accent/60 bg-qn-bg/85 text-[14px] text-qn-text">
+        <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-accent/60 bg-qn-bg/85 text-ui-md text-qn-text">
           <ImagePlus size={28} className="text-qn-accent" />
           松开以添加图片或文件
-          <span className="text-[12px] text-qn-muted">
+          <span className="text-ui-sm text-qn-muted">
             图片随消息发送；其他文件{target && target.kind !== 'local' ? '会先上传到目标机' : '按本机路径引用'}
           </span>
         </div>

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppSettings, AppSettingsPatch } from '../../../../shared/backendApi'
+import { DEFAULT_FONT_SIZES } from '../../../../shared/fontSizes'
 import { BackendCallError } from '../../lib/backend'
 import { defaultAppSettings, mergeAppSettings } from './settingsModel'
 import { applyDensity, useSettings } from './settingsStore'
@@ -106,7 +107,7 @@ describe('settingsStore', () => {
       ['data-density', 'comfortable'],
       ['data-theme', 'dark'],
     ])
-    expect(setProperty).toHaveBeenLastCalledWith('--qn-editor-font-size', '12.5px')
+    expect(setProperty).toHaveBeenLastCalledWith('--qn-editor-font-size', `${DEFAULT_FONT_SIZES.editorFontSize}px`)
   })
 
   it('并发编辑中较早的失败不回滚更晚的编辑', async () => {

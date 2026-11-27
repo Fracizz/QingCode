@@ -282,10 +282,10 @@ export function Composer({
         )}
 
         {noApprovals && (
-          <div className="mb-1.5 px-3 text-[12px] text-qn-warn">无审批：工具直接执行</div>
+          <div className="mb-1.5 px-3 text-ui-sm text-qn-warn">无审批：工具直接执行</div>
         )}
         {attach && !imageSupport.allowed && (
-          <div className="mb-1.5 flex items-center gap-1.5 px-3 text-[12px] text-qn-dim">
+          <div className="mb-1.5 flex items-center gap-1.5 px-3 text-ui-sm text-qn-dim">
             <ImageOff size={12} className="shrink-0" />
             {imageSupport.reason}，图片附件已禁用
           </div>
@@ -311,7 +311,7 @@ export function Composer({
           <textarea
             ref={areaRef}
             className={cn(
-              'qn-scroll block w-full resize-none bg-transparent px-4 pt-3.5 text-[length:var(--qn-composer-font-size,14px)] leading-[1.7] text-qn-text outline-none placeholder:text-qn-dim',
+              'qn-scroll block w-full resize-none bg-transparent px-4 pt-3.5 text-[length:var(--qn-composer-font-size,15px)] leading-[1.7] text-qn-text outline-none placeholder:text-qn-dim',
               compact ? 'min-h-[48px]' : 'min-h-[56px] max-h-[max(56px,25cqh)]',
             )}
             rows={1}
@@ -374,7 +374,7 @@ export function Composer({
               <Tip label="随本条消息请求子代理协作，由当前智能体决定如何委派">
                 <button
                   type="button"
-                  className={cn('inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-xs hover:bg-qn-fg/10 disabled:opacity-50',
+                  className={cn('inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-ui-sm hover:bg-qn-fg/10 disabled:opacity-50',
                     delegate ? 'bg-qn-accent/10 text-qn-accent' : 'text-qn-muted')}
                   aria-label="本条消息请求子代理"
                   aria-pressed={delegate}
@@ -387,7 +387,7 @@ export function Composer({
               </Tip>
             )}
             {slash?.skills.map((skill) => (
-              <span key={skill.name} className="inline-flex h-7 max-w-[14rem] items-center gap-1 rounded-lg bg-qn-brand/10 pl-2 pr-1 text-[13px] text-qn-brand">
+              <span key={skill.name} className="inline-flex h-7 max-w-[14rem] items-center gap-1 rounded-lg bg-qn-brand/10 pl-2 pr-1 text-ui text-qn-brand">
                 <Wand2 size={13} className="shrink-0" />
                 <span className="truncate">{skill.name}</span>
                 <button
@@ -401,7 +401,7 @@ export function Composer({
               </span>
             ))}
             {annotationCount > 0 && (
-              <span className="rounded-md bg-qn-accent/10 px-2 py-0.5 text-[12px] text-qn-accent">
+              <span className="rounded-md bg-qn-accent/10 px-2 py-0.5 text-ui-sm text-qn-accent">
                 {annotationCount} 条注释随消息发送
               </span>
             )}
@@ -426,7 +426,7 @@ export function Composer({
                 <span className="inline-flex">
                   <button
                     type="button"
-                    className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-qn-text px-2 text-[12px] font-medium text-qn-bg hover:bg-qn-text/90 disabled:bg-qn-fg/15 disabled:text-qn-dim disabled:opacity-100"
+                    className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-qn-text px-2 text-ui-sm font-medium text-qn-bg hover:bg-qn-text/90 disabled:bg-qn-fg/15 disabled:text-qn-dim disabled:opacity-100"
                     disabled={!canSend}
                     aria-label={running ? '排队' : '发送'}
                     onClick={() => submit()}
@@ -457,7 +457,7 @@ export function Composer({
             </div>
           </div>
         </div>
-        {footer && <div className="mt-1.5 flex min-h-6 items-center gap-3 px-3 text-[12px] text-qn-dim">{footer}</div>}
+        {footer && <div className="mt-1.5 flex min-h-6 items-center gap-3 px-3 text-ui-sm text-qn-dim">{footer}</div>}
       </div>
     </div>
   )
@@ -523,8 +523,8 @@ function AttachmentChip({
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-qn-accent/12 text-qn-accent">
         <FileText size={16} />
       </span>
-      <span className="min-w-0 text-[12px] leading-4">
-        <span className="block truncate text-[13px] text-qn-text">{item.name}</span>
+      <span className="min-w-0 text-ui-sm leading-4">
+        <span className="block truncate text-ui text-qn-text">{item.name}</span>
         {status}
       </span>
       {remove}
@@ -571,10 +571,10 @@ function SlashMenu({
             {item.kind === 'skill' ? <Wand2 size={14} /> : <Slash size={14} />}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] text-qn-text">/{item.name}</span>
-            {item.description && <span className="block truncate text-[12px] text-qn-dim">{item.description}</span>}
+            <span className="block truncate text-ui text-qn-text">/{item.name}</span>
+            {item.description && <span className="block truncate text-ui-sm text-qn-dim">{item.description}</span>}
           </span>
-          {item.scope && <span className="shrink-0 text-[11px] text-qn-dim">{item.scope}</span>}
+          {item.scope && <span className="shrink-0 text-ui-xs text-qn-dim">{item.scope}</span>}
         </ListOption>
       ))}
     </Suggestions>

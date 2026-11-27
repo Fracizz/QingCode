@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_FONT_SIZES } from '../../../../shared/fontSizes'
+import { DEFAULT_FONT_SIZES, FONT_SIZES_VERSION } from '../../../../shared/fontSizes'
 import {
   DEFAULT_AGENT_OPTIONS,
   DENSITY_OPTIONS,
@@ -28,6 +28,7 @@ describe('默认设置与白名单', () => {
       density: 'comfortable',
       theme: 'dark',
       ...DEFAULT_FONT_SIZES,
+      fontSizesVersion: FONT_SIZES_VERSION,
     })
     first.agents.local = { codex: { enabled: false } }
     expect(defaultAppSettings().agents).toEqual({})
@@ -53,6 +54,7 @@ describe('默认设置与白名单', () => {
       density: 'compact',
       theme: 'dark',
       ...DEFAULT_FONT_SIZES,
+      fontSizesVersion: FONT_SIZES_VERSION,
     })
     expect(result.agents.local?.codex).toEqual({
       enabled: false,

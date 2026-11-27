@@ -187,6 +187,8 @@ export type AppSettings = {
     composerFontSize: number
     editorFontSize: number
     terminalFontSize: number
+    /** 字号默认值的版本，用于把旧默认值迁移到新默认（见 shared/fontSizes.ts），界面不展示 */
+    fontSizesVersion: number
   }
   /** 按目标 id 分组，每个 agent 一份偏好 */
   agents: Record<string, Partial<Record<SettingsAgentKind, AgentPrefs>>>

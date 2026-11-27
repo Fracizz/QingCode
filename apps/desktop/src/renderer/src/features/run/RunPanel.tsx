@@ -189,7 +189,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-qn-panel text-qn-text">
       <div className="flex shrink-0 items-center gap-1 border-b border-qn-border px-2 py-2">
-        <span className="px-1 text-[12px] font-medium">运行</span>
+        <span className="px-1 text-ui-sm font-medium">运行</span>
         {view.platform && <Badge>{view.platform}</Badge>}
         <div className="ml-auto flex items-center gap-0.5">
           <IconButton
@@ -237,11 +237,11 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
         <ErrorNote message={error} onClose={() => setError(null)} />
         <FeedbackRow
           message={notice}
-          className="rounded-lg bg-qn-warn/10 px-3 py-2 text-[12px] leading-5 text-qn-warn"
+          className="rounded-lg bg-qn-warn/10 px-3 py-2 text-ui-sm leading-5 text-qn-warn"
           onClose={() => setNotice(null)}
         />
         {view.configSource === 'nestcode' && !view.configError && (
-          <div className="rounded-lg bg-qn-fg/[0.04] px-3 py-2 text-[12px] leading-5 text-qn-muted">
+          <div className="rounded-lg bg-qn-fg/[0.04] px-3 py-2 text-ui-sm leading-5 text-qn-muted">
             读取自旧版位置 .nestcode/run.json；保存后写入 {RUN_CONFIG_RELATIVE_PATH}。
           </div>
         )}
@@ -258,7 +258,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             <div className="mt-2 flex justify-center gap-2">
               <button
                 type="button"
-                className="qn-button-subtle px-2 py-1 text-[12px]"
+                className="qn-button-subtle px-2 py-1 text-ui-sm"
                 disabled={!canEdit}
                 onClick={() => setEditing({ config: createConfig(configs), isNew: true })}
               >
@@ -266,7 +266,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
               </button>
               <button
                 type="button"
-                className="qn-button-subtle px-2 py-1 text-[12px]"
+                className="qn-button-subtle px-2 py-1 text-ui-sm"
                 disabled={!canEdit}
                 onClick={() => setDiscoverOpen(true)}
               >
@@ -289,8 +289,8 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
                   <span className={cn('h-2 w-2 shrink-0 rounded-full', statusDot[status])} />
                 </Tip>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px]">{config.name || '（未命名）'}</div>
-                  <div className="truncate font-mono text-[11px] text-qn-dim" title={taskOverview(config)}>
+                  <div className="truncate text-ui">{config.name || '（未命名）'}</div>
+                  <div className="truncate font-mono text-ui-xs text-qn-dim" title={taskOverview(config)}>
                     {taskOverview(config)}
                   </div>
                 </div>
@@ -379,7 +379,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             </div>
           }
         >
-          <pre className="whitespace-pre-wrap font-mono text-[12px] leading-5 text-qn-muted">{taskOverview(deleting)}</pre>
+          <pre className="whitespace-pre-wrap font-mono text-ui-sm leading-5 text-qn-muted">{taskOverview(deleting)}</pre>
         </Modal>
       )}
     </div>
@@ -456,7 +456,7 @@ function DiscoveryPanel({
   return (
     <div className="mt-1 flex flex-col gap-2 rounded-lg border border-qn-border bg-qn-bg/50 p-2">
       <div className="flex items-center gap-2">
-        <span className="flex-1 text-[12px] text-qn-muted">从项目中发现（只生成建议，确认后才写入）</span>
+        <span className="flex-1 text-ui-sm text-qn-muted">从项目中发现（只生成建议，确认后才写入）</span>
         <IconButton label="关闭" size="sm" onClick={onClose}>
           <X size={13} />
         </IconButton>
@@ -465,7 +465,7 @@ function DiscoveryPanel({
       {loading ? (
         <Spinner label="正在扫描 package.json、Makefile、Cargo.toml、pyproject…" />
       ) : tasks.length === 0 ? (
-        <div className="px-1 py-2 text-[12px] text-qn-dim">没有发现可用的脚本。</div>
+        <div className="px-1 py-2 text-ui-sm text-qn-dim">没有发现可用的脚本。</div>
       ) : (
         <div className="flex flex-col gap-0.5">
           {tasks.map((task) => {
@@ -478,11 +478,11 @@ function DiscoveryPanel({
                     disabled={imported || disabled}
                     onChange={(on) => toggle(task.key, on)}
                   >
-                    <span className="text-[12px]">{task.name}</span>
+                    <span className="text-ui-sm">{task.name}</span>
                   </Checkbox>
                 </div>
                 <div className="min-w-0 flex-1 pt-0.5 text-right">
-                  <div className="truncate font-mono text-[11px] text-qn-dim" title={`${task.source}\n${task.detail}`}>
+                  <div className="truncate font-mono text-ui-xs text-qn-dim" title={`${task.source}\n${task.detail}`}>
                     {imported ? '已添加' : task.task.target}
                   </div>
                 </div>
@@ -492,7 +492,7 @@ function DiscoveryPanel({
         </div>
       )}
       {(result?.warnings.length ?? 0) > 0 && (
-        <details className="text-[11px] text-qn-dim">
+        <details className="text-ui-xs text-qn-dim">
           <summary className="cursor-pointer">{result!.warnings.length} 条提示</summary>
           <ul className="mt-1 list-disc pl-4">
             {result!.warnings.map((warning, index) => (
@@ -505,11 +505,11 @@ function DiscoveryPanel({
       )}
       <div className="flex items-center gap-2">
         <Checkbox checked={combined} onChange={setCombined} disabled={chosen.length < 2}>
-          <span className="text-[12px]">合并为一个配置</span>
+          <span className="text-ui-sm">合并为一个配置</span>
         </Checkbox>
         <button
           type="button"
-          className="qn-button ml-auto px-2 py-1 text-[12px]"
+          className="qn-button ml-auto px-2 py-1 text-ui-sm"
           disabled={chosen.length === 0 || saving || disabled}
           onClick={() => void submit()}
         >
@@ -579,7 +579,7 @@ function RunOutputArea({
                 aria-selected={selected}
                 tabIndex={0}
                 className={cn(
-                  'flex max-w-[180px] shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-[12px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+                  'flex max-w-[180px] shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-ui-sm outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
                   selected ? 'bg-qn-active text-qn-text' : 'text-qn-muted hover:bg-qn-hover',
                 )}
                 onClick={() => onSelect(run.runId)}
@@ -632,7 +632,7 @@ function RunOutputArea({
           )}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2 px-2 py-1 text-[11px] text-qn-dim">
+      <div className="flex shrink-0 items-center gap-2 px-2 py-1 text-ui-xs text-qn-dim">
         <span className="min-w-0 flex-1 truncate font-mono" title={`${active.workdir}\n${active.command}`}>
           {active.command}
         </span>
@@ -640,7 +640,7 @@ function RunOutputArea({
       </div>
       <div
         ref={scrollRef}
-        className="qn-scroll min-h-0 flex-1 overflow-auto bg-qn-bg px-2 py-1 font-mono text-[12px] leading-[18px]"
+        className="qn-scroll min-h-0 flex-1 overflow-auto bg-qn-bg px-2 py-1 font-mono text-ui-sm leading-[18px]"
         onScroll={(event) => {
           const node = event.currentTarget
           const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 24

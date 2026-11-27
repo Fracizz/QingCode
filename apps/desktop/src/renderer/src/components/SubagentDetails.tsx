@@ -28,7 +28,7 @@ function History({ rpc, threadId, renderItem }: { rpc: CodexRpcLike; threadId: s
   return (
     <>
       <div className="flex items-center justify-between gap-2">
-        <p className="min-w-0 break-words text-sm text-qn-muted">{history?.name || '子会话记录'}</p>
+        <p className="min-w-0 break-words text-ui-md text-qn-muted">{history?.name || '子会话记录'}</p>
         <button type="button" className="qn-button shrink-0" disabled={loading} onClick={() => {
           setLoading(true)
           setError(undefined)
@@ -37,7 +37,7 @@ function History({ rpc, threadId, renderItem }: { rpc: CodexRpcLike; threadId: s
       </div>
       {loading && <Spinner label="正在读取子代理记录…" />}
       {error && <ErrorNote message={error} />}
-      {history && !history.view?.items.length && <p className="py-3 text-sm text-qn-muted">暂无子会话记录。</p>}
+      {history && !history.view?.items.length && <p className="py-3 text-ui-md text-qn-muted">暂无子会话记录。</p>}
       {history?.view?.error && <ErrorNote message={history.view.error} />}
       <div className="space-y-3">{history?.view?.items.map(renderItem)}</div>
     </>
@@ -55,7 +55,7 @@ export function SubagentDetails({ item, renderItem }: {
   const result = agent?.result || item.result
   return (
     <div>
-      <button type="button" className="flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-lg text-left text-[13px] text-qn-muted hover:bg-qn-hover hover:text-qn-text" aria-haspopup="dialog"
+      <button type="button" className="flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-lg text-left text-ui text-qn-muted hover:bg-qn-hover hover:text-qn-text" aria-haspopup="dialog"
         onClick={() => setSelected(agents[0]?.threadId ?? '')}>
         <GitFork size={15} className="shrink-0 text-qn-muted" aria-hidden />
         <span className="min-w-0 flex-1 truncate">{item.title}{agents.length > 1 ? ` · ${agents.length}` : ''}</span>
@@ -64,23 +64,23 @@ export function SubagentDetails({ item, renderItem }: {
       </button>
       {selected !== null && (
         <Modal title={item.title} width="max-w-3xl" onClose={() => setSelected(null)}>
-          {item.detail && <p className="mb-3 whitespace-pre-wrap break-words text-sm text-qn-muted">{item.detail}</p>}
+          {item.detail && <p className="mb-3 whitespace-pre-wrap break-words text-ui-md text-qn-muted">{item.detail}</p>}
           {agents.length > 1 && <div className="mb-3 flex flex-wrap gap-2" aria-label="子代理">
             {agents.map((candidate, index) => <button type="button" key={candidate.threadId} aria-pressed={agent === candidate}
               className={`qn-button ${agent === candidate ? 'text-qn-accent' : ''}`} onClick={() => setSelected(candidate.threadId)}>
               {candidate.label || `子代理 ${index + 1}`}
             </button>)}
           </div>}
-          {agent && <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-qn-muted">
+          {agent && <div className="mb-2 flex flex-wrap items-center gap-2 text-ui-sm text-qn-muted">
             <span className="break-all">{agent.label || agent.threadId}</span>{agent.status && <Badge>{agent.status}</Badge>}
           </div>}
           {result && <section className="mb-4 space-y-1">
-            <h3 className="text-sm font-medium">子代理返回结果</h3>
-            <div className="whitespace-pre-wrap break-words text-sm">{result}</div>
+            <h3 className="text-ui-md font-medium">子代理返回结果</h3>
+            <div className="whitespace-pre-wrap break-words text-ui-md">{result}</div>
           </section>}
           {agent && rpc && <History key={agent.threadId} threadId={agent.threadId} rpc={rpc} renderItem={renderItem} />}
-          {agent && !rpc && <p className="text-sm text-qn-muted">会话连接暂不可用。</p>}
-          {!agent && !item.detail && !result && <p className="text-sm text-qn-muted">暂无子代理详情。</p>}
+          {agent && !rpc && <p className="text-ui-md text-qn-muted">会话连接暂不可用。</p>}
+          {!agent && !item.detail && !result && <p className="text-ui-md text-qn-muted">暂无子代理详情。</p>}
         </Modal>
       )}
     </div>

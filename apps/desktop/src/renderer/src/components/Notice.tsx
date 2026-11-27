@@ -22,7 +22,7 @@ export function Notice() {
   return (
     <FeedbackRow
       message={message}
-      className="qn-no-drag qn-pop qn-surface-float fixed right-4 top-12 z-40 max-w-sm px-3.5 py-2.5 text-[13px] leading-5"
+      className="qn-no-drag qn-pop qn-surface-float fixed right-4 top-12 z-40 max-w-sm px-3.5 py-2.5 text-ui leading-5"
       onClose={() => {
         dismissTargets()
         dismissCodex()

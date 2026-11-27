@@ -13,10 +13,10 @@ export function ApprovalCard({
     <div className="rounded-lg border border-amber-400/50 bg-amber-400/5 p-3">
       <div className="mb-2 flex items-center gap-2">
         <ShieldAlert size={15} className="text-amber-300" />
-        <span className="text-sm font-medium">{approval.title}</span>
+        <span className="text-ui-md font-medium">{approval.title}</span>
         <Badge tone="warn">等待处理</Badge>
       </div>
-      <pre className="qn-scroll mb-3 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-inset p-2 font-mono text-[12px] leading-5">
+      <pre className="qn-scroll mb-3 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-inset p-2 font-mono text-ui-sm leading-5">
         {approval.detail}
       </pre>
       <div className="flex flex-wrap gap-2">

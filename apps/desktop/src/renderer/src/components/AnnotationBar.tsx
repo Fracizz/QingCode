@@ -19,7 +19,7 @@ export function AnnotationBar({
   if (annotations.length === 0) return null
 
   return (
-    <div className="shrink-0 border-t border-qn-border bg-qn-panel px-4 pt-2 text-xs">
+    <div className="shrink-0 border-t border-qn-border bg-qn-panel px-4 pt-2 text-ui-sm">
       <button
         type="button"
         className="flex items-center gap-1 text-qn-accent hover:underline"
@@ -35,11 +35,11 @@ export function AnnotationBar({
             <div key={annotation.id} className="rounded-lg border border-qn-border bg-qn-inset p-2">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                  <div className="whitespace-pre-wrap break-words font-mono text-[12px] leading-4 text-qn-muted">
+                  <div className="whitespace-pre-wrap break-words font-mono text-ui-sm leading-4 text-qn-muted">
                     {quoteBlock(annotationExcerpt(annotation, 200))}
                   </div>
                   {annotation.comment && (
-                    <div className="mt-1 break-words text-[12px]">{annotation.comment}</div>
+                    <div className="mt-1 break-words text-ui-sm">{annotation.comment}</div>
                   )}
                 </div>
                 <IconButton label="删除注释" size="sm" danger onClick={() => onRemove(annotation.id)}>

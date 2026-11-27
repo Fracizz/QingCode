@@ -44,17 +44,17 @@ export function ConnectionSection({
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="truncate text-[13px] text-qn-text">{target.name}</span>
-              <span className="rounded-md bg-qn-fg/[0.06] px-1.5 text-[11px] leading-5 text-qn-muted">
+              <span className="truncate text-ui text-qn-text">{target.name}</span>
+              <span className="rounded-md bg-qn-fg/[0.06] px-1.5 text-ui-xs leading-5 text-qn-muted">
                 {kindLabel(target)}
               </span>
             </div>
-            <div className="truncate font-mono text-[12px] text-qn-dim">{addressOf(target)}</div>
+            <div className="truncate font-mono text-ui-sm text-qn-dim">{addressOf(target)}</div>
           </div>
           {target.kind === 'ssh' && onEditTarget && (
             <button
               type="button"
-              className="qn-button-subtle flex shrink-0 items-center gap-1 px-2.5 py-1 text-[12px]"
+              className="qn-button-subtle flex shrink-0 items-center gap-1 px-2.5 py-1 text-ui-sm"
               onClick={() => onEditTarget(target)}
             >
               <Pencil size={13} /> 编辑
@@ -63,7 +63,7 @@ export function ConnectionSection({
           {target.kind !== 'local' && onRemoveTarget && (
             <button
               type="button"
-              className="qn-button-subtle flex shrink-0 items-center gap-1 px-2.5 py-1 text-[12px] text-qn-danger"
+              className="qn-button-subtle flex shrink-0 items-center gap-1 px-2.5 py-1 text-ui-sm text-qn-danger"
               onClick={() => onRemoveTarget(target.id)}
             >
               <Trash2 size={13} /> 删除

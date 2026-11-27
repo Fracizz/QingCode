@@ -33,8 +33,8 @@ export function BinaryNotice({
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center', className)}>
       <Binary size={28} className="text-qn-dim" />
-      <div className="text-[13px] text-qn-muted">{message}</div>
-      <div className="max-w-full truncate font-mono text-[12px] text-qn-dim">{path}</div>
+      <div className="text-ui text-qn-muted">{message}</div>
+      <div className="max-w-full truncate font-mono text-ui-sm text-qn-dim">{path}</div>
     </div>
   )
 }

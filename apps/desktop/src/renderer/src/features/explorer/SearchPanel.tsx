@@ -55,7 +55,7 @@ export function SearchPanel({
             区分大小写
           </Checkbox>
           <input
-            className="qn-input min-w-0 flex-1 font-mono text-[12px]"
+            className="qn-input min-w-0 flex-1 font-mono text-ui-sm"
             value={glob}
             placeholder="glob 过滤，如 *.ts 或 src/**"
             onChange={(event) => setGlob(event.target.value)}
@@ -65,7 +65,7 @@ export function SearchPanel({
       <ErrorNote message={search.error} />
       <FeedbackRow
         message={truncated ? '结果已截断，请缩小查询范围或使用 glob 过滤' : null}
-        className="border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-[12px] leading-5 text-qn-warn"
+        className="border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-ui-sm leading-5 text-qn-warn"
       />
       <div className="qn-scroll min-h-0 flex-1 overflow-y-auto">
         {groups.length === 0 && (
@@ -82,19 +82,19 @@ export function SearchPanel({
         {groups.map((group) => (
           <div key={group.path} className="border-b border-qn-border/60 py-1">
             <div
-              className="flex items-center gap-2 px-3 py-1 text-[12px] font-medium text-qn-text"
+              className="flex items-center gap-2 px-3 py-1 text-ui-sm font-medium text-qn-text"
               title={group.path}
             >
               <span className="min-w-0 flex-1 truncate font-mono">
                 {relativePath(root, group.path, style) || group.path}
               </span>
-              <span className="shrink-0 text-[11px] text-qn-dim">{group.hits.length}</span>
+              <span className="shrink-0 text-ui-xs text-qn-dim">{group.hits.length}</span>
             </div>
             {group.hits.map((hit, index) => (
               <button
                 key={`${hit.path}:${hit.line ?? 0}:${hit.column ?? 0}:${index}`}
                 type="button"
-                className="flex w-full items-start gap-2 px-3 py-0.5 text-left text-[12px] hover:bg-qn-fg/5"
+                className="flex w-full items-start gap-2 px-3 py-0.5 text-left text-ui-sm hover:bg-qn-fg/5"
                 onClick={() =>
                   openFile({
                     targetId,
@@ -104,11 +104,11 @@ export function SearchPanel({
                   })
                 }
               >
-                <span className="w-12 shrink-0 truncate font-mono text-[11px] text-qn-dim">
+                <span className="w-12 shrink-0 truncate font-mono text-ui-xs text-qn-dim">
                   {hit.line ?? '-'}
                   {hit.column ? `:${hit.column}` : ''}
                 </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-[11px] leading-5">
+                <span className="min-w-0 flex-1 truncate font-mono text-ui-xs leading-5">
                   {highlightParts(hit.text ?? '', query, caseSensitive).map((part, partIndex) => (
                     <span
                       key={partIndex}

@@ -15,7 +15,7 @@ export function LegacyBanner() {
     detect.counts.connections + detect.counts.localProjects + detect.counts.sshProjects
   // 旧版是整宽横幅，挤占所有栏的高度；改成侧栏底部的小卡片，一次性提示不打断主流程。
   return (
-    <div className="qn-pop rounded-lg border border-qn-brand/25 bg-qn-brand/[0.06] p-2.5 text-xs">
+    <div className="qn-pop rounded-lg border border-qn-brand/25 bg-qn-brand/[0.06] p-2.5 text-ui-sm">
       <div className="flex items-start gap-2">
         <Upload size={14} className="mt-0.5 shrink-0 text-qn-brand" />
         <span className="min-w-0 flex-1 leading-5 text-qn-text/90">
@@ -25,7 +25,7 @@ export function LegacyBanner() {
           <X size={13} />
         </IconButton>
       </div>
-      <button className="qn-button mt-2 w-full py-1 text-[12px]" onClick={open}>
+      <button className="qn-button mt-2 w-full py-1 text-ui-sm" onClick={open}>
         导入到新版本
       </button>
     </div>
@@ -69,10 +69,10 @@ export function LegacyDialog() {
     >
       <div className="space-y-4">
         <div>
-          <div className="mb-1 text-xs text-qn-muted">来源数据库</div>
+          <div className="mb-1 text-ui-sm text-qn-muted">来源数据库</div>
           <div className="flex gap-2">
             <input
-              className="qn-input min-w-0 flex-1 font-mono text-[12px]"
+              className="qn-input min-w-0 flex-1 font-mono text-ui-sm"
               value={path}
               placeholder="qingcode.db 路径"
               onChange={(event) => setPath(event.target.value)}
@@ -81,22 +81,22 @@ export function LegacyDialog() {
               另选文件
             </button>
           </div>
-          <p className="mt-1 text-[12px] text-qn-muted">
+          <p className="mt-1 text-ui-sm text-qn-muted">
             旧版可能正在运行，导入会先复制数据库再只读打开，不会改动原文件。
           </p>
         </div>
 
         <div className="rounded-lg border border-qn-border bg-qn-inset p-3">
-          <div className="mb-2 text-xs text-qn-muted">预览数量</div>
+          <div className="mb-2 text-ui-sm text-qn-muted">预览数量</div>
           {counts ? (
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-2 gap-2 text-ui-sm">
               <span>SSH 连接：{counts.connections}</span>
               <span>本机项目：{counts.localProjects}</span>
               <span>远端项目：{counts.sshProjects}</span>
               <span>已保存密码：{counts.secrets}</span>
             </div>
           ) : (
-            <div className="text-xs text-qn-muted">{busy ? '正在检测…' : '未检测到旧版数据'}</div>
+            <div className="text-ui-sm text-qn-muted">{busy ? '正在检测…' : '未检测到旧版数据'}</div>
           )}
         </div>
 
@@ -104,7 +104,7 @@ export function LegacyDialog() {
           <Checkbox checked={includeSecrets} onChange={setIncludeSecrets}>
             同时导入已保存的密码 / 口令
           </Checkbox>
-          <p className="pl-5 text-[12px] leading-5 text-qn-muted">
+          <p className="pl-5 text-ui-sm leading-5 text-qn-muted">
             用本机系统加密重新保存（Windows DPAPI），不勾选则只导入连接与项目。
           </p>
         </div>
@@ -113,7 +113,7 @@ export function LegacyDialog() {
         <ErrorNote message={error} onRetry={() => void runImport()} />
 
         {result && (
-          <div className="space-y-2 rounded-lg border border-emerald-400/30 bg-emerald-400/5 p-3 text-xs">
+          <div className="space-y-2 rounded-lg border border-emerald-400/30 bg-emerald-400/5 p-3 text-ui-sm">
             <div className="font-medium text-emerald-300">导入完成</div>
             <div className="grid grid-cols-2 gap-1">
               <span>连接：{result.imported.targets}</span>

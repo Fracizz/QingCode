@@ -7,7 +7,7 @@ import type {
   SettingsSendKey,
   SettingsTheme,
 } from '../../shared/backendApi'
-import { DEFAULT_FONT_SIZES, sanitizeFontSizes } from '../../shared/fontSizes'
+import { DEFAULT_FONT_SIZES, FONT_SIZES_VERSION, resolveFontSizes, sanitizeFontSizes } from '../../shared/fontSizes'
 
 // 设置的纯逻辑：默认值、白名单校验、深合并。IO 在 settingsStore.ts，两边共用同一份形状。
 // 只保存路径字符串，不读取 CODEX_HOME / CLAUDE_CONFIG_DIR 的内容（合规 §3.2）。
@@ -46,6 +46,7 @@ export function defaultAppSettings(): AppSettings {
       density: 'comfortable',
       theme: 'dark',
       ...DEFAULT_FONT_SIZES,
+      fontSizesVersion: FONT_SIZES_VERSION,
     },
     agents: {},
   }
@@ -117,8 +118,7 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
         : defaults.general.defaultAgent,
       density: isSettingsDensity(general.density) ? general.density : defaults.general.density,
       theme: isSettingsTheme(general.theme) ? general.theme : defaults.general.theme,
-      ...DEFAULT_FONT_SIZES,
-      ...sanitizeFontSizes(general),
+      ...resolveFontSizes(general),
     },
     agents,
   }

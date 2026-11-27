@@ -19,18 +19,18 @@ export function TurnErrorNote({ error, compact = false }: { error: string; compa
   }
 
   return (
-    <div className="rounded-lg border border-qn-danger/30 bg-qn-danger/10 px-3 py-2.5 text-[13px] leading-5">
+    <div className="rounded-lg border border-qn-danger/30 bg-qn-danger/10 px-3 py-2.5 text-ui leading-5">
       <div className="flex items-start gap-2">
         <CircleAlert size={15} className="mt-0.5 shrink-0 text-qn-danger" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-medium text-qn-danger">{view.title}</span>
             {view.status !== undefined && (
-              <span className="rounded bg-qn-danger/15 px-1.5 font-mono text-[11px] leading-5 text-qn-danger">
+              <span className="rounded bg-qn-danger/15 px-1.5 font-mono text-ui-xs leading-5 text-qn-danger">
                 {view.status}
               </span>
             )}
-            {view.hint && <span className="text-[12px] text-qn-warn">{view.hint}</span>}
+            {view.hint && <span className="text-ui-sm text-qn-warn">{view.hint}</span>}
           </div>
           {view.detail && (
             <p className={`mt-1 whitespace-pre-wrap break-words text-qn-text/80 ${compact ? 'line-clamp-4' : ''}`}>
@@ -52,7 +52,7 @@ export function TurnErrorNote({ error, compact = false }: { error: string; compa
               )}
             </p>
           )}
-          <div className="mt-1.5 flex items-center gap-3 text-[12px] text-qn-muted">
+          <div className="mt-1.5 flex items-center gap-3 text-ui-sm text-qn-muted">
             {hasRaw && (
               <button
                 type="button"
@@ -69,7 +69,7 @@ export function TurnErrorNote({ error, compact = false }: { error: string; compa
             </button>
           </div>
           {hasRaw && showRaw && (
-            <pre className="qn-scroll mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-qn-inset px-2 py-1.5 font-mono text-[11px] leading-4 text-qn-muted">
+            <pre className="qn-scroll mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-qn-inset px-2 py-1.5 font-mono text-ui-xs leading-4 text-qn-muted">
               {view.raw}
             </pre>
           )}

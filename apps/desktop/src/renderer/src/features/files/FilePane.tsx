@@ -34,7 +34,7 @@ function MarkdownPreview({ content, targetId, cwd }: { content: string; targetId
   const link = useMemo(() => createMarkdownLink(() => ({ targetId, cwd })), [targetId, cwd])
   const components = useMemo<Components>(() => ({ a: link }), [link])
   return (
-    <div className="qn-scroll qn-markdown min-h-0 flex-1 overflow-auto px-4 py-3 text-[length:var(--qn-editor-font-size,12.5px)] leading-[1.8] text-qn-text">
+    <div className="qn-scroll qn-markdown min-h-0 flex-1 overflow-auto px-4 py-3 text-[length:var(--qn-editor-font-size,13px)] leading-[1.8] text-qn-text">
       <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={qnUrlTransform} components={components}>
         {content}
       </ReactMarkdown>
@@ -152,7 +152,7 @@ export function FilePane({ className }: { className?: string }) {
                 }
               }}
               className={cn(
-                'group/tab flex h-7 min-w-0 max-w-56 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[12px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+                'group/tab flex h-7 min-w-0 max-w-56 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-ui-sm outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
                 tab.id === activeId ? 'bg-qn-active text-qn-text' : 'text-qn-muted hover:bg-qn-hover',
               )}
             >
@@ -172,7 +172,7 @@ export function FilePane({ className }: { className?: string }) {
                 </span>
               )}
               <span className="truncate">{basename(tab.path) || tab.path}</span>
-              <span className="truncate text-[11px] text-qn-dim">{basename(dirname(tab.path))}</span>
+              <span className="truncate text-ui-xs text-qn-dim">{basename(dirname(tab.path))}</span>
               <IconButton
                 label={`关闭 ${basename(tab.path)}`}
                 size="sm"
@@ -194,7 +194,7 @@ export function FilePane({ className }: { className?: string }) {
             <>
               {reason && (
                 <span
-                  className="inline-flex h-6 items-center gap-1 rounded-md px-1 text-[11px] text-qn-muted"
+                  className="inline-flex h-6 items-center gap-1 rounded-md px-1 text-ui-xs text-qn-muted"
                   title={`只读 · ${readOnlyLabel(reason)}`}
                 >
                   <LockKeyhole size={12} />
@@ -246,8 +246,8 @@ export function FilePane({ className }: { className?: string }) {
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
           <FileText size={26} className="text-qn-dim" />
-          <div className="text-[13px] text-qn-muted">点击对话里的文件路径或 Markdown 链接，在这里查看与编辑</div>
-          <div className="text-[12px] text-qn-dim">Ctrl+S 保存、Ctrl+F 搜索、Ctrl+H 替换、Ctrl+G 跳转行</div>
+          <div className="text-ui text-qn-muted">点击对话里的文件路径或 Markdown 链接，在这里查看与编辑</div>
+          <div className="text-ui-sm text-qn-dim">Ctrl+S 保存、Ctrl+F 搜索、Ctrl+H 替换、Ctrl+G 跳转行</div>
         </div>
       )}
       <FileDialogs />

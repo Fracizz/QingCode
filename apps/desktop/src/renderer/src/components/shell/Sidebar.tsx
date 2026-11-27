@@ -67,21 +67,21 @@ export function Sidebar({
       <div className="px-2 pt-2">
         <button
           type="button"
-          className={`group flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-[14px] outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent ${
+          className={`group flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-ui-md outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent ${
             isDraft ? 'bg-qn-hover text-qn-text' : 'text-qn-text/90'
           }`}
           onClick={() => startDraft()}
         >
           <SquarePen size={16} className="text-qn-muted" />
           <span className="flex-1 text-left">新会话</span>
-          <kbd className="hidden rounded-md border border-qn-border-strong px-1 font-sans text-[11px] text-qn-dim group-hover:inline">
+          <kbd className="hidden rounded-md border border-qn-border-strong px-1 font-sans text-ui-xs text-qn-dim group-hover:inline">
             Ctrl N
           </kbd>
         </button>
       </div>
 
       <div className="flex items-center justify-between pb-0.5 pl-4 pr-2 pt-3">
-        <span className="text-[13px] text-qn-muted">工作区</span>
+        <span className="text-ui text-qn-muted">工作区</span>
         <TargetPicker {...targetActions} />
       </div>
 
@@ -124,7 +124,7 @@ export function Sidebar({
         <FooterButton label="设置" onClick={onSettings}>
           <Settings size={15} />
         </FooterButton>
-        {version && <span className="ml-auto shrink-0 pr-1.5 text-[11px] text-qn-dim">v{version}</span>}
+        {version && <span className="ml-auto shrink-0 pr-1.5 text-ui-xs text-qn-dim">v{version}</span>}
       </div>
 
       <ResizeHandle
@@ -145,7 +145,7 @@ function FooterButton({ label, onClick, children }: { label: string; onClick: ()
   return (
     <button
       type="button"
-      className="flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
+      className="flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-ui text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
       onClick={onClick}
     >
       {children}

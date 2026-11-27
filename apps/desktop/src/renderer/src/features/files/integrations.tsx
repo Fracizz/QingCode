@@ -128,7 +128,7 @@ export function FileChangeActions({
   const location = cwd ? parseFileHref(path, cwd) : null
   const absolute = location?.path ?? path
   const button =
-    'inline-flex items-center gap-1 rounded-md border border-qn-border px-1.5 py-0.5 text-[11px] text-qn-muted hover:bg-qn-hover hover:text-qn-text'
+    'inline-flex items-center gap-1 rounded-md border border-qn-border px-1.5 py-0.5 text-ui-xs text-qn-muted hover:bg-qn-hover hover:text-qn-text'
   return (
     <span className={cn('inline-flex shrink-0 items-center gap-1', className)} onClick={(event) => event.stopPropagation()}>
       <button type="button" className={button} onClick={() => openFile({ targetId, path: absolute })}>

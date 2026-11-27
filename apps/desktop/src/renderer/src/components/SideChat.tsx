@@ -61,7 +61,7 @@ export function SideChat() {
 
   return (
     <aside className="absolute bottom-0 right-0 top-0 z-20 flex w-[380px] max-w-[92vw] flex-col border-l border-qn-border bg-qn-panel shadow-2xl">
-      <div className="flex shrink-0 items-center gap-2 border-b border-qn-border px-3 py-2 text-xs">
+      <div className="flex shrink-0 items-center gap-2 border-b border-qn-border px-3 py-2 text-ui-sm">
         <AgentIcon agent={agent} size={14} />
         <span className="font-medium">侧边临时会话</span>
         <Badge tone="muted">不进入会话列表</Badge>

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { AppSettings } from '../../shared/backendApi'
-import { DEFAULT_FONT_SIZES } from '../../shared/fontSizes'
+import { DEFAULT_FONT_SIZES, FONT_SIZES_VERSION } from '../../shared/fontSizes'
 import { backendConfig } from '../config'
 import { registerSettingsMethods } from '../registerSettings'
 import { BackendRouter, RouterError } from '../router'
@@ -43,6 +43,7 @@ describe('registerSettingsMethods', () => {
         density: 'comfortable',
         theme: 'dark',
         ...DEFAULT_FONT_SIZES,
+        fontSizesVersion: FONT_SIZES_VERSION,
       },
       agents: {},
     })

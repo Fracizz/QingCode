@@ -22,7 +22,7 @@ export function SendQueue({ targetId, agent, threadId, running, compact, content
     <div className={`shrink-0 ${compact ? 'px-3' : 'px-6'}`}>
       <section
         aria-label="发送队列"
-        className={`mx-auto rounded-xl border border-qn-border bg-qn-panel px-3 py-2 text-[12px] ${contentWidthClassName}`}
+        className={`mx-auto rounded-xl border border-qn-border bg-qn-panel px-3 py-2 text-ui-sm ${contentWidthClassName}`}
       >
         <div className="flex items-center gap-1.5 text-qn-muted"><ListEnd size={14} /> 排队消息（{pending.length}）</div>
         <ul className="qn-scroll mt-1 max-h-32 space-y-0.5 overflow-auto">

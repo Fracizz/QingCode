@@ -108,11 +108,11 @@ export function SettingsDialog({
       open={open}
       onClose={onClose}
       overlayClassName="bg-black/70"
-      className="fixed inset-4 z-50 text-[13px] text-qn-text shadow-[var(--qn-shadow-dialog)]"
+      className="fixed inset-4 z-50 text-ui text-qn-text shadow-[var(--qn-shadow-dialog)]"
     >
       <header className="flex shrink-0 items-center gap-3 border-b border-qn-border px-5 py-3">
         <Settings2 size={17} className="shrink-0 text-qn-brand" />
-        <Dialog.Title className="text-[15px] font-semibold">设置</Dialog.Title>
+        <Dialog.Title className="text-ui-lg font-semibold">设置</Dialog.Title>
         <SearchField
           boxed
           className="ml-auto w-72 max-w-[42vw] shrink"
@@ -148,7 +148,7 @@ export function SettingsDialog({
                     if (searching) setQuery('')
                   }}
                   className={cn(
-                    'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+                    'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
                     active === section.id && !searching
                       ? 'bg-qn-hover text-qn-text'
                       : 'text-qn-muted hover:bg-qn-hover hover:text-qn-text',
@@ -157,12 +157,12 @@ export function SettingsDialog({
                 >
                   <span className="shrink-0 text-qn-muted"><SectionIcon id={section.id} /></span>
                   <span className="min-w-0 flex-1 truncate">{section.label}</span>
-                  {searching && <span className="text-[11px] text-qn-dim">{count}</span>}
+                  {searching && <span className="text-ui-xs text-qn-dim">{count}</span>}
                 </button>
               )
             })}
           </div>
-          <p className="mt-4 px-2.5 text-[11px] leading-5 text-qn-dim">
+          <p className="mt-4 px-2.5 text-ui-xs leading-5 text-qn-dim">
             修改即时保存到本机；检测只运行可执行文件的 --version。
           </p>
         </nav>
@@ -185,7 +185,7 @@ export function SettingsDialog({
         </main>
       </div>
 
-      <footer className="flex shrink-0 items-center gap-3 border-t border-qn-border px-5 py-2 text-[12px] text-qn-dim">
+      <footer className="flex shrink-0 items-center gap-3 border-t border-qn-border px-5 py-2 text-ui-sm text-qn-dim">
         {loading ? <Spinner label="加载设置…" /> : saving ? <Spinner label="保存中…" /> : <span>设置自动保存</span>}
         <span className="ml-auto">Ctrl+, 打开设置</span>
       </footer>

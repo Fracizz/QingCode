@@ -43,11 +43,11 @@ export function MainHeader() {
   const title = thread?.title ?? '新会话'
 
   return (
-    <div className="flex h-11 shrink-0 items-center gap-2 px-4 text-[14px]">
+    <div className="flex h-11 shrink-0 items-center gap-2 px-4 text-ui-md">
       <MessageSquareText size={15} className="shrink-0 text-qn-muted" />
       <span className="min-w-0 truncate font-medium text-qn-text">{title}</span>
       {project && (
-        <span className="hidden max-w-[16rem] shrink-0 items-center gap-1 truncate text-[13px] text-qn-dim sm:flex" title={project.path}>
+        <span className="hidden max-w-[16rem] shrink-0 items-center gap-1 truncate text-ui text-qn-dim sm:flex" title={project.path}>
           <FolderGit2 size={13} /> {project.name}
         </span>
       )}

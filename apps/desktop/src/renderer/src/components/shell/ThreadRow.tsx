@@ -173,7 +173,7 @@ export function ThreadRow({
           ref={inputRef}
           value={draft}
           aria-label="会话名称"
-          className="qn-input h-7 min-w-0 flex-1 px-1.5 py-0 text-[13px]"
+          className="qn-input h-7 min-w-0 flex-1 px-1.5 py-0 text-ui"
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => void commitRename()}
           onKeyDown={(event) => {
@@ -193,7 +193,7 @@ export function ThreadRow({
             role="button"
             tabIndex={0}
             aria-busy={opening}
-            className={`group relative flex h-8 w-full cursor-default items-center gap-2 rounded-lg pl-[31px] pr-2 text-left text-[13px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover ${
+            className={`group relative flex h-8 w-full cursor-default items-center gap-2 rounded-lg pl-[31px] pr-2 text-left text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover ${
               current ? 'bg-qn-active text-qn-text' : 'text-qn-text/80 hover:bg-qn-hover hover:text-qn-text'
             }`}
             title={thread.preview || thread.title}
@@ -215,7 +215,7 @@ export function ThreadRow({
             <span className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold text-qn-text')}>{thread.title}</span>
             {status !== 'pending' && status !== 'input' && (
               <>
-                <span className="shrink-0 text-[12px] text-qn-dim group-hover:hidden">
+                <span className="shrink-0 text-ui-sm text-qn-dim group-hover:hidden">
                   {formatRelative(thread.updatedAt, now)}
                 </span>
                 <span className="-mr-1 hidden shrink-0 items-center group-hover:flex" onClick={(e) => e.stopPropagation()}>

@@ -59,7 +59,7 @@ function WindowRow({
         />
       </div>
       {value.resetsAt !== null && (
-        <div className="mt-1.5 text-[12px] leading-4 text-qn-muted">
+        <div className="mt-1.5 text-ui-sm leading-4 text-qn-muted">
           {formatReset(value.resetsAt, now)}
         </div>
       )}
@@ -84,13 +84,13 @@ function Body({
   const refresh = useRateLimits((s) => s.refresh)
 
   return (
-    <div className="w-80 p-3 text-[13px]">
+    <div className="w-80 p-3 text-ui">
       <div className="mb-2 flex items-center justify-between">
         <span className="font-semibold">{agentLabel(agent)} 额度</span>
         <div className="flex items-center gap-1">
           <button
             type="button"
-            className="qn-button-subtle flex items-center gap-1 px-2 py-1 text-[12px]"
+            className="qn-button-subtle flex items-center gap-1 px-2 py-1 text-ui-sm"
             disabled={entry?.loading === true}
             onClick={() => void refresh(targetId, agent)}
           >
@@ -109,7 +109,7 @@ function Body({
               </span>
             </div>
             {snapshot?.primary?.resetsAt !== null && snapshot?.primary?.resetsAt !== undefined && (
-              <div className="mt-1.5 text-[12px] text-qn-muted">
+              <div className="mt-1.5 text-ui-sm text-qn-muted">
                 {formatReset(snapshot.primary.resetsAt, now)}
               </div>
             )}
@@ -121,13 +121,13 @@ function Body({
                 ≈{formatCost(sumCost(entry?.costByThread, threadId))}（估算）
               </span>
             </div>
-            <div className="mt-1 text-[12px] text-qn-muted">{CLAUDE_RATE_LIMIT_NOTE}</div>
+            <div className="mt-1 text-ui-sm text-qn-muted">{CLAUDE_RATE_LIMIT_NOTE}</div>
           </div>
         </div>
       ) : (
         <>
           {entry?.account && (
-            <div className="mb-2 space-y-0.5 rounded-lg bg-qn-inset p-2 text-[12px] text-qn-muted">
+            <div className="mb-2 space-y-0.5 rounded-lg bg-qn-inset p-2 text-ui-sm text-qn-muted">
               <div>套餐：{entry.account.planType ?? '未知'}</div>
               {entry.account.email && <div className="truncate">账号：{entry.account.email}</div>}
               {entry.account.workspaceName && (
@@ -160,20 +160,20 @@ function Body({
           )}
 
           {snapshot?.credits?.hasCredits && (
-            <div className="mt-2 text-[12px] text-qn-muted">
+            <div className="mt-2 text-ui-sm text-qn-muted">
               积分：{snapshot.credits.unlimited ? '不限量' : (snapshot.credits.balance ?? '有余额')}
             </div>
           )}
           {(snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true) && (
-            <div className="mt-2 text-[12px] text-qn-danger">
+            <div className="mt-2 text-ui-sm text-qn-danger">
               已达额度上限{snapshot.rateLimitReachedType ? `（${snapshot.rateLimitReachedType}）` : ''}
             </div>
           )}
         </>
       )}
-      {entry?.error && <div className="mt-2 text-[12px] text-qn-danger">{entry.error}</div>}
+      {entry?.error && <div className="mt-2 text-ui-sm text-qn-danger">{entry.error}</div>}
 
-      <div className="mt-3 flex items-center justify-between border-t border-qn-border pt-2 text-[12px] text-qn-muted">
+      <div className="mt-3 flex items-center justify-between border-t border-qn-border pt-2 text-ui-sm text-qn-muted">
         <span>{updatedAtText(entry?.updatedAt, now)}</span>
         <span>可见时每 60 秒刷新</span>
       </div>
@@ -222,7 +222,7 @@ export function RateLimitBadge({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`flex h-6 items-center gap-1.5 rounded-md border border-qn-border-strong bg-qn-fg/[0.03] px-2 text-[12px] leading-4 hover:bg-qn-hover data-[state=open]:bg-qn-hover ${severityTextClass(level)}`}
+          className={`flex h-6 items-center gap-1.5 rounded-md border border-qn-border-strong bg-qn-fg/[0.03] px-2 text-ui-sm leading-4 hover:bg-qn-hover data-[state=open]:bg-qn-hover ${severityTextClass(level)}`}
           aria-label={`查看 ${agentLabel(agent)} 额度详情`}
         >
           <Gauge size={13} />

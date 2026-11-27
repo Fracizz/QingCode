@@ -97,13 +97,13 @@ export function CodeEditor({ tab, onChange, onSave, onLoadMore, className }: Pro
     <div className={cn('relative flex min-h-0 flex-1 flex-col', className)}>
       <div ref={hostRef} className="qn-editor-host min-h-0 flex-1 overflow-hidden bg-qn-code" />
       {readOnly && (
-        <div className="pointer-events-none absolute right-3 top-2 inline-flex items-center gap-1 rounded-md bg-qn-panel/90 px-1.5 py-0.5 text-[11px] text-qn-muted">
+        <div className="pointer-events-none absolute right-3 top-2 inline-flex items-center gap-1 rounded-md bg-qn-panel/90 px-1.5 py-0.5 text-ui-xs text-qn-muted">
           <LockKeyhole size={11} />
           只读 · {readOnlyLabel(reason)}
         </div>
       )}
       {tab.truncated && (
-        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-qn-border px-3 py-1.5 text-[12px] text-qn-muted">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-qn-border px-3 py-1.5 text-ui-sm text-qn-muted">
           <span>{loadedLabel(tab.loadedBytes)} · 只读</span>
           <button
             type="button"

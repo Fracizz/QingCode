@@ -31,7 +31,7 @@ export function useWorkspaceScope(): { targetId: string; cwd: string } | { reaso
 function ToolBody({ tool }: { tool: DockTool }) {
   const scope = useWorkspaceScope()
   if ('reason' in scope) {
-    return <div className="px-4 py-6 text-center text-[13px] text-qn-dim">{scope.reason}</div>
+    return <div className="px-4 py-6 text-center text-ui text-qn-dim">{scope.reason}</div>
   }
   // key 按项目区分，切换项目时重建内部状态。
   const key = `${scope.targetId}:${scope.cwd}`
@@ -93,7 +93,7 @@ export function WorkspaceDock() {
                 {item.icon}
               </IconButton>
             ))}
-            <span className="ml-1 min-w-0 flex-1 truncate text-[12px] text-qn-muted">{meta.label}</span>
+            <span className="ml-1 min-w-0 flex-1 truncate text-ui-sm text-qn-muted">{meta.label}</span>
             <IconButton label="收起" onClick={() => useDock.getState().hideTool()}>
               <X size={14} />
             </IconButton>

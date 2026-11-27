@@ -28,22 +28,22 @@ export function MobileSection() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-qn-border bg-qn-fg/[0.02] px-3 py-2.5">
         <Smartphone size={16} className="shrink-0 text-qn-accent" />
-        <span className="text-[13px]">手机网关</span>
+        <span className="text-ui">手机网关</span>
         <Badge tone={status.tone}>{status.label}</Badge>
-        <span className="font-mono text-[12px] text-qn-dim">0.0.0.0:{settings?.port ?? 38500}</span>
-        <span className="text-[12px] text-qn-dim">已配对 {devices.length} 台设备</span>
+        <span className="font-mono text-ui-sm text-qn-dim">0.0.0.0:{settings?.port ?? 38500}</span>
+        <span className="text-ui-sm text-qn-dim">已配对 {devices.length} 台设备</span>
         <span className="min-w-0 flex-1" />
         {busy && <Spinner label={busy} />}
-        <button type="button" className="qn-button px-2.5 py-1 text-[12px]" onClick={() => setManageOpen(true)}>
+        <button type="button" className="qn-button px-2.5 py-1 text-ui-sm" onClick={() => setManageOpen(true)}>
           打开手机连接设置
         </button>
       </div>
 
-      {status.detail && <p className="text-[12px] text-qn-muted">{status.detail}</p>}
-      {error && <p className="text-[12px] text-qn-danger">{error}</p>}
+      {status.detail && <p className="text-ui-sm text-qn-muted">{status.detail}</p>}
+      {error && <p className="text-ui-sm text-qn-danger">{error}</p>}
 
       <InfoBlock title="证书指纹（SHA-256）">
-        <div className="break-all font-mono text-[12px]">
+        <div className="break-all font-mono text-ui-sm">
           {settings?.fingerprint ? groupFingerprint(settings.fingerprint) : '尚未生成'}
         </div>
         <p className="mt-1.5 text-qn-dim">

@@ -410,11 +410,11 @@ export function TargetForm({
         {!initial && (
           <div className="flex gap-1 rounded-lg border border-qn-border bg-qn-bg p-1">
             <button type="button" onClick={() => switchMode('ssh')}
-              className={`h-8 flex-1 rounded-lg px-3 text-[13px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent ${mode === 'ssh' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
+              className={`h-8 flex-1 rounded-lg px-3 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent ${mode === 'ssh' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
               SSH 连接
             </button>
             <button type="button" onClick={() => switchMode('direct')}
-              className={`h-8 flex-1 rounded-lg px-3 text-[13px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent ${mode === 'direct' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
+              className={`h-8 flex-1 rounded-lg px-3 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent ${mode === 'direct' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
               直连（连接码）
             </button>
           </div>
@@ -424,7 +424,7 @@ export function TargetForm({
             {!initial && (
               <>
                 <textarea
-                  className="qn-input min-h-20 resize-y font-mono text-[12px] leading-5"
+                  className="qn-input min-h-20 resize-y font-mono text-ui-sm leading-5"
                   rows={3}
                   placeholder="粘贴 qn-direct: 开头的连接码（可连同前后其它文字一起复制）"
                   value={codeText}
@@ -452,7 +452,7 @@ export function TargetForm({
                   <input className="qn-input w-20" placeholder="端口" inputMode="numeric" value={directDraft.port}
                     onChange={(event) => patchDirect({ port: event.target.value })} />
                 </div>
-                <div className="rounded-lg border border-qn-border px-3 py-2 text-[12px] leading-5 text-qn-muted">
+                <div className="rounded-lg border border-qn-border px-3 py-2 text-ui-sm leading-5 text-qn-muted">
                   证书指纹 <span className="font-mono text-qn-text">{codeInfo.fingerprint.slice(0, 16)}…</span>（只读）
                 </div>
               </>
@@ -497,17 +497,17 @@ export function TargetForm({
               <Checkbox checked={draft.remember} onChange={(value) => patch({ remember: value })}>
                 记住密码 / 口令（用本机系统加密保存）
               </Checkbox>
-              <p className="text-[12px] leading-5 text-qn-muted">
+              <p className="text-ui-sm leading-5 text-qn-muted">
                 凭据只在连接时传给 backend，不写入连接配置。
               </p>
             </>
           )}
           {initial?.kind === 'ssh' && (
             <div className="mt-3 space-y-2 rounded-lg border border-qn-border px-3 py-2.5">
-              <div className="text-[13px] font-medium text-qn-text">直连加速</div>
+              <div className="text-ui font-medium text-qn-text">直连加速</div>
               {sshDirect ? (
                 <>
-                  <div className="text-[12px] leading-5 text-qn-muted">
+                  <div className="text-ui-sm leading-5 text-qn-muted">
                     已开启：<span className="font-mono text-qn-text">{sshDirect.host}:{sshDirect.port}</span>
                     {' · '}指纹 <span className="font-mono text-qn-text">{sshDirect.fingerprint.slice(0, 16)}…</span>
                   </div>
@@ -518,7 +518,7 @@ export function TargetForm({
                 </>
               ) : (
                 <>
-                  <p className="text-[12px] leading-5 text-qn-muted">
+                  <p className="text-ui-sm leading-5 text-qn-muted">
                     经 SSH 在远端开启 TLS 直连，之后连接优先直连、失败自动回退 SSH
                   </p>
                   <div className="flex gap-2">
@@ -552,7 +552,7 @@ export function TargetForm({
       <FeedbackRow
         message={passed}
         icon={<CircleCheck size={15} />}
-        className="rounded-lg border border-qn-ok/30 bg-qn-ok/10 px-3 py-2 text-[13px] leading-5 text-qn-ok"
+        className="rounded-lg border border-qn-ok/30 bg-qn-ok/10 px-3 py-2 text-ui leading-5 text-qn-ok"
       />
       <ErrorNote message={error} onClose={() => setError(null)} />
       </form>

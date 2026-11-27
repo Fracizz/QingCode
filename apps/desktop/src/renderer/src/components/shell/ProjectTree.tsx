@@ -77,7 +77,7 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
       {!loading && projects.length === 0 && !projectError && (
         <button
           type="button"
-          className="flex h-8 w-full items-center gap-2 rounded-lg pl-[30px] text-left text-[13px] text-qn-dim hover:bg-qn-hover hover:text-qn-text"
+          className="flex h-8 w-full items-center gap-2 rounded-lg pl-[30px] text-left text-ui text-qn-dim hover:bg-qn-hover hover:text-qn-text"
           onClick={() => openPicker(targetId)}
         >
           <FolderPlus size={14} /> 添加项目
@@ -153,7 +153,7 @@ function ProjectRow({
           ref={inputRef}
           value={draft}
           aria-label="项目名称"
-          className="qn-input h-7 min-w-0 flex-1 px-1.5 py-0 text-[13px]"
+          className="qn-input h-7 min-w-0 flex-1 px-1.5 py-0 text-ui"
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commit}
           onKeyDown={(event) => {
@@ -183,7 +183,7 @@ function ProjectRow({
 
   return (
     <div
-      className={`group flex h-8 items-center gap-1 rounded-lg pl-2 pr-1 text-[14px] ${
+      className={`group flex h-8 items-center gap-1 rounded-lg pl-2 pr-1 text-ui-md ${
         active ? 'text-qn-text' : 'text-qn-text/85 hover:bg-qn-hover'
       } ${(active && !expanded) || menuOpen ? 'bg-qn-hover' : ''}`}
       title={project.path}
@@ -198,7 +198,7 @@ function ProjectRow({
         <span className="min-w-0 flex-1 truncate">{project.name}</span>
         {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
       </button>
-      <span className={`shrink-0 pr-1.5 text-[12px] text-qn-dim group-hover:hidden ${menuOpen ? 'hidden' : ''}`}>
+      <span className={`shrink-0 pr-1.5 text-ui-sm text-qn-dim group-hover:hidden ${menuOpen ? 'hidden' : ''}`}>
         {formatRelative(project.lastOpenedAt, now)}
       </span>
       <span className={`shrink-0 items-center group-hover:flex ${menuOpen ? 'flex' : 'hidden'}`}>
@@ -308,7 +308,7 @@ function ThreadList({ now }: { now: number }) {
       {!threadsLoading && threads.length === 0 && !threadsError && (
         <button
           type="button"
-          className="flex h-8 w-full items-center rounded-lg pl-[31px] text-left text-[13px] text-qn-dim hover:bg-qn-hover hover:text-qn-text"
+          className="flex h-8 w-full items-center rounded-lg pl-[31px] text-left text-ui text-qn-dim hover:bg-qn-hover hover:text-qn-text"
           onClick={() => startDraft()}
         >
           暂无会话，开始一个
@@ -333,7 +333,7 @@ function ThreadList({ now }: { now: number }) {
       {hidden > 0 && (
         <button
           type="button"
-          className="h-7 w-full rounded-lg pl-[31px] text-left text-[12px] text-qn-muted hover:bg-qn-hover hover:text-qn-text"
+          className="h-7 w-full rounded-lg pl-[31px] text-left text-ui-sm text-qn-muted hover:bg-qn-hover hover:text-qn-text"
           onClick={() => setShowAll(true)}
         >
           显示其余 {hidden} 个会话
@@ -351,7 +351,7 @@ function ThreadList({ now }: { now: number }) {
         />
       )}
       {threadsError && threadsError === openError && currentTargetId && (
-        <div className="py-1 pl-[31px] text-[12px] text-qn-dim">会话列表不可用</div>
+        <div className="py-1 pl-[31px] text-ui-sm text-qn-dim">会话列表不可用</div>
       )}
     </div>
   )

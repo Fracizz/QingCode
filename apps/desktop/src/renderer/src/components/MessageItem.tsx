@@ -93,7 +93,7 @@ function ToolRow({
 }) {
   if (!children) {
     return (
-      <div className="flex min-h-7 items-center gap-2 text-[13px] text-qn-muted">
+      <div className="flex min-h-7 items-center gap-2 text-ui text-qn-muted">
         <span className="shrink-0">{icon}</span>
         <span className="min-w-0 flex-1 truncate">{summary}</span>
         {trailing}
@@ -101,7 +101,7 @@ function ToolRow({
     )
   }
   return (
-    <details className="group/tool text-[13px]">
+    <details className="group/tool text-ui">
       <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-lg text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden">
         <span className="shrink-0">{icon}</span>
         <span className="min-w-0 flex-1 truncate">{summary}</span>
@@ -119,8 +119,8 @@ function DiffBlock({ text }: { text: string }) {
   const truncated = lineCount(text) > rows.length
   return (
     <div>
-      {truncated && <div className="px-2 py-1 text-[12px] text-qn-dim">仅显示末尾 {rows.length} 行</div>}
-      <pre className="qn-scroll max-h-72 overflow-auto rounded-lg border border-qn-border bg-qn-code py-1 font-mono text-[12px] leading-5">
+      {truncated && <div className="px-2 py-1 text-ui-sm text-qn-dim">仅显示末尾 {rows.length} 行</div>}
+      <pre className="qn-scroll max-h-72 overflow-auto rounded-lg border border-qn-border bg-qn-code py-1 font-mono text-ui-sm leading-5">
         {rows.map((row, index) => (
           <div
             key={index}
@@ -163,21 +163,21 @@ function CommandItem({ item }: { item: Extract<ItemView, { kind: 'command' }> })
       summary={
         <>
           {running ? '正在运行 ' : '已运行 '}
-          <code className="font-mono text-[12.5px] text-qn-text/90">{item.command || '（命令）'}</code>
+          <code className="font-mono text-ui-sm text-qn-text/90">{item.command || '（命令）'}</code>
         </>
       }
       trailing={
         failed ? <Badge tone="danger">退出码 {item.exitCode}</Badge> : statusTone(item.status) === 'danger' ? <Badge tone="danger">{item.status}</Badge> : null
       }
     >
-      {item.cwd && <div className="mb-1 font-mono text-[12px] text-qn-dim">{item.cwd}</div>}
+      {item.cwd && <div className="mb-1 font-mono text-ui-sm text-qn-dim">{item.cwd}</div>}
       {output ? (
-        <pre className="qn-scroll max-h-72 overflow-auto whitespace-pre rounded-lg border border-qn-border bg-qn-code px-3 py-2 font-mono text-[12px] leading-5 text-qn-text/85">
+        <pre className="qn-scroll max-h-72 overflow-auto whitespace-pre rounded-lg border border-qn-border bg-qn-code px-3 py-2 font-mono text-ui-sm leading-5 text-qn-text/85">
           {truncated && <span className="block text-qn-dim">…（仅显示末尾 200 行）</span>}
           {output}
         </pre>
       ) : (
-        <div className="text-[12px] text-qn-dim">{running ? '等待输出…' : '无输出'}</div>
+        <div className="text-ui-sm text-qn-dim">{running ? '等待输出…' : '无输出'}</div>
       )}
     </ToolRow>
   )
@@ -193,7 +193,7 @@ function FileChangeItem({ item }: { item: Extract<ItemView, { kind: 'fileChange'
       icon={<FileDiff size={14} />}
       summary={item.changes.length === 0 ? '等待改动内容…' : `编辑了 ${item.changes.length} 个文件`}
       trailing={
-        <span className="shrink-0 font-mono text-[12px]">
+        <span className="shrink-0 font-mono text-ui-sm">
           {add > 0 && <span className="text-emerald-400">+{add}</span>} {del > 0 && <span className="text-red-400">−{del}</span>}
         </span>
       }
@@ -202,7 +202,7 @@ function FileChangeItem({ item }: { item: Extract<ItemView, { kind: 'fileChange'
         {item.changes.map((change, index) => (
           <div key={`${change.path}-${change.kind}-${index}`}>
             <div className="flex items-center gap-2 py-1">
-              <span className="min-w-0 truncate font-mono text-[12.5px] text-qn-text/90">{change.path}</span>
+              <span className="min-w-0 truncate font-mono text-ui-sm text-qn-text/90">{change.path}</span>
               <Badge>{change.kind}</Badge>
               {context && (
                 <FileChangeActions
@@ -227,7 +227,7 @@ function AgentMessage({ id, text, streaming, onFork }: { id: string; text: strin
   const components = useMemo(() => markdownComponents(streaming, context), [streaming, context])
   return (
     <div className="group/msg">
-      <div className={cn('qn-markdown break-words text-[length:var(--qn-chat-font-size,14px)] leading-[1.7] text-qn-prose', streaming && 'qn-streaming')}>
+      <div className={cn('qn-markdown break-words text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-prose', streaming && 'qn-streaming')}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={qnUrlTransform}>
           {text}
         </ReactMarkdown>
@@ -239,10 +239,10 @@ function AgentMessage({ id, text, streaming, onFork }: { id: string; text: strin
 
 export function TurnProgress({ activity }: { activity?: ThreadActivity }) {
   if (activity === 'interrupted') {
-    return <FeedbackRow message="本轮已中断" icon={<Square size={13} />} className="text-[13px] leading-6 text-qn-muted" />
+    return <FeedbackRow message="本轮已中断" icon={<Square size={13} />} className="text-ui leading-6 text-qn-muted" />
   }
   const message = activity === 'input' ? '等待输入…' : activity === 'pending' ? '等待审批…' : '正在处理…'
-  return <FeedbackRow message={message} icon={<LoadingIcon />} className="text-[13px] leading-6 text-qn-muted" />
+  return <FeedbackRow message={message} icon={<LoadingIcon />} className="text-ui leading-6 text-qn-muted" />
 }
 
 export const MessageItem = memo(function MessageItem({
@@ -267,7 +267,7 @@ export const MessageItem = memo(function MessageItem({
           icon={<Lightbulb size={14} strokeWidth={1.75} className={item.streaming ? 'animate-pulse text-qn-brand' : ''} />}
           summary={item.streaming ? '正在思考…' : '思考过程'}
         >
-          <div className="whitespace-pre-wrap break-words border-l border-qn-border pl-3 text-[length:calc(var(--qn-chat-font-size,14px)_-_1px)] leading-[1.8] text-qn-muted">
+          <div className="whitespace-pre-wrap break-words border-l border-qn-border pl-3 text-[length:calc(var(--qn-chat-font-size,15px)_-_1px)] leading-[1.8] text-qn-muted">
             {item.summary || '（暂无摘要）'}
           </div>
         </ToolRow>
@@ -281,7 +281,7 @@ export const MessageItem = memo(function MessageItem({
     case 'other':
       return (
         <ToolRow icon={<FileText size={14} />} summary={item.type}>
-          <div className="whitespace-pre-wrap break-words text-[13px] text-qn-muted">{item.summary}</div>
+          <div className="whitespace-pre-wrap break-words text-ui text-qn-muted">{item.summary}</div>
         </ToolRow>
       )
   }
@@ -291,7 +291,7 @@ export const MessageItem = memo(function MessageItem({
 export const ToolGroup = memo(function ToolGroup({ items }: { items: ItemView[] }) {
   const running = isGroupRunning(items)
   return (
-    <details className="group/steps text-[13px]">
+    <details className="group/steps text-ui">
       <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden">
         {running ? <LoadingIcon className="text-qn-brand" /> : <ListChecks size={14} />}
         <span className="min-w-0 truncate">{summarizeTools(items)}</span>
@@ -317,7 +317,7 @@ export const WorkGroup = memo(function WorkGroup({
   onFork?: (itemId: string, markdown: string) => void
 }) {
   return (
-    <details className="group/work text-[13px]">
+    <details className="group/work text-ui">
       <summary className="inline-flex min-h-7 cursor-pointer list-none items-center gap-1 text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden">
         <span>{durationMs ? `工作了 ${formatDuration(durationMs)}` : '工作过程'}</span>
         <ChevronDown size={14} className="shrink-0 text-qn-dim transition-transform group-open/work:rotate-180" />
@@ -381,17 +381,17 @@ function UserMessage({ item, onEdit }: {
       {(skills.length > 0 || files.length > 0 || named.length > 0) && (
         <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
           {skills.map((name) => (
-            <span key={'s-' + name} className="inline-flex h-6 items-center gap-1 rounded-md bg-qn-brand/10 px-2 text-[12px] text-qn-brand">
+            <span key={'s-' + name} className="inline-flex h-6 items-center gap-1 rounded-md bg-qn-brand/10 px-2 text-ui-sm text-qn-brand">
               <Wand2 size={12} /> {name}
             </span>
           ))}
           {named.map((path) => (
-            <span key={'i-' + path} title={path} className="inline-flex h-6 max-w-[16rem] items-center gap-1 rounded-md bg-qn-fg/[0.06] px-2 text-[12px] text-qn-muted">
+            <span key={'i-' + path} title={path} className="inline-flex h-6 max-w-[16rem] items-center gap-1 rounded-md bg-qn-fg/[0.06] px-2 text-ui-sm text-qn-muted">
               <ImageIcon size={12} className="shrink-0" /> <span className="truncate">{basename(path)}</span>
             </span>
           ))}
           {files.map((path) => (
-            <span key={'f-' + path} title={path} className="inline-flex h-6 max-w-[16rem] items-center gap-1 rounded-md bg-qn-fg/[0.06] px-2 text-[12px] text-qn-muted">
+            <span key={'f-' + path} title={path} className="inline-flex h-6 max-w-[16rem] items-center gap-1 rounded-md bg-qn-fg/[0.06] px-2 text-ui-sm text-qn-muted">
               <FileText size={12} className="shrink-0" /> <span className="truncate">{basename(path)}</span>
             </span>
           ))}
@@ -408,7 +408,7 @@ function UserMessage({ item, onEdit }: {
           <textarea
             ref={(area) => { area?.focus() }}
             aria-label="编辑已发送的消息"
-            className="qn-scroll block min-h-20 w-full resize-y bg-transparent px-1 text-[length:var(--qn-composer-font-size,14px)] leading-[1.7] outline-none"
+            className="qn-scroll block min-h-20 w-full resize-y bg-transparent px-1 text-[length:var(--qn-composer-font-size,15px)] leading-[1.7] outline-none"
             value={edit}
             disabled={saving}
             onChange={(event) => setEdit(event.target.value)}
@@ -416,19 +416,19 @@ function UserMessage({ item, onEdit }: {
               if (event.key === 'Escape' && !event.nativeEvent.isComposing && !saving) setEdit(null)
             }}
           />
-          {editFailed && <div role="status" className="px-1 text-[12px] text-qn-warn">发送失败，修改已保留</div>}
-          <div className="mt-2 flex flex-wrap justify-end gap-1.5 text-[12px]">
+          {editFailed && <div role="status" className="px-1 text-ui-sm text-qn-warn">发送失败，修改已保留</div>}
+          <div className="mt-2 flex flex-wrap justify-end gap-1.5 text-ui-sm">
             <button type="button" disabled={saving} className="rounded-md px-2 py-1 text-qn-muted hover:bg-qn-hover" onClick={() => setEdit(null)}>取消</button>
             <button type="submit" disabled={!canSave || saving} className="rounded-md bg-qn-text px-2 py-1 text-qn-bg disabled:opacity-40">{saving ? '提交中…' : '发送修订'}</button>
           </div>
         </form>
       ) : parsed.text.trim() && (
-        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-qn-fg/[0.06] bg-qn-bubble px-4 py-2.5 text-[length:var(--qn-chat-font-size,14px)] leading-[1.7] text-qn-text">
+        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-qn-fg/[0.06] bg-qn-bubble px-4 py-2.5 text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-text">
           {parsed.text}
         </div>
       )}
       {edit === null && (timestamp || parsed.text.trim() || onEdit) && (
-        <div className="flex h-6 items-center gap-1 text-[12px] text-qn-muted">
+        <div className="flex h-6 items-center gap-1 text-ui-sm text-qn-muted">
           {timestamp && <time className="mr-1" dateTime={timestamp.toISOString()}>{timestamp.toLocaleString('zh-CN', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false })}</time>}
           {parsed.text.trim() && (
             <IconButton label={copied ? '已复制' : '复制消息'} size="sm" onClick={() => void copyText(parsed.text).then((ok) => {

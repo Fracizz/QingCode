@@ -39,6 +39,17 @@
   /* 输入框、分段控件底 */
   --color-qn-field: #161616;
   --font-mono: "Cascadia Mono", "JetBrains Mono", "Consolas", "Microsoft YaHei", monospace;
+  /*
+   * 界面字号阶梯，按 1920×1080、100% 缩放调校：常驻文字不小于 12px，正文 14–15px。
+   * 只定义字号不带行高，与原先 text-[Npx] 的行为一致；改档位只改这里。
+   * 新增档位要同步 lib/cn.ts 的 tailwind-merge 配置，否则会被当成颜色类误删。
+   */
+  --text-ui-2xs: 11px;
+  --text-ui-xs: 12px;
+  --text-ui-sm: 13px;
+  --text-ui: 14px;
+  --text-ui-md: 15px;
+  --text-ui-lg: 16px;
 }
 
 :root {
@@ -243,7 +254,7 @@ button:disabled {
     background: var(--color-qn-field);
     color: var(--color-qn-text);
     padding: 7px 10px;
-    font-size: 13px;
+    font-size: 14px;
     line-height: 20px;
     outline: none;
     transition:
@@ -268,7 +279,7 @@ button:disabled {
     border-radius: 8px;
     background: var(--color-qn-accent);
     color: #fff;
-    font-size: 13px;
+    font-size: 14px;
     line-height: 20px;
     padding: 6px 12px;
   }
@@ -282,7 +293,7 @@ button:disabled {
     border-radius: 8px;
     background: transparent;
     color: var(--color-qn-text);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 20px;
     padding: 6px 12px;
   }
@@ -526,7 +537,7 @@ body.qn-resizing webview {
   white-space: pre;
   padding: 10px 14px;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.6;
 }
 

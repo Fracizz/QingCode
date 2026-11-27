@@ -66,7 +66,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-8 max-w-[16rem] items-center gap-1 rounded-lg px-2 text-[13px] text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover data-[state=open]:text-qn-text"
+          className="inline-flex h-8 max-w-[16rem] items-center gap-1 rounded-lg px-2 text-ui text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover data-[state=open]:text-qn-text"
           aria-label="选择模型与推理强度"
         >
           {list?.loading && models.length === 0 ? (
@@ -91,7 +91,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
           ref={searchRef}
           label="搜索模型"
           className="gap-2.5 border-b border-qn-border px-3.5 py-3"
-          inputClassName="text-[14px]"
+          inputClassName="text-ui-md"
           placeholder="搜索模型…"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -126,9 +126,9 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                 onClick={() => pick(model.model)}
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[14px] font-medium text-qn-text">{model.displayName}</span>
+                  <span className="block truncate text-ui-md font-medium text-qn-text">{model.displayName}</span>
                   {model.description && (
-                    <span className="mt-0.5 line-clamp-2 block text-[13px] leading-5 text-qn-muted">
+                    <span className="mt-0.5 line-clamp-2 block text-ui leading-5 text-qn-muted">
                       {localizeModelDescription(model.description)}
                     </span>
                   )}
@@ -143,7 +143,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
           <div className="space-y-2 border-t border-qn-border px-3.5 py-3">
             {selection.model.efforts.length > 0 && (
               <div className="flex items-center justify-between gap-3">
-                <span className="shrink-0 text-[13px] text-qn-muted">推理强度</span>
+                <span className="shrink-0 text-ui text-qn-muted">推理强度</span>
                 <div className="flex flex-wrap justify-end gap-1" role="radiogroup" aria-label="推理强度">
                   {selection.model.efforts.map((effort) => {
                     const active = effort.value === selection.effort
@@ -154,7 +154,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                         role="radio"
                         aria-checked={active}
                         className={cn(
-                          'h-8 rounded-lg px-2.5 text-[13px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+                          'h-8 rounded-lg px-2.5 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
                           active ? 'bg-qn-active font-medium text-qn-text' : 'text-qn-muted hover:bg-qn-hover hover:text-qn-text',
                         )}
                         onClick={() => setPrefs(agent, { effort: effort.value })}
@@ -176,13 +176,13 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
             )}
             {selection.fastTier && (
               <div className="flex items-center justify-between gap-3">
-                <span className="shrink-0 text-[13px] text-qn-muted">速度</span>
+                <span className="shrink-0 text-ui text-qn-muted">速度</span>
                 <Tip label="优先处理请求，响应更快，额度消耗更多">
                 <button
                   type="button"
                   aria-pressed={selection.fast}
                   className={cn(
-                    'inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[13px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+                    'inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
                     selection.fast
                       ? 'border-qn-warn/50 bg-qn-warn/10 text-qn-warn'
                       : 'border-qn-border-strong text-qn-muted hover:bg-qn-hover hover:text-qn-text',

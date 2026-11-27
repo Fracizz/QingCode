@@ -177,10 +177,10 @@ export function TargetPicker(actions: TargetActions) {
                 >
                   <TargetGlyph target={target} state={state} size={26} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] text-qn-text">{target.name}</span>
-                    <span className="block truncate font-mono text-[11px] leading-4 text-qn-dim">{targetSubtitle(target)}</span>
+                    <span className="block truncate text-ui text-qn-text">{target.name}</span>
+                    <span className="block truncate font-mono text-ui-xs leading-4 text-qn-dim">{targetSubtitle(target)}</span>
                   </span>
-                  <span className={`shrink-0 text-[11px] ${state === 'error' ? 'text-qn-danger' : 'text-qn-dim'} group-hover:hidden`}>
+                  <span className={`shrink-0 text-ui-xs ${state === 'error' ? 'text-qn-danger' : 'text-qn-dim'} group-hover:hidden`}>
                     {targetStateLabel[state]}
                   </span>
                   {inSidebar && <Check size={14} className="shrink-0 text-qn-brand group-hover:hidden" aria-label="已在侧栏" />}
@@ -196,7 +196,7 @@ export function TargetPicker(actions: TargetActions) {
         <div className="border-t border-qn-border p-1.5">
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-qn-text outline-none hover:bg-qn-hover focus-visible:bg-qn-hover"
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-ui text-qn-text outline-none hover:bg-qn-hover focus-visible:bg-qn-hover"
             onClick={() => run(actions.onAdd)}
           >
             <Plus size={15} className="text-qn-muted" /> 添加 SSH 连接
@@ -248,13 +248,13 @@ export function TargetSectionHeader({
           />
           <TargetGlyph target={target} state={state} size={22} />
           <span
-            className={`min-w-0 flex-1 truncate text-[13px] font-semibold ${current ? 'text-qn-text' : 'text-qn-text/80'}`}
+            className={`min-w-0 flex-1 truncate text-ui font-semibold ${current ? 'text-qn-text' : 'text-qn-text/80'}`}
           >
             {target.name}
           </span>
         </button>
         <span
-          className={`shrink-0 pr-1.5 text-[11px] group-hover:hidden ${menuOpen ? 'hidden' : ''} ${
+          className={`shrink-0 pr-1.5 text-ui-xs group-hover:hidden ${menuOpen ? 'hidden' : ''} ${
             state === 'error' ? 'text-qn-danger' : 'text-qn-dim'
           }`}
         >
