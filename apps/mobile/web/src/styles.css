@@ -1413,22 +1413,6 @@ input[type="radio"] {
   border-radius: 8px;
 }
 
-.qn-image-preview {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 0;
-}
-
-.qn-image-preview img {
-  max-width: 100%;
-  max-height: calc(100% - 76px);
-  min-height: 0;
-  object-fit: contain;
-}
-
 /* 消息操作入口是次要操作：小尺寸、低对比，靠左贴着回复，不撑高消息。 */
 .qn-message-actions {
   display: flex;
@@ -1847,6 +1831,8 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 .qn-tool-chevron { transition: transform var(--qn-motion-medium) var(--qn-ease-emphasized); }
 .qn-tool[open] > .qn-tool-row .qn-tool-chevron,
 .qn-tool-group[open] > .qn-tool-row .qn-tool-chevron { transform: rotate(90deg); }
+.qn-work-group > .qn-tool-row { display: inline-flex; gap: 4px; padding-inline: 4px; }
+.qn-work-group[open] > .qn-tool-row .qn-tool-chevron { transform: rotate(180deg); }
 /* 每轮末尾的命令摘要：比正文更轻，只占一行；有失败时标红提醒。 */
 .qn-tool-trail { margin-top: 4px; }
 .qn-tool-trail > .qn-tool-row { min-height: 40px; font-size: 11.5px; }

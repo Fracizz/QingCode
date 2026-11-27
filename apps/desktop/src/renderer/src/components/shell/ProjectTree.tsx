@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent } from 'react'
-import { Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, SquarePen, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, SquarePen, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { copyText } from '../../lib/clipboard'
 import type { Project, Target, TargetState } from '../../../../shared/backendApi'
@@ -321,6 +321,9 @@ function ProjectRow({
             </button>
           </MenuTrigger>
           <MenuContent align="start" className="min-w-52" onKeyDown={shortcut}>
+            <MenuItem icon={expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} onSelect={onOpen}>
+              {expanded ? '收起' : '展开'}
+            </MenuItem>
             <MenuItem icon={pinned ? <PinOff size={14} /> : <Pin size={14} />} hint="P" onSelect={() => togglePin(project.id)}>
               {pinned ? '取消置顶' : '置顶'}
             </MenuItem>

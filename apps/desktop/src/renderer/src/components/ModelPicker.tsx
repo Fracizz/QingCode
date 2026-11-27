@@ -32,11 +32,13 @@ const triggerClass = 'inline-flex h-8 max-w-[16rem] items-center gap-1 rounded-l
  * 选择按 agent 记在本机，发送时作为 turn/start 的 model / effort / serviceTier 覆盖项。
  * pi 需要先有运行中的会话才能读到模型，冷启动时由用户主动开启。
  */
-export function ModelPicker({ targetId, agent, threadId, piDraft }: {
+export function ModelPicker({ targetId, agent, threadId, piDraft, open: controlledOpen, onOpenChange }: {
   targetId: string
   agent: AgentKind
   threadId: string | null
   piDraft?: { start: () => void; starting: boolean; disabled: boolean }
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }) {
   const key = sessionKey(targetId, agent)
   const rpc = useCodex((s) => {
@@ -50,7 +52,9 @@ export function ModelPicker({ targetId, agent, threadId, piDraft }: {
   const prefs = useModels((s) => s.prefs[agent] ?? EMPTY_PREFS)
   const load = useModels((s) => s.load)
   const setPrefs = useModels((s) => s.setPrefs)
-  const [open, setOpen] = useState(false)
+  const [ownOpen, setOwnOpen] = useState(false)
+  const open = controlledOpen ?? ownOpen
+  const setOpen = onOpenChange ?? setOwnOpen
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -63,7 +67,7 @@ export function ModelPicker({ targetId, agent, threadId, piDraft }: {
   const visible = useMemo(() => filterModels(models, query), [models, query])
 
   const empty = models.length === 0 && !list?.loading && !list?.error
-  if (piDraft && (piDraft.starting || empty)) {
+  if (!open && piDraft && (piDraft.starting || empty)) {
     return (
       <button
         type="button"
@@ -76,7 +80,7 @@ export function ModelPicker({ targetId, agent, threadId, piDraft }: {
       </button>
     )
   }
-  if (!rpc || (empty && agent !== 'pi')) return null
+  if (!rpc || (!open && empty && agent !== 'pi')) return null
 
   const pick = (model: string) => {
     const option = models.find((item) => item.model === model)
@@ -239,8 +243,14 @@ export function ModelPicker({ targetId, agent, threadId, piDraft }: {
 }
 
 /** 有窗口大小时显示占用环；Claude 和 pi 只有单轮统计时显示用量详情。 */
-export function ContextRing({ tokenUsage }: { tokenUsage: unknown }) {
+export function ContextRing({ tokenUsage, onClick }: { tokenUsage: unknown; onClick?: () => void }) {
   const usage = contextUsage(tokenUsage)
+  if (onClick) {
+    const tone = usage && (usage.percent >= 90 ? 'var(--color-qn-danger)' : usage.percent >= 75 ? 'var(--color-qn-warn)' : 'var(--color-qn-muted)')
+    return <IconButton label={usage ? `上下文已用 ${usage.percent}%` : '查看会话用量'} onClick={onClick}>
+      {usage && tone ? <ProgressRing percent={usage.percent} size={14} color={tone} /> : <Gauge size={15} />}
+    </IconButton>
+  }
   if (!usage) {
     const turn = estimatedTurnUsage(tokenUsage)
     if (!turn) return null

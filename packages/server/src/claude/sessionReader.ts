@@ -1,4 +1,5 @@
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads'
+import type { ForkSessionOptions, ForkSessionResult } from '@anthropic-ai/claude-agent-sdk'
 import { agentConfigEnv } from '../codexHost'
 import { redact } from '../log'
 
@@ -8,11 +9,13 @@ type SessionRequest =
   | { method: 'list'; options?: SessionListOptions }
   | { method: 'info'; sessionId: string }
   | { method: 'messages'; sessionId: string; options?: MessageListOptions }
+  | { method: 'fork'; sessionId: string; options: ForkSessionOptions }
 
 export interface ClaudeSessionReader {
   listSessions(options?: SessionListOptions): Promise<unknown[]>
   getSessionInfo?(sessionId: string): Promise<unknown>
   getSessionMessages(sessionId: string, options?: MessageListOptions): Promise<unknown[]>
+  forkSession?(sessionId: string, options: ForkSessionOptions): Promise<ForkSessionResult>
 }
 
 type Reply = { result: unknown } | { error: string }
@@ -38,6 +41,7 @@ export function isolatedClaudeSessionReader(directory: string): ClaudeSessionRea
     listSessions: (options) => read({ method: 'list', options }),
     getSessionInfo: (sessionId) => read({ method: 'info', sessionId }),
     getSessionMessages: (sessionId, options) => read({ method: 'messages', sessionId, options }),
+    forkSession: (sessionId, options) => read({ method: 'fork', sessionId, options }),
   }
 }
 
@@ -56,6 +60,9 @@ export async function runClaudeHistoryWorker(): Promise<boolean> {
         break
       case 'messages':
         result = await sdk.getSessionMessages(request.sessionId, request.options)
+        break
+      case 'fork':
+        result = await sdk.forkSession(request.sessionId, request.options)
         break
     }
     parentPort.postMessage({ result } satisfies Reply)

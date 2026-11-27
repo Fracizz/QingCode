@@ -1,6 +1,6 @@
-import type { ItemView, ThreadView } from '@qn/codex-client'
+import type { ItemView, ThreadView, TurnEntry } from '@qn/codex-client'
 
-export { formatDuration, groupFlow, groupTurns, isEmptyReasoning, turnTimeline, type FlowEntry, type TurnEntry } from '@qn/codex-client'
+export { formatDuration, groupFlow, groupTurns, isEmptyReasoning, streamingReplyId, turnTimeline, type FlowEntry, type TurnEntry } from '@qn/codex-client'
 
 export function hasPendingSubmission(items: ItemView[], submitting: boolean): boolean {
   if (!submitting) return false
@@ -8,13 +8,13 @@ export function hasPendingSubmission(items: ItemView[], submitting: boolean): bo
   return item?.kind === 'user' && item.pending === true
 }
 
-export function streamingReplyId(thread: ThreadView | undefined): string | undefined {
-  if (thread?.status !== 'running') return
-  const itemIds = thread.turns?.findLast((turn) => turn.id === thread.activeTurnId)?.itemIds
-  if (itemIds?.length === 0) return
-  // 命令或新回复接管后，不能让还没收到完成事件的旧回复重新出现指示。
-  const last = itemIds ? thread.items.findLast((item) => itemIds.includes(item.id)) : thread.items.at(-1)
-  if (last?.kind === 'agent' && last.streaming && last.text.trim()) return last.id
+export function needsTurnProgress(thread: ThreadView, visibleEntries: readonly TurnEntry[]): boolean {
+  if (thread.activity === 'input' || thread.activity === 'pending') return true
+  const activeIds = thread.turns?.findLast((turn) => turn.id === thread.activeTurnId)?.itemIds
+  const thinking = (item: ItemView) => item.kind === 'reasoning' && item.streaming && (activeIds?.includes(item.id) ?? true)
+  // 正在思考的行或工具组已经显示了进度，只在当前轮次缺少这个提示时补一行。
+  return !visibleEntries.some((entry) => entry.kind === 'item' ? thinking(entry.item)
+    : entry.kind === 'tools' && entry.items.some(thinking))
 }
 
 export function formatStoppedDuration(ms: number): string {

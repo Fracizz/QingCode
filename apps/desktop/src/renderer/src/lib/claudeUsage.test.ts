@@ -38,18 +38,18 @@ describe('Claude 费用估算', () => {
 
   it('徽标与详情展示限额事件、上限和估算标记', () => {
     const empty = emptySnapshot()
-    expect(claudeRateLimitStatus(empty)).toBe('暂无限额事件')
-    expect(claudeCompactText(empty, 0.01)).toBe('暂无限额事件 · ≈$0.01（估算）')
+    expect(claudeRateLimitStatus(empty)).toBe('等待 Claude CLI 上报')
+    expect(claudeCompactText(empty, 0.01)).toBe('等待 Claude CLI 上报 · ≈$0.01（估算）')
 
     const snapshot = {
       ...empty,
       primary: { usedPercent: 90, windowDurationMins: 300, resetsAt: null },
     }
-    expect(claudeRateLimitStatus(snapshot)).toBe('利用率 90%（本次限额事件）')
-    expect(claudeCompactText(snapshot, 0.012)).toBe('限额 90% · ≈$0.012（估算）')
+    expect(claudeRateLimitStatus(snapshot)).toBe('上报剩余 10%')
+    expect(claudeCompactText(snapshot, 0.012)).toBe('上报剩余 10% · ≈$0.012（估算）')
 
     const reached = { ...snapshot, rateLimitReachedType: 'rate_limit_reached' as const }
     expect(claudeRateLimitStatus(reached)).toBe('已达额度上限')
-    expect(claudeCompactText(reached, 0)).toBe('已达上限')
+    expect(claudeCompactText(reached, 0)).toBe('已达额度上限')
   })
 })

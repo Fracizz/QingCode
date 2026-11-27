@@ -1,9 +1,9 @@
-import type { RateLimitSnapshot, AccountSummary } from '@qn/codex-client'
+import type { ClaudeRateLimitSnapshot, AccountSummary } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { DEFAULT_AGENT, sessionKey } from './agents'
 
 export type RateLimitEntry = {
-  snapshot: RateLimitSnapshot | null
+  snapshot: ClaudeRateLimitSnapshot | null
   account: AccountSummary | null
   updatedAt: number | null
   loading: boolean

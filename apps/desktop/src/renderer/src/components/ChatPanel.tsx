@@ -2,9 +2,10 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragE
 import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { CodexRpcLike, ItemView, ThreadView } from '@qn/codex-client'
-import { collectSubagents, DRAFT_THREAD_ID } from '@qn/codex-client'
+import { accessOptions, chatCommands, chatCommandUnavailable, claudeQuotaBlocked, collectSubagents, contextUsage, DRAFT_THREAD_ID,
+  estimatedTurnUsage, formatTokens, includeWorkSummary, type ChatCommandId } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
-import { buildAnnotatedMessage, quoteBlock, sideChatExcerpt, type Annotation } from '../lib/annotations'
+import { buildAnnotatedMessage, sideChatExcerpt, type Annotation } from '../lib/annotations'
 import { agentLabel, sessionKey } from '../lib/agents'
 import {
   attachmentsBlocking,
@@ -14,20 +15,27 @@ import {
   MAX_ATTACHMENTS,
   MAX_FILE_BYTES,
   removePlaceholder,
+  stripImagePlaceholders,
   uniqueImageName,
   type Attachment,
   type SkillRef,
   type SlashItem,
 } from '../lib/attachments'
 import { readImage, uploadToTarget } from '../lib/attachmentIo'
+import { getAccessMode } from '../features/access/accessModel'
 import { screenFiles, useImageSupport } from '../features/composer'
+import { useSettings } from '../features/settings/settingsStore'
+import { formatCost } from '../lib/claudeUsage'
+import { copyText } from '../lib/clipboard'
 import { isAtBottom } from '../lib/diff'
 import { friendlyError } from '../lib/errors'
 import { targetDotClass } from '../lib/targetStatus'
 import { threadKey } from '../lib/threads'
-import { groupTurns, hasPendingSubmission, streamingReplyId } from '../lib/turnGroups'
-import { composerDraftKey, currentThreadApprovals, pendingSendKey, useCodex, type SendMode } from '../store/codex'
+import { groupTurns, hasPendingSubmission, needsTurnProgress, streamingReplyId } from '../lib/turnGroups'
+import { composerDraftKey, currentThreadApprovals, currentThreads, pendingSendKey, useCodex, type SendMode } from '../store/codex'
+import { useDock } from '../store/dock'
 import { useProjects } from '../store/projects'
+import { useRateLimits } from '../store/rateLimits'
 import { skillsKey, useSkills } from '../store/skills'
 import { useTargets } from '../store/targets'
 import { useThreadPrefs } from '../store/threadPrefs'
@@ -39,6 +47,7 @@ import { Composer } from './Composer'
 import { LoadingIcon } from './LoadingIcon'
 import { MessageItem, ToolGroup, TurnProgress, TurnStopped, WorkGroup } from './MessageItem'
 import { ContextRing, ModelPicker } from './ModelPicker'
+import { RateLimitDetails } from './RateLimitBadge'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
 import { StatusDot } from './StatusDot'
@@ -48,7 +57,7 @@ import { WelcomePane } from './shell/WelcomePane'
 import { SubagentLauncher } from './SubagentDetails'
 import { TurnErrorNote } from './TurnErrorNote'
 import { TurnNavigation } from './TurnNavigation'
-import { EmptyState, ErrorNote } from './ui'
+import { EmptyState, ErrorNote, Modal } from './ui'
 
 const HISTORY_BATCH_SIZE = 60
 
@@ -136,6 +145,12 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const [historyLoad, setHistoryLoad] = useState<{ key: string | null; error?: string } | null>(null)
   const loadEarlierHistory = useCodex((s) => s.loadEarlierHistory)
   const draftKey = useCodex(composerDraftKey)
+  const [commandDialog, setCommandDialog] = useState<{ key: string; id: ChatCommandId } | null>(null)
+  const [commandFeedback, setCommandFeedback] = useState<{ key: string; message: string } | null>(null)
+  const [commandName, setCommandName] = useState('')
+  const [commandPending, setCommandPending] = useState(false)
+  const activeCommand = commandDialog?.key === draftKey ? commandDialog.id : null
+  const commandMessage = commandFeedback?.key === draftKey ? commandFeedback.message : null
   const sendingDraftKey = useRef<string | null>(null)
   const [startingPiDraft, setStartingPiDraft] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
@@ -184,6 +199,12 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const chatKey = currentTargetId ? pendingSendKey({ targetId: currentTargetId, agent: currentAgent, threadId: visibleThreadId }) : null
   const sendingMessage = useCodex((s) => s.sendingMessage?.key === chatKey ? s.sendingMessage : null)
   const sendingQueued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.[0]?.sending))
+  const queued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.length))
+  const compactionStarting = useCodex((s) => !!(chatKey && s.compacting[chatKey]))
+  const quota = useRateLimits((s) => {
+    if (currentAgent === 'claude') return sessionId ? s.byAgent[sessionId]?.snapshot : null
+    return currentAgent === 'codex' && currentTargetId ? s.byTarget[currentTargetId]?.snapshot : null
+  })
   const view = useCodex((s) => sessionId ? s.sessions[sessionId]?.state.threads[visibleThreadId] : undefined)
   const preview = sendingMessage?.preview
   const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? noItems), preview] : view?.items ?? noItems, [preview, view?.items])
@@ -197,15 +218,19 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
     ? { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId } as const : null
   const approvals = useCodex(currentThreadApprovals)
   const running = view?.status === 'running'
+  const activeItems = running ? view.turns?.find((turn) => turn.id === view.activeTurnId)?.itemIds : undefined
+  const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
+    item.type === 'contextCompaction' && item.status === 'inProgress' && activeItems?.includes(item.id))
   const streamingId = streamingReplyId(view)
   const interrupted = !running && view?.activity === 'interrupted'
-  const showProgress = approvals.length === 0 && !openError
-    && (running || hasPendingSubmission(items, !!sendingMessage || sendingQueued))
   const flow = useMemo(() => groupTurns(items, view?.turns, running),
     [items, view?.turns, running])
-  const empty = items.length === 0 && flow.length === 0 && approvals.length === 0 && !running && !showProgress
   const defaultStart = Math.max(0, flow.length - HISTORY_BATCH_SIZE)
-  const firstVisible = historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart
+  const firstVisible = includeWorkSummary(flow, historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart)
+  const visibleFlow = flow.slice(firstVisible)
+  const showProgress = approvals.length === 0 && !openError
+    && (running ? needsTurnProgress(view, visibleFlow) : hasPendingSubmission(items, !!sendingMessage || sendingQueued))
+  const empty = items.length === 0 && flow.length === 0 && approvals.length === 0 && !running && !showProgress
   const historyLoading = historyLoad?.key === chatKey && historyLoad.error === undefined
   const historyError = historyLoad?.key === chatKey ? historyLoad.error : undefined
 
@@ -313,7 +338,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   }
 
   const submit = async (text: string, mode: SendMode): Promise<boolean> => {
-    const message = buildAnnotatedMessage(annotations, text)
+    const message = buildAnnotatedMessage(annotations, stripImagePlaceholders(text, attachments))
     const input = buildUserInput(message, attachments, skills)
     const newDraft = currentThreadId === null
     if (input.length === 0 || (newDraft && sendingDraftKey.current)) return false
@@ -335,7 +360,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
       const next = { ...previous }
       delete next[draftKey]
       const unsent = accepted ? {
-        text: source.text === text ? '' : source.text,
+        text: source.text === text ? '' : stripImagePlaceholders(source.text, attachments),
         annotations: source.annotations.filter((item) => !annotations.includes(item)),
         attachments: source.attachments.filter((item) => !attachments.includes(item)),
         skills: {
@@ -505,21 +530,12 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
     }
   }
 
-  // "从这里开始新会话"：回到草稿态并把引用填进输入框，用户补充后发送才真正建会话。
   const forkThread = useCodex((s) => s.forkThread)
-  // 分支到新聊天：Codex 用 thread/fork 截到这条回复所在的轮次，与侧栏"创建聊天分支"同一能力；
-  // 其他 Agent 没有分叉 RPC，退化为带引用的新草稿。
-  const forkFromMessage = (itemId: string, markdown: string) => {
-    const turnId = view?.turns?.find((turn) => turn.itemIds.includes(itemId))?.id
-    if (currentAgent === 'codex' && currentThreadId && turnId) {
-      void forkThread(currentThreadId, currentAgent, turnId)
-      return
-    }
-    startDraft(currentAgent)
-    updateDraft((item) => ({ ...item, text: quoteBlock(markdown) }), composerDraftKey(useCodex.getState()))
+  const forkFromMessage = (itemId: string) => {
+    const turn = view?.turns?.find((candidate) => candidate.itemIds.includes(itemId))
+    if (!currentThreadId || !turn || turn.id === view?.activeTurnId) return
+    return () => void forkThread(currentThreadId, currentAgent, turn.id)
   }
-  // 进行中的轮次不能分叉（Codex 会拒绝），运行期间先不提供入口。
-  const canFork = !(currentAgent === 'codex' && running)
 
   const target = targets.find((item) => item.id === currentTargetId)
   const project = projects.find((item) => item.id === selectedProjectId)
@@ -536,24 +552,97 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
     if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, refreshClaudeSkills)
   }, [skillKey, currentCwd, skillRpc, loadSkills, refreshClaudeSkills])
 
-  const slashItems = useMemo<SlashItem[]>(
-    () => [
-      { id: 'new', kind: 'command', name: 'new', description: '开始新会话' },
-      ...(running ? [{ id: 'stop', kind: 'command' as const, name: 'stop', description: '停止当前运行' }] : []),
-      { id: 'refresh', kind: 'command', name: 'refresh', description: '刷新会话列表与技能' },
-      ...(skillList?.items ?? []),
-    ],
-    [running, skillList],
-  )
+  const threads = useCodex(currentThreads)
+  const localTitle = useThreadPrefs((s) => currentTargetId && currentThreadId
+    ? s.byTarget[currentTargetId]?.names[threadKey(currentAgent, currentThreadId)]
+    : undefined)
+  const usage = contextUsage(view?.tokenUsage)
+  const turnUsage = estimatedTurnUsage(view?.tokenUsage)
+  const latestReply = items.findLast((item) => item.kind === 'agent' && !item.streaming && item.text.trim())
+  const quotaBlocked = currentAgent === 'claude' ? claudeQuotaBlocked(quota) : !!(quota?.rateLimitReachedType || quota?.spendControlReached)
+  const compactBlocked = !currentThreadId || !opened || !view || openingThread ? '请先打开会话'
+    : running || sending || compacting || approvals.length ? '请先等待当前一轮结束'
+    : queued ? '请先处理排队的消息' : quotaBlocked ? '当前额度已用完' : null
+  const commandReason = (id: ChatCommandId) => {
+    if (id === 'model' && !opened) return '请先连接当前 Agent'
+    if (id === 'diff' && !currentCwd) return '请先选择项目'
+    return chatCommandUnavailable(id, {
+      agent: currentAgent, thread: !!currentThreadId, running,
+      busy: sending || compacting || !!openingThread || commandPending, compactBlocked, hasReply: !!latestReply,
+    })
+  }
+  const slashItems: SlashItem[] = [
+    ...chatCommands.map(({ id, name, description }) => ({
+      id: name, name, description: id === 'refresh' ? '刷新会话列表与技能' : description,
+      kind: 'command' as const, reason: commandReason(id),
+    })),
+    ...(skillList?.items ?? []),
+  ]
+  const closeCommand = () => setCommandDialog(null)
+  const showCommandMessage = (message: string) => setCommandFeedback({ key: draftKey, message })
+  const showCommand = (id: ChatCommandId) => setCommandDialog({ key: draftKey, id })
 
-  const runCommand = (id: string) => {
-    if (id === 'new') startDraft(currentAgent)
-    else if (id === 'stop') void interrupt()
-    else if (id === 'refresh') {
-      void refreshThreads()
-      if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, true)
+  const runCommand = (name: string) => {
+    const command = chatCommands.find((entry) => entry.name === name)
+    if (!command) return
+    const { id } = command
+    const blocked = commandReason(id)
+    if (blocked) { showCommandMessage(blocked); return }
+    setCommandFeedback(null)
+    switch (id) {
+      case 'new': startDraft(currentAgent); return
+      case 'stop': void interrupt(); return
+      case 'refresh':
+        void refreshThreads()
+        if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, true)
+        return
+      case 'diff': useDock.getState().showTool('git'); return
+      case 'resume':
+        if (project && project.targetId === currentTargetId && project.path === currentCwd) {
+          useProjects.getState().setExpanded(project, true)
+          useUi.getState().revealThreadList({ targetId: project.targetId, projectId: project.id, threadKey: null })
+          return
+        }
+        break
+      case 'rename':
+        setCommandName(localTitle ?? threads.find((thread) => thread.agent === currentAgent && thread.id === currentThreadId)?.title ?? '')
+        break
+      case 'copy':
+        if (latestReply?.kind === 'agent') void copyText(latestReply.text).then((ok) => showCommandMessage(ok ? '已复制最近一条回复' : '复制失败'))
+        return
+    }
+    showCommand(id)
+  }
+
+  async function confirmCommand(id: 'rename' | 'archive' | 'fork' | 'compact') {
+    if (!currentTargetId || !currentThreadId || commandReason(id)) return
+    const name = commandName.trim()
+    if (id === 'rename' && !name) return
+    const state = useCodex.getState()
+    setCommandPending(true)
+    if (id === 'compact') closeCommand()
+    try {
+      if (id === 'compact') await state.compactConversation()
+      else {
+        let ok: boolean
+        if (id === 'archive') ok = await state.archiveThread(currentThreadId, currentAgent)
+        else if (id === 'fork') ok = await state.forkThread(currentThreadId, currentAgent)
+        else {
+          ok = currentAgent !== 'codex' || await state.renameThread(currentThreadId, currentAgent, name)
+          if (ok) useThreadPrefs.getState().setLocalName(currentTargetId, threadKey(currentAgent, currentThreadId), currentAgent === 'codex' ? null : name)
+        }
+        if (!ok) { showCommandMessage(useCodex.getState().error ?? '会话操作失败'); return }
+        setCommandDialog((current) => current?.key === draftKey && current.id === id ? null : current)
+      }
+    } finally {
+      setCommandPending(false)
     }
   }
+
+  const accessMode = useCodex((state) => currentTargetId ? getAccessMode(state.access,
+    { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId },
+    useSettings.getState().settings.general.globalAccessMode) : 'default')
+  const access = accessOptions[currentAgent].find((option) => option.mode === accessMode)
 
   // 切换草稿后只跟踪当前输入框的读图进度。
   useLayoutEffect(() => {
@@ -639,12 +728,12 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
                   </button>
                 )}
                 {historyError && <div role="alert" className="text-center text-ui-md text-qn-danger">{historyError}</div>}
-                {flow.slice(firstVisible).map((entry, index) => {
-                  const previous = index > 0 ? flow[firstVisible + index - 1] : undefined
+                {visibleFlow.map((entry, index) => {
+                  const previous = visibleFlow[index - 1]
                   if (entry.kind === 'tools') return <ToolGroup key={entry.key} items={entry.items} />
                   if (entry.kind === 'work') {
                     return <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries}
-                      replyCompletedAtMs={entry.reply?.completedAtMs} onFork={canFork ? forkFromMessage : undefined} />
+                      replyCompletedAtMs={entry.reply?.completedAtMs} onFork={forkFromMessage} />
                   }
                   if (entry.kind === 'stopped') return <TurnStopped key={entry.key} durationMs={entry.durationMs} />
                   const key = `${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`
@@ -654,7 +743,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
                       item={entry.item}
                       showStreamingDots={entry.item.id === streamingId}
                       replyTimeInSummary={previous?.kind === 'work' && previous.reply?.id === entry.item.id}
-                      onFork={canFork ? forkFromMessage : undefined}
+                      onFork={forkFromMessage}
                       showRevisionMarker={entry.item.id === revisionItemId}
                       editRestartsConversation={!!revisionChat}
                       onEdit={revisionChat
@@ -708,6 +797,9 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
         />
         <AnnotationBar annotations={annotations} onRemove={removeAnnotation} contentWidthClassName={contentWidthClassName} />
       </div>
+      {commandMessage && !activeCommand && (
+        <div role="status" className="mx-auto w-full max-w-3xl px-4 py-1 text-ui text-qn-muted">{commandMessage}</div>
+      )}
       <Composer
         key={draftKey}
         suggestionBoundaryRef={scrollRef}
@@ -715,7 +807,9 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
         onSend={submit}
         onInterrupt={() => void interrupt()}
         running={running}
-        sending={sending || preparingPi}
+        canSteer={!!view?.activeTurnId}
+        compacting={compacting}
+        sending={sending || preparingPi || compactionStarting}
         disabled={!currentTargetId}
         error={error}
         onClearError={clearError}
@@ -741,11 +835,13 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
         trailing={
           currentTargetId && (
             <>
-              <ContextRing tokenUsage={view?.tokenUsage} />
+              <ContextRing tokenUsage={view?.tokenUsage} onClick={currentThreadId ? () => showCommand('context') : undefined} />
               <ModelPicker
                 targetId={currentTargetId}
                 agent={currentAgent}
                 threadId={currentThreadId}
+                open={activeCommand === 'model'}
+                onOpenChange={(open) => open ? showCommand('model') : closeCommand()}
                 piDraft={currentAgent === 'pi' && isDraft ? {
                   start: () => void preparePiDraft(),
                   starting: preparingPi,
@@ -775,6 +871,56 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
           </>
         }
       />
+      {activeCommand === 'help' && <Modal title="对话命令" onClose={closeCommand}>
+        <ul className="space-y-2">{chatCommands.map(({ id, name, description }) => (
+          <li key={name}><span className="font-medium">/{name}</span> <span className="text-qn-muted">{commandReason(id) ?? description}</span></li>
+        ))}</ul>
+      </Modal>}
+      {activeCommand === 'status' && currentTargetId && <Modal title="账号额度" onClose={closeCommand}>
+        <RateLimitDetails targetId={currentTargetId} agent={currentAgent} threadId={currentThreadId} />
+      </Modal>}
+      {activeCommand === 'context' && <Modal title="会话用量" onClose={closeCommand}>
+        <div className="space-y-2">
+          {usage && <p>上下文已用 {usage.percent}% · {formatTokens(usage.used)} / {formatTokens(usage.window)} tokens</p>}
+          {turnUsage?.tokens != null && <p>最近上报的单轮用量 {formatTokens(turnUsage.tokens)} tokens</p>}
+          {turnUsage?.costUsd != null && <p>费用估算 {formatCost(turnUsage.costUsd)}</p>}
+          {!usage && !turnUsage && <p className="text-qn-muted">暂无会话用量</p>}
+          {currentThreadId && <>
+            <button type="button" className="qn-button" disabled={!!compactBlocked} onClick={() => showCommand('compact')}>压缩会话</button>
+            {compactBlocked && <p className="text-qn-muted">{compactBlocked}</p>}
+          </>}
+        </div>
+      </Modal>}
+      {activeCommand === 'permissions' && <Modal title="会话访问权限" onClose={closeCommand}>
+        <p>{access?.label ?? 'pi 不经审批直接执行工具'}</p>
+        {access && <p className="text-qn-muted">{access.hint}</p>}
+      </Modal>}
+      {activeCommand === 'resume' && <Modal title="切换会话" onClose={closeCommand}>
+        {threads.length === 0 && <EmptyState>当前目标暂无会话</EmptyState>}
+        {threads.map((thread) => (
+          <button type="button" key={threadKey(thread.agent, thread.id)} className="qn-button-subtle block w-full truncate text-left"
+            onClick={() => { closeCommand(); void useCodex.getState().openThread(thread.id, thread.agent) }}>
+            {thread.title} · {agentLabel(thread.agent)}
+          </button>
+        ))}
+      </Modal>}
+      {(activeCommand === 'rename' || activeCommand === 'archive' || activeCommand === 'fork' || activeCommand === 'compact') && (
+        <Modal title={activeCommand === 'rename' ? '重命名会话' : activeCommand === 'archive' ? '归档会话'
+          : activeCommand === 'fork' ? '创建会话分支' : '压缩会话'} onClose={closeCommand}>
+          <form onSubmit={(event) => { event.preventDefault(); void confirmCommand(activeCommand) }}>
+            {activeCommand === 'rename'
+              ? <input className="qn-input w-full" aria-label="会话名称" value={commandName} onChange={(event) => setCommandName(event.target.value)} />
+              : <p className="text-qn-muted">{activeCommand === 'archive' ? '可在已归档会话中恢复。'
+                : activeCommand === 'fork' ? '从当前会话复制上下文并打开新分支。'
+                : '压缩会总结较早的对话，让后续回复使用更短的上下文。账号已用额度不会恢复。'}</p>}
+            {commandMessage && <p role="alert" className="mt-2 text-qn-danger">{commandMessage}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" className="qn-button-subtle" onClick={closeCommand}>取消</button>
+              <button type="submit" className="qn-button" disabled={commandPending || (activeCommand === 'rename' && !commandName.trim())}>确认</button>
+            </div>
+          </form>
+        </Modal>
+      )}
       {dragging && (
         <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-outline bg-qn-bg/85 text-ui-md text-qn-text">
           <ImagePlus size={28} className="text-qn-accent" />

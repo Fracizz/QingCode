@@ -527,7 +527,7 @@ describe('手机网关 HTTPS 集成', () => {
     const turnRequest = (agent: string, accessMode: string) => ({
       method: 'mobile.turn.start',
       params: { targetId: 'local', agent, accessMode, msg: { id: 'c2', method: 'turn/start', params: {
-        threadId: 'thread', input: [], model: 'test-model', claudePermissionMode: 'bypassPermissions',
+        threadId: 'thread', input: [], model: 'test-model', clientUserMessageId: 'mobile-user', claudePermissionMode: 'bypassPermissions',
         approvalPolicy: 'on-request', sandboxPolicy: { type: 'dangerFullAccess' },
       } } },
     })
@@ -535,7 +535,7 @@ describe('手机网关 HTTPS 集成', () => {
     expect(readOnly.status).toBe(200)
     expect(lastCodexSend).toEqual({ targetId: 'local', agent: 'codex', msg: {
       id: expect.any(String), method: 'turn/start', params: {
-        threadId: 'thread', input: [], model: 'test-model',
+        threadId: 'thread', input: [], model: 'test-model', clientUserMessageId: 'mobile-user',
         approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly', networkAccess: false }, qingcodeAccessOverride: true,
       },
     } })
@@ -543,13 +543,13 @@ describe('手机网关 HTTPS 集成', () => {
     expect(claudeTurn.status).toBe(200)
     expect(lastCodexSend).toEqual({ targetId: 'local', agent: 'claude', msg: {
       id: expect.any(String), method: 'turn/start',
-      params: { threadId: 'thread', input: [], model: 'test-model', claudePermissionMode: 'plan' },
+      params: { threadId: 'thread', input: [], model: 'test-model', clientUserMessageId: 'mobile-user', claudePermissionMode: 'plan' },
     } })
     const claudeAuto = await requestJson('/rpc', 'POST', turnRequest('claude', 'auto'), token)
     expect(claudeAuto.status).toBe(200)
     expect(lastCodexSend).toEqual({ targetId: 'local', agent: 'claude', msg: {
       id: expect.any(String), method: 'turn/start',
-      params: { threadId: 'thread', input: [], model: 'test-model', claudePermissionMode: 'auto' },
+      params: { threadId: 'thread', input: [], model: 'test-model', clientUserMessageId: 'mobile-user', claudePermissionMode: 'auto' },
     } })
     const forwardedTurn = lastCodexSend
     const inheritedTurn = (agent: string, mode: string) => {
@@ -573,7 +573,9 @@ describe('手机网关 HTTPS 集成', () => {
       ...defaultTurn, params: { ...defaultTurn.params, inheritAccess: false },
     }, token)).status).toBe(200)
     expect(lastCodexSend).toEqual({ targetId: 'local', agent: 'codex', msg: {
-      id: expect.any(String), method: 'turn/start', params: { threadId: 'thread', input: [], model: 'test-model' },
+      id: expect.any(String), method: 'turn/start', params: {
+        threadId: 'thread', input: [], model: 'test-model', clientUserMessageId: 'mobile-user',
+      },
     } })
 
     const agents = await requestJson('/rpc', 'POST', { method: 'mobile.agents', params: {} }, token)

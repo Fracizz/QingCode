@@ -27,6 +27,7 @@ import {
   type V2Item,
   type V2Notification,
 } from '../claude/v2'
+import { isSteerPlacement, type SteerPlacement } from '../steerHistory'
 import { unifiedDiff } from '../claude/items'
 
 export type JsonRecord = Json
@@ -559,8 +560,21 @@ export interface HistoryResult {
   items: V2Item[]
 }
 
-/** get_messages 的完整历史 → v2 thread；按带文本的用户消息切分 turns（与 Claude 桥一致）。 */
-export function messagesToThread(meta: SessionMeta, messages: unknown[]): HistoryResult {
+export type UserMessageIdentity = { id: string; clientId: string | null; steering?: SteerPlacement }
+
+export function parsePiSteer(value: unknown): UserMessageIdentity | undefined {
+  const entry = asRecord(value)
+  if (isSteerPlacement(entry?.steering) && typeof entry.id === 'string') {
+    return { id: entry.id, clientId: scalarText(entry.clientId) || null, steering: entry.steering }
+  }
+}
+
+/** get_messages 的完整历史 → v2 thread；按带文本或图片的用户消息切分 turns。 */
+export function messagesToThread(
+  meta: SessionMeta,
+  messages: unknown[],
+  userItemIds?: ReadonlyMap<string, UserMessageIdentity | null>,
+): HistoryResult {
   const state = emptyMapState()
   const open: { id: string; itemIds: string[]; error?: string }[] = []
   let current: { id: string; itemIds: string[]; error?: string } | null = null
@@ -569,6 +583,19 @@ export function messagesToThread(meta: SessionMeta, messages: unknown[]): Histor
     turnId,
     cwd: meta.cwd,
   })
+  const uniqueUserIds = new Map<string, UserMessageIdentity | null>()
+  if (userItemIds?.size) {
+    for (const raw of messages) {
+      const message = asRecord(raw)
+      if (message?.role !== 'user') continue
+      const timestamp = finite(message.timestamp)
+      if (timestamp === null) continue
+      const key = String(timestamp)
+      const identity = userItemIds.get(key)
+      // 时间戳相同的原生消息会各自保留，避免把两次发送合成一条。
+      if (identity) uniqueUserIds.set(key, uniqueUserIds.has(key) ? null : identity)
+    }
+  }
 
   for (let index = 0; index < messages.length; index++) {
     const message = asRecord(messages[index])
@@ -578,14 +605,17 @@ export function messagesToThread(meta: SessionMeta, messages: unknown[]): Histor
     if (role !== 'user' && role !== 'assistant' && role !== 'toolResult') continue
     const echo = role === 'user' ? userEcho(message.content) : []
     if (role === 'user' && echo.length === 0) continue
-    if (role === 'user' || !current) {
+    const timestamp = role === 'user' ? finite(message.timestamp) : null
+    const identity = timestamp === null ? null : uniqueUserIds.get(String(timestamp))
+    if (!current || (role === 'user' && !identity?.steering)) {
       current = { id: `turn-${meta.id}-${index}`, itemIds: [] }
       open.push(current)
     }
     const ctx = ctxFor(current.id)
     const before = state.order.length
     if (role === 'user') {
-      const item = userMessageContentItem(`${current.id}-user`, echo)
+      const item = userMessageContentItem(identity?.id ?? `${current.id}-user`, echo, identity?.clientId)
+      if (identity?.steering) item.steering = identity.steering
       recordItem(state, item)
       current.itemIds.push(scalarText(item.id))
       continue

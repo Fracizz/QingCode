@@ -138,6 +138,21 @@ export function removePlaceholder(value: string, name: string): string {
   return value.slice(0, start) + value.slice(end)
 }
 
+/** 图片名单独显示，正文只保留用户输入的内容。 */
+export function stripImagePlaceholders(value: string, attachments: readonly Attachment[]): string {
+  for (const item of attachments) {
+    if (item.kind === 'image') value = removePlaceholder(value, item.name)
+  }
+  return value
+}
+
+/** 历史消息的内嵌图片只带数据，用格式和序号生成预览标签。 */
+export function embeddedImageLabel(src: string, index: number): string {
+  const format = /^data:image\/([^;,]+)/.exec(src)?.[1]
+  const name = index === 0 ? 'image' : `image-${index + 1}`
+  return imagePlaceholder(`${name}${format ? `.${format}` : ''}`)
+}
+
 export type SkillRef = { name: string; path: string }
 
 /** 拼 turn/start 的 input：多个技能按选择顺序在最前（Claude 桥接会转成 /name 前缀），然后文字、图片、附件文件。 */
@@ -213,9 +228,10 @@ export type SlashItem = {
   /** 技能来源（用户级 / 项目级 / 系统），仅展示。 */
   scope?: string
   path?: string
+  reason?: string | null
 }
 
-/** 排序：名称前缀匹配 > 名称包含 > 描述包含；同级内命令在技能之前、再按名称。 */
+/** 排序：名称前缀匹配 > 名称包含 > 描述包含；同级命令按菜单顺序，技能按名称。 */
 export function filterSlashItems(items: SlashItem[], query: string): SlashItem[] {
   const q = query.trim().toLowerCase()
   const rank = (item: SlashItem): number => {
@@ -232,8 +248,8 @@ export function filterSlashItems(items: SlashItem[], query: string): SlashItem[]
     .sort(
       (a, b) =>
         a.score - b.score ||
-        (a.item.kind === b.item.kind ? 0 : a.item.kind === 'command' ? -1 : 1) ||
-        a.item.name.localeCompare(b.item.name),
+        (a.item.kind !== b.item.kind ? (a.item.kind === 'command' ? -1 : 1)
+          : a.item.kind === 'skill' ? a.item.name.localeCompare(b.item.name) : 0),
     )
     .map((entry) => entry.item)
 }

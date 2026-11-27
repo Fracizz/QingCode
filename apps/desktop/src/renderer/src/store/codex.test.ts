@@ -66,8 +66,8 @@ async function fakeCall(method: string, params?: CallParams): Promise<unknown> {
   return {}
 }
 
-const viewItems = (threadId: string) =>
-  useCodex.getState().sessions[sessionKey('local', 'codex')]?.state.threads[threadId]?.items ?? []
+const viewItems = (threadId: string, agent: 'codex' | 'claude' | 'pi' = 'codex') =>
+  useCodex.getState().sessions[sessionKey('local', agent)]?.state.threads[threadId]?.items ?? []
 
 beforeEach(() => {
   listeners.clear()
@@ -595,6 +595,31 @@ describe('发送时的乐观用户消息', () => {
     expect(viewItems('t1').map((item) => item.id)).toEqual(['u1'])
   })
 
+  it.each(['codex', 'claude', 'pi'] as const)('%s 发送带图消息时使用占位 ID，实时回显与完成快照只显示一条', async (agent) => {
+    useCodex.setState({ currentAgent: agent })
+    const url = 'data:image/png;base64,AAAA'
+    const input: UserInput[] = [{ type: 'text', text: '看图', text_elements: [] }, { type: 'image', url }]
+    await expect(useCodex.getState().send('看图', { input })).resolves.toBe(true)
+    const calls = callMock.mock.calls.filter(([method, params]) => method === 'codex.send' && params?.msg?.method === 'turn/start')
+    expect(calls).toHaveLength(1)
+    const clientId = calls[0]?.[1].msg.params.clientUserMessageId
+    expect(clientId).toEqual(expect.any(String))
+    expect(viewItems('t1', agent)[0]?.id).toBe(clientId)
+
+    const user = { type: 'userMessage', clientId, content: input }
+    emitRecv({ method: 'item/completed', params: {
+      threadId: 't1', turnId: 'turn1', item: { ...user, id: 'live-user' }, completedAtMs: 1760000000000,
+    } }, agent)
+    emitRecv({ method: 'item/agentMessage/delta', params: { threadId: 't1', turnId: 'turn1', itemId: 'reply', delta: '看到了' } }, agent)
+    emitRecv({ method: 'turn/completed', params: { threadId: 't1', turn: {
+      id: 'turn1', status: 'completed', items: [{ ...user, id: 'snapshot-user' }],
+    } } }, agent)
+    expect(viewItems('t1', agent)).toMatchObject([
+      { id: clientId, kind: 'user', text: '看图', images: [url], sentAt: 1760000000000 },
+      { id: 'reply', kind: 'agent', text: '看到了' },
+    ])
+  })
+
   it('请求子代理时只发送一轮，并把委派请求放在这一轮的正文中', async () => {
     await expect(useCodex.getState().send('核对文档', { delegate: true })).resolves.toBe(true)
     const turns = callMock.mock.calls
@@ -653,6 +678,70 @@ describe.each(['codex', 'claude', 'pi'] as const)('%s 侧边对话', (agent) => 
     expect(store().sideChats[owner]).toBeUndefined()
     expect(Object.keys(store().sideChats)).toHaveLength(1)
   })
+
+  it('确认结束后先中断侧聊，停止排队发送并释放临时会话', async () => {
+    callMock.mockImplementation((method: string, params?: CallParams) =>
+      params?.method === 'codex.open'
+        ? Promise.resolve({ initialize: {}, lastSeq: 0, capabilities: { ephemeralNoTools: true } })
+        : fakeCall(method, params))
+    useCodex.setState({ currentThreadId: 'parent', currentAgent: agent })
+    const store = useCodex.getState
+    const requests = (method: string) => callMock.mock.calls.flatMap(([, params]) =>
+      params?.msg?.method === method ? [params] : [])
+    store().openSideChat()
+    await store().sendSide('运行中的消息', 'queue')
+    await store().sendSide('排队消息', 'queue')
+    const queueKey = pendingSendKey({ targetId: 'local', agent, threadId: 't1' })
+    expect(store().pendingSends[queueKey]).toHaveLength(1)
+
+    await store().endSideChat()
+    expect(requests('turn/interrupt')).toHaveLength(0)
+    const ending = store().endSideChat(true)
+    await store().endSideChat(true)
+    expect(requests('turn/interrupt')).toEqual([expect.objectContaining({
+      agent, msg: expect.objectContaining({ params: { threadId: 't1', turnId: 'turn1' } }),
+    })])
+    expect(requests('thread/unsubscribe')).toHaveLength(0)
+    // 即使该轮恰好自然结束，也不能开始发送队列里的下一条。
+    emitRecv({ method: 'turn/completed', params: { threadId: 't1', turn: { id: 'turn1', status: 'completed', items: [] } } }, agent)
+    await ending
+
+    expect(requests('thread/unsubscribe')).toEqual([expect.objectContaining({
+      agent, msg: expect.objectContaining({ params: { threadId: 't1' } }),
+    })])
+    expect(requests('turn/start')).toHaveLength(1)
+    expect(store().pendingSends[queueKey]).toBeUndefined()
+    expect(store().sideChats).toEqual({})
+    expect(store().currentThreadId).toBe('parent')
+  })
+})
+
+it('结束侧聊失败时保留面板、草稿和排队消息，允许重试', async () => {
+  useCodex.setState({ currentThreadId: 'parent' })
+  const store = useCodex.getState
+  store().openSideChat('引用')
+  await store().sendSide('运行中的消息', 'queue')
+  await store().sendSide('排队消息', 'queue')
+  store().setSideDraft('草稿')
+  callMock.mockImplementation((method: string, params?: CallParams) => {
+    if (params?.msg?.method === 'thread/unsubscribe') {
+      emitRecv({ id: params.msg.id, error: { code: -32603, message: '暂时无法结束' } })
+      return Promise.resolve({})
+    }
+    return fakeCall(method, params)
+  })
+
+  const ending = store().endSideChat(true)
+  emitRecv({ method: 'turn/completed', params: { threadId: 't1', turn: { id: 'turn1', status: 'interrupted', items: [] } } })
+  await ending
+  expect(store().sideChats[currentChatKey(store())]).toMatchObject({ open: true, busy: false, draft: '草稿', error: '暂时无法结束' })
+  const queueKey = pendingSendKey({ targetId: 'local', agent: 'codex', threadId: 't1' })
+  expect(store().pendingSends[queueKey]).toMatchObject([{ text: '排队消息', error: '结束侧聊失败，队列已暂停' }])
+
+  callMock.mockImplementation(fakeCall)
+  await store().endSideChat(true)
+  expect(store().sideChats).toEqual({})
+  expect(store().pendingSends[queueKey]).toBeUndefined()
 })
 
 it('旧 Pi 服务缺少无工具能力时保留草稿和引用并显示升级提示', async () => {

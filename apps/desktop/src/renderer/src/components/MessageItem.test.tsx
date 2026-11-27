@@ -33,13 +33,33 @@ const toggle = (summary: HTMLElement) => act(async () => {
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
 })
 
+it('后台任务独立显示状态，展开后按 Markdown 显示完整结果', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  try {
+    await act(() => root.render(<MessageItem item={{
+      kind: 'backgroundTask', id: 'task', status: 'completed', summary: '手机后台提醒', result: '**类型检查通过**',
+    }} onEdit={vi.fn()} />))
+    const summary = host.querySelector('summary')!
+    expect(summary.textContent).toContain('后台任务已完成 · 手机后台提醒')
+    expect(host.textContent).not.toContain('类型检查通过')
+    await toggle(summary)
+    expect(host.querySelector('strong')?.textContent).toBe('类型检查通过')
+    expect(host.querySelector('button[aria-label*="编辑"]')).toBeNull()
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
+
 it('对话更新操作回调时复用历史回复的 Markdown，正文变化时重新渲染', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   renderCodeBlock.mockClear()
   const root = createRoot(document.createElement('div'))
   const reply: ItemView = { kind: 'agent', id: 'reply', text: '```text\n历史内容\n```', streaming: false }
   const render = (item: ItemView) => act(() => root.render(
-    <MessageItem item={item} onFork={() => {}} onEdit={async () => true} />,
+    <MessageItem item={item} onFork={() => () => {}} onEdit={async () => true} />,
   ))
   try {
     await render(reply)
@@ -172,6 +192,32 @@ it('不改内容也能直接重发原文和附件', async () => {
     expect(host.querySelector('textarea')?.value).toBe('检查改动')
     await act(() => host.querySelector<HTMLButtonElement>('button[type="submit"]')!.click())
     expect(onEdit).toHaveBeenCalledExactlyOnceWith('检查改动', [{ type: 'text', text, text_elements: [] }, image])
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('对话中的虚拟图片名打开相应图片的预览', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const images = ['data:image/png;base64,AAAA', 'data:image/webp;base64,BBBB']
+  try {
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'original', text: '看看这两张图', images }} />))
+    const thumbnails = Array.from(host.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="dialog"]'))
+    expect(thumbnails.map((button) => button.textContent)).toEqual(['[image.png]', '[image-2.webp]'])
+    const dialogs = Array.from(host.querySelectorAll('dialog'))
+    const first = vi.fn()
+    const second = vi.fn()
+    Object.assign(dialogs[0]!, { showModal: first })
+    Object.assign(dialogs[1]!, { showModal: second })
+    await act(() => thumbnails[1]!.click())
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledOnce()
+    expect(dialogs[1]?.querySelector('img')?.getAttribute('src')).toBe(images[1])
+    expect(host.textContent).toContain('看看这两张图')
   } finally {
     await act(() => root.unmount())
     host.remove()

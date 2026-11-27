@@ -13,14 +13,18 @@ import { WorkspaceSearch } from './WorkspaceHome'
  * 输入区的"模型 · 推理强度"入口 + 底部弹层。
  * 数据来自当前会话 Agent 的 model/list，快速档只对 Codex 显示。
  */
-export function ModelPicker({ targetId, agent }: { targetId: string; agent: AgentKind }) {
+export function ModelPicker({ targetId, agent, open: controlledOpen, onOpenChange }: {
+  targetId: string; agent: AgentKind; open?: boolean; onOpenChange?: (open: boolean) => void
+}) {
   const key = sessionKey(targetId, agent)
   const opened = useApp((s) => s.sessions[key]?.opened === true)
   const list = useApp((s) => s.models[key])
   const prefs = useApp((s) => s.modelPrefs[key] ?? EMPTY_PREFS)
   const load = useApp((s) => s.loadModels)
   const setPrefs = useApp((s) => s.setModelPrefs)
-  const [open, setOpen] = useState(false)
+  const [ownOpen, setOwnOpen] = useState(false)
+  const open = controlledOpen ?? ownOpen
+  const setOpen = onOpenChange ?? setOwnOpen
   const [query, setQuery] = useState('')
 
   useEffect(() => {

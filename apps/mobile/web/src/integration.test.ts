@@ -286,6 +286,7 @@ describe('模拟网关全链路', () => {
     const port = (gateway as unknown as { native: { port: MockNativePort } }).native.port
     expect(port.lastTurnParams).toMatchObject({
       agent: 'codex', model: 'gpt-5.5-mini', effort: 'minimal',
+      clientUserMessageId: expect.any(String),
       input: [{ type: 'text', text: '你好', text_elements: [] }],
     })
     // turn 完成后的后台刷新不重试打不开的 pi，但保留它的提示。
@@ -298,7 +299,7 @@ describe('模拟网关全链路', () => {
     expect(accessRpc).toHaveBeenCalledWith(edited, 'mobile.turn.start', {
       targetId: 'local', agent: 'codex', accessMode: 'readOnly', replyViaHttp: true, msg: expect.objectContaining({
         method: 'turn/start', params: {
-          threadId, model: 'gpt-5.5-mini', effort: 'minimal',
+          threadId, model: 'gpt-5.5-mini', effort: 'minimal', clientUserMessageId: expect.any(String),
           input: [{ type: 'text', text: '仅检查项目', text_elements: [] }],
         },
       }),
@@ -315,6 +316,7 @@ describe('模拟网关全链路', () => {
     await state().send('审查一下', [], true)
     await wait(50)
     expect(port.lastTurnParams?.agent).toBe('claude')
+    expect(port.lastTurnParams?.clientUserMessageId).toEqual(expect.any(String))
     expect(port.lastTurnParams?.input).toEqual([
       { type: 'text', text: expect.stringMatching(/^审查一下\n\n请.*子代理/), text_elements: [] },
     ])
@@ -324,9 +326,21 @@ describe('模拟网关全链路', () => {
     const claudeThread = state().selectedThreadId
     expect(state().claudeCosts[JSON.stringify(['local', claudeThread])]).toBeCloseTo(0.012)
     expect(state().claudeRateLimits.local?.primary?.usedPercent).toBe(81)
-    useApp.setState({ claudeRateLimits: {} })
+    const beforeRestart = state().claudeRateLimits.local
+    expect(beforeRestart?.observedAt).toEqual(expect.any(Number))
+    let releaseQuota!: (value: unknown) => void
+    const delayedQuota = new Promise((resolve) => { releaseQuota = resolve })
+    const quotaRequest = vi.spyOn(state().sessions['claude:local']!.rpc, 'request')
+      .mockImplementationOnce(() => delayedQuota as never)
+    const refreshBeforeRestart = state().refreshClaudeRateLimits('local')
+    state().handleGatewayEvent({ name: 'server.evt', payload: { name: 'server.restarted', targetId: 'local' } })
+    expect(state().claudeRateLimits.local).toBeUndefined()
+    releaseQuota({ rateLimits: beforeRestart })
+    await expect(refreshBeforeRestart).resolves.toBe(false)
+    expect(state().claudeRateLimits.local).toBeUndefined()
+    quotaRequest.mockRestore()
     await state().attachOpened('local')
-    await vi.waitFor(() => expect(state().claudeRateLimits.local?.primary?.usedPercent).toBe(81))
+    await vi.waitFor(() => expect(state().claudeRateLimits.local).toEqual(beforeRestart))
 
     await state().openThread(threadId!, 'codex')
     expect(selectedAccessMode(state())).toBe('readOnly')
@@ -789,9 +803,27 @@ describe('模拟网关全链路', () => {
       await expect(state().send('视觉模型', [image])).resolves.toBe(true)
       expect(rpc.mock.calls).toContainEqual([conn, 'codex.send', expect.objectContaining({
         agent: 'pi', msg: expect.objectContaining({ method: 'turn/start', params: expect.objectContaining({
-          model: 'p/vision', input: expect.arrayContaining([image]),
+          model: 'p/vision', input: expect.arrayContaining([image]), clientUserMessageId: expect.any(String),
         }) }),
       })])
+      const threadId = state().selectedThreadId!
+      const users = () => state().sessions[key]?.state.threads[threadId]?.items.filter((item) => item.kind === 'user')
+      const expectedTurnId = state().sessions[key]?.state.threads[threadId]?.activeTurnId
+      await expect(state().send('pi 补充要求', [], false, 'steer')).resolves.toBe(true)
+      expect(rpc.mock.calls).toContainEqual([conn, 'codex.send', expect.objectContaining({
+        agent: 'pi', msg: expect.objectContaining({ method: 'turn/steer', params: expect.objectContaining({ expectedTurnId }) }),
+      })])
+      await vi.waitFor(() => expect(state().sessions[key]?.state.threads[threadId]?.status).toBe('idle'))
+      const before = users()
+      expect(before).toMatchObject([
+        { text: '视觉模型', images: [image.url], clientId: expect.any(String) },
+        { text: 'pi 补充要求', steering: 'currentTurn' },
+      ])
+      await expect(state().openThread(threadId, 'pi')).resolves.toBe(true)
+      expect(users()).toMatchObject([
+        { id: before?.[0]?.id, text: '视觉模型', images: [image.url] },
+        { id: before?.[1]?.id, text: 'pi 补充要求', steering: 'currentTurn' },
+      ])
     } finally {
       controller.stop()
       await state().removeConnection(conn.id)
@@ -843,8 +875,10 @@ describe('模拟网关全链路', () => {
       expect(compactions()).toHaveLength(1)
       expect(compactions()[0]?.[2]).toMatchObject({ msg: { params: { threadId: 't-demo' } } })
       await expect(state().openThread('c-demo', 'claude')).resolves.toBe(true)
-      await expect(state().compactConversation()).resolves.toBe(false)
-      expect(compactions()).toHaveLength(1)
+      await expect(state().compactConversation()).resolves.toBe(true)
+      expect(compactions()[1]?.[2]).toMatchObject({ agent: 'claude', msg: { params: { threadId: 'c-demo' } } })
+      await vi.waitFor(() => expect(state().sessions[sessionKey('local', 'claude')]?.state.threads['c-demo']?.items)
+        .toContainEqual(expect.objectContaining({ type: 'contextCompaction', status: 'completed' })))
     } finally {
       controller.stop()
       rpc.mockRestore()
@@ -974,13 +1008,16 @@ describe('模拟网关全链路', () => {
       steering.mockRestore()
 
       await state().openThread('c-demo', 'claude')
-      const unsupportedRpc = vi.spyOn(gateway, 'rpc')
-      await expect(state().send('不支持引导', [], false, 'steer')).resolves.toBe(false)
-      expect(state().error).toBe('当前 Agent 不支持引导')
-      expect(unsupportedRpc.mock.calls).not.toContainEqual([
-        conn, 'codex.send', expect.objectContaining({ msg: expect.objectContaining({ method: 'turn/steer' }) }),
-      ])
-      unsupportedRpc.mockRestore()
+      await expect(state().send('空闲时引导', [], false, 'steer')).resolves.toBe(false)
+      expect(state().error).toBe('当前一轮已结束，请选择排队或发送')
+      await expect(state().send('开始 Claude 对话')).resolves.toBe(true)
+      const claudeView = () => state().sessions['claude:local']?.state.threads['c-demo']
+      const claudeTurn = claudeView()?.activeTurnId
+      expect(claudeTurn).toBeTruthy()
+      await expect(state().send('Claude 排队后引导')).resolves.toBe(true)
+      await expect(state().steerQueuedSend(queue()[0]!.id)).resolves.toBe(true)
+      expect(claudeView()?.items).toContainEqual(expect.objectContaining({ text: 'Claude 排队后引导', steering: 'currentTurn' }))
+      expect(queue()).toEqual([])
     } finally {
       controller.stop()
       await state().removeConnection(conn.id)

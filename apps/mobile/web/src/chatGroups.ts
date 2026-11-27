@@ -1,4 +1,6 @@
-import { groupTurns, type ItemView, type ThreadView, type TurnMeta } from '@qn/codex-client'
+import { groupTurns, type ItemView, type TurnEntry, type TurnMeta } from '@qn/codex-client'
+
+export { streamingReplyId } from '@qn/codex-client'
 
 /** 子代理单独显示，便于从消息流直接查看。 */
 export type ToolItem = Exclude<ItemView, { kind: 'user' | 'agent' | 'reasoning' | 'subagent' }>
@@ -7,21 +9,17 @@ export type ChatBlock =
   | { kind: 'item'; item: ItemView }
   | { kind: 'tools'; id: string; items: ToolItem[] }
 
-export type ToolStatus = 'running' | 'failed' | 'done'
+export type WorkGroupEntry = Extract<TurnEntry, { kind: 'work' }>
 
-export function streamingReplyId(thread: ThreadView | undefined): string | undefined {
-  if (thread?.status !== 'running') return
-  const itemIds = thread.turns?.findLast((turn) => turn.id === thread.activeTurnId)?.itemIds
-  if (itemIds?.length === 0) return
-  // 命令或新回复接管后，不能让还没收到完成事件的旧回复重新出现指示。
-  const last = itemIds ? thread.items.findLast((item) => itemIds.includes(item.id)) : thread.items.at(-1)
-  if (last?.kind === 'agent' && last.streaming && last.text.trim()) return last.id
-}
+type ChatTimelineEntry = WorkGroupEntry | Extract<TurnEntry, { kind: 'stopped' }>
+  | { kind: 'visible'; key: string; block: ChatBlock; trail?: ToolItem[]; finalReply: boolean }
+
+export type ToolStatus = 'running' | 'failed' | 'done'
 
 const isTool = (item: ItemView): item is ToolItem =>
   item.kind === 'command' || item.kind === 'fileChange' || (item.kind === 'other' && item.type !== 'contextCompaction')
 
-export function toolStatus(item: ToolItem): ToolStatus {
+export function toolStatus(item: ItemView): ToolStatus {
   const status = 'status' in item && typeof item.status === 'string' ? item.status : ''
   if (/progress|running|started/i.test(status)) return 'running'
   if (/fail|error|denied|declined/i.test(status)) return 'failed'
@@ -54,17 +52,19 @@ export function groupChatItems(items: readonly ItemView[]): ChatBlock[] {
 }
 
 /** 摘要文案：「已运行 3 条命令 · 改动 2 个文件 · 1 个失败」，仍在运行时改为进行时。 */
-export function toolSummary(items: readonly ToolItem[]): string {
+export function toolSummary(items: readonly ItemView[]): string {
   const commands = items.filter((item) => item.kind === 'command').length
   const files = items
     .filter((item) => item.kind === 'fileChange')
     .reduce((total, item) => total + (item.kind === 'fileChange' ? Math.max(1, item.changes.length) : 0), 0)
-  const others = items.length - commands - items.filter((item) => item.kind === 'fileChange').length
+  const thoughts = items.filter((item) => item.kind === 'reasoning').length
+  const others = items.length - commands - items.filter((item) => item.kind === 'fileChange').length - thoughts
   const failed = items.filter((item) => toolStatus(item) === 'failed').length
   const running = items.some((item) => toolStatus(item) === 'running')
   const parts: string[] = []
   if (commands) parts.push(`${running ? '正在运行' : '已运行'} ${commands} 条命令`)
   if (files) parts.push(`改动 ${files} 个文件`)
+  if (thoughts && parts.length === 0) parts.push(`思考了 ${thoughts} 次`)
   if (others) parts.push(`${others} 个其它步骤`)
   if (failed) parts.push(`${failed} 个失败`)
   return parts.join(' · ') || `${items.length} 个步骤`
@@ -77,56 +77,37 @@ export function isChatVisible(item: ItemView): boolean {
   return true
 }
 
-export type WorkSummary = { durationMs: number | null; reply?: { id: string; completedAtMs?: number } }
-
-/** 工作摘要沿用桌面分轮，挂在对应的最后一条回复或最近的可见步骤上。 */
-export function chatWorkSummaries(items: ItemView[], turns: TurnMeta[] | undefined, running: boolean): Map<string, WorkSummary> {
-  const summaries = new Map<string, WorkSummary>()
-  let anchor: string | undefined
+/** 已完成的工作组直接沿用桌面顺序，组外的进行中条目保持手机端的精简展示。 */
+export function chatTimeline(items: readonly ItemView[], turns: readonly TurnMeta[] | undefined, running: boolean,
+  activeIds?: readonly string[]): ChatTimelineEntry[] {
+  const timeline: ChatTimelineEntry[] = []
+  let pending: ItemView[] = []
+  const flush = () => {
+    if (!pending.length) return
+    const trails = hiddenToolTrails(pending, activeIds)
+    const visible = groupChatItems(pending.filter(isChatVisible))
+    const entries: ChatTimelineEntry[] = []
+    let seenReply = false
+    for (const block of visible.reverse()) {
+      const id = block.kind === 'item' ? block.item.id : block.items.at(-1)!.id
+      const kind = block.kind === 'item' ? block.item.kind : undefined
+      entries.push({ kind: 'visible', key: block.kind === 'item' ? id : block.id, block, trail: trails.get(id),
+        finalReply: kind === 'agent' && !seenReply })
+      if (kind === 'agent' || kind === 'user') seenReply = kind === 'agent'
+    }
+    timeline.push(...entries.reverse())
+    pending = []
+  }
   for (const entry of groupTurns(items, turns, running)) {
-    if (entry.kind === 'stopped') anchor = undefined
-    if (entry.kind === 'item' && isChatVisible(entry.item)) anchor = entry.item.id
-    if (entry.kind !== 'work') continue
-    for (const step of entry.entries) {
-      const visible = step.kind === 'item' ? (isChatVisible(step.item) ? step.item : undefined) : step.items.findLast(isChatVisible)
-      if (visible) anchor = visible.id
+    if (entry.kind === 'item') pending.push(entry.item)
+    else if (entry.kind === 'tools') pending.push(...entry.items)
+    else {
+      flush()
+      timeline.push(entry)
     }
-    const id = entry.reply?.id ?? anchor
-    if (id) summaries.set(id, { durationMs: entry.durationMs, reply: entry.reply })
   }
-  return summaries
-}
-
-export function interruptedTurnPositions(items: readonly ItemView[], shown: readonly ItemView[], turns?: readonly TurnMeta[]) {
-  const stops = new Map<number, string[]>()
-  if (!turns?.some((turn) => turn.outcome === 'interrupted')) return stops
-
-  const visible = new Set(shown.map((item) => item.id))
-  const positions = new Map<string, { before: number; after: number }>()
-  let count = 0
-  for (const item of items) {
-    const before = count
-    if (visible.has(item.id)) count += 1
-    positions.set(item.id, { before, after: count })
-  }
-
-  let nextStart = count
-  for (const turn of [...turns].reverse()) {
-    let first = Infinity
-    let last = -1
-    for (const id of turn.itemIds) {
-      const position = positions.get(id)
-      if (!position) continue
-      first = Math.min(first, position.before)
-      last = Math.max(last, position.after)
-    }
-    if (turn.outcome === 'interrupted' && (last >= 0 || turn.itemIds.length === 0)) {
-      const anchor = last >= 0 ? last : nextStart
-      stops.set(anchor, [turn.id, ...(stops.get(anchor) ?? [])])
-    }
-    if (last >= 0) nextStart = first
-  }
-  return stops
+  flush()
+  return timeline
 }
 
 /** 根据本轮最新一步推断回复阶段，命令被隐藏后仍让用户知道在忙什么。 */
@@ -135,7 +116,7 @@ export function replyPhase(items: readonly ItemView[], activeIds: readonly strin
   const ids = new Set(activeIds)
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]!
-    if (!ids.has(item.id) || item.kind === 'user') continue
+    if (!ids.has(item.id) || item.kind === 'user' || item.kind === 'backgroundTask') continue
     if (item.kind === 'agent') return item.streaming ? '正在回复' : '正在思考'
     if (item.kind === 'command') return '正在执行命令'
     if (item.kind === 'fileChange') return '正在修改文件'

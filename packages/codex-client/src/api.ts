@@ -65,6 +65,27 @@ export function isOversizeHistoryResponse(error: unknown): boolean {
   return error instanceof CodexRpcError && error.data === 'response_too_large'
 }
 
+/** 先监听再请求，避免快于 RPC 回执的通知丢失。 */
+export async function startThreadCompaction(rpc: CodexRpc, threadId: string): Promise<void> {
+  let unsubscribe = () => {}
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const started = new Promise<boolean>((resolve) => {
+    unsubscribe = rpc.onNotification((note) => {
+      if ((note.method === 'turn/started' || note.method === 'turn/completed' ||
+        (note.method === 'item/started' && note.params.item.type === 'contextCompaction')) &&
+        note.params.threadId === threadId) resolve(true)
+    })
+    timer = setTimeout(() => resolve(false), 30_000)
+  })
+  try {
+    await rpc.request('thread/compact/start', { threadId })
+    if (!(await started)) throw new Error('尚未收到压缩进度，请检查当前会话')
+  } finally {
+    unsubscribe()
+    clearTimeout(timer)
+  }
+}
+
 async function withHistory<T extends { thread: Thread }>(
   rpc: CodexRpcLike,
   threadId: string,
@@ -306,12 +327,13 @@ export function sendInput(
   threadId: string,
   input: UserInput[],
   overrides: TurnOverrides = {},
+  clientUserMessageId?: string,
 ): Promise<TurnStartResponse> {
   const extra: TurnOverrides = {}
   if (overrides.model) extra.model = overrides.model
   if (overrides.effort) extra.effort = overrides.effort
   if (overrides.serviceTier !== undefined) extra.serviceTier = overrides.serviceTier
-  return rpc.request('turn/start', { threadId, input, ...extra })
+  return rpc.request('turn/start', { threadId, input, ...extra, ...(clientUserMessageId ? { clientUserMessageId } : {}) })
 }
 
 export function steerTurn(
@@ -319,8 +341,9 @@ export function steerTurn(
   threadId: string,
   expectedTurnId: string,
   input: UserInput[],
+  clientUserMessageId?: string,
 ): Promise<TurnSteerResponse> {
-  return rpc.request('turn/steer', { threadId, expectedTurnId, input })
+  return rpc.request('turn/steer', { threadId, expectedTurnId, input, ...(clientUserMessageId ? { clientUserMessageId } : {}) })
 }
 
 /** 拉取全部可见模型（自动翻页，最多 10 页防止服务端游标异常导致死循环）。 */

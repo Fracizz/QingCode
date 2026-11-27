@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
-import { accessOptions, resolveAccessMode } from '@qn/codex-client'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref, type RefObject } from 'react'
+import { accessOptions, exactChatCommand, resolveAccessMode } from '@qn/codex-client'
 import { ArrowUp, ChevronDown, CircleAlert, FileText, ImageOff, Paperclip, Shield, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
@@ -83,6 +83,7 @@ export function Composer({
   onSend,
   onInterrupt,
   running,
+  canSteer,
   sending,
   disabled,
   error,
@@ -94,6 +95,7 @@ export function Composer({
   toolsDisabled = false,
   annotationCount = 0,
   compact = false,
+  compacting = false,
   contentWidthClassName = 'max-w-3xl',
   context,
   placeholder,
@@ -108,7 +110,9 @@ export function Composer({
   onSend: (text: string, mode: SendMode) => void | Promise<boolean>
   onInterrupt: () => void
   running: boolean
+  canSteer: boolean
   sending: boolean
+  compacting?: boolean
   disabled?: boolean
   error: string | null
   onClearError: () => void
@@ -136,6 +140,7 @@ export function Composer({
   const composing = useRef(false)
   const areaRef = useRef<HTMLTextAreaElement>(null)
   const imageTextRef = useRef<HTMLDivElement>(null)
+  const imagePreviewTriggers = useRef(new Map<string, HTMLButtonElement>())
   const fileRef = useRef<HTMLInputElement>(null)
   const suggestionAnchorRef = useRef<HTMLDivElement>(null)
   const [caret, setCaret] = useState(0)
@@ -210,7 +215,11 @@ export function Composer({
   const token = slash && !imeActive ? slashToken(value, caret) : null
   const query = token?.query ?? null
   const menuOpen = query !== null && !dismissed && !disabled
-  const matches = menuOpen && slash ? filterSlashItems(slash.items, query) : []
+  const standaloneSlash = token && !value.slice(0, token.start).trim() && !value.slice(token.end).trim()
+  const matches = menuOpen && slash ? filterSlashItems(
+    slash.items.filter((item) => item.kind === 'skill' || standaloneSlash),
+    query,
+  ) : []
 
   const mention = !disabled && !imeActive && targetId && root ? mentionToken(value, caret) : null
   const mentionOpen = mention !== null && !dismissed && !menuOpen
@@ -251,9 +260,15 @@ export function Composer({
   const shortcut = sendKey === 'ctrlEnter' ? 'Ctrl+Enter' : 'Enter'
   const newlineShortcut = sendKey === 'ctrlEnter' ? 'Enter' : 'Shift+Enter'
   const sendHint = running ? `排队（${shortcut}）· 本轮结束后发送` : `发送（${shortcut}）· 换行（${newlineShortcut}）`
-  const canSend = !disabled && !sending && !blocked && (value.trim() !== '' || hasAttachmentsOrSkills || annotationCount > 0)
+  const canSend = !disabled && !sending && !compacting && !blocked && (value.trim() !== '' || hasAttachmentsOrSkills || annotationCount > 0)
 
   const submit = (mode: SendMode = 'queue') => {
+    const command = slash && exactChatCommand(value)
+    if (slash && command && !disabled && !composing.current) {
+      onChange('')
+      slash.onCommand(command.name)
+      return
+    }
     if (!canSend) return
     void onSend(value, mode)
   }
@@ -309,9 +324,9 @@ export function Composer({
         setActive((index) => (matches.length ? (index + delta + matches.length) % matches.length : 0))
         return
       }
-      if ((event.key === 'Enter' || event.key === 'Tab') && matches.length > 0) {
+      if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && matches.length > 0) {
         event.preventDefault()
-        choose(matches[active])
+        if (!event.repeat) choose(matches[active] ?? matches[0])
         return
       }
       if (event.key === 'Escape') {
@@ -418,7 +433,7 @@ export function Composer({
         )}
         <div
           className={cn(
-            'rounded-[20px] border border-qn-outline bg-qn-composer shadow-[var(--qn-composer-shadow)] transition-colors focus-within:border-qn-outline-hover',
+            'rounded-xl border border-qn-outline bg-qn-composer shadow-[var(--qn-composer-shadow)] transition-colors focus-within:border-qn-outline-hover',
             disabled && 'opacity-70',
           )}
         >
@@ -430,6 +445,11 @@ export function Composer({
                   item={item}
                   problem={item.kind === 'image' && !imageSupport.allowed ? imageSupport.reason : null}
                   onRemove={() => attach.onRemoveAttachment(item.id)}
+                  previewButtonRef={item.kind === 'image' ? (button) => {
+                    const token = imagePlaceholder(item.name)
+                    if (button) imagePreviewTriggers.current.set(token, button)
+                    else imagePreviewTriggers.current.delete(token)
+                  } : undefined}
                 />
               ))}
               {slash?.skills.map((skill) => (
@@ -450,17 +470,31 @@ export function Composer({
           )}
           {context}
           <div className="relative">
-            {/* 着色层只负责显示。输入法组合期间交回原生文本绘制，保留组合文字的下划线。 */}
+            {/* 只有图片标签接收点击，普通文字仍由 textarea 处理选区和编辑。 */}
             {highlightImages && (
               <div
                 ref={imageTextRef}
-                aria-hidden="true"
                 className={cn(TEXT_LAYOUT, 'pointer-events-none absolute inset-0 overflow-hidden text-qn-text forced-colors:hidden')}
               >
-                {imageTextParts.map((part, index) => index % 2 === 0 ? part : (
-                  <span key={index} className="text-qn-composer-attachment">{part}</span>
+                {imageTextParts.map((part, index) => index % 2 === 0 ? (
+                  <span key={index} aria-hidden="true">{part}</span>
+                ) : (
+                  <span
+                    key={index}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`预览 ${part}`}
+                    aria-haspopup="dialog"
+                    className="pointer-events-auto relative z-10 cursor-zoom-in text-qn-composer-attachment hover:underline focus-visible:outline-2 focus-visible:outline-qn-outline-hover"
+                    onClick={() => imagePreviewTriggers.current.get(part)?.click()}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
+                      imagePreviewTriggers.current.get(part)?.click()
+                    }}
+                  >{part}</span>
                 ))}
-                {value.endsWith('\n') && '\u200b'}
+                {value.endsWith('\n') && <span aria-hidden="true">{'\u200b'}</span>}
               </div>
             )}
             <textarea
@@ -580,8 +614,8 @@ export function Composer({
                   <MenuContent side="top" align="end">
                     <MenuItem hint="默认 · 本轮结束后发送" onSelect={() => submit('queue')}>排队</MenuItem>
                     <MenuItem
-                      disabled={agent !== 'codex'}
-                      hint={agent === 'codex' ? '补充到当前一轮' : '当前 Agent 不支持'}
+                      disabled={!canSteer}
+                      hint={!canSteer ? '等待当前轮次就绪' : agent === 'claude' ? '本轮结束时可能进入下一轮' : '补充到当前一轮'}
                       onSelect={() => submit('steer')}
                     >引导</MenuItem>
                     <MenuItem hint="中断当前一轮后发送" onSelect={() => submit('immediate')}>立即发送</MenuItem>
@@ -615,14 +649,16 @@ function AttachmentChip({
   item,
   problem,
   onRemove,
+  previewButtonRef,
 }: {
   item: Attachment
   /** 不能随消息发送的原因（如当前模型不支持图片），有值时标红提示。 */
   problem?: string | null
   onRemove: () => void
+  previewButtonRef?: Ref<HTMLButtonElement>
 }) {
   if (item.kind === 'image') {
-    return <ImageAttachmentChip item={item} problem={problem} onRemove={onRemove} />
+    return <ImageAttachmentChip item={item} problem={problem} onRemove={onRemove} previewButtonRef={previewButtonRef} />
   }
 
   const remove = (
@@ -706,7 +742,9 @@ function SlashMenu({
           <span className="min-w-0 flex-1">
             <span className="block wrap-anywhere text-ui leading-5 text-qn-text">/{item.name}</span>
             {item.description && (
-              <span className="block truncate text-ui-sm leading-4 text-qn-muted group-aria-selected:text-qn-text/85">{item.description}</span>
+              <span className="block truncate text-ui-sm leading-4 text-qn-muted group-aria-selected:text-qn-text/85">
+                {item.reason ?? item.description}
+              </span>
             )}
           </span>
           {item.scope && <span className="shrink-0 text-ui-xs text-qn-dim">{item.scope}</span>}

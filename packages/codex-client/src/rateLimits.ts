@@ -2,6 +2,12 @@
 import type { RateLimitSnapshot, RateLimitWindow } from './codex-types'
 
 export type RateLimitSeverity = 'ok' | 'warn' | 'danger'
+export type ClaudeRateLimitSnapshot = RateLimitSnapshot & {
+  /** 目标机接受该读数的毫秒时间戳。旧 daemon 不会上报。 */
+  observedAt?: number
+  /** SDK 拒绝时可能只给重置时间和状态。 */
+  rejectionResetsAt?: number
+}
 
 export const WARN_PERCENT = 80
 export const DANGER_PERCENT = 95
@@ -163,6 +169,54 @@ export function pickSnapshot(resp: unknown): RateLimitSnapshot | null {
 
 export function isClaudeStatusLine(snapshot: RateLimitSnapshot | null | undefined): boolean {
   return snapshot?.limitId === 'claude-statusline'
+}
+
+/** Claude 读取结果与通知都是完整快照，缺失窗口由 daemon 判定。 */
+export function pickClaudeSnapshot(message: unknown): ClaudeRateLimitSnapshot | null {
+  const record = asRecord(message)
+  const payload = record?.method === 'account/rateLimits/updated' ? asRecord(record.params) : record
+  const byId = asRecord(payload?.rateLimitsByLimitId)
+  const raw = asRecord(byId?.claude) ?? asRecord(payload?.rateLimits)
+  const snapshot = mergeSnapshot(null, raw)
+  if (!snapshot) return null
+  const observedAt = finite(raw?.observedAt)
+  const rejectionResetsAt = toSeconds(raw?.rejectionResetsAt)
+  return {
+    ...snapshot,
+    ...(observedAt !== null && observedAt > 0 ? { observedAt } : {}),
+    ...(rejectionResetsAt !== null && rejectionResetsAt > 0 ? { rejectionResetsAt } : {}),
+  }
+}
+
+export function claudeQuotaResetAt(snapshot: ClaudeRateLimitSnapshot | null | undefined): number | null {
+  return snapshot?.rejectionResetsAt ?? snapshot?.primary?.resetsAt ?? null
+}
+
+export function claudeQuotaBlocked(snapshot: ClaudeRateLimitSnapshot | null | undefined, now = Date.now()): boolean {
+  const reset = claudeQuotaResetAt(snapshot)
+  return Boolean((snapshot?.rateLimitReachedType || snapshot?.spendControlReached) && (reset === null || reset * 1000 > now))
+}
+
+export const CLAUDE_WAITING_FOR_QUOTA = '等待 Claude CLI 上报'
+
+export function claudeQuotaSummary(snapshot: RateLimitSnapshot | null | undefined): string | null {
+  if (snapshot?.rateLimitReachedType || snapshot?.spendControlReached) return '已达额度上限'
+  if (isClaudeStatusLine(snapshot) && (snapshot?.primary || snapshot?.secondary)) return compactText(snapshot, 'remaining')
+  const used = snapshot?.primary?.usedPercent
+  return used == null ? null : `上报剩余 ${Math.round(remainingQuotaPercent(used))}%`
+}
+
+export function claudeQuotaSource(snapshot: RateLimitSnapshot | null | undefined): string | null {
+  if (claudeQuotaSummary(snapshot) === null) return null
+  return isClaudeStatusLine(snapshot) ? '来源为 Claude CLI 状态栏' : '来源为 Claude SDK 限额事件'
+}
+
+export function claudeQuotaReportedAt(snapshot: ClaudeRateLimitSnapshot | null | undefined): string | null {
+  const at = snapshot?.observedAt
+  if (at == null) return null
+  const date = new Date(at)
+  if (Number.isNaN(date.getTime())) return null
+  return `上报时间 ${date.getMonth() + 1}月${date.getDate()}日 ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
 }
 
 /** 从 account/rateLimits/updated 通知中把稀疏更新并入当前快照。 */

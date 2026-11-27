@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type Ref } from 'react'
 import { Check, Copy, X } from 'lucide-react'
 import { Tip } from '../../components/primitives'
 import { IconButton } from '../../components/ui'
+import { ImagePreviewDialog } from '../../components/ZoomableImage'
 import { formatBytes, type ImageAttachment } from '../../lib/attachments'
 import { cn } from '../../lib/cn'
 import { copyImage } from './imageClipboard'
@@ -10,10 +11,12 @@ export function ImageAttachmentChip({
   item,
   problem,
   onRemove,
+  previewButtonRef,
 }: {
   item: ImageAttachment
   problem?: string | null
   onRemove: () => void
+  previewButtonRef?: Ref<HTMLButtonElement>
 }) {
   const previewRef = useRef<HTMLDialogElement>(null)
   const imageRef = useRef<HTMLImageElement>(null)
@@ -40,6 +43,7 @@ export function ImageAttachmentChip({
     >
       <Tip label={`${item.name} · ${problem ?? formatBytes(item.size)}`}>
         <button
+          ref={previewButtonRef}
           type="button"
           aria-label={`查看图片 ${item.name}`}
           aria-haspopup="dialog"
@@ -60,15 +64,8 @@ export function ImageAttachmentChip({
       >
         <X size={12} />
       </IconButton>
-      <dialog
-        ref={previewRef}
-        aria-label={`图片预览 ${item.name}`}
-        className="qn-no-drag fixed inset-0 m-0 h-dvh max-h-none w-dvw max-w-none place-items-center bg-transparent p-0 backdrop:bg-black/80 open:grid"
-        onClick={(event) => {
-          if (event.target === event.currentTarget) event.currentTarget.close()
-        }}
-      >
-        <div className="absolute right-3 top-3 flex items-center gap-2">
+      <ImagePreviewDialog dialogRef={previewRef} src={item.dataUrl} alt={item.name}
+        label={`图片预览 ${item.name}`} imageRef={imageRef} actions={<>
           <button
             type="button"
             aria-label="复制图片"
@@ -80,23 +77,7 @@ export function ImageAttachmentChip({
             {copyLabel}
           </button>
           <span className="sr-only" role="status">{copyState === 'idle' ? '' : copyLabel}</span>
-          <IconButton
-            label="关闭图片预览"
-            className="bg-qn-panel text-qn-text"
-            tooltip={false}
-            onClick={() => previewRef.current?.close()}
-          >
-            <X size={16} />
-          </IconButton>
-        </div>
-        <img
-          ref={imageRef}
-          src={item.dataUrl}
-          alt={item.name}
-          loading="lazy"
-          className="h-auto w-auto max-h-[min(82dvh,calc(100dvh-6rem))] max-w-[min(88dvw,90rem)] object-contain"
-        />
-      </dialog>
+        </>} />
     </div>
   )
 }

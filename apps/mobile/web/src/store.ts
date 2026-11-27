@@ -5,9 +5,11 @@ import {
   applyRateLimitsUpdate,
   applyServerRequest,
   archiveThread,
+  claudeQuotaBlocked,
   CodexRpc,
   emptyState,
   failActiveThreads,
+  forkThread,
   interruptTurn,
   isOversizeHistoryResponse,
   isThreadOutcome,
@@ -17,6 +19,7 @@ import {
   loadThread,
   openThreadHistory,
   pickAccount,
+  pickClaudeSnapshot,
   pickSnapshot,
   prependThreadHistory,
   readThread,
@@ -26,10 +29,12 @@ import {
   sendInput,
   setThreadName,
   startThread,
+  startThreadCompaction,
   steerTurn,
   type AccessMode,
   type AccessSelection,
   type AccountSummary,
+  type ClaudeRateLimitSnapshot,
   type ConversationState,
   type RateLimitSnapshot,
   type RequestId,
@@ -286,7 +291,7 @@ type AppState = {
   models: Record<string, ModelList>
   modelPrefs: Record<string, ModelPrefs>
   rateLimits: Record<string, RateLimitEntry>
-  claudeRateLimits: Record<string, RateLimitSnapshot>
+  claudeRateLimits: Record<string, ClaudeRateLimitSnapshot>
   claudeCosts: Record<string, number>
   viewer: ViewerState | null
   annotations: Annotation[]
@@ -342,6 +347,7 @@ type AppState = {
   restoreConversation: (targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>) => Promise<void>
   renameConversation: (targetId: string, threadId: string, name: string) => Promise<void>
   compactConversation: () => Promise<boolean>
+  forkConversation: () => Promise<void>
   setDraftText: (text: string) => void
   setAccessMode: (mode: AccessSelection) => void
   send: (text: string, attachments?: UserInput[], delegate?: boolean, mode?: SendMode, options?: { keepDraft?: boolean }) => Promise<boolean>
@@ -356,6 +362,7 @@ type AppState = {
   loadModels: (targetId: string, agent: AgentKind, force?: boolean) => Promise<void>
   setModelPrefs: (targetId: string, agent: AgentKind, prefs: ModelPrefs) => void
   refreshRateLimits: (targetId: string) => Promise<void>
+  refreshClaudeRateLimits: (targetId: string) => Promise<boolean>
   openFile: (location: FileLocation) => Promise<void>
   loadMoreFile: () => Promise<void>
   openDiff: (request: DiffRequest) => Promise<void>
@@ -458,7 +465,7 @@ export function selectedCompactionStarting(state: AppState): boolean {
 
 export function selectedCompactionBlockedReason(state: AppState): string | null {
   const address = selectedSendAddress(state)
-  if (!address || address.agent !== 'codex') return '仅已创建的 Codex 会话支持压缩'
+  if (!address) return '请先打开会话'
   if (!state.eventsConnected) return '连接电脑后可压缩会话'
   const session = state.sessions[sessionKey(address.targetId, address.agent)]
   const thread = session?.state.threads[address.threadId]
@@ -466,7 +473,8 @@ export function selectedCompactionBlockedReason(state: AppState): string | null 
   if (selectedCompactionStarting(state)) return '正在启动压缩…'
   if (thread.status === 'running' || thread.pendingApprovals.length > 0 || state.sending) return '请先等待当前一轮结束'
   if (selectedQueuedSends(state)?.length) return '请先处理排队的消息'
-  const quota = state.rateLimits[address.targetId]?.snapshot
+  if (address.agent === 'claude' && claudeQuotaBlocked(state.claudeRateLimits[address.targetId])) return '当前额度已用完'
+  const quota = address.agent === 'codex' ? state.rateLimits[address.targetId]?.snapshot : null
   if (quota?.rateLimitReachedType || quota?.spendControlReached) return '当前额度已用完'
   return null
 }
@@ -537,6 +545,7 @@ export const useApp = create<AppState>((set, get) => {
   let restoreTask: Promise<void> | null = null
   let reconnectTask: Promise<void> | null = null
   const targetLinkEpochs = new Map<string, number>()
+  const claudeQuotaEpochs = new Map<string, number>()
   let desktopModelPrefs: Record<string, Record<string, ModelPrefs>> = {}
   const claudeCostPerTurn = new Map<string, number>()
   const completedTurns = new WeakMap<MobileCodexTransport, Set<string>>()
@@ -902,10 +911,8 @@ export const useApp = create<AppState>((set, get) => {
 
   function queueLimited(address: Pick<SendAddress, 'agent' | 'targetId'>): boolean {
     const state = get()
-    const snapshot = address.agent === 'codex' ? state.rateLimits[address.targetId]?.snapshot
-      : address.agent === 'claude' ? state.claudeRateLimits[address.targetId] : null
-    const reset = snapshot?.primary?.resetsAt
-    if (address.agent === 'claude' && reset != null && reset * 1000 <= Date.now()) return false
+    if (address.agent === 'claude') return claudeQuotaBlocked(state.claudeRateLimits[address.targetId])
+    const snapshot = address.agent === 'codex' ? state.rateLimits[address.targetId]?.snapshot : null
     return !!(snapshot?.rateLimitReachedType || snapshot?.spendControlReached)
   }
 
@@ -944,10 +951,11 @@ export const useApp = create<AppState>((set, get) => {
     if (!mobileTurnFits(targetId, agent, threadId, input, overrides, undefined, access)) {
       throw new Error('消息和附件合计超过 1 MiB，请移除部分内容后再发送')
     }
-    const params = { threadId, input, model: overrides.model || undefined, effort: overrides.effort || undefined,
+    const clientUserMessageId = makeId()
+    const params = { threadId, input, clientUserMessageId, model: overrides.model || undefined, effort: overrides.effort || undefined,
       serviceTier: overrides.serviceTier, mobileAccessMode: access }
     const { turn } = accessMode === 'default' && inheritAccess === undefined
-      ? await sendInput(session.rpc, threadId, input, overrides)
+      ? await sendInput(session.rpc, threadId, input, overrides, clientUserMessageId)
       : await session.rpc.request('turn/start', params)
     const current = get().sessions[session.key]
     if (current?.transport !== session.transport || completedTurns.get(session.transport)?.has(turn.id)) return
@@ -1116,6 +1124,7 @@ export const useApp = create<AppState>((set, get) => {
     claudeCostPerTurn.clear()
     reconnectTask = null
     targetLinkEpochs.clear()
+    claudeQuotaEpochs.clear()
     submitting.clear()
     replacing.clear()
     editingQueue.clear()
@@ -1276,12 +1285,8 @@ export const useApp = create<AppState>((set, get) => {
         })
       }
       if (agent === 'claude' && method === 'account/rateLimits/updated') {
-        // Claude 推送完整的单次事件，不能沿用上一次事件的窗口或拒绝状态。
-        const snapshot = applyRateLimitsUpdate(null, notification)
-        if (snapshot) set((state) => ({ claudeRateLimits: { ...state.claudeRateLimits, [targetId]: snapshot } }))
-        if (snapshot && queueLimited({ targetId, agent })) {
-          pauseQueues([conn.id, targetId, agent], '当前额度已用完，队列已暂停')
-        }
+        const snapshot = pickClaudeSnapshot(notification)
+        if (snapshot) applyClaudeQuota(conn.id, targetId, snapshot)
       } else if (agent === 'claude' && method === 'thread/tokenUsage/updated') {
         const threadId = params?.threadId
         const turnId = params?.turnId
@@ -1364,19 +1369,40 @@ export const useApp = create<AppState>((set, get) => {
       params: { agent: session.agent, sinceSeq },
     })
 
-  const readClaudeRateLimits = async (session: AgentSession): Promise<void> => {
+  const applyClaudeQuota = (desktopId: string, targetId: string, snapshot: ClaudeRateLimitSnapshot): void => {
+    set((state) => ({ claudeRateLimits: { ...state.claudeRateLimits, [targetId]: snapshot } }))
+    if (claudeQuotaBlocked(snapshot)) pauseQueues([desktopId, targetId, 'claude'], '当前额度已用完，队列已暂停')
+  }
+
+  const clearClaudeQuota = (targetId: string): void => {
+    claudeQuotaEpochs.set(targetId, (claudeQuotaEpochs.get(targetId) ?? 0) + 1)
+    set((state) => {
+      if (!state.claudeRateLimits[targetId]) return state
+      const claudeRateLimits = { ...state.claudeRateLimits }
+      delete claudeRateLimits[targetId]
+      return { claudeRateLimits }
+    })
+  }
+
+  const readClaudeRateLimits = async (session: AgentSession): Promise<boolean> => {
     const { key, targetId, rpc } = session
     const epoch = desktopEpoch
-    const linkEpoch = targetLinkEpochs.get(targetId)
-    const previous = get().claudeRateLimits[targetId]
+    const streamEpoch = eventStreamEpoch
+    const quotaEpoch = claudeQuotaEpochs.get(targetId)
+    const { activeId, claudeRateLimits } = get()
+    if (!activeId) return false
+    const previous = claudeRateLimits[targetId]
     try {
-      // Claude 桥只返回已有事件的缓存。事件流可能在读取期间收到更新。
-      const snapshot = pickSnapshot(await rpc.request('account/rateLimits/read', {}))
-      if (epoch !== desktopEpoch || linkEpoch !== targetLinkEpochs.get(targetId)
-        || get().sessions[key]?.rpc !== rpc || get().claudeRateLimits[targetId] !== previous || !snapshot) return
-      set((state) => ({ claudeRateLimits: { ...state.claudeRateLimits, [targetId]: snapshot } }))
+      // 只读取目标机缓存，读取期间可能收到新推送或切换连接。
+      const snapshot = pickClaudeSnapshot(await rpc.request('account/rateLimits/read', {}))
+      const state = get()
+      if (!snapshot || epoch !== desktopEpoch || streamEpoch !== eventStreamEpoch || quotaEpoch !== claudeQuotaEpochs.get(targetId)
+        || !state.sessions[key]?.opened || state.sessions[key].rpc !== rpc) return false
+      if (state.claudeRateLimits[targetId] === previous) applyClaudeQuota(activeId, targetId, snapshot)
+      return true
     } catch {
       // 旧版 daemon 或暂时断线时仍可等待下一次限额事件。
+      return false
     }
   }
 
@@ -1539,7 +1565,7 @@ export const useApp = create<AppState>((set, get) => {
         },
         onClose: () => {
           eventStreamEpoch += 1
-          set({ eventsConnected: false })
+          set({ eventsConnected: false, claudeRateLimits: {} })
         },
         onUnavailable: () => set({ eventsError: EVENTS_UNAVAILABLE_MESSAGE }),
         onRepair: (reason, message) => {
@@ -2117,6 +2143,7 @@ export const useApp = create<AppState>((set, get) => {
         await getGateway().rpc(conn, 'target.disconnect', { id })
         if (epoch !== desktopEpoch) return
         set((state) => ({ targetStates: applyTargetState(state.targetStates, { id, state: 'idle' }) }))
+        clearClaudeQuota(id)
         pauseQueues([conn.id, id], '目标连接中断，队列已暂停')
       } catch (err) {
         if (epoch !== desktopEpoch) return
@@ -2428,7 +2455,7 @@ export const useApp = create<AppState>((set, get) => {
             openError: null,
             lastSeq: restarted ? info.lastSeq : maxSeq(value.lastSeq, info.lastSeq),
           }), session)
-          if (session.agent === 'claude') void readClaudeRateLimits(session)
+          const quota = session.agent === 'claude' ? readClaudeRateLimits(session) : undefined
           const queueAddresses = queued()
           const threadIds = new Set(queueAddresses.map((address) => address.threadId))
           const selected = get().selectedThreadId
@@ -2444,6 +2471,7 @@ export const useApp = create<AppState>((set, get) => {
             if (!loaded) pauseQueue(key, '未能确认会话状态，队列已暂停')
             else if (view?.status === 'error' || view?.activity === 'interrupted') pauseQueue(key, '上一轮未完成，队列已暂停')
           }))
+          if (queueAddresses.length) await quota
           if (isCurrent()) patchSession(session.key, (value) => ({ ...value, linkInterrupted: false }), session)
         } catch (err) {
           if (!isCurrent()) return
@@ -2841,6 +2869,21 @@ export const useApp = create<AppState>((set, get) => {
       saveAccessPrefs({ ...state.threadAccessModes, [preferenceKey]: mode })
     },
 
+    forkConversation: async () => {
+      const source = get()
+      const address = selectedSendAddress(source)
+      if (!address || address.agent !== 'codex') throw new Error('当前会话不支持创建分支')
+      const navigation = navigationEpoch
+      const epoch = desktopEpoch
+      const { targetId, agent, threadId } = address
+      const session = await conversationSession(targetId, agent, epoch)
+      if (navigation !== navigationEpoch || epoch !== desktopEpoch) return
+      const result = await forkThread(session.rpc, threadId)
+      if (navigation !== navigationEpoch || epoch !== desktopEpoch) return
+      await get().openThread(result.thread.id, agent)
+      if (epoch === desktopEpoch && get().selectedTargetId === targetId) void get().refreshThreads({ skipFailed: true })
+    },
+
     compactConversation: async () => {
       const initial = get()
       const address = selectedSendAddress(initial)
@@ -2860,11 +2903,9 @@ export const useApp = create<AppState>((set, get) => {
         return epoch === desktopEpoch && navigation === navigationEpoch && state.page === 'chat'
           && selected !== null && sendKey(selected) === key
       }
-      let unsubscribe = () => {}
-      let timer: ReturnType<typeof setTimeout> | undefined
       set((state) => ({ compactingThreads: { ...state.compactingThreads, [key]: true }, error: null }))
       try {
-        if (!session.resumedCodexThreads.has(threadId)) await resumeCodexConversation(session, threadId)
+        if (agent === 'codex' && !session.resumedCodexThreads.has(threadId)) await resumeCodexConversation(session, threadId)
         if (!isCurrent()) return false
         const state = get()
         const current = state.sessions[session.key]
@@ -2876,24 +2917,12 @@ export const useApp = create<AppState>((set, get) => {
         if (thread.status === 'running' || thread.pendingApprovals.length > 0) throw new Error('请先等待当前一轮结束')
         if (queueLimited(address)) throw new Error('当前额度已用完')
 
-        // 请求只确认已提交。先监听同一会话的事件，以免快速回包留下重复触发的空档。
-        const started = new Promise<boolean>((resolve) => {
-          unsubscribe = session.rpc.onNotification((note) => {
-            if ((note.method === 'turn/started' || note.method === 'turn/completed'
-              || (note.method === 'item/started' && note.params.item.type === 'contextCompaction'))
-              && note.params.threadId === threadId) resolve(true)
-          })
-          timer = setTimeout(() => resolve(false), 30_000)
-        })
-        await session.rpc.request('thread/compact/start', { threadId })
-        if (!(await started)) throw new Error('尚未收到压缩进度，请检查当前会话')
+        await startThreadCompaction(session.rpc, threadId)
         return true
       } catch (err) {
         if (isCurrent()) set({ error: `压缩会话失败。${friendlyError(err, '请稍后重试')}` })
         return false
       } finally {
-        unsubscribe()
-        clearTimeout(timer)
         if (epoch === desktopEpoch) {
           set((state) => {
             const compactingThreads = { ...state.compactingThreads }
@@ -2917,10 +2946,6 @@ export const useApp = create<AppState>((set, get) => {
         return false
       }
       if (!keepDraft && queueingDrafts.has(key)) return false
-      if (mode === 'steer' && agent !== 'codex') {
-        set({ error: '当前 Agent 不支持引导' })
-        return false
-      }
       const draft = { text, annotations }
       const epoch = desktopEpoch
       const navigation = navigationEpoch
@@ -3020,7 +3045,7 @@ export const useApp = create<AppState>((set, get) => {
           if (current?.status !== 'running' || current.activeTurnId !== expectedTurnId) {
             throw new Error('当前一轮已结束或切换，消息已保留')
           }
-          await steerTurn(session.rpc, threadId, expectedTurnId, input)
+          await steerTurn(session.rpc, threadId, expectedTurnId, input, makeId())
           if (epoch === desktopEpoch) clearSentDraft(sentDraftKey)
           return true
         }
@@ -3106,7 +3131,7 @@ export const useApp = create<AppState>((set, get) => {
     steerQueuedSend: async (id) => {
       const state = get()
       const address = selectedSendAddress(state)
-      if (!address || address.agent !== 'codex' || !state.eventsConnected) return false
+      if (!address || !state.eventsConnected) return false
       const { targetId, agent, threadId } = address
       const key = sendKey(address)
       const session = state.sessions[sessionKey(targetId, agent)]
@@ -3132,7 +3157,7 @@ export const useApp = create<AppState>((set, get) => {
           throw new Error('当前一轮已结束或切换，排队消息已保留')
         }
         if (queueLimited(address)) throw new Error('当前额度已用完，排队消息已保留')
-        await steerTurn(session.rpc, threadId, turnId, input)
+        await steerTurn(session.rpc, threadId, turnId, input, makeId())
         if (epoch === desktopEpoch) void dropQueuedSend(key, id)
         return true
       } catch (err) {
@@ -3413,6 +3438,11 @@ export const useApp = create<AppState>((set, get) => {
       return task
     },
 
+    refreshClaudeRateLimits: async (targetId) => {
+      const session = get().sessions[sessionKey(targetId, 'claude')]
+      return session?.opened ? readClaudeRateLimits(session) : false
+    },
+
     openFile: async (location) => {
       const targetId = get().selectedTargetId
       if (!targetId || !location.path) return
@@ -3565,6 +3595,7 @@ export const useApp = create<AppState>((set, get) => {
           if (!id) return
           if (record?.state !== 'ready') {
             targetLinkEpochs.set(id, (targetLinkEpochs.get(id) ?? 0) + 1)
+            clearClaudeQuota(id)
             for (const session of Object.values(get().sessions)) {
               if (session.targetId !== id) continue
               session.loadedThreads.clear()
@@ -3613,6 +3644,7 @@ export const useApp = create<AppState>((set, get) => {
           const payload = isRecord(event.payload) ? event.payload : null
           const targetId = typeof payload?.targetId === 'string' ? payload.targetId : ''
           if (payload?.name === 'server.restarted' && targetId) {
+            clearClaudeQuota(targetId)
             for (const session of Object.values(get().sessions)) {
               if (session.targetId === targetId) {
                 patchSession(session.key, (value) => ({ ...value, accessSupported: undefined }), session)
@@ -3638,6 +3670,7 @@ export const useApp = create<AppState>((set, get) => {
               }))
             }
             if (agent === null || agent === 'codex') patchRate(targetId, emptyRateLimit())
+            if (agent === null || agent === 'claude') clearClaudeQuota(targetId)
           }
           return
         }

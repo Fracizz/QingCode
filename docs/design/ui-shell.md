@@ -46,7 +46,7 @@
 | 项目树 | 行高 32 | 当前项目展开显示会话（默认 8 条）；当前会话青轨 + 选中底；运行中转圈、待审批琥珀标签；每条会话行尾显示 Agent 图标；悬停换成"新会话 / 移除项目" | `shell/ProjectTree.tsx` |
 | 主区顶栏 | 44px | 会话标题、所在项目、运行中徽标、Agent、"…"菜单 | `shell/MainHeader.tsx` |
 | 消息流 | `max-w-3xl` 居中 | 草稿页 / 消息；连续 ≥2 个工具步骤折叠成摘要行；错误横幅；"回到底部"居中悬浮 | `ChatPanel.tsx`、`MessageItem.tsx`、`shell/WelcomePane.tsx` |
-| 输入框 | 圆角 20px 卡片 | 自动增高（≤40% 视口）；左：Agent 选择（仅草稿态）；右：上下文占用环、模型选择器、发送/停止；下方环境行 | `Composer.tsx`、`AgentPicker.tsx`、`ModelPicker.tsx` |
+| 输入框 | 圆角 12px 卡片（`rounded-xl`） | 自动增高（≤40% 视口）；左：Agent 选择（仅草稿态）；右：上下文占用环、模型选择器、发送/停止；下方环境行 | `Composer.tsx`、`AgentPicker.tsx`、`ModelPicker.tsx` |
 
 > 去掉了 v1 的底部状态栏：目标状态在切换器与输入框环境行，额度在标题栏胶囊，Agent 状态在环境行与主区横幅，版本号在侧栏底部。
 > 会话列表一次只加载一个 cwd（codex store 现状），同一时间只展开当前项目。
@@ -59,8 +59,8 @@
 | 选 Agent | 草稿态输入框左下 Agent 菜单；不可用的 Agent 置灰并显示原因；会话创建后 Agent 固定 |
 | 选模型 | 输入框右下模型选择器：搜索模型 → 选模型 → 推理强度分段（Low/Med/High/XHigh/Max/极致，按模型支持项显示）→ 速度 Fast 开关（模型有加速档才显示）。偏好按 Agent 存 `localStorage['qn-model-prefs']`，发送时作为 `turn/start` 的 `model / effort / serviceTier` 覆盖；目标上没有该模型时回落默认。模型列表来自 `model/list`，为空（Claude 桥接）时不显示选择器 |
 | 附件 | 粘贴、拖入主区或点输入框左下回形针添加，最多 8 个。图片（png/jpg/gif/webp）读成 data URL 随消息发送，边长 >2048 或 >5 MB 时缩放转 WebP；其他文件 ≤10 MB：本机目标直接引用本机路径，SSH 目标先经 `fs.write` 上传到目标机 `~/.qingcode-next/uploads/<日期>/`，上传中/失败时不能发送。发送为 `turn/start` 的 `image` / `mention` 输入；Claude 桥接转成图片内容块与"附件文件"说明 |
-| 斜杠菜单 | 输入框开头输入 `/` 弹出：内置命令（`/new` 新会话、`/stop` 停止、`/refresh` 刷新）+ 技能（`skills/list`，Codex 原生；Claude 桥接扫描 `~/.claude` 与项目 `.claude` 下的 skills/commands）。↑↓ 选择、Enter/Tab 确认、Esc 关闭；选中技能显示为青色标签，空输入时退格移除；发送为 `skill` 输入（Claude 转成 `/name` 前缀） |
-| 上下文占用 | `thread/tokenUsage/updated` 的 `last.totalTokens / modelContextWindow`，≥75% 琥珀、≥90% 红；悬停显示具体 token 数 |
+| 斜杠菜单 | 桌面与手机在对话输入框输入 `/` 查看内置命令，↑↓ 选择、Enter/Tab 确认、Esc 关闭，也可以点击或触摸。用 `/help` 查看完整清单与不可用原因。桌面同一菜单还列出 Agent 技能，选中技能显示为标签并作为 `skill` 输入发送 |
+| 上下文占用 | `thread/tokenUsage/updated` 的 `last.totalTokens / modelContextWindow`，≥75% 琥珀、≥90% 红。点占用环或用 `/context` 查看会话用量，`/compact` 打开压缩确认。账号额度用 `/status`、`/usage` 或 `/quota` 查看 |
 | 工具步骤 | 连续 ≥2 个命令/文件改动/思考折叠成"已运行 N 条命令 · M 个失败 · 编辑了 K 个文件"，运行中默认展开 |
 | 代码块 | 顶部语言名 + 复制；生成结束后用 shiki 高亮（JS 正则引擎，按需加载语言，>60K 字符不高亮） |
 | 回复操作 | 悬停回复显出：复制 Markdown、"…"（复制纯文本、从这里开始新会话） |
@@ -117,16 +117,15 @@ Tailwind 尺寸全是 rem，**根字号不得改小**（v1 用 14px 导致 `text
 
 ### 尺寸
 
-- 圆角（只用下表几档，新代码不再出现裸 `rounded` / 任意值，输入框卡片除外）：
+- 圆角统一使用下表的档位。
 
 | 档位 | 用途 |
 |---|---|
 | `rounded-sm` 4px | 文字级高亮：划词框、搜索命中、行内文件链接、光标 |
 | `rounded-md` 6px | ≤24px 的小元素：Badge、标签/chip、kbd、行内代码、`IconButton size="sm"` |
 | `rounded-lg` 8px | 标准控件：按钮、输入框（`.qn-input`）、菜单项、标签页、列表行、Tooltip、弹窗/浮层内的信息块 |
-| `rounded-xl` 12px | 独立容器：代码块、卡片、所有浮层（菜单、Popover、斜杠菜单、划词工具条、右键菜单、Toast） |
+| `rounded-xl` 12px | 独立容器：代码块、卡片（含排队消息面板和对话输入框）、所有浮层（菜单、Popover、斜杠菜单、划词工具条、右键菜单、Toast） |
 | `rounded-2xl` 16px | 弹窗、用户消息气泡、拖放遮罩 |
-| `rounded-[20px]` | 仅输入框卡片 |
 | `rounded-full` | 状态点、圆形按钮、进度条、胶囊 |
 
 - 控件高度：图标按钮 32（`IconButton` 默认）/ 24（`size="sm"`）；列表行 32；菜单项 ≥32。

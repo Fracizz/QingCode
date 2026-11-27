@@ -31,7 +31,7 @@ type WorkspacePreferences = {
 }
 
 export const threadPreferenceKey = (targetId: string, agent: AgentKind, threadId: string) => JSON.stringify([targetId, agent, threadId])
-const preferenceKey = (thread: WorkspaceThread) => threadPreferenceKey(thread.targetId, thread.agent, thread.id)
+const preferenceKey = (thread: Pick<WorkspaceThread, 'targetId' | 'agent' | 'id'>) => threadPreferenceKey(thread.targetId, thread.agent, thread.id)
 
 export function useWorkspacePreferences() {
   const activeId = useApp((state) => state.activeId)
@@ -237,7 +237,7 @@ function changePreferences(desktopId: string, change: (current: WorkspacePrefere
   persistWorkspace()
 }
 
-export function changeThreadPreference(desktopId: string, thread: WorkspaceThread, patch: ThreadPreference): void {
+export function changeThreadPreference(desktopId: string, thread: Pick<WorkspaceThread, 'targetId' | 'agent' | 'id'>, patch: ThreadPreference): void {
   changePreferences(desktopId, (current) => {
     const key = preferenceKey(thread)
     const threads = { ...current.threads, [key]: { ...current.threads[key], ...patch } }

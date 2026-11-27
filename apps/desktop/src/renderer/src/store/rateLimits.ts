@@ -2,9 +2,10 @@ import { create } from 'zustand'
 import {
   applyRateLimitsUpdate,
   pickAccount,
+  pickClaudeSnapshot,
   pickSnapshot,
   type AccountSummary,
-  type RateLimitSnapshot,
+  type ClaudeRateLimitSnapshot,
 } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { on } from '../lib/backend'
@@ -16,7 +17,7 @@ import { DEFAULT_AGENT, exitedAgentOf, parseSessionKey, sessionKey } from '../li
 import { useCodex } from './codex'
 
 export type TargetRateLimits = {
-  snapshot: RateLimitSnapshot | null
+  snapshot: ClaudeRateLimitSnapshot | null
   account: AccountSummary | null
   updatedAt: number | null
   loading: boolean
@@ -86,10 +87,26 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
     const session = useCodex.getState().sessions[key]
     if (!session?.opened) return
 
+    const previous = get().byAgent[key]?.snapshot ?? null
+    const isCurrent = () => {
+      const current = useCodex.getState().sessions[key]
+      return inFlight.get(key) === task && current?.opened && current.rpc === session.rpc
+    }
     patch(targetId, agent, { loading: true })
-    const task = (async () => {
+    const task: Promise<void> = Promise.resolve().then(async () => {
       try {
-        // 账号读取失败不应挡住额度显示，两个请求彼此独立；Claude 只返回最近一次限额事件缓存。
+        if (agent === 'claude') {
+          const snapshot = pickClaudeSnapshot(await session.rpc.request('account/rateLimits/read', {}))
+          if (!isCurrent()) return
+          if (!snapshot) throw new Error('读取额度失败')
+          // 推送可能先于读取返回。已经收到了更新时，保留推送的快照。
+          const changes = (get().byAgent[key]?.snapshot ?? null) === previous
+            ? { snapshot, updatedAt: snapshot.observedAt ?? null }
+            : {}
+          patch(targetId, agent, { ...changes, loading: false, error: null })
+          return
+        }
+        // Codex 的账号与额度可以独立返回。
         const [limits, account] = await Promise.allSettled([
           session.rpc.request('account/rateLimits/read', {}),
           session.rpc.request('account/read', {}),
@@ -108,11 +125,13 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
         if (snapshot || accountInfo) changes.updatedAt = Date.now()
         patch(targetId, agent, changes)
       } catch (err) {
-        patch(targetId, agent, { loading: false, error: friendlyError(err, '读取额度失败') })
+        if (agent !== 'claude' || isCurrent()) {
+          patch(targetId, agent, { loading: false, error: friendlyError(err, '读取额度失败') })
+        }
       } finally {
-        inFlight.delete(key)
+        if (inFlight.get(key) === task) inFlight.delete(key)
       }
-    })()
+    })
     inFlight.set(key, task)
     return task
   }
@@ -135,6 +154,7 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
           const registered = listeners.get(key)
           if (!registered || registered.rpc !== session.rpc) {
             registered?.off()
+            if (registered && agent === 'claude') get().reset(targetId, agent)
             listeners.set(key, {
               rpc: session.rpc,
               off: session.rpc.onNotification((msg) =>
@@ -143,15 +163,17 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
             })
           }
           // codex.open 成功后立即读取，进程退出后清掉过期数据。
-          if (session.opened && before[key]?.opened !== true) {
+          if (session.opened && (before[key]?.opened !== true || before[key]?.rpc !== session.rpc)) {
             void get().refresh(targetId, agent)
           }
           if (!session.opened && before[key]?.opened === true) get().reset(targetId, agent)
         }
         for (const key of [...listeners.keys()]) {
           if (!current[key]) {
+            const { targetId, agent } = sessionScope(key)
             listeners.get(key)?.off()
             listeners.delete(key)
+            if (agent === 'claude') get().reset(targetId, agent)
           }
         }
       }
@@ -163,7 +185,7 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
         for (const [key, session] of Object.entries(sessionsOf(useCodex.getState()))) {
           if (!session.opened) continue
           const { targetId, agent } = sessionScope(key)
-          void get().refresh(targetId, agent)
+          if (agent === 'codex') void get().refresh(targetId, agent)
         }
       }
       const isVisible = (): boolean =>
@@ -218,9 +240,12 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
       const kind = notificationKind(msg)
       if (kind === 'updated') {
         const key = sessionKey(targetId, agent)
-        // Claude 的最近一次限额事件是完整快照，允许覆盖之前的拒绝状态。
-        const prev = agent === 'claude' ? null
-          : get().byAgent[key]?.snapshot ?? get().byTarget[targetId]?.snapshot ?? null
+        if (agent === 'claude') {
+          const snapshot = pickClaudeSnapshot(msg)
+          if (snapshot) patch(targetId, agent, { snapshot, updatedAt: snapshot.observedAt ?? null, error: null })
+          return
+        }
+        const prev = get().byAgent[key]?.snapshot ?? get().byTarget[targetId]?.snapshot ?? null
         patch(targetId, agent, {
           snapshot: applyRateLimitsUpdate(prev, msg),
           updatedAt: Date.now(),
@@ -238,12 +263,11 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
             ...costs,
             [cost.threadId]: (costs[cost.threadId] ?? 0) + cost.usd,
           },
-          updatedAt: Date.now(),
         })
         return
       }
       // turn 完成后服务端额度可能刚变化，主动重新读一次。
-      if (kind === 'turnCompleted') void get().refresh(targetId, agent)
+      if (kind === 'turnCompleted' && agent === 'codex') void get().refresh(targetId, agent)
     },
 
     reset: (targetId, agent) => {

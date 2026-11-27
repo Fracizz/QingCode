@@ -1,4 +1,9 @@
 import {
+  CLAUDE_WAITING_FOR_QUOTA,
+  claudeQuotaReportedAt,
+  claudeQuotaResetAt,
+  claudeQuotaSource,
+  claudeQuotaSummary,
   compactText,
   formatReset,
   isClaudeStatusLine,
@@ -7,7 +12,7 @@ import {
   severityForPercent,
   tightestPercent,
   windowLabel,
-  type RateLimitSnapshot,
+  type ClaudeRateLimitSnapshot,
   type RateLimitWindow,
 } from '@qn/codex-client'
 import { useEffect, useState } from 'react'
@@ -17,31 +22,55 @@ import { Badge, Button, Dialog } from './ui'
 
 type QuotaAgent = 'codex' | 'claude'
 
-function claudeQuotaSummary(snapshot: RateLimitSnapshot | undefined): string | null {
-  if (snapshot?.rateLimitReachedType || snapshot?.spendControlReached) return '已达额度上限'
-  if (isClaudeStatusLine(snapshot)) return compactText(snapshot, 'remaining')
-  const used = snapshot?.primary?.usedPercent
-  return used == null ? null : `上报剩余 ${Math.round(remainingQuotaPercent(used))}%`
-}
+function ClaudeQuotaDetails({ targetId, snapshot, available }: {
+  targetId: string
+  snapshot?: ClaudeRateLimitSnapshot
+  available: boolean
+}) {
+  const refreshQuota = useApp((s) => s.refreshClaudeRateLimits)
+  const [loading, setLoading] = useState(false)
+  const [readFailed, setReadFailed] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+  const reset = claudeQuotaResetAt(snapshot)
+  const live = isClaudeStatusLine(snapshot)
+  const source = claudeQuotaSource(snapshot)
 
-const claudeQuotaNote = 'Claude 只在接近或触发限额时上报。'
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [])
 
-function ClaudeQuotaDetails({ snapshot }: { snapshot?: RateLimitSnapshot }) {
-  const now = Date.now()
-  if (isClaudeStatusLine(snapshot)) {
-    return (
-      <div>
-        {snapshot?.primary && <WindowRow label="5 小时" window={snapshot.primary} now={now} />}
-        {snapshot?.secondary && <WindowRow label="每周" window={snapshot.secondary} now={now} />}
-        <p className="text-xs text-qn-muted">来源为 Claude CLI 状态栏</p>
-      </div>
-    )
+  async function refresh() {
+    setLoading(true)
+    setReadFailed(false)
+    try {
+      setReadFailed(!await refreshQuota(targetId))
+    } finally {
+      setLoading(false)
+    }
   }
+
   return (
     <div className="space-y-1 text-sm">
-      <p className={toneText(severity(snapshot))}>{claudeQuotaSummary(snapshot) ?? '暂无限额上报'}</p>
-      {snapshot?.primary?.resetsAt != null && <p className="text-xs text-qn-muted">{formatReset(snapshot.primary.resetsAt, now)}</p>}
-      <p className="text-xs text-qn-muted">{claudeQuotaNote}</p>
+      <div className="flex justify-end">
+        <Button className="px-2 py-1 text-xs" disabled={!available || loading} onClick={() => void refresh()}>
+          {loading ? '刷新中…' : '刷新'}
+        </Button>
+      </div>
+      {readFailed && available && <p className="text-xs text-qn-danger">读取额度失败</p>}
+      {live ? (
+        <>
+          {snapshot?.primary && <WindowRow label="5 小时" window={snapshot.primary} now={now} />}
+          {snapshot?.secondary && <WindowRow label="每周" window={snapshot.secondary} now={now} />}
+        </>
+      ) : (
+        <>
+          <p className={toneText(severity(snapshot))}>{claudeQuotaSummary(snapshot) ?? CLAUDE_WAITING_FOR_QUOTA}</p>
+          {reset !== null && <p className="text-xs text-qn-muted">{formatReset(reset, now)}</p>}
+        </>
+      )}
+      {source && <p className="text-xs text-qn-muted">{source}</p>}
+      <p className="text-xs text-qn-muted">{claudeQuotaReportedAt(snapshot) ?? '暂无上报时间'}</p>
     </div>
   )
 }
@@ -98,7 +127,9 @@ export function TargetRateLimits({ targetId, targetName, available }: {
       {showClaude && <QuotaButton agent="claude" summary={claudeSummary} level={severity(claude)} onClick={() => setOpen('claude')} />}
       {open && (open === 'codex' ? showCodex : showClaude) && (
         <Dialog title={`${targetName} · ${agentLabel(open)} 额度`} onClose={() => setOpen(null)}>
-          {open === 'codex' ? <RateLimitDetails targetId={targetId} available={available} /> : <ClaudeQuotaDetails snapshot={claude} />}
+          {open === 'codex'
+            ? <RateLimitDetails targetId={targetId} available={available} />
+            : <ClaudeQuotaDetails targetId={targetId} snapshot={claude} available={available && claudeOpened} />}
         </Dialog>
       )}
     </div>
@@ -108,6 +139,7 @@ export function TargetRateLimits({ targetId, targetName, available }: {
 /** 对话里模型弹层下方的额度区：只看当前目标、当前 Agent，比在连接页单独开入口更贴近使用场景。 */
 export function AgentQuota({ targetId, agent }: { targetId: string; agent: string }) {
   const opened = useApp((s) => s.sessions[sessionKey(targetId, 'codex')]?.opened === true)
+  const claudeAvailable = useApp((s) => s.eventsConnected && s.sessions[sessionKey(targetId, 'claude')]?.opened === true)
   const claude = useApp((s) => s.claudeRateLimits[targetId])
   if (agent === 'codex') {
     return (
@@ -121,7 +153,7 @@ export function AgentQuota({ targetId, agent }: { targetId: string; agent: strin
   return (
     <section className="mb-3 space-y-1 text-sm" aria-label="Claude 额度">
       <div className="qn-label">额度</div>
-      <ClaudeQuotaDetails snapshot={claude} />
+      <ClaudeQuotaDetails targetId={targetId} snapshot={claude} available={claudeAvailable} />
     </section>
   )
 }

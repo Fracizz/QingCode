@@ -69,6 +69,11 @@ Claude 订阅登录的灰区说明：Anthropic 允许"end user signing in to the
 
 ## 4. 用量、限额与并发
 
+- 引导从桌面或手机对活动轮次发 `turn/steer`。pi 使用官方 `steer` RPC（安装包 `docs/rpc-commands.md`），收到原生用户消息事件后回显。Claude 使用 [Agent SDK 流式输入](https://code.claude.com/docs/en/agent-sdk/typescript#sdkusermessage) 的 `priority: 'next'`，根据 SDK 回显的用户消息 UUID 确认归属。本轮先结束时，Claude 可以在下一轮处理这条补充。
+- 持久会话的引导归属保存在 QingCode daemon 状态目录的 `steering/`，只记录消息标识及轮次归属。临时会话只在内存记录。
+
+- 手动压缩只在用户确认后执行。Codex 用公开的 [`thread/compact/start`](https://developers.openai.com/codex/app-server)，Claude 用 [Agent SDK 的 `/compact`](https://code.claude.com/docs/en/agent-sdk/agent-loop) 且须由 `supportedCommands()` 声明，pi 用官方 RPC `compact`（随安装包提供的 `docs/rpc-commands.md`）。压缩减少上下文占用，已用账号额度不会恢复。
+
 - 额度只读官方接口：Codex `account/rateLimits/read` + `account/rateLimits/updated`。Claude 默认使用 SDK 的 `rate_limit_event`，费用使用 `result.total_cost_usd`（标注"估算"）。个人自用可以主动配置官方 CLI 的 [`statusLine`](https://code.claude.com/docs/en/statusline#rate-limit-usage) 转发两个订阅窗口；对外分发仍遵守 §3.3。不抓取网页、不调用私有用量接口。
 - Codex `account/rateLimitResetCredit/consume`、`account/sendAddCreditsNudgeEmail` 等有副作用的账户方法：只能由用户显式点击触发，带确认框，禁止自动调用。
 - 刷新频率：界面可见时 ≥60 秒一次；不可见时停止。禁止为"保持在线""预热"发送空 turn 或心跳 prompt。

@@ -96,7 +96,7 @@ describe('排队消息操作', () => {
     expect(useCodex.getState().currentThreadId).toBe('new-thread')
   })
 
-  it('新会话继续：在侧栏分叉到最后一个已结束的轮次，主会话不切换', async () => {
+  it('新对话继续：在侧栏分叉到最后一个已结束的轮次，主会话不切换', async () => {
     await useCodex.getState().send('接着做', chat)
     const id = pending()[0]!.id
     expect(await useCodex.getState().sendPendingInNewThread(chat, id, 'continue')).toBe(false)

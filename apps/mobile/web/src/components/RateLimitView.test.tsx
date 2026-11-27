@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { pickSnapshot, type RateLimitSnapshot } from '@qn/codex-client'
+import { pickClaudeSnapshot, pickSnapshot, type ClaudeRateLimitSnapshot } from '@qn/codex-client'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -10,11 +10,12 @@ import { AgentQuota, RateLimitDetails, TargetRateLimits } from './RateLimitView'
 
 const state = vi.hoisted(() => ({
   rateLimits: {} as Record<string, RateLimitEntry>,
-  claudeRateLimits: {} as Record<string, RateLimitSnapshot>,
+  claudeRateLimits: {} as Record<string, ClaudeRateLimitSnapshot>,
   agentSettings: null as MobileAgentSettings | null,
   sessions: {} as Record<string, { opened: boolean }>,
   ensureOpen: vi.fn(),
   refreshRateLimits: vi.fn(),
+  refreshClaudeRateLimits: vi.fn(),
 }))
 
 vi.mock('../store', () => ({
@@ -37,8 +38,9 @@ afterEach(() => {
 
 describe('手机目标额度展示', () => {
   it('状态栏推送分别显示 Claude 的 5 小时与每周额度', () => {
-    const snapshot = pickSnapshot({ rateLimits: {
+    const snapshot = pickClaudeSnapshot({ rateLimits: {
       limitId: 'claude-statusline',
+      observedAt: new Date(2026, 10, 27, 8, 9, 10).getTime(),
       primary: { usedPercent: 0, windowDurationMins: 300 },
       secondary: { usedPercent: 58, windowDurationMins: 10_080 },
     } })
@@ -50,12 +52,13 @@ describe('手机目标额度展示', () => {
     expect(html).toContain('剩余 100%')
     expect(html).toContain('剩余 42%')
     expect(html).toContain('来源为 Claude CLI 状态栏')
+    expect(html).toContain('上报时间 11月27日 08:09:10')
   })
 
   it('Claude 未收到限额事件时在对话中说明状态，pi 没有账户额度入口', () => {
     const claude = renderToStaticMarkup(<AgentQuota targetId="local" agent="claude" />)
-    expect(claude).toContain('暂无限额上报')
-    expect(claude).toContain('Claude 只在接近或触发限额时上报。')
+    expect(claude).toContain('等待 Claude CLI 上报')
+    expect(claude).toContain('暂无上报时间')
     expect(renderToStaticMarkup(<AgentQuota targetId="local" agent="pi" />)).toBe('')
   })
 
@@ -116,11 +119,13 @@ describe('手机目标额度展示', () => {
     expect(details).toContain('>刷新</button>')
   })
 
-  it('仅显式刷新 Codex 时访问对应目标，Claude 详情只显示已上报的数据', async () => {
+  it('手动刷新 Claude 只读已有会话，Codex 仍可显式打开', async () => {
     state.agentSettings = { defaultAgent: 'pi', agents: {} }
     const claude = pickSnapshot({ rateLimits: { primary: { usedPercent: 75 } } })
     if (!claude) throw new Error('缺少 Claude 限额样例')
     state.claudeRateLimits.remote = claude
+    state.sessions['claude:remote'] = { opened: true }
+    state.refreshClaudeRateLimits.mockResolvedValueOnce(true)
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     const host = document.createElement('div')
     const root = createRoot(host)
@@ -134,6 +139,8 @@ describe('手机目标额度展示', () => {
       await act(() => root.render(<TargetRateLimits targetId="remote" targetName="远端" available />))
       await click('Claude 额度详情，上报剩余 25%')
       expect(host.querySelector('[aria-label="远端 · Claude 额度"]')?.textContent).toContain('上报剩余 25%')
+      await click('刷新')
+      expect(state.refreshClaudeRateLimits).toHaveBeenCalledExactlyOnceWith('remote')
       await click('关闭')
       await click('Codex 额度详情')
       expect(host.querySelector('[aria-label="远端 · Codex 额度"]')).toBeTruthy()

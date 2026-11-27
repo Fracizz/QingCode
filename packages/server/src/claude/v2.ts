@@ -105,9 +105,9 @@ export function userMessageItem(id: string, value: string): V2Item {
   }
 }
 
-/** content 已是 v2 UserInput 形态（含 image 项）时用；纯文本仍走 userMessageItem。 */
-export function userMessageContentItem(id: string, content: Json[]): V2Item {
-  return { type: 'userMessage', id, clientId: null, content }
+/** 把一次提交的全部输入（含文本与图片）放在同一个条目中。 */
+export function userMessageContentItem(id: string, content: Json[], clientId: string | null = null): V2Item {
+  return { type: 'userMessage', id, clientId, content }
 }
 
 export function agentMessageItem(id: string, value: string): V2Item {

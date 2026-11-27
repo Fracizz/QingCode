@@ -11,7 +11,65 @@ import { useCodex } from '../../store/codex'
 import { useProjects } from '../../store/projects'
 import { useTargets } from '../../store/targets'
 import { TooltipProvider } from '../primitives'
+import { ProjectTree } from './ProjectTree'
 import { Sidebar } from './Sidebar'
+
+it('从项目菜单收起和展开会话列表时保留当前会话', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const originalProjects = useProjects.getState()
+  const originalTargets = useTargets.getState()
+  const originalCodex = useCodex.getState()
+  const target: SshTarget = {
+    id: 'project-menu-test', kind: 'ssh', name: '远端', host: 'example', port: 22, username: 'user', auth: { kind: 'agent' },
+  }
+  const project: Project = { id: 'qingcode', targetId: target.id, name: 'QingCode', path: '/qingcode', lastOpenedAt: 0 }
+  const other: Project = { ...project, id: 'other', name: '其他项目', path: '/other' }
+  const select = vi.fn(async () => undefined)
+  useProjects.setState({
+    byTarget: { [target.id]: { projects: [project, other], loading: false, error: null } },
+    treeByTarget: new Map([[target.id, { projectId: project.id, expandedIds: [project.id, other.id] }]]),
+    targetId: target.id, selectedId: project.id, load: vi.fn(async () => undefined), select,
+  })
+  useTargets.setState({ selectedId: target.id })
+  useCodex.setState({ currentTargetId: target.id, currentCwd: project.path, currentThreadId: 'current' })
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const list = (name: string) => host.querySelector(`[aria-label="${name}会话列表"]`)
+  const onSelectTarget = vi.fn()
+
+  try {
+    await act(() => root.render(<TooltipProvider><ProjectTree target={target} onSelectTarget={onSelectTarget} /></TooltipProvider>))
+    const header = host.querySelector<HTMLElement>('[title="QingCode"]')!.closest('button')!
+    const trigger = header.parentElement!.querySelector<HTMLButtonElement>('button[aria-label="更多操作"]')!
+    const selectAction = async (label: string) => {
+      await act(() => trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })))
+      const action = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((entry) => entry.textContent?.trim() === label)
+      expect(action).toBeTruthy()
+      await act(() => action!.click())
+    }
+
+    expect(list(project.name)).toBeTruthy()
+    await selectAction('收起')
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    expect(list(project.name)).toBeNull()
+    expect(list(other.name)).toBeTruthy()
+    expect(useCodex.getState().currentThreadId).toBe('current')
+
+    await selectAction('展开')
+    expect(header.getAttribute('aria-expanded')).toBe('true')
+    expect(list(project.name)).toBeTruthy()
+    expect(select).not.toHaveBeenCalled()
+    expect(onSelectTarget).not.toHaveBeenCalled()
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    localStorage.removeItem(`qn.projects.tree.${target.id}`)
+    useProjects.setState(originalProjects, true)
+    useTargets.setState(originalTargets, true)
+    useCodex.setState(originalCodex, true)
+    vi.unstubAllGlobals()
+  }
+})
 
 it('用铃铛临时提前活动会话、项目和目标，再点恢复工作区顺序', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)

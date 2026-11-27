@@ -4,6 +4,7 @@
  * pi 没有审批机制：这里绝不生成审批请求，也不代答扩展 UI 对话框。
  */
 import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { classifyJsonRpc, type JsonRpcId } from '@qn/protocol'
 import {
   AgentHostError,
@@ -16,15 +17,20 @@ import {
 import {
   asRecord,
   buildTurn,
+  finite,
+  itemCompleted,
+  isRecord,
   nowSeconds,
   scalarText,
   userMessageContentItem,
   type Json,
   type SessionMeta,
+  type V2Item,
   type V2Notification,
 } from '../claude/v2'
 import { HistoryPageCache, listHistoryItems, listHistoryTurns } from '../claude/historyPages'
 import { redact } from '../log'
+import { SteerHistoryStore } from '../steerHistory'
 import { VERSION } from '../version'
 import { nativeAgentCwd } from '../workspace/paths'
 import { PiRpcError } from './errors'
@@ -33,9 +39,11 @@ import {
   finishTurnNotifications,
   mapPiEvent,
   messagesToThread,
+  parsePiSteer,
   piThread,
   type MapResult,
   type MapState,
+  type UserMessageIdentity,
 } from './items'
 import { resolvePiExecutable, type PiExecutable } from './resolve'
 import { PiRpcProcess, type PiRpcOptions, type RpcRecord } from './rpc'
@@ -56,6 +64,7 @@ export interface PiHostOptions {
   createRpc?: (options: PiRpcOptions) => PiRpcProcess
   listSessions?: (cwd?: string | string[], threadId?: string) => Promise<PiSessionInfo[]>
   idleTimeoutMs?: number
+  stateDir?: string
 }
 
 type PiSessionMeta = SessionMeta & { sessionFile?: string }
@@ -65,7 +74,12 @@ interface PiSession {
   rpc: PiRpcProcess | null
   starting: Promise<PiRpcProcess> | null
   preparingTurn: boolean
+  compacting: boolean
   turnId: string | null
+  pendingUserItem?: UserMessageIdentity
+  pendingSteers: Map<string, { item: V2Item; turnId: string }>
+  steering?: Promise<void>
+  userItemIds: Map<string, UserMessageIdentity | null>
   state: MapState
   idleTimer: ReturnType<typeof setTimeout> | null
   /** 当前进程已切到的模型（provider/id）与推理档位；进程重启后清空。 */
@@ -90,6 +104,7 @@ export class PiHost extends JsonRpcAgentHost {
   private readonly metas = new Map<string, PiSessionMeta>()
   private readonly historyPages = new HistoryPageCache()
   private readonly idleTimeoutMs: number
+  private readonly steerHistory: SteerHistoryStore<UserMessageIdentity>
   private counter = 0
   // 最近一次从运行中进程取到的模型列表，daemon 生命周期内复用
   private cachedModels: Json | null = null
@@ -101,6 +116,7 @@ export class PiHost extends JsonRpcAgentHost {
   ) {
     super(hub, version, 'pi-rpc', 'pi')
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
+    this.steerHistory = new SteerHistoryStore(options.stateDir, 'pi', parsePiSteer, (msg) => this.hub.log(msg))
   }
 
   /** codex.open {agent:'pi'} 的结果：能力字段让前端如实标注无审批、无额度。 */
@@ -191,13 +207,19 @@ export class PiHost extends JsonRpcAgentHost {
         return this.threadList(params)
       case 'thread/start':
         return this.threadStart(params)
+      case 'thread/fork':
+        return this.threadFork(params)
       case 'thread/resume':
       case 'thread/read':
       case 'thread/turns/list':
       case 'thread/items/list':
         return this.threadRead(method, params)
+      case 'thread/compact/start':
+        return this.compactThread(params)
       case 'turn/start':
         return this.turnStart(params)
+      case 'turn/steer':
+        return this.turnSteer(params)
       case 'turn/interrupt':
         return this.turnInterrupt(params)
       case 'model/list':
@@ -284,12 +306,8 @@ export class PiHost extends JsonRpcAgentHost {
     }
     const load = async () => {
       const rpc = await this.ensureRpc(session)
-      const response = await rpc.command('get_messages')
-      const messages = asRecord(response.data)?.messages
-      if (response.success !== true || !Array.isArray(messages)) {
-        throw new PiRpcError(-32603, '读取 pi 会话消息失败')
-      }
-      return messagesToThread(meta, messages).turns
+      const messages = await this.readMessages(rpc)
+      return messagesToThread(meta, messages, session.userItemIds).turns
     }
     const saved = await (paged
       ? this.historyPages.read(threadId, params.cursor != null || method === 'thread/items/list', load)
@@ -304,6 +322,88 @@ export class PiHost extends JsonRpcAgentHost {
     return { thread: turnId ? { ...thread, status: { type: 'active', activeFlags: [] } } : thread }
   }
 
+  private async readMessages(rpc: PiRpcProcess): Promise<unknown[]> {
+    const response = await rpc.command('get_messages')
+    const messages = asRecord(response.data)?.messages
+    if (response.success !== true || !Array.isArray(messages)) {
+      throw new PiRpcError(-32603, '读取 pi 会话消息失败')
+    }
+    return messages
+  }
+
+  private async threadFork(params: Json): Promise<Json> {
+    const threadId = scalarText(params.threadId)
+    if (!threadId) throw new PiRpcError(-32602, 'threadId 不能为空')
+    const meta = await this.metaFor(threadId)
+    const source = this.sessionFor(threadId, meta)
+    const turnId = scalarText(params.lastTurnId)
+    if (meta.ephemeral || !meta.sessionFile || (source.turnId && (!turnId || source.turnId === turnId))) {
+      throw new PiRpcError(-32602, '请选择已保存且已结束的 pi 会话轮次')
+    }
+
+    // pi 的 fork 会切换调用方的会话。用独立进程载入源会话，正在查看或运行源会话的客户端可继续使用原进程。
+    const fork = this.makeSession(meta)
+    try {
+      const rpc = await this.ensureRpc(fork)
+      const entryId = turnId ? await this.piForkEntry(rpc, source, turnId) : undefined
+      const response = entryId ? await rpc.command('fork', { entryId }) : await rpc.command('clone')
+      if (response.success !== true || asRecord(response.data)?.cancelled === true) {
+        throw new PiRpcError(-32603, 'pi 未创建会话分支')
+      }
+      const status = await rpc.command('get_state')
+      const state = asRecord(status.data)
+      const id = scalarText(state?.sessionId)
+      const sessionFile = scalarText(state?.sessionFile)
+      if (status.success !== true || !id || id === threadId || !sessionFile) {
+        throw new PiRpcError(-32603, 'pi 未返回新的会话')
+      }
+      const branch = { ...meta, id, sessionFile, createdAt: nowSeconds(), updatedAt: nowSeconds() }
+      this.metas.set(id, branch)
+      const branchSession = this.sessionFor(id, branch)
+      branchSession.userItemIds = new Map(source.userItemIds)
+      if ([...branchSession.userItemIds.values()].some((identity) => identity?.steering)) this.persistSteers(branchSession)
+      const messages = params.excludeTurns === true ? [] : await this.readMessages(rpc)
+      const thread = messagesToThread(branch, messages, branchSession.userItemIds).thread
+      this.notify({ method: 'thread/started', params: { thread } })
+      return { ...threadStartResult(branch), thread }
+    } finally {
+      this.closeRpc(fork)
+    }
+  }
+
+  private async piForkEntry(rpc: PiRpcProcess, source: PiSession, turnId: string): Promise<string | undefined> {
+    const messages = await this.readMessages(rpc)
+    const turns = messagesToThread(source.meta, messages, source.userItemIds).turns
+    const index = turns.findIndex((turn) =>
+      turn.id === turnId || (Array.isArray(turn.items) && turn.items.some((item) => asRecord(item)?.id === `${turnId}-user`)))
+    if (index < 0) throw new PiRpcError(-32602, '在 pi 历史中找不到所选轮次')
+    const prefix = `turn-${source.meta.id}-`
+    // fork 排除传入的用户消息，按历史轮次找下一轮开头，跳过当前轮内的引导消息。
+    const next = turns[index + 1]
+    if (!next) return undefined
+    const user = asRecord(messages[Number(scalarText(next.id).slice(prefix.length))])
+    const response = await rpc.command('get_entries')
+    const data = asRecord(response.data)
+    if (!user || response.success !== true || !Array.isArray(data?.entries)) {
+      throw new PiRpcError(-32603, '读取 pi 会话分支失败')
+    }
+    const entries = new Map(data.entries.filter(isRecord).map((entry) => [scalarText(entry.id), entry]))
+    let selected: string | undefined
+    let leaf = scalarText(data.leafId)
+    while (leaf) {
+      const entry = entries.get(leaf)
+      if (!entry) throw new PiRpcError(-32603, 'pi 会话分支不完整')
+      entries.delete(leaf)
+      if (entry.type === 'message' && isDeepStrictEqual(entry.message, user)) {
+        if (selected) throw new PiRpcError(-32602, 'pi 历史中的分支位置不唯一')
+        selected = leaf
+      }
+      leaf = scalarText(entry.parentId)
+    }
+    if (!selected) throw new PiRpcError(-32602, '在 pi 历史中找不到下一轮的开头')
+    return selected
+  }
+
   private async turnStart(params: Json): Promise<Json> {
     const threadId = scalarText(params.threadId)
     if (!threadId) throw new PiRpcError(-32602, 'threadId 不能为空')
@@ -313,7 +413,9 @@ export class PiHost extends JsonRpcAgentHost {
     if (session.turnId || session.preparingTurn) throw new PiRpcError(-32603, '会话已有准备中或运行中的 turn')
 
     const turnId = randomUUID()
-    const userItem = userMessageContentItem(`${turnId}-user`, echo)
+    const clientId = typeof params.clientUserMessageId === 'string' ? params.clientUserMessageId || null : null
+    const userItemId = `${turnId}-user`
+    const userItem = userMessageContentItem(userItemId, echo, clientId)
     const turn = buildTurn(turnId, [userItem], 'inProgress')
 
     session.preparingTurn = true
@@ -321,9 +423,10 @@ export class PiHost extends JsonRpcAgentHost {
       const rpc = await this.ensureRpc(session)
       await this.applyModel(session, rpc, params)
       session.turnId = turnId
+      session.pendingUserItem = { id: userItemId, clientId }
       session.state = emptyMapState()
-      session.state.items[scalarText(userItem.id)] = userItem
-      session.state.order.push(scalarText(userItem.id))
+      session.state.items[userItemId] = userItem
+      session.state.order.push(userItemId)
       this.notify({ method: 'turn/started', params: { threadId, turn } })
       const response = await rpc.command('prompt', prompt as unknown as RpcRecord)
       if (response.success === false) {
@@ -366,6 +469,38 @@ export class PiHost extends JsonRpcAgentHost {
     return this.cachedModels
   }
 
+  private async compactThread(params: Json): Promise<Json> {
+    const threadId = scalarText(params.threadId)
+    if (!threadId) throw new PiRpcError(-32602, 'threadId 不能为空')
+    const session = this.sessionFor(threadId, await this.metaFor(threadId))
+    if (session.turnId || session.preparingTurn) throw new PiRpcError(-32602, '请先等待当前一轮结束')
+    session.preparingTurn = true
+    try {
+      const rpc = await this.ensureRpc(session)
+      const turnId = randomUUID()
+      const item = { type: 'contextCompaction', id: `${turnId}-compact`, status: 'inProgress' }
+      session.turnId = turnId
+      session.compacting = true
+      session.state = emptyMapState()
+      session.state.items[item.id] = item
+      session.state.order.push(item.id)
+      this.notify({ method: 'turn/started', params: { threadId, turn: buildTurn(turnId, [], 'inProgress') } })
+      this.notify({ method: 'item/started', params: { threadId, turnId, item } })
+      // 和 Codex 一样立即回执，压缩请求可在后台等待模型返回。
+      void rpc.command('compact', {}, 5 * 60_000).then((response) => {
+        if (session.turnId !== turnId) return
+        const error = response.success === true ? null : scalarText(response.error) || 'pi 未完成上下文压缩'
+        this.finishTurn(session, error ? 'failed' : 'completed', error)
+      }, (error: unknown) => {
+        if (session.turnId === turnId) this.finishTurn(session, 'failed', describe(error))
+      })
+      return {}
+    } finally {
+      session.preparingTurn = false
+      this.touch(session)
+    }
+  }
+
   /** 按 turn/start 的 model/effort 切换；与当前一致时不发命令。切换失败让本轮失败，避免用错模型。 */
   private async applyModel(session: PiSession, rpc: PiRpcProcess, params: Json): Promise<void> {
     const key = scalarText(params.model)
@@ -397,34 +532,118 @@ export class PiHost extends JsonRpcAgentHost {
     if (!session?.rpc || !session.turnId) {
       throw new PiRpcError(-32602, '没有运行中的 turn')
     }
+    const turnId = session.turnId
     await session.rpc.command('abort')
     // abort 会等会话 idle；若 pi 没发 agent_settled，兜底按中断结束本轮。
     if (session.turnId) {
       const timer = setTimeout(() => {
-        if (session.turnId) this.finishTurn(session, 'interrupted', null)
+        if (session.turnId === turnId) this.finishTurn(session, 'interrupted', null)
       }, 1_500)
       timer.unref?.()
     }
     return {}
   }
 
+  private async turnSteer(params: Json): Promise<Json> {
+    const threadId = scalarText(params.threadId)
+    const session = this.sessions.get(threadId)
+    const rpc = session?.rpc
+    const turnId = scalarText(params.expectedTurnId)
+    if (!rpc?.running || !session?.turnId || session.turnId !== turnId || session.compacting) {
+      throw new PiRpcError(-32602, '当前轮次已结束或切换，请重新发送')
+    }
+    const { prompt, echo } = await resolvePiPrompt(params.input)
+    // pi 没有客户端消息 ID；串行提交以保持相同的原生入队顺序。
+    const previous = session.steering
+    let release!: () => void
+    session.steering = new Promise<void>((resolve) => { release = resolve })
+    try {
+      await previous
+      if (session.turnId !== turnId || session.rpc !== rpc) {
+        throw new PiRpcError(-32602, '当前轮次已结束或切换，请重新发送')
+      }
+      const clientId = scalarText(params.clientUserMessageId) || null
+      const itemId = `steer-${clientId ?? randomUUID()}`
+      if (session.pendingSteers.has(itemId) || session.state.items[itemId]) return { turnId }
+      const item = userMessageContentItem(itemId, echo, clientId)
+      // pi 可能先发 message_start，再返回 steer 回执。
+      session.pendingSteers.set(itemId, { item, turnId })
+      try {
+        const response = await rpc.command('steer', { ...prompt })
+        if (response.success !== true) {
+          throw new PiRpcError(-32602, scalarText(response.error) || 'pi 拒绝了引导消息')
+        }
+        // 扩展可能处理了输入，只有原生用户消息送达时才回显到对话。
+        if (asRecord(response.data)?.disposition === 'handled') session.pendingSteers.delete(itemId)
+      } catch (error) {
+        session.pendingSteers.delete(itemId)
+        throw error
+      }
+      return { turnId }
+    } finally {
+      release()
+    }
+  }
+
   private onPiEvent(session: PiSession, event: RpcRecord): void {
     if (!session.turnId) return
+    if (session.compacting) {
+      if (event.type === 'compaction_end' && event.reason === 'manual' && event.aborted === true) {
+        this.finishTurn(session, 'interrupted', null)
+      }
+      return
+    }
+    if (event.type === 'message_start') {
+      const message = asRecord(event.message)
+      if (message?.role === 'user') this.onUserMessage(session, session.turnId, message)
+    }
     const ctx = { threadId: session.meta.id, turnId: session.turnId, cwd: session.meta.cwd }
     const mapped = mapPiEventSafe(event, ctx, session.state)
     session.state = mapped.state
     for (const note of mapped.notifications) this.notify(note)
     if (mapped.turnEnd) {
       session.turnId = null
+      delete session.pendingUserItem
       this.historyPages.clear(session.meta.id)
       this.touch(session)
     }
+  }
+
+  private onUserMessage(session: PiSession, turnId: string, message: Json): void {
+    let identity = session.pendingUserItem
+    if (identity) delete session.pendingUserItem
+    else {
+      const next = session.pendingSteers.entries().next().value
+      if (!next) return
+      const [id, pending] = next
+      session.pendingSteers.delete(id)
+      const steering = turnId === pending.turnId ? 'currentTurn' : 'nextTurn'
+      const item = { ...pending.item, steering }
+      identity = { id, clientId: scalarText(pending.item.clientId) || null, steering }
+      session.state.items[id] = item
+      session.state.order.push(id)
+      this.notify(itemCompleted({ threadId: session.meta.id, turnId, cwd: session.meta.cwd }, item))
+    }
+    // pi 不接收客户端消息 ID，沿用原生用户消息在事件和历史中共有的时间戳。
+    const timestamp = finite(message.timestamp)
+    if (timestamp === null) return
+    const key = String(timestamp)
+    const previous = session.userItemIds.get(key)
+    session.userItemIds.set(key, previous === undefined ? identity : null)
+    if (identity.steering || previous?.steering) this.persistSteers(session)
+  }
+
+  private persistSteers(session: PiSession): void {
+    if (session.meta.ephemeral) return
+    const entries = [...session.userItemIds].flatMap(([key, identity]) => identity?.steering ? [[key, identity] as const] : [])
+    this.steerHistory.write(session.meta.id, entries)
   }
 
   private onRpcExit(session: PiSession, rpc: PiRpcProcess, info: { code: number | null }): void {
     // closeRpc 会先置空 session.rpc，预期关闭不按崩溃处理。
     if (session.rpc !== rpc) return
     session.rpc = null
+    session.pendingSteers.clear()
     if (session.turnId) this.finishTurn(session, 'failed', 'pi 进程提前退出')
     if (session.meta.ephemeral) this.forgetTemporary(session.meta.id)
     this.hub.log(`pi 会话进程退出 (thread=${session.meta.id} code=${String(info.code)})`)
@@ -434,8 +653,17 @@ export class PiHost extends JsonRpcAgentHost {
     const turnId = session.turnId
     if (!turnId) return
     const ctx = { threadId: session.meta.id, turnId, cwd: session.meta.cwd }
+    if (session.compacting && status === 'interrupted') {
+      const item = session.state.items[`${turnId}-compact`]
+      if (item) {
+        item.status = 'interrupted'
+        this.notify({ method: 'item/completed', params: { threadId: session.meta.id, turnId, item } })
+      }
+    }
     for (const note of finishTurnNotifications(ctx, session.state, status, error)) this.notify(note)
     session.turnId = null
+    delete session.pendingUserItem
+    session.compacting = false
     this.historyPages.clear(session.meta.id)
     this.touch(session)
   }
@@ -465,17 +693,24 @@ export class PiHost extends JsonRpcAgentHost {
   private sessionFor(threadId: string, meta: PiSessionMeta): PiSession {
     const existing = this.sessions.get(threadId)
     if (existing) return existing
-    const session: PiSession = {
+    const session = this.makeSession(meta)
+    this.sessions.set(threadId, session)
+    return session
+  }
+
+  private makeSession(meta: PiSessionMeta): PiSession {
+    return {
       meta,
       rpc: null,
       starting: null,
       preparingTurn: false,
+      compacting: false,
       turnId: null,
+      pendingSteers: new Map(),
+      userItemIds: meta.ephemeral ? new Map() : this.steerHistory.read(meta.id),
       state: emptyMapState(),
       idleTimer: null,
     }
-    this.sessions.set(threadId, session)
-    return session
   }
 
   private async ensureRpc(session: PiSession): Promise<PiRpcProcess> {
@@ -527,6 +762,7 @@ export class PiHost extends JsonRpcAgentHost {
     const rpc = session.rpc
     if (!rpc) return
     session.rpc = null
+    session.pendingSteers.clear()
     rpc.close()
   }
 

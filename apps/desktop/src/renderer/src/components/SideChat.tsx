@@ -6,7 +6,7 @@ import { agentLabel, DEFAULT_AGENT, sessionKey } from '../lib/agents'
 import { annotationExcerpt, type Annotation } from '../lib/annotations'
 import { isAtBottom } from '../lib/diff'
 import { SIDE_CHAT_DEFAULT_WIDTH, sideChatLayout } from '../lib/layout'
-import { hasPendingSubmission, streamingReplyId, turnTimeline } from '../lib/turnGroups'
+import { hasPendingSubmission, needsTurnProgress, streamingReplyId, turnTimeline } from '../lib/turnGroups'
 import { currentSideApprovals, currentSideChat, pendingSendKey, currentChatKey, useCodex } from '../store/codex'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
@@ -16,7 +16,7 @@ import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
 import { SubagentRpcContext } from './SubagentDetails'
 import { TurnErrorNote } from './TurnErrorNote'
-import { ErrorNote, IconButton } from './ui'
+import { ErrorNote, IconButton, Modal } from './ui'
 
 export function SideChat() {
   const ownerKey = useCodex(currentChatKey)
@@ -44,6 +44,7 @@ export function SideChat() {
   const pinned = useRef(true)
   const [preferredWidth, setPreferredWidth] = useState(SIDE_CHAT_DEFAULT_WIDTH)
   const [availableWidth, setAvailableWidth] = useState(SIDE_CHAT_DEFAULT_WIDTH + 48)
+  const [confirmEnd, setConfirmEnd] = useState(false)
   const { docked, min, max, width } = sideChatLayout(preferredWidth, availableWidth)
 
   const sessionId = sideOpen && sideTargetId && sideAgent ? sessionKey(sideTargetId, sideAgent) : null
@@ -63,7 +64,7 @@ export function SideChat() {
   const streamingId = running ? streamingReplyId(view) : undefined
   const interrupted = !running && view?.activity === 'interrupted'
   const showProgress = approvals.length === 0 && !openError
-    && (running || hasPendingSubmission(items, !!sendingMessage || sendingQueued))
+    && (running ? needsTurnProgress(view, timeline) : hasPendingSubmission(items, !!sendingMessage || sendingQueued))
   const agent = sideAgent ?? DEFAULT_AGENT
 
   useLayoutEffect(() => {
@@ -76,7 +77,10 @@ export function SideChat() {
     return () => observer.disconnect()
   }, [sideOpen])
 
-  useLayoutEffect(() => { pinned.current = true }, [ownerKey, sideOpen, sideThreadId])
+  useLayoutEffect(() => {
+    pinned.current = true
+    setConfirmEnd(false)
+  }, [ownerKey, sideOpen, sideThreadId])
   useLayoutEffect(() => {
     const scroll = scrollRef.current
     if (scroll && pinned.current) scroll.scrollTop = scroll.scrollHeight
@@ -84,10 +88,11 @@ export function SideChat() {
 
   if (!sideOpen || !sideTargetId || !sideAgent) return null
 
-  const status = side.expired ? (side.forked ? '分支已断开' : '会话已结束')
+  const status = side.ending ? '正在结束' : side.expired ? (side.forked ? '分支已断开' : '会话已结束')
     : approvals.length ? '等待审批' : running ? '正在运行' : side.busy ? '正在处理' : null
   const showWelcome = timeline.length === 0 && approvals.length === 0 && !showProgress && !side.expired && !side.busy && !openError
   const annotationCount = side.annotations.filter((annotation) => annotation.quote.trim()).length
+  const endDisabled = side.busy || sendingQueued || !!sendingMessage
 
   return (
     <aside
@@ -119,7 +124,7 @@ export function SideChat() {
             <span className="shrink-0">{agentLabel(agent)}</span>
             <span aria-hidden>·</span>
             <span className={status === '等待审批' ? 'truncate text-qn-warn' : 'truncate'} role="status">
-              {status ?? (side.forked ? '新会话继续' : '临时会话')}
+              {status ?? (side.forked ? '新对话继续' : '临时会话')}
             </span>
           </div>
         </div>
@@ -128,7 +133,10 @@ export function SideChat() {
             <PanelRightClose size={16} />
           </IconButton>
           {!side.forked && (
-            <IconButton label="结束侧边对话" tooltipSide="bottom" danger disabled={side.busy || running || !!queueLength || approvals.length > 0} onClick={() => void endSideChat()}>
+            <IconButton label="结束侧边对话" tooltipSide="bottom" danger disabled={endDisabled} onClick={() => {
+              if (sideDraft.trim() || side.annotations.length || queueLength) setConfirmEnd(true)
+              else void endSideChat()
+            }}>
               <X size={16} />
             </IconButton>
           )}
@@ -194,7 +202,7 @@ export function SideChat() {
       </SelectionLayer>
       <div className="shrink-0 border-t border-qn-border pt-2">
         <div className="qn-scroll max-h-[25cqh] space-y-2 overflow-y-auto pb-1 empty:hidden">
-          <SendQueue targetId={sideTargetId} agent={agent} threadId={sideThreadId} running={running} resumeDisabled={side.expired} compact />
+          <SendQueue targetId={sideTargetId} agent={agent} threadId={sideThreadId} running={running} resumeDisabled={side.expired || side.ending} compact />
           {side.expired && (
             <button type="button" className="qn-button-subtle mx-4 mb-2 text-ui-md" disabled={side.busy || sendingQueued}
               onClick={() => void useCodex.getState().restartSideChat()}>
@@ -229,6 +237,7 @@ export function SideChat() {
           }}
           onInterrupt={() => void interruptSide()}
           running={running}
+          canSteer={!!view?.activeTurnId}
           sending={sending || side.busy}
           disabled={side.expired || side.busy}
           error={sideError ?? null}
@@ -238,6 +247,22 @@ export function SideChat() {
           agent={agent}
         />
       </div>
+      {confirmEnd && !side.forked && (
+        <Modal title="结束侧边对话？" onClose={() => setConfirmEnd(false)}
+          description={running ? '当前回复会停止，未发送的内容会被丢弃。' : '未发送的内容会被丢弃。'}
+          width="max-w-md"
+          bodyClassName="hidden" children={null}
+          footer={(
+            <div className="flex justify-end gap-2">
+              <button type="button" className="qn-button-subtle" onClick={() => setConfirmEnd(false)}>取消</button>
+              <button type="button" className="qn-button bg-qn-danger hover:bg-qn-danger" disabled={endDisabled}
+                onClick={() => {
+                  setConfirmEnd(false)
+                  void endSideChat(true)
+                }}>结束对话</button>
+            </div>
+          )} />
+      )}
     </aside>
   )
 }

@@ -7,7 +7,7 @@ import { openFile } from '../features/workspace/openers'
 import { sessionKey } from '../lib/agents'
 import { basename } from '../lib/attachments'
 import { pendingSendKey, useCodex } from '../store/codex'
-import { canContinueQueued, canSteerQueued, type PendingThreadMode } from '../store/pendingQueue'
+import { canContinueQueued, type PendingThreadMode } from '../store/pendingQueue'
 import { MessageImage } from './MessageImage'
 import { IconButton, Modal } from './ui'
 
@@ -35,7 +35,7 @@ function attachmentPreviews(input: readonly UserInput[], targetId: string, cwd: 
 
 const newThreadActions = [
   { mode: 'start', label: '新会话开始', Icon: MessageSquarePlus },
-  { mode: 'continue', label: '新会话继续', Icon: GitBranch },
+  { mode: 'continue', label: '新对话继续', Icon: GitBranch },
 ] as const
 
 export function SendQueue({
@@ -71,7 +71,7 @@ export function SendQueue({
   useEffect(() => () => release.current?.(), [])
   if (!chat || !pending?.length) return null
 
-  const canSteer = running && canSteerQueued(agent) && !!view?.activeTurnId
+  const canSteer = running && !!view?.activeTurnId
   const canContinue = canContinueQueued(agent)
   const hasFinishedTurn = !!view?.turns?.some((turn) => turn.outcome)
 
@@ -152,7 +152,7 @@ export function SendQueue({
                     <button
                       type="button"
                       className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 text-qn-accent hover:underline"
-                      title="补充到当前一轮"
+                      title={agent === 'claude' ? '本轮结束时可能进入下一轮' : '补充到当前一轮'}
                       onClick={() => void steer(chat, item.id)}
                     >
                       <CornerDownRight size={12} aria-hidden />引导
@@ -215,7 +215,7 @@ export function SendQueue({
       )}
       {destination && (
         <Modal
-          title={continuing ? '新会话继续' : '新会话开始'}
+          title={continuing ? '新对话继续' : '新会话开始'}
           description={continuing
             ? '继承最后一个已结束轮次的上下文，在右侧打开分支并发送这条消息。'
             : '从空白会话开始，用这条消息作为第一条消息。'}

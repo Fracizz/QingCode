@@ -2,8 +2,8 @@ import { Children, isValidElement, memo, useMemo, useState, useSyncExternalStore
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Terminal, Wand2 } from 'lucide-react'
-import { formatReplyTime, localReplyDay, subscribeToReplyDay, workSummaryLabel, type ItemView, type ThreadActivity, type UserInput } from '@qn/codex-client'
-import { basename, editUserText, splitUserText } from '../lib/attachments'
+import { backgroundTaskLabel, formatReplyTime, localReplyDay, subscribeToReplyDay, workSummaryLabel, type ItemView, type ThreadActivity, type UserInput } from '@qn/codex-client'
+import { basename, editUserText, embeddedImageLabel, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
 import { cn } from '../lib/cn'
 import { diffRows, lineCount, tailLines } from '../lib/diff'
@@ -308,7 +308,7 @@ const ReplyMarkdown = memo(function ReplyMarkdown({ text, streaming }: { text: s
 
 function AgentMessage({ id, text, streaming, completedAtMs, showStreamingDots, onFork }: {
   id: string; text: string; streaming: boolean; completedAtMs?: number; showStreamingDots?: boolean
-  onFork?: (itemId: string, markdown: string) => void
+  onFork?: (itemId: string) => (() => void) | undefined
 }) {
   return (
     <div className="group/msg">
@@ -316,7 +316,7 @@ function AgentMessage({ id, text, streaming, completedAtMs, showStreamingDots, o
       <div className={cn('qn-markdown break-words text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-prose', streaming && showStreamingDots && 'qn-streaming')}>
         <ReplyMarkdown text={text} streaming={streaming} />
       </div>
-      {!streaming && <MessageActions markdown={text} onFork={onFork ? () => onFork(id, text) : undefined} />}
+      {!streaming && <MessageActions markdown={text} onContinue={onFork?.(id)} />}
     </div>
   )
 }
@@ -341,7 +341,7 @@ type MessageItemProps = {
   item: ItemView
   showStreamingDots?: boolean
   replyTimeInSummary?: boolean
-  onFork?: (itemId: string, markdown: string) => void
+  onFork?: (itemId: string) => (() => void) | undefined
   onEdit?: (text: string, input: UserInput[]) => Promise<boolean>
   editRestartsConversation?: boolean
   showRevisionMarker?: boolean
@@ -379,9 +379,24 @@ function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, o
       return <CommandItem item={item} />
     case 'fileChange':
       return <FileChangeItem item={item} />
+    case 'backgroundTask': {
+      const label = backgroundTaskLabel(item.status)
+      return (
+        <ToolRow icon={<ListChecks size={14} aria-hidden />} summary={item.summary ? `${label} · ${item.summary}` : label}>
+          {item.result && (
+            <div className="qn-markdown min-w-0 wrap-anywhere border-l border-qn-border pl-3 text-qn-prose">
+              <ReplyMarkdown text={item.result} streaming={false} />
+            </div>
+          )}
+        </ToolRow>
+      )
+    }
     case 'subagent':
       return <SubagentDetails item={item} renderItem={(child, showDots) => <MessageItem key={child.id} item={child} showStreamingDots={showDots} />} />
     case 'other':
+      if (item.type === 'contextCompaction') {
+        return <p role="status" className="text-ui text-qn-muted">{item.summary}</p>
+      }
       return (
         <ToolRow icon={<FileText size={14} />} summary={item.type}>
           <div className="whitespace-pre-wrap break-words text-ui text-qn-muted">{item.summary}</div>
@@ -416,7 +431,7 @@ export const WorkGroup = memo(function WorkGroup({
   durationMs: number | null
   replyCompletedAtMs?: number
   entries: FlowEntry[]
-  onFork?: (itemId: string, markdown: string) => void
+  onFork?: (itemId: string) => (() => void) | undefined
 }) {
   return (
     <ActivityDetails
@@ -479,10 +494,13 @@ function UserMessage({ item, onEdit, editRestartsConversation, showRevisionMarke
           <span className="h-px flex-1 bg-qn-border" aria-hidden="true" />
         </div>
       )}
+      {item.steering && <span className="text-ui-sm text-qn-muted">
+        {item.steering === 'nextTurn' ? '引导 · 下一轮' : '引导 · 当前轮'}
+      </span>}
       {visible.length > 0 && (
         <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
           {visible.map((src, index) => (
-            <MessageImage key={index} src={src} label={`图片 ${index + 1}`} />
+            <MessageImage key={index} src={src} label={embeddedImageLabel(src, index)} />
           ))}
         </div>
       )}

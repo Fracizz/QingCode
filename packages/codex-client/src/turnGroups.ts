@@ -1,4 +1,4 @@
-import type { ItemView, TurnMeta } from './conversation'
+import type { ItemView, ThreadView, TurnMeta } from './conversation'
 
 type MessageEntry = { kind: 'item'; key: string; item: ItemView }
 
@@ -13,11 +13,29 @@ export type TurnEntry =
   /** 已结束一轮的过程（思考、工具、中间说明）收成"工作了 4m 56s"，只露出最终回复。 */
   | { kind: 'work'; key: string; durationMs: number | null; entries: FlowEntry[]; reply?: { id: string; completedAtMs?: number } }
 
+/** 分页起点落在最终回复时，让对应的工作摘要和回复一起显示。 */
+export function includeWorkSummary(
+  timeline: readonly { kind: string; key: string; reply?: { id: string } }[], start: number,
+): number {
+  const previous = timeline[start - 1]
+  const first = timeline[start]
+  return previous?.kind === 'work' && first && previous.reply?.id === first.key ? start - 1 : start
+}
+
 export function isEmptyReasoning(item: ItemView): boolean {
   return item.kind === 'reasoning' && !item.streaming && !item.summary.trim()
 }
 
-export function turnTimeline(items: ItemView[], turns: TurnMeta[] | undefined): TimelineEntry[] {
+export function streamingReplyId(thread: ThreadView | undefined): string | undefined {
+  if (thread?.status !== 'running') return
+  const itemIds = thread.turns?.findLast((turn) => turn.id === thread.activeTurnId)?.itemIds
+  if (itemIds?.length === 0) return
+  // 命令或新回复会接管指示，异步到达的任务通知不影响正在输出的回复。
+  const last = thread.items.findLast((item) => item.kind !== 'backgroundTask' && (!itemIds || itemIds.includes(item.id)))
+  if (last?.kind === 'agent' && last.streaming && last.text.trim()) return last.id
+}
+
+export function turnTimeline(items: readonly ItemView[], turns: readonly TurnMeta[] | undefined): TimelineEntry[] {
   const messages = items.map((item): MessageEntry => ({ kind: 'item', key: item.id, item }))
   if (!turns?.some((turn) => turn.outcome === 'interrupted')) return messages
 
@@ -54,7 +72,7 @@ export function turnTimeline(items: ItemView[], turns: TurnMeta[] | undefined): 
 }
 
 /** 按用户消息切轮；进行中的那一轮保持展开，方便看实时进度。 */
-export function groupTurns(items: ItemView[], turns: TurnMeta[] | undefined, running: boolean): TurnEntry[] {
+export function groupTurns(items: readonly ItemView[], turns: readonly TurnMeta[] | undefined, running: boolean): TurnEntry[] {
   // 多轮共用一个条目索引，避免长会话的每个折叠组都扫描整份历史。
   const turnsByItem = new Map<string, TurnMeta[]>()
   for (const turn of turns ?? []) {
@@ -99,11 +117,27 @@ export function groupTurns(items: ItemView[], turns: TurnMeta[] | undefined, run
     if (finalIndex >= 0) out.push(...groupFlow(rest.slice(finalIndex)))
   }
   // 主对话在页头集中展示子代理，保留它们在时间线中的位置以定位停止提示。
+  const liveItems = new Set(running ? turns?.findLast((turn) => turn.outcome === undefined)?.itemIds : [])
   for (const entry of turnTimeline(items, turns)) {
     if (entry.kind === 'stopped') {
       flush(false)
       out.push(entry)
     } else if (entry.item.kind !== 'subagent') {
+      if (entry.item.kind === 'backgroundTask') {
+        flush(itemsInSegment.some((item) => liveItems.has(item.id)))
+        out.push(entry)
+        continue
+      }
+      if (entry.item.kind === 'other' && entry.item.type === 'contextCompaction') {
+        const user = itemsInSegment[0]
+        const insideUserTurn = user?.kind === 'user' && turns?.some((turn) =>
+          turn.itemIds.includes(user.id) && turn.itemIds.includes(entry.item.id))
+        if (!insideUserTurn) {
+          flush(false)
+          out.push(entry)
+          continue
+        }
+      }
       if (entry.item.kind === 'user') flush(false)
       itemsInSegment.push(entry.item)
     }

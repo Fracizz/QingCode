@@ -118,8 +118,8 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     codex: new CodexHost(hubFor('codex'), options.version),
     claude: options.createClaudeHost
       ? options.createClaudeHost(hubFor('claude'), options.version)
-      : createClaudeHost(hubFor('claude'), options.version),
-    pi: createPiHost(hubFor('pi'), options.version),
+      : createClaudeHost(hubFor('claude'), options.version, { stateDir: paths.stateDir }),
+    pi: createPiHost(hubFor('pi'), options.version, { stateDir: paths.stateDir }),
   }
   const allHosts = [hosts.codex, hosts.claude, hosts.pi]
   const direct = new DirectListener({

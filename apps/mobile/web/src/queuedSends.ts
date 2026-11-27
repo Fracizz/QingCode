@@ -31,7 +31,11 @@ export function queuedInput(agent: AgentKind, item: Pick<QueuedSend, 'text' | 'a
 export function mobileTurnFits(targetId: string, agent: AgentKind, threadId: string | null,
   input: UserInput[], overrides: TurnOverrides, expectedTurnId?: string, access?: MobileTurnAccess): boolean {
   const params = expectedTurnId ? { threadId, expectedTurnId, input } : { threadId: threadId ?? 'x'.repeat(256), input, ...overrides }
-  const msg = { id: 'x'.repeat(80), method: expectedTurnId ? 'turn/steer' : 'turn/start', params }
+  const msg = {
+    id: 'x'.repeat(80),
+    method: expectedTurnId ? 'turn/steer' : 'turn/start',
+    params: { ...params, clientUserMessageId: 'x'.repeat(36) },
+  }
   const managed = !expectedTurnId && access && (access.inheritAccess !== undefined || access.accessMode !== 'default')
   const body = {
     method: managed ? 'mobile.turn.start' : 'codex.send',

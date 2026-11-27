@@ -1,24 +1,27 @@
 import { ChevronDown, PanelLeft, Square } from 'lucide-react'
-import { collectSubagents, resolveAccessMode, sessionStatus, sessionStatusLabels, type ItemView, type UserInput } from '@qn/codex-client'
+import { accessOptions, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, resolveAccessMode, sessionStatus, sessionStatusLabels, type ChatCommandId, type ItemView, type UserInput } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { bindChatPinch } from '../chatFont'
+import { copyText } from '../client'
 import { nearBottom } from '../composerLogic'
 import { EMPTY_PREFS, resolveSelection } from '../models'
 import { currentCwd, displayedAccessMode, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
-import { chatWorkSummaries, groupChatItems, hiddenToolTrails, interruptedTurnPositions, isChatVisible, replyPhase, streamingReplyId } from '../chatGroups'
+import { chatTimeline, replyPhase, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
-import { threadPreferenceKey, useWorkspacePreferences } from '../workspace'
+import { changeThreadPreference, threadPreferenceKey, useWorkspacePreferences } from '../workspace'
 import { ApprovalCard } from './ApprovalCard'
 import { AccessModePicker } from './AccessModePicker'
 import { Composer } from './Composer'
 import { ContextUsage } from './ContextUsage'
-import { FileActionsContext, MessageItem, ToolGroup, WorkSummaryLine, type FileActions } from './MessageItem'
+import { GitChangesDialog } from './GitChangesDialog'
+import { FileActionsContext, MessageItem, ToolGroup, WorkGroup, type FileActions } from './MessageItem'
 import { ModelPicker } from './ModelSheet'
 import { QueuedMessages } from './QueuedMessages'
+import { AgentQuota } from './RateLimitView'
 import { SessionSwitcher } from './SessionSwitcher'
 import { SubagentLauncher } from './SubagentDetails'
-import { Badge, Button, Empty, Header, LoadingIcon, Note } from './ui'
+import { Badge, Button, Dialog, Empty, Header, LoadingIcon, Note } from './ui'
 
 const NO_ITEMS: ItemView[] = []
 const HISTORY_BATCH_SIZE = 60
@@ -73,6 +76,13 @@ export function ChatPage() {
   const [quote, setQuote] = useState<{ key: string; text: string } | null>(null)
   const [stopRequest, setStopRequest] = useState<{ chatKey: string; turnId: string; error: string | null } | null>(null)
   const [switching, setSwitching] = useState(false)
+  const [commandDialog, setCommandDialog] = useState<{ key: string; id: ChatCommandId } | null>(null)
+  const [contextPanel, setContextPanel] = useState<{ key: string; panel: 'usage' | 'confirm' } | null>(null)
+  const [commandFeedback, setCommandFeedback] = useState<{ key: string; message: string } | null>(null)
+  const [commandName, setCommandName] = useState('')
+  const [commandPending, setCommandPending] = useState(false)
+  const activeCommand = commandDialog?.key === chatKey ? commandDialog.id : null
+  const commandMessage = commandFeedback?.key === chatKey ? commandFeedback.message : null
   const [historyStart, setHistoryStart] = useState<{ key: string; index: number } | null>(null)
   const [historyLoad, setHistoryLoad] = useState<{ key: string; error?: string } | null>(null)
   const loadEarlierHistory = useApp((s) => s.loadEarlierHistory)
@@ -119,50 +129,22 @@ export function ChatPage() {
     : null
   const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
     item.type === 'contextCompaction' && item.status === 'inProgress' && activeItemIds?.includes(item.id))
-  const echoFree = useMemo(() => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'subagent'), [items, view?.error, running])
-  // 手机屏幕有限：推理摘要、命令和其它工具步骤都不进消息流，进度只在底部回复状态里体现。
-  const shownItems = useMemo(() => echoFree.filter(isChatVisible), [echoFree])
-  const stopPositions = useMemo(() => interruptedTurnPositions(items, shownItems, view?.turns), [items, shownItems, view?.turns])
+  const timeline = useMemo(() => chatTimeline(withoutErrorEcho(items, view?.error, running), view?.turns, running, activeItemIds),
+    [items, view?.error, view?.turns, running, activeItemIds])
   const latestStop = interrupted && view?.turns?.at(-1)?.outcome === 'interrupted' ? view.turns.at(-1)?.id : undefined
-  const renderStops = (position: number) => stopPositions.get(position)?.map((id) => <TurnInterrupted key={id} announce={id === latestStop} />)
-  // 隐藏的命令每轮收成一行可展开的摘要，出错时还能查到跑了什么。
-  const trails = useMemo(() => hiddenToolTrails(echoFree, activeItemIds), [echoFree, activeItemIds])
-  const workSummaries = useMemo(() => chatWorkSummaries(echoFree, view?.turns, running), [echoFree, view?.turns, running])
-  // 每轮只有最后一条回复常驻操作入口：从后往前，遇到用户消息重置。
-  const finalReplies = useMemo(() => {
-    const ids = new Set<string>()
-    let seen = false
-    for (let index = shownItems.length - 1; index >= 0; index -= 1) {
-      const item = shownItems[index]!
-      if (item.kind === 'user') seen = false
-      else if (item.kind === 'agent' && !seen) {
-        ids.add(item.id)
-        seen = true
-      }
-    }
-    return ids
-  }, [shownItems])
-  // index 记的是块里第一条在 shownItems 中的位置，用来判断是不是打开后新到的。
-  const blocks = useMemo(() => {
-    let index = 0
-    return groupChatItems(shownItems).map((block) => {
-      const entry = { block, index }
-      index += block.kind === 'item' ? 1 : block.items.length
-      return entry
-    })
-  }, [shownItems])
-  const defaultStart = Math.max(0, blocks.length - HISTORY_BATCH_SIZE)
-  const firstVisible = historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart
+  const latestStopKey = latestStop ? `stopped-${latestStop}` : undefined
+  const defaultStart = Math.max(0, timeline.length - HISTORY_BATCH_SIZE)
+  const firstVisible = includeWorkSummary(timeline, historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart)
   const historyLoading = historyLoad?.key === chatKey && historyLoad.error === undefined
   const historyError = historyLoad?.key === chatKey ? historyLoad.error : undefined
   // 打开会话时已有的历史直接显示，之后新到的消息才播放入场动画。
   const baseline = useRef({ key: '', count: 0, firstId: '' })
-  const firstId = shownItems[0]?.id
+  const firstId = timeline[0]?.key
   if (firstId && baseline.current.key !== chatKey) {
-    baseline.current = { key: chatKey, count: shownItems.length, firstId }
+    baseline.current = { key: chatKey, count: timeline.length, firstId }
   } else if (firstId && baseline.current.firstId !== firstId) {
-    const inserted = shownItems.findIndex((item) => item.id === baseline.current.firstId)
-    baseline.current = { key: chatKey, count: inserted < 0 ? shownItems.length : baseline.current.count + inserted, firstId }
+    const inserted = timeline.findIndex((entry) => entry.key === baseline.current.firstId)
+    baseline.current = { key: chatKey, count: inserted < 0 ? timeline.length : baseline.current.count + inserted, firstId }
   }
   const project = projects.find((item) => item.id === selectedProjectId)
   // 冷启动恢复会话时列表可能还没加载，先用首条用户消息顶上，避免标题只剩项目名。
@@ -196,7 +178,7 @@ export function ChatPage() {
     }
     const node = scrollRef.current
     if (node && following.current) node.scrollTop = node.scrollHeight
-  }, [chatKey, items, approvals.length, progress, interrupted, stopPositions, turnError])
+  }, [chatKey, timeline, approvals.length, progress, interrupted, turnError])
 
   useLayoutEffect(() => {
     const previous = historyScroll.current
@@ -270,6 +252,63 @@ export function ChatPage() {
     }
   }
 
+  const latestReply = items.findLast((item) => item.kind === 'agent' && !item.streaming && item.text.trim())
+  const commandReason = (id: ChatCommandId) => {
+    if (id === 'model' && !session?.opened) return '请先连接当前 Agent'
+    if (id === 'diff' && !cwd) return '请先选择项目'
+    return chatCommandUnavailable(id, {
+      agent: selectedAgent, thread: !!selectedThreadId, running, busy: sending || compacting || commandPending,
+      compactBlocked: compactionBlockedReason, hasReply: !!latestReply,
+    })
+  }
+  const closeCommand = () => setCommandDialog(null)
+  const showCommandMessage = (message: string) => setCommandFeedback({ key: chatKey, message })
+
+  function runCommand(id: ChatCommandId) {
+    const blocked = commandReason(id)
+    if (blocked) { showCommandMessage(blocked); return }
+    setCommandFeedback(null)
+    const state = useApp.getState()
+    switch (id) {
+      case 'new': void state.newThread(selectedAgent); return
+      case 'resume': setSwitching(true); return
+      case 'stop': void stopTurn(); return
+      case 'refresh': void state.refreshThreads(); return
+      case 'compact': setContextPanel({ key: chatKey, panel: 'confirm' }); return
+      case 'context': setContextPanel({ key: chatKey, panel: 'usage' }); return
+      case 'model':
+        if (selectedTargetId) void state.loadModels(selectedTargetId, selectedAgent, true)
+        break
+      case 'rename': setCommandName(threadTitle); break
+      case 'copy':
+        if (latestReply?.kind === 'agent') {
+          void copyText(latestReply.text).then(() => showCommandMessage('已复制最近一条回复'), () => showCommandMessage('复制失败'))
+        }
+        return
+    }
+    setCommandDialog({ key: chatKey, id })
+  }
+
+  async function confirmCommand(id: 'rename' | 'archive' | 'fork') {
+    if (!selectedTargetId || !selectedThreadId || commandReason(id)) return
+    const name = commandName.trim()
+    if (id === 'rename' && !name) return
+    const state = useApp.getState()
+    const address = { id: selectedThreadId, agent: selectedAgent, targetId: selectedTargetId }
+    setCommandPending(true)
+    try {
+      if (id === 'archive') await state.archiveConversation(selectedTargetId, address)
+      else if (id === 'fork') await state.forkConversation()
+      else if (selectedAgent === 'codex') await state.renameConversation(selectedTargetId, selectedThreadId, name)
+      else if (activeId) changeThreadPreference(activeId, address, { title: name })
+      setCommandDialog((current) => current?.key === chatKey && current.id === id ? null : current)
+    } catch (error) {
+      showCommandMessage(friendlyError(error, '会话操作失败'))
+    } finally {
+      setCommandPending(false)
+    }
+  }
+
   return (
     <>
       <Header
@@ -319,7 +358,7 @@ export function ChatPage() {
               <Note message={session.openError} tone="error" actionLabel="重试"
                 onAction={() => { if (selectedTargetId) void ensureOpen(selectedTargetId, selectedAgent) }} />
             )}
-            {!running && items.length === 0 && approvals.length === 0 && !view?.historyCursor && !stopPositions.size && !interrupted && <Empty>发送消息开始对话。</Empty>}
+            {!running && items.length === 0 && approvals.length === 0 && !view?.historyCursor && !timeline.length && !interrupted && <Empty>发送消息开始对话。</Empty>}
             <div className="space-y-4">
               {(firstVisible > 0 || view?.historyCursor) && (
                 <Button variant="ghost" className="mx-auto flex" disabled={historyLoading} onClick={() => void showEarlier()}>
@@ -328,28 +367,25 @@ export function ChatPage() {
               )}
               {historyError && <Note message={historyError} tone="error" />}
               <FileActionsContext.Provider key={chatKey} value={fileActions}>
-                {firstVisible === 0 && renderStops(0)}
-                {blocks.slice(firstVisible).map(({ block, index }) => {
-                  const anchor = block.kind === 'item' ? block.item.id : block.items.at(-1)!.id
-                  const work = workSummaries.get(anchor)
-                  const trail = trails.get(anchor)
+                {timeline.slice(firstVisible).map((entry, offset) => {
+                  const index = firstVisible + offset
                   const onQuote = (text: string) => setQuote({ key: chatKey, text })
-                  const summary = trail ? <ToolGroup trail items={trail} work={work} onQuote={onQuote} />
-                    : work ? <WorkSummaryLine work={work} /> : null
+                  if (entry.kind === 'work') return <WorkGroup key={entry.key} work={entry} onQuote={onQuote} />
+                  if (entry.kind === 'stopped') return <TurnInterrupted key={entry.key} announce={entry.key === latestStopKey} />
+                  const { block, trail, finalReply } = entry
+                  const previous = offset > 0 ? timeline[index - 1] : undefined
                   return (
-                    <div key={block.kind === 'item' ? block.item.id : block.id}
+                    <div key={entry.key}
                       className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
-                      {work?.reply && summary}
                       {block.kind === 'item'
                         ? <MessageItem item={block.item} onQuote={onQuote} agentName={agentLabel(selectedAgent)}
                           active={activeItemIds?.includes(block.item.id)}
                           showStreamingDots={block.item.id === streamingId}
-                          showActions={finalReplies.has(block.item.id)}
-                          replyTimeInSummary={work?.reply?.completedAtMs !== undefined}
+                          showActions={finalReply}
+                          replyTimeInSummary={previous?.kind === 'work' && previous.reply?.id === block.item.id}
                           onResend={selectedThreadId ? resend : undefined} />
                         : <ToolGroup items={block.items} onQuote={onQuote} />}
-                      {!work?.reply && summary}
-                      {renderStops(index + (block.kind === 'item' ? 1 : block.items.length))}
+                      {trail && <ToolGroup trail items={trail} onQuote={onQuote} />}
                     </div>
                   )
                 })}
@@ -357,7 +393,7 @@ export function ChatPage() {
               {progress && (
                 <div className="qn-thinking qn-replying" role="status"><LoadingIcon aria-hidden />{progress}</div>
               )}
-              {interrupted && (!latestStop || ![...stopPositions.values()].some((ids) => ids.includes(latestStop))) && <TurnInterrupted announce />}
+              {interrupted && !timeline.some((entry) => entry.kind === 'stopped' && entry.key === latestStopKey) && <TurnInterrupted announce />}
               {turnError && <TurnErrorCard message={turnError} />}
               {approvals.length > 0 && (
                 <div ref={approvalsRef} className="space-y-3">
@@ -379,14 +415,15 @@ export function ChatPage() {
             </Button>
           )}
         </div>
-        {(error || notice || stopError) && (
+        {(error || notice || stopError || (commandMessage && !activeCommand)) && (
           <div className="bg-qn-panel px-3 pt-1">
             {error && <Note message={error} tone="error" onClose={clearError} />}
             {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
             {stopError && <div role="alert"><Note message={stopError} tone="error" onClose={() => setStopRequest(null)} /></div>}
+            {commandMessage && !activeCommand && <Note message={commandMessage} onClose={() => setCommandFeedback(null)} />}
           </div>
         )}
-        <QueuedMessages key={`queue:${chatKey}`} running={running} canSteer={selectedAgent === 'codex' && !!view?.activeTurnId} />
+        <QueuedMessages key={`queue:${chatKey}`} running={running} canSteer={!compacting && !!view?.activeTurnId} />
         <Composer
           key={chatKey}
           draftKey={chatKey}
@@ -412,7 +449,9 @@ export function ChatPage() {
           onConfirmQuote={(text, comment) => { addAnnotation(text, comment); setQuote(null) }}
           onCancelQuote={() => setQuote(null)}
           placeholder={agentPlaceholder(selectedAgent)}
-          canSteer={selectedAgent === 'codex' && !!view?.activeTurnId}
+          canSteer={!!view?.activeTurnId}
+          steerHint={selectedAgent === 'claude' ? '本轮结束时可能进入下一轮' : undefined}
+          commands={{ run: runCommand, unavailable: commandReason }}
           toolbar={
             <>
               {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">无审批：工具直接执行</span>}
@@ -423,8 +462,12 @@ export function ChatPage() {
                   disabled={!eventsConnected || !session?.opened || running || sending || compacting}
                   onChange={setAccessMode} />
               )}
-              {selectedTargetId && <ModelPicker targetId={selectedTargetId} agent={selectedAgent} />}
-              <ContextUsage key={`context:${chatKey}`} tokenUsage={view?.tokenUsage} estimatedCostUsd={claudeCost} compact={selectedAgent === 'codex' && selectedThreadId ? {
+              {selectedTargetId && <ModelPicker targetId={selectedTargetId} agent={selectedAgent}
+                open={activeCommand === 'model'} onOpenChange={(open) => setCommandDialog(open ? { key: chatKey, id: 'model' } : null)} />}
+              <ContextUsage key={`context:${chatKey}`} tokenUsage={view?.tokenUsage} estimatedCostUsd={claudeCost}
+                panel={contextPanel?.key === chatKey ? contextPanel.panel : null}
+                onPanelChange={(panel) => setContextPanel(panel ? { key: chatKey, panel } : null)}
+                compact={selectedThreadId ? {
                 busy: compacting,
                 blockedReason: compactionBlockedReason,
                 onConfirm: () => void compactConversation(),
@@ -434,6 +477,35 @@ export function ChatPage() {
         />
       </div>
       {switching && <SessionSwitcher onClose={() => setSwitching(false)} />}
+      {activeCommand === 'help' && <Dialog title="对话命令" onClose={closeCommand}>
+        <ul className="space-y-2">{chatCommands.map(({ id, name, description }) => (
+          <li key={name}><span className="font-medium">/{name}</span> <span className="text-sm text-qn-muted">{commandReason(id) ?? description}</span></li>
+        ))}</ul>
+      </Dialog>}
+      {activeCommand === 'status' && selectedTargetId && <Dialog title={`${agentLabel(selectedAgent)} 额度`} onClose={closeCommand}>
+        <AgentQuota targetId={selectedTargetId} agent={selectedAgent} />
+      </Dialog>}
+      {activeCommand === 'diff' && selectedTargetId && cwd && (
+        <GitChangesDialog key={chatKey} targetId={selectedTargetId} cwd={cwd} onClose={closeCommand} />
+      )}
+      {activeCommand === 'permissions' && <Dialog title="会话访问权限" onClose={closeCommand}>
+        <p className="text-sm">{accessOptions[selectedAgent].find((option) => option.mode === accessMode)?.label ?? 'pi 不经审批直接执行工具'}</p>
+        <p className="text-sm text-qn-muted">{accessOptions[selectedAgent].find((option) => option.mode === accessMode)?.hint}</p>
+      </Dialog>}
+      {(activeCommand === 'rename' || activeCommand === 'archive' || activeCommand === 'fork') && (
+        <Dialog title={activeCommand === 'rename' ? '重命名会话' : activeCommand === 'archive' ? '归档会话' : '创建会话分支'} onClose={closeCommand}>
+          <form onSubmit={(event) => { event.preventDefault(); void confirmCommand(activeCommand) }}>
+            {activeCommand === 'rename'
+              ? <input className="qn-input w-full" aria-label="会话名称" value={commandName} onChange={(event) => setCommandName(event.target.value)} />
+              : <p className="text-sm text-qn-muted">{activeCommand === 'archive' ? '可在已归档会话中恢复。' : '从当前会话复制上下文并打开新分支。'}</p>}
+            {commandMessage && <Note tone="error" message={commandMessage} />}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button onClick={closeCommand}>取消</Button>
+              <Button type="submit" variant="primary" disabled={commandPending || (activeCommand === 'rename' && !commandName.trim())}>确认</Button>
+            </div>
+          </form>
+        </Dialog>
+      )}
     </>
   )
 }

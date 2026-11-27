@@ -274,6 +274,9 @@ describe('daemon 的 agent 分发与协议扩展', () => {
         f.agent === 'claude' &&
         (f.msg as Frame)?.method === 'turn/completed',
     )
+    // 额度通知紧随 turn/completed，可能在下一个数据帧才到达客户端。
+    await client.wait((f) => f.t === 'codex.recv' && f.agent === 'claude' &&
+      (f.msg as Frame)?.method === 'thread/tokenUsage/updated')
     const claudeNotes = client.all.filter((f) => f.t === 'codex.recv' && f.agent === 'claude' && typeof f.seq === 'number')
     expect(claudeNotes.map((f) => (f.msg as Frame).method)).toEqual(
       expect.arrayContaining(['turn/started', 'item/agentMessage/delta', 'turn/completed']),
@@ -321,13 +324,16 @@ describe('daemon 的 agent 分发与协议扩展', () => {
         limitId: 'claude-statusline',
         primary: { usedPercent: 0, resetsAt, windowDurationMins: 300 },
         secondary: { usedPercent: 35, resetsAt: resetsAt + 604_800, windowDurationMins: 10_080 },
+        observedAt: expect.any(Number),
       }
       const readQuota = async (id: string) => {
         client.send({ t: 'codex.send', agent: 'claude', msg: { id, method: 'account/rateLimits/read' } })
         const response = await client.wait((frame) => frame.t === 'codex.recv' && (frame.msg as Frame)?.id === id)
         return (response.msg as Frame).result
       }
-      expect(await readQuota('cli-quota')).toMatchObject({ rateLimits: snapshot })
+      const reading = await readQuota('cli-quota')
+      expect(reading).toMatchObject({ rateLimits: snapshot })
+      expect(await readQuota('cli-quota-again')).toEqual(reading)
 
       const otherProfile = path.join(root, 'other-claude-profile')
       await client.req('codex.open', { agent: 'claude', claudeConfigDir: otherProfile })

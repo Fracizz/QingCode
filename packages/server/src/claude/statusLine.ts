@@ -5,8 +5,9 @@ import { asRecord, finite } from './v2'
 const PUBLISH_INTERVAL_MS = 15_000
 
 type Window = { usedPercent: number; resetsAt: number; windowDurationMins: number }
-type Windows = { primary: Window | null; secondary: Window | null }
-const EMPTY: Windows = { primary: null, secondary: null }
+type Windows<T = Window> = { primary: T | null; secondary: T | null }
+type ObservedWindow = { window: Window; at: number }
+const EMPTY: Windows<ObservedWindow> = { primary: null, secondary: null }
 
 export function statusLineProfile(directory?: string): string {
   const resolved = path.resolve(directory || path.join(os.homedir(), '.claude'))
@@ -30,20 +31,20 @@ export function statusLineWindows(value: unknown): Windows {
   }
 }
 
-function active(window: Window | null, now: number): Window | null {
-  return window && window.resetsAt * 1000 > now ? window : null
+function active(reading: ObservedWindow | null, now: number): ObservedWindow | null {
+  return reading && reading.window.resetsAt * 1000 > now ? reading : null
 }
 
-function newerWindow(before: Window | null, after: Window | null, now: number): Window | null {
+function newerWindow(before: ObservedWindow | null, after: ObservedWindow | null, now: number): ObservedWindow | null {
   before = active(before, now)
   after = active(after, now)
   if (!after) return before
-  if (!before || after.resetsAt > before.resetsAt) return after
+  if (!before || after.window.resetsAt > before.window.resetsAt) return after
   // 同一窗口中旧终端的快照可能晚到，保留已知的较新读数。
-  return after.resetsAt === before.resetsAt && after.usedPercent > before.usedPercent ? after : before
+  return after.window.resetsAt === before.window.resetsAt && after.window.usedPercent > before.window.usedPercent ? after : before
 }
 
-function merge(before: Windows, after: Windows, now: number): Windows {
+function merge(before: Windows<ObservedWindow>, after: Windows<ObservedWindow>, now: number): Windows<ObservedWindow> {
   return {
     primary: newerWindow(before.primary, after.primary, now),
     secondary: newerWindow(before.secondary, after.secondary, now),
@@ -53,20 +54,29 @@ function merge(before: Windows, after: Windows, now: number): Windows {
 /** 每个目标机配置目录各自节流，间隔内保留最后一次变化。 */
 export class ClaudeStatusLine {
   private windows = EMPTY
-  private pending: Windows | null = null
+  private pending: Windows<ObservedWindow> | null = null
   private nextPublishAt = 0
   private timer: ReturnType<typeof setTimeout> | undefined
 
   constructor(private readonly onChange: () => void) {}
 
-  snapshot(): Windows {
-    return merge(this.windows, EMPTY, Date.now())
+  snapshot(): Windows & { observedAt: number | null } {
+    const { primary, secondary } = merge(this.windows, EMPTY, Date.now())
+    return {
+      primary: primary?.window ?? null,
+      secondary: secondary?.window ?? null,
+      observedAt: Math.max(primary?.at ?? 0, secondary?.at ?? 0) || null,
+    }
   }
 
   ingest(value: unknown): void {
     const windows = statusLineWindows(value)
     if (!windows.primary && !windows.secondary) return
-    this.pending = merge(this.pending ?? EMPTY, windows, Date.now())
+    const at = Date.now()
+    this.pending = merge(this.pending ?? EMPTY, {
+      primary: windows.primary && { window: windows.primary, at },
+      secondary: windows.secondary && { window: windows.secondary, at },
+    }, at)
     this.update()
   }
 
@@ -89,8 +99,8 @@ export class ClaudeStatusLine {
     this.windows = next
     const nextUpdate = Math.min(
       this.pending ? this.nextPublishAt : Infinity,
-      next.primary ? next.primary.resetsAt * 1000 : Infinity,
-      next.secondary ? next.secondary.resetsAt * 1000 : Infinity,
+      next.primary ? next.primary.window.resetsAt * 1000 : Infinity,
+      next.secondary ? next.secondary.window.resetsAt * 1000 : Infinity,
     )
     if (Number.isFinite(nextUpdate)) {
       this.timer = setTimeout(() => this.update(), Math.max(1, Math.min(2_147_483_647, nextUpdate - now)))

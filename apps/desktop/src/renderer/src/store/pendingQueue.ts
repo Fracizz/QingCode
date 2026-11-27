@@ -4,8 +4,6 @@ import type { AgentKind } from '../../../shared/backendApi'
 /** 排队消息转到新会话的方式：空白会话开始，或继承已结束轮次的上下文继续。 */
 export type PendingThreadMode = 'start' | 'continue'
 
-// 引导走 turn/steer、继续走 thread/fork，目前只有 Codex 提供这两个 RPC。
-export const canSteerQueued = (agent: AgentKind) => agent === 'codex'
 export const canContinueQueued = (agent: AgentKind) => agent === 'codex'
 
 /**

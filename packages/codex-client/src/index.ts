@@ -1,5 +1,6 @@
 export * from './accessModes'
 export * from './api'
+export * from './chatCommands'
 export * from './contextUsage'
 export * from './conversation'
 export * from './modelText'

@@ -121,7 +121,8 @@ function TargetMenu({
           <MoreHorizontal size={14} />
         </IconButton>
       </MenuTrigger>
-      <MenuContent align="end">
+      {/* 关闭时悬停按钮可能先隐藏，菜单淡出期间也要随锚点隐藏，避免跳到左上角。 */}
+      <MenuContent align="end" hideWhenDetached>
         {canUpdate && (
           <MenuItem danger icon={<Download size={14} />} onSelect={() => useForceUpdate.setState({ target })}>
             强制更新 Server

@@ -4,6 +4,8 @@
  */
 import type { Options, PermissionMode, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ServerMessage } from '@qn/protocol'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { AgentHostError, type AgentHostHub } from '../codexHost'
@@ -59,7 +61,9 @@ function harness(options: {
   failResolve?: boolean
   listSessions?: ClaudeDeps['listSessions']
   getSessionMessages?: ClaudeDeps['getSessionMessages']
+  forkSession?: ClaudeDeps['forkSession']
   sessionReader?: ClaudeBridgeOptions['sessionReader']
+  stateDir?: string
 } = {}): Harness {
   const sent: Harness['sent'] = []
   const recv: Harness['recv'] = []
@@ -80,6 +84,7 @@ function harness(options: {
     },
     listSessions: options.listSessions ?? (async () => [oldSession]),
     getSessionInfo: async (id) => id === oldSession.sessionId ? oldSession : undefined,
+    forkSession: options.forkSession,
     getSessionMessages: options.getSessionMessages ?? (async () => [
       {
         message: { id: 'm1', role: 'user', content: [{ type: 'text', text: '历史问题' }] },
@@ -92,6 +97,7 @@ function harness(options: {
   const bridge = new ClaudeBridge(hub, '0.0.1', {
     deps,
     sessionReader: options.sessionReader,
+    stateDir: options.stateDir,
     resolve: (claudePath) => {
       if (options.failResolve) {
         throw new AgentHostError('agent_unavailable', `未找到 claude (${claudePath ?? ''})`)
@@ -145,6 +151,225 @@ function note(h: Harness, method: string): Json {
 }
 
 describe('ClaudeBridge 端到端（假 query 工厂）', () => {
+  it('以 SDK 回显确认引导归属，并在 Claude 已排好下一轮时保持会话运行', async () => {
+    const transcript: { uuid: string; message: unknown }[] = []
+    const stateDir = mkdtempSync(path.join(tmpdir(), 'qn-claude-steering-'))
+    const options = { stateDir, getSessionMessages: async () => transcript }
+    const h = harness(options)
+    const restarted = harness(options)
+    const threadId = 'old-1'
+    const first = '00000000-0000-4000-8000-000000000001'
+    const same = '00000000-0000-4000-8000-000000000002'
+    const next = '00000000-0000-4000-8000-000000000003'
+    const input = (text: string) => [{ type: 'text', text, text_elements: [] }]
+    const notifications = (method: string) => h.recv.filter(({ msg }) => msg.method === method).map(({ msg }) => msg.params as Json)
+    try {
+      await h.bridge.open({})
+      request(h, 'start-steer-test', 'turn/start', { threadId, input: input('开始'), clientUserMessageId: first })
+      const turnId = ((await response(h, 'start-steer-test')).result as { turn: { id: string } }).turn.id
+      const query = h.queries[0]!
+      const prompt = (query.prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]()
+      transcript.push({ uuid: first, message: (await prompt.next()).value.message })
+
+      request(h, 'stale-steer', 'turn/steer', { threadId, expectedTurnId: 'old-turn', input: input('已过期') })
+      expect((await response(h, 'stale-steer')).error).toMatchObject({ code: -32602 })
+
+      for (const [id, text] of [[same, '补充到当前轮'], [next, '补充到下一轮']] as const) {
+        request(h, id, 'turn/steer', { threadId, expectedTurnId: turnId, input: input(text), clientUserMessageId: id })
+        expect((await response(h, id)).result).toEqual({ turnId })
+        const { value } = await prompt.next()
+        expect(value).toMatchObject({ priority: 'next', origin: { kind: 'human' }, uuid: id })
+        transcript.push({ uuid: id, message: value.message })
+      }
+      expect(notifications('item/completed')).toEqual([])
+
+      query.emit({ type: 'result', subtype: 'success', user_message_uuids: [first, same], queued_turn_count: 1 })
+      await until(() => notifications('turn/started').length === 2)
+      const nextTurn = (notifications('turn/started')[1]!.turn as Json).id
+      expect(nextTurn).not.toBe(turnId)
+      expect(h.bridge.activeTurns).toBe(1)
+      expect(notifications('item/completed')).toMatchObject([
+        { turnId, item: { id: same, steering: 'currentTurn' } },
+      ])
+
+      query.emit({ type: 'result', subtype: 'success', user_message_uuid: next, queued_turn_count: 0 })
+      await until(() => notifications('turn/completed').length === 2)
+      expect(notifications('item/completed')).toMatchObject([
+        { turnId, item: { id: same, steering: 'currentTurn' } },
+        { turnId: nextTurn, item: { id: next, steering: 'nextTurn' } },
+      ])
+      expect(h.bridge.activeTurns).toBe(0)
+
+      await restarted.bridge.open({})
+      request(restarted, 'steer-history', 'thread/read', { threadId })
+      expect((await response(restarted, 'steer-history')).result).toMatchObject({ thread: { turns: [
+        { items: [{ id: first }, { id: same, steering: 'currentTurn' }] },
+        { items: [{ id: next, steering: 'nextTurn' }] },
+      ] } })
+    } finally {
+      h.bridge.shutdown()
+      restarted.bridge.shutdown()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('按历史轮次或实时轮次找到 Claude 消息边界，并打开独立的会话', async () => {
+    const threadId = 'old-1'
+    const message = (uuid: string, role: string, text: string) => ({
+      uuid, message: { role, content: [{ type: 'text', text }] },
+    })
+    const firstTurn = [message('first', 'user', '前一轮'), message('first-reply', 'assistant', '前一轮回答')]
+    const transcript = [...firstTurn]
+    const forkSession = vi.fn(async () => ({ sessionId: 'branch' }))
+    const h = harness({
+      forkSession,
+      getSessionMessages: async (id) => id === threadId ? transcript : firstTurn,
+    })
+    try {
+      await h.bridge.open({})
+      request(h, 'send', 'turn/start', { threadId, input: [{ type: 'text', text: '下一轮' }] })
+      const started = await response(h, 'send')
+      const { id: liveTurnId } = (started.result as { turn: { id: string } }).turn
+      const query = h.queries[0]!
+      const prompt = await (query.prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]().next()
+      const uuid = prompt.value.uuid as string
+      transcript.push(message(uuid, 'user', '下一轮'), message('live-reply', 'assistant', '这一轮回答'))
+      request(h, 'past-fork', 'thread/fork', { threadId, lastTurnId: 'turn-old-1-0' })
+      expect(await response(h, 'past-fork')).toMatchObject({
+        result: { thread: { id: 'branch', turns: [{ items: [expect.anything(), { text: '前一轮回答' }] }] } },
+      })
+      expect(forkSession).toHaveBeenLastCalledWith(threadId, { dir: '/work', upToMessageId: 'first-reply' })
+      request(h, 'running-fork', 'thread/fork', { threadId, lastTurnId: liveTurnId })
+      expect(await response(h, 'running-fork')).toMatchObject({ error: { code: -32602 } })
+      query.emit({ type: 'result', subtype: 'success' })
+      await until(() => hasNote(h, 'turn/completed'))
+      request(h, 'live-fork', 'thread/fork', { threadId, lastTurnId: liveTurnId })
+      expect(await response(h, 'live-fork')).toHaveProperty('result')
+      expect(forkSession).toHaveBeenLastCalledWith(threadId, { dir: '/work', upToMessageId: 'live-reply' })
+      expect(h.queries).toHaveLength(1)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('空闲时转发后台任务结果，历史回放复用同一通知且不多切一轮', async () => {
+    const userMessage = { type: 'user', uuid: 'prompt', message: { role: 'user', content: '开始检查' } }
+    const transcript: Json[] = [userMessage]
+    const h = harness({ getSessionMessages: async () => transcript })
+    const threadId = 'old-1'
+    try {
+      await h.bridge.open({})
+      request(h, 'send', 'turn/start', { threadId, input: [{ type: 'text', text: '开始检查' }] })
+      await response(h, 'send')
+      const query = h.queries[0]!
+      query.emit({ type: 'result', subtype: 'success' })
+      await until(() => hasNote(h, 'turn/completed'))
+
+      for (const index of [0, 1]) {
+        query.emit({
+          type: 'system', subtype: 'task_notification', uuid: `event-${index}`, task_id: 'task1',
+          status: 'completed', summary: '后台检查',
+        })
+      }
+      for (const index of [0, 1]) {
+        const summary = '后台检查'
+        const result = `**结果 ${index + 1}**`
+        const content = [
+          '<task-notification>', '<task-id>task1</task-id>', '<tool-use-id>tool1</tool-use-id>',
+          '<output-file>C:\\Temp\\task1.output</output-file>', '<status>completed</status>',
+          `<summary>${summary}</summary>`, '<note>可继续运行</note>', `<result>${result}</result>`, '</task-notification>',
+        ].join('\n')
+        const delivery = { type: 'user', uuid: `delivery-${index}`, message: { role: 'user', content: [{ type: 'text', text: content }] } }
+        query.emit(delivery)
+        transcript.push(delivery)
+      }
+      await until(() => h.recv.filter(({ msg }) => msg.method === 'item/completed').length === 4)
+      const updates = h.recv.filter(({ msg }) => msg.method === 'item/completed')
+        .map(({ msg }) => (msg.params as Json).item as Json)
+      expect(updates[0]?.id).toBe(updates[2]?.id)
+      expect(updates[1]?.id).toBe(updates[3]?.id)
+      expect(updates[2]?.id).not.toBe(updates[3]?.id)
+      expect(updates[2]).toMatchObject({ type: 'backgroundTaskNotification', status: 'completed', result: '**结果 1**' })
+      expect(updates[3]).toMatchObject({ type: 'backgroundTaskNotification', status: 'completed', result: '**结果 2**' })
+      expect(h.recv.filter(({ msg }) => msg.method === 'turn/started')).toHaveLength(1)
+
+      request(h, 'read', 'thread/read', { threadId })
+      expect((await response(h, 'read')).result).toMatchObject({
+        thread: { status: { type: 'idle' }, turns: [{ items: [
+          { type: 'userMessage', id: 'prompt' }, updates[2], updates[3],
+        ] }] },
+      })
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('SDK 输入、实时回显和历史复用同一条带图消息的 UUID', async () => {
+    const transcript: { uuid?: string; message: unknown }[] = []
+    const h = harness({ getSessionMessages: async () => transcript })
+    const threadId = 'old-1'
+    const clientUserMessageId = '00000000-0000-4000-8000-000000000001'
+    const input = [
+      { type: 'image', url: 'data:image/png;base64,QUJD' },
+      { type: 'text', text: '看图', text_elements: [] },
+    ]
+    try {
+      await h.bridge.open({})
+      request(h, 'send', 'turn/start', { threadId, input, clientUserMessageId })
+      const echo = { type: 'userMessage', id: clientUserMessageId, clientId: clientUserMessageId }
+      expect((await response(h, 'send')).result).toMatchObject({ turn: { items: [echo] } })
+      expect(note(h, 'turn/started').params).toMatchObject({ turn: { items: [echo] } })
+      const prompt = h.queries[0]!.prompt as AsyncIterable<SDKUserMessage>
+      const { value } = await prompt[Symbol.asyncIterator]().next()
+      expect(value.uuid).toBe(clientUserMessageId)
+      transcript.push({ uuid: value.uuid, message: value.message })
+      request(h, 'read', 'thread/read', { threadId })
+      expect((await response(h, 'read')).result).toMatchObject({
+        thread: { turns: [
+          { items: [{ type: 'userMessage', id: clientUserMessageId, content: input }] },
+          { status: 'inProgress', items: [] },
+        ] },
+      })
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('压缩走 SDK 原生命令，收到压缩边界才报告成功', async () => {
+    const supported = vi.spyOn(FakeQuery.prototype, 'supportedCommands').mockResolvedValue([{ name: 'compact' }])
+    const h = harness()
+    try {
+      await h.bridge.open({})
+      const threadId = 'old-1'
+      request(h, 'compact', 'thread/compact/start', { threadId })
+      expect((await response(h, 'compact')).result).toEqual({})
+      const query = h.queries[0]!
+      expect(query.options?.resume).toBe(threadId)
+      const input = (query.prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]()
+      expect((await input.next()).value).toMatchObject({ message: { content: [{ type: 'text', text: '/compact' }] } })
+      expect(note(h, 'turn/started').params).toMatchObject({ threadId, turn: { items: [] } })
+      request(h, 'repeat', 'thread/compact/start', { threadId })
+      expect((await response(h, 'repeat')).error).toMatchObject({ code: -32602 })
+      query.emit({ type: 'system', subtype: 'status', status: 'compacting' })
+      query.emit({ type: 'system', subtype: 'compact_boundary' })
+      query.emit({ type: 'result', subtype: 'success', result: 'Compacted' })
+      await until(() => hasNote(h, 'turn/completed'))
+      expect(note(h, 'turn/completed').params).toMatchObject({
+        threadId, turn: { status: 'completed', items: [{ type: 'contextCompaction', status: 'completed' }] },
+      })
+
+      h.recv.length = 0
+      request(h, 'too-short', 'thread/compact/start', { threadId })
+      expect((await response(h, 'too-short')).result).toEqual({})
+      query.emit({ type: 'result', subtype: 'success', result: 'Not enough messages' })
+      await until(() => hasNote(h, 'turn/completed'))
+      expect(note(h, 'turn/completed').params).toMatchObject({ turn: { status: 'failed' } })
+    } finally {
+      h.bridge.shutdown()
+      supported.mockRestore()
+    }
+  })
+
   it('元数据跳过历史读取，分页从最近轮次回读并复用 SDK 快照', async () => {
     const readMessages = vi.fn(async () => [0, 1, 2].flatMap((index) => [
       { message: { id: `u${index}`, role: 'user', content: [{ type: 'text', text: `问题 ${index}` }] } },
@@ -368,6 +593,16 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
     request(h, 'r-limits', 'account/rateLimits/read', {})
     const limits = await response(h, 'r-limits')
     expect(((limits.result as Json).rateLimits as Json).primary).toMatchObject({ usedPercent: 90 })
+
+    const rejectionResetsAt = Math.floor(Date.now() / 1000) + 600
+    query?.emit({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: rejectionResetsAt } })
+    await until(() => h.recv.some((entry) => {
+      const snapshot = (entry.msg.params as Json | undefined)?.rateLimits as Json | undefined
+      return snapshot?.rateLimitReachedType === 'rate_limit_reached'
+    }))
+    const rejection = { primary: null, rejectionResetsAt, observedAt: expect.any(Number), rateLimitReachedType: 'rate_limit_reached' }
+    request(h, 'r-rejection', 'account/rateLimits/read', {})
+    expect(await response(h, 'r-rejection')).toMatchObject({ result: { rateLimits: rejection } })
 
     request(h, 'r-unknown', 'account/login/start', {})
     const unsupported = await response(h, 'r-unknown')

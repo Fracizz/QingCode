@@ -34,14 +34,14 @@ it('新会话图标在引导之前，打开说明后才可确认发送', async (
     })
     expect([...host.querySelectorAll('li button')].slice(0, 3)
       .map((item) => item.getAttribute('aria-label') ?? item.textContent))
-      .toEqual(['新会话开始', '新会话继续', '引导'])
+      .toEqual(['新会话开始', '新对话继续', '引导'])
     await act(() => button('新会话开始').click())
     expect(host.querySelector('dialog')?.textContent).toContain('从空白会话开始')
     await act(() => button('取消').click())
     expect(release).toHaveBeenCalledTimes(1)
     expect(send).not.toHaveBeenCalled()
 
-    await act(() => button('新会话继续').click())
+    await act(() => button('新对话继续').click())
     expect(host.querySelector('dialog')?.textContent).toContain('继承已结束轮次的上下文')
     expect(send).not.toHaveBeenCalled()
     await act(() => button('在新会话发送').click())
@@ -49,7 +49,7 @@ it('新会话图标在引导之前，打开说明后才可确认发送', async (
     expect(send).toHaveBeenCalledExactlyOnceWith('message', 'continue')
 
     await act(() => useApp.setState({ selectedAgent: 'claude' }))
-    await act(() => button('新会话继续').click())
+    await act(() => button('新对话继续').click())
     expect(host.querySelector('dialog')?.textContent).toContain('仅 Codex 支持')
     expect(button('在新会话发送').disabled).toBe(true)
   } finally {
