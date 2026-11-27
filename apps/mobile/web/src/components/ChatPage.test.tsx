@@ -4,6 +4,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { type AgentSession, useApp } from '../store'
+import { clearToasts, useToasts } from '../toast'
 import { MobileCodexTransport } from '../transport'
 import { closeTopSheet } from '../workspace'
 import { ChatPage } from './ChatPage'
@@ -195,7 +196,9 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
     await act(() => stopButton('停止运行').click())
     expect(stopButton('正在中断').disabled).toBe(true)
     await act(() => rejectStop(new Error('连接超时')))
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain('未能中断本轮。连接超时')
+    const toasts = () => useToasts.getState().items.map((item) => item.message).join(' | ')
+    expect(toasts()).toContain('未能中断本轮。连接超时')
+    clearToasts()
 
     await act(() => stopButton('停止运行').click())
     await act(() => setTurn({ ...thread, status: 'error', activity: 'interrupted', activeTurnId: null, error: 'Turn interrupted' }))
@@ -204,6 +207,7 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
     expect(host.textContent?.match(/本轮已中断/g)).toHaveLength(1)
     expect(host.textContent).not.toMatch(/Turn interrupted|本轮失败|未能中断本轮/)
     expect(host.querySelector('[role="alert"]')).toBeNull()
+    expect(toasts()).toBe('')
 
     await act(() => setTurn({ ...thread, status: 'error', activity: 'failed', activeTurnId: null, error: '503: upstream down',
       items: [...thread.items, { kind: 'user', id: 'next', text: '开始下一轮' }],

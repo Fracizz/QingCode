@@ -88,3 +88,31 @@ export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, su
     </>
   )
 }
+
+/**
+ * pi 原生没有审批机制（docs/agent-adapters.md）：不能伪造档位切换，但要如实提示。
+ * 输入框里与其它 Agent 一样只放红色「盾牌划掉」图标，省出宽度给模型名；点开看完整说明。
+ */
+export function NoApprovalNotice() {
+  const [open, setOpen] = useState(false)
+  const label = t('无审批：工具直接执行')
+  return (
+    <>
+      <Button variant="ghost" className="qn-access-chip" data-tone="danger"
+        aria-label={label} aria-haspopup="dialog" aria-expanded={open} title={label} onClick={() => setOpen(true)}>
+        <ShieldOff size={18} strokeWidth={1.75} className="shrink-0" aria-hidden />
+      </Button>
+      {open && (
+        <Dialog title={t('访问模式')} onClose={() => setOpen(false)}>
+          <div className="qn-row gap-3 rounded-xl border border-qn-border px-3 py-2">
+            <ShieldOff size={18} strokeWidth={1.75} className="shrink-0 text-qn-danger" aria-hidden />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium text-qn-danger">{label}</span>
+              <span className="block text-xs text-qn-muted">{t('pi 不经审批直接执行工具')}</span>
+            </span>
+          </div>
+        </Dialog>
+      )}
+    </>
+  )
+}

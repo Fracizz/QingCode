@@ -51,7 +51,6 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
   const prefs = useModels((s) => prefsFor(s, targetId, agent, threadId))
   const load = useModels((s) => s.load)
   const setPrefs = useModels((s) => s.setPrefs)
-  const scope = { targetId, threadId }
   const [ownOpen, setOwnOpen] = useState(false)
   const open = controlledOpen ?? ownOpen
   const setOpen = onOpenChange ?? setOwnOpen
@@ -60,6 +59,7 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
 
   const savedConfig = useCodex((s) => threadId ? s.sessions[key]?.state?.threads[threadId]?.savedConfig : undefined)
   const seedFromHistory = useModels((s) => s.seedFromHistory)
+  const scope = { targetId, threadId, saved: savedConfig }
   // 打开历史会话后，本机没记录就沿用该会话上次用的模型与强度，而不是最近一次在别处的选择。
   // 模型列表就绪后才能把历史里的模型对应到选项（Claude 历史记的是完整模型 ID），列表变化时重试。
   const listedModels = list?.models

@@ -31,6 +31,8 @@ type WorkspacePreferences = {
   projectOrders: Record<string, string[]>
   /** 置顶项目的键（workspaceProjectKey），越靠前越晚置顶；旧数据没有此字段。 */
   pinnedProjects?: string[]
+  /** 长按拖动后的会话顺序：项目键 → 会话偏好键（threadPreferenceKey）；旧数据没有此字段。 */
+  threadOrders?: Record<string, string[]>
 }
 
 export const threadPreferenceKey = (targetId: string, agent: AgentKind, threadId: string) => JSON.stringify([targetId, agent, threadId])
@@ -105,8 +107,22 @@ export function groupWorkspaceThreads(
     if (group) group.threads.push(thread)
     else groups.set(key, { project, threads: [thread] })
   }
-  return [...groups.values()].map((group) => ({ ...group, threads: group.threads.sort((a, b) =>
-    Number(Boolean(preferences?.threads[preferenceKey(b)]?.pinned)) - Number(Boolean(preferences?.threads[preferenceKey(a)]?.pinned))) }))
+  return [...groups.values()].map((group) => ({
+    ...group,
+    threads: orderWorkspaceThreads(group.threads, preferences?.threadOrders?.[workspaceProjectKey(group.project)])
+      .sort((a, b) => Number(Boolean(preferences?.threads[preferenceKey(b)]?.pinned)) - Number(Boolean(preferences?.threads[preferenceKey(a)]?.pinned))),
+  }))
+}
+
+/**
+ * 按拖动保存的顺序排列会话；没排过的（多为新会话）保持原有顺序排在最前，
+ * 这样新建的会话仍出现在顶部，已排好的会话不会被挤乱。
+ */
+export function orderWorkspaceThreads<T extends Pick<WorkspaceThread, 'targetId' | 'agent' | 'id'>>(threads: readonly T[], order: readonly string[] = []): T[] {
+  if (!order.length) return [...threads]
+  const rank = new Map(order.map((key, index) => [key, index]))
+  const rankOf = (thread: T) => rank.get(preferenceKey(thread)) ?? -1
+  return [...threads].sort((a, b) => rankOf(a) - rankOf(b))
 }
 
 export function workspaceProjectKey(project: Pick<Project, 'targetId' | 'id'>): string {
@@ -161,7 +177,13 @@ function parsePreferences(raw: unknown): WorkspacePreferences | undefined {
     Array.isArray(order) ? [[key, [...new Set(order.filter((id) => typeof id === 'string'))]]] : []))
   const pinnedProjects = Array.isArray(value.pinnedProjects)
     ? [...new Set(value.pinnedProjects.filter((key) => typeof key === 'string'))] : []
-  return { fp: value.fp, threads, projectOrders, ...(pinnedProjects.length ? { pinnedProjects } : {}) }
+  const threadOrders = Object.fromEntries(Object.entries(value.threadOrders ?? {}).flatMap(([key, order]) =>
+    Array.isArray(order) ? [[key, [...new Set(order.filter((id) => typeof id === 'string'))]]] : []))
+  return {
+    fp: value.fp, threads, projectOrders,
+    ...(pinnedProjects.length ? { pinnedProjects } : {}),
+    ...(Object.keys(threadOrders).length ? { threadOrders } : {}),
+  }
 }
 
 type WorkspaceState = {
@@ -325,6 +347,19 @@ export function placeWorkspaceProject(desktopId: string, rows: Project[], from: 
   if (!moved || from === to || !rows[to]) return
   const ids = reorder(rows.map(({ id }) => id), from, to)
   changePreferences(desktopId, (current) => ({ ...current, projectOrders: { ...current.projectOrders, [moved.targetId]: ids } }))
+}
+
+/**
+ * 长按拖动后保存某个项目下的会话顺序（仅此手机）。
+ * rows 为当前显示的会话；只保存当前仍在的会话，已归档或删除的自然淘汰。
+ */
+export function placeWorkspaceThread(
+  desktopId: string, project: Pick<Project, 'targetId' | 'id'>, rows: readonly Pick<WorkspaceThread, 'targetId' | 'agent' | 'id'>[], from: number, to: number,
+): void {
+  if (from === to || !rows[from] || !rows[to]) return
+  const keys = reorder(rows.map(preferenceKey), from, to)
+  const projectKey = workspaceProjectKey(project)
+  changePreferences(desktopId, (current) => ({ ...current, threadOrders: { ...current.threadOrders, [projectKey]: keys } }))
 }
 
 export function startWorkspaceObserver(): () => void {

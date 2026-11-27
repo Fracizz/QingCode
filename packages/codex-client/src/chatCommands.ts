@@ -1,3 +1,4 @@
+import { AGENT_CAPABILITIES } from '../../protocol/src/agents'
 import { t } from '../../protocol/src/i18n'
 
 export const chatCommands = [
@@ -50,7 +51,7 @@ export function chatCommandUnavailable(id: ChatCommandId, state: {
     return state.running ? null : t('当前没有运行中的轮次')
   }
   if (id === 'status' && state.agent === 'pi') return t('pi 暂无账号额度数据')
-  if (id === 'fork' && state.agent !== 'codex') return t('仅 Codex 支持创建会话分支')
+  if (id === 'fork' && !AGENT_CAPABILITIES[state.agent].fork) return t('当前会话不支持创建分支')
   if (id === 'compact') return state.compactBlocked
   if (id === 'copy' && !state.hasReply) return t('当前没有可复制的回复')
   if (id === 'archive' || id === 'rename' || id === 'fork') {

@@ -12,6 +12,7 @@ import { MobileSettings } from './MobileSettings'
 import { PullToRefresh } from './PullToRefresh'
 import { Badge, Button, Card, Dialog, Field, Header, Loading, Note, SheetAction, StatusDot } from './ui'
 import { WorkspaceIcon } from './WorkspaceHome'
+import { toast } from '../toast'
 
 const stateText: Record<ConnectionStatus, string> = {
   online: t('在线'),
@@ -36,8 +37,6 @@ export function ConnectionsPage() {
   const booting = useApp((s) => s.booting)
   const mock = useApp((s) => s.mock)
   const eventsConnected = useApp((s) => s.eventsConnected)
-  const error = useApp((s) => s.error)
-  const notice = useApp((s) => s.notice)
   const needsRepair = useApp((s) => s.needsRepair)
   const beginRepair = useApp((s) => s.beginRepair)
   const activate = useApp((s) => s.activate)
@@ -46,8 +45,6 @@ export function ConnectionsPage() {
   const removeConnection = useApp((s) => s.removeConnection)
   const pasteFromClipboard = useApp((s) => s.pasteFromClipboard)
   const refreshStatuses = useApp((s) => s.refreshStatuses)
-  const clearError = useApp((s) => s.clearError)
-  const clearNotice = useApp((s) => s.clearNotice)
   const [menu, setMenu] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const [settings, setSettings] = useState(false)
@@ -81,8 +78,6 @@ export function ConnectionsPage() {
           </div>
           {connections.length > 0 && <h1 className="qn-hero-title">QingCode</h1>}
         </header>
-        {error && <Note message={error} tone="error" onClose={clearError} />}
-        {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
         {booting ? <Loading text={t('正在读取已保存的连接…')} /> : connections.length === 0 ? (
           <div className="qn-onboard">
             <h1 className="qn-hero-title">QingCode</h1>
@@ -172,7 +167,6 @@ export function ConnectionFormPage() {
   const pairAndSave = useApp((s) => s.pairAndSave)
   const saveEdit = useApp((s) => s.saveEdit)
   const [scanning, setScanning] = useState(false)
-  const [scanError, setScanError] = useState<string | null>(null)
   const [reimport, setReimport] = useState(false)
 
   if (!form) return null
@@ -192,19 +186,18 @@ export function ConnectionFormPage() {
   const scan = async () => {
     const requestForm = useApp.getState().form
     setScanning(true)
-    setScanError(null)
     try {
       const link = await callDevice<string | null>('pair.scan', {}, 300_000)
       if (!link || requestForm !== useApp.getState().form) return
       if (!parsePairingLink(link)) {
-        setScanError(t('二维码里没有可用的 QingCode Next 配对链接。'))
+        toast(t('二维码里没有可用的 QingCode Next 配对链接。'), { tone: 'warn' })
         return
       }
       setFormPaste(link)
       parsePaste()
       setReimport(false)
     } catch (err) {
-      setScanError(friendlyError(err, t('扫码不可用，可用系统相机或粘贴连接信息。')))
+      toast(friendlyError(err, t('扫码不可用，可用系统相机或粘贴连接信息。')), { tone: 'warn' })
     } finally {
       setScanning(false)
     }
@@ -226,7 +219,7 @@ export function ConnectionFormPage() {
         {!isEdit && (!imported || reimport) && (
           <Card className="mb-3">
             <p className="mb-3 text-sm">{t('在电脑端「手机连接」复制连接信息，再在这里导入。')}</p>
-            <Button className="w-full" onClick={() => { setScanError(null); setReimport(false); void pasteFromClipboard() }}>
+            <Button className="w-full" onClick={() => { setReimport(false); void pasteFromClipboard() }}>
               {t('从剪贴板导入')}
             </Button>
             {getWindowNativePort() && (
@@ -242,7 +235,6 @@ export function ConnectionFormPage() {
               </Field>
               <Button className="w-full" disabled={!form.paste.trim()} onClick={() => { setReimport(false); parsePaste() }}>{t('导入信息')}</Button>
             </details>
-            {scanError && <Note message={scanError} tone="warn" onClose={() => setScanError(null)} />}
           </Card>
         )}
 

@@ -2,7 +2,7 @@ import { Check, ChevronDown, Zap } from 'lucide-react'
 import { localizeModelDescription, t, translateMessage } from '@qn/codex-client'
 import { useEffect, useMemo, useState } from 'react'
 import { sessionKey } from '../agents'
-import { EMPTY_PREFS, effortHint, effortLabel, pickModel, resolveSelection, triggerLabel, visibleModels } from '../models'
+import { EMPTY_PREFS, effortHint, effortLabel, pickModel, prefsFor, resolveSelection, triggerLabel, visibleModels, type ModelPrefs } from '../models'
 import { useApp } from '../store'
 import type { AgentKind } from '../types'
 import { AgentQuota } from './RateLimitView'
@@ -19,9 +19,15 @@ export function ModelPicker({ targetId, agent, open: controlledOpen, onOpenChang
   const key = sessionKey(targetId, agent)
   const opened = useApp((s) => s.sessions[key]?.opened === true)
   const list = useApp((s) => s.models[key])
-  const prefs = useApp((s) => s.modelPrefs[key] ?? EMPTY_PREFS)
+  // 每个会话各自记模型与强度；草稿（没有选中会话）读写的是新会话默认。
+  const threadId = useApp((s) => s.selectedThreadId)
+  const table = useApp((s) => s.modelPrefs)
+  const saved = useApp((s) => threadId ? s.sessions[key]?.state.threads[threadId]?.savedConfig : undefined)
+  const prefs = useMemo(() => prefsFor(table, agent, key, threadId, list?.models, saved),
+    [table, agent, key, threadId, list?.models, saved])
   const load = useApp((s) => s.loadModels)
-  const setPrefs = useApp((s) => s.setModelPrefs)
+  const setModelPrefs = useApp((s) => s.setModelPrefs)
+  const setPrefs = (target: string, kind: AgentKind, next: ModelPrefs) => setModelPrefs(target, kind, next, threadId)
   const [ownOpen, setOwnOpen] = useState(false)
   const open = controlledOpen ?? ownOpen
   const setOpen = onOpenChange ?? setOwnOpen

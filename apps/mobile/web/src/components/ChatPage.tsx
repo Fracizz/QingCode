@@ -1,21 +1,21 @@
-import { ChevronDown, GitCompare, PanelLeft, Square } from 'lucide-react'
+import { ChevronDown, PanelLeft, Square } from 'lucide-react'
 import { accessOptions, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, resolveAccessMode, sessionStatus, sessionStatusLabels, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { bindChatPinch } from '../chatFont'
+import { toast } from '../toast'
 import { copyText } from '../client'
 import { nearBottom } from '../composerLogic'
-import { EMPTY_PREFS, resolveSelection } from '../models'
+import { prefsFor, resolveSelection } from '../models'
 import { currentCwd, displayedAccessMode, selectedAccessMode, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
 import { chatTimeline, replyPhase, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { changeThreadPreference, threadPreferenceKey, useWorkspacePreferences } from '../workspace'
 import { ApprovalCard } from './ApprovalCard'
 import { UserInputCard } from './UserInputCard'
-import { AccessModePicker } from './AccessModePicker'
+import { AccessModePicker, NoApprovalNotice } from './AccessModePicker'
 import { Composer } from './Composer'
 import { ContextUsage } from './ContextUsage'
-import { GitChangesDialog } from './GitChangesDialog'
 import { FileActionsContext, MessageItem, ToolGroup, WorkGroup, type FileActions } from './MessageItem'
 import { ModelPicker } from './ModelSheet'
 import { NewSessionButton } from './NewSessionButton'
@@ -29,6 +29,8 @@ import { SubagentLauncher } from './SubagentDetails'
 import { Badge, Button, Dialog, Empty, Header, LoadingIcon, Note } from './ui'
 
 const NO_ITEMS: ItemView[] = []
+// 手机版不提供 Git 差异，/diff 不出现在命令列表里，输入后按普通文本发送。
+const MOBILE_HIDDEN_COMMANDS: readonly ChatCommandId[] = ['diff']
 const HISTORY_BATCH_SIZE = 60
 
 export function ChatPage() {
@@ -51,12 +53,13 @@ export function ChatPage() {
     ? resolveAccessMode(s.selectedAgent, s.agentSettings?.globalAccessMode) : undefined)
   const setAccessMode = useApp((s) => s.setAccessMode)
   const models = useApp((s) => s.models[key]?.models)
-  const modelPrefs = useApp((s) => s.modelPrefs[key] ?? EMPTY_PREFS)
+  const prefsTable = useApp((s) => s.modelPrefs)
+  const savedConfig = useApp((s) => selectedThreadId ? s.sessions[key]?.state.threads[selectedThreadId]?.savedConfig : undefined)
+  const modelPrefs = useMemo(() => prefsFor(prefsTable, selectedAgent, key, selectedThreadId, models, savedConfig),
+    [prefsTable, selectedAgent, key, selectedThreadId, models, savedConfig])
   const threads = useApp((s) => s.threads)
   const preferences = useWorkspacePreferences()
   const sending = useApp((s) => s.sending)
-  const error = useApp((s) => s.error)
-  const notice = useApp((s) => s.notice)
   const annotations = useApp((s) => s.annotations)
   const draftText = useApp((s) => s.draftText)
   const setDraftText = useApp((s) => s.setDraftText)
@@ -75,14 +78,12 @@ export function ChatPage() {
   const updateAnnotation = useApp((s) => s.updateAnnotation)
   const removeAnnotation = useApp((s) => s.removeAnnotation)
   const ensureOpen = useApp((s) => s.ensureOpen)
-  const clearError = useApp((s) => s.clearError)
-  const clearNotice = useApp((s) => s.clearNotice)
   const claudeCost = useApp((s) => selectedAgent === 'claude'
     ? s.claudeCosts[JSON.stringify([selectedTargetId, selectedThreadId])] : undefined)
 
   const chatKey = JSON.stringify([activeId, fingerprint, selectedTargetId, selectedAgent, selectedProjectId, selectedThreadId])
   const [quote, setQuote] = useState<{ key: string; text: string } | null>(null)
-  const [stopRequest, setStopRequest] = useState<{ chatKey: string; turnId: string; error: string | null } | null>(null)
+  const [stopRequest, setStopRequest] = useState<{ chatKey: string; turnId: string } | null>(null)
   const [switching, setSwitching] = useState(false)
   const [commandDialog, setCommandDialog] = useState<{ key: string; id: ChatCommandId } | null>(null)
   const [contextPanel, setContextPanel] = useState<{ key: string; panel: 'usage' | 'confirm' } | null>(null)
@@ -98,7 +99,10 @@ export function ChatPage() {
   const [selection, setSelection] = useState<{ key: string; text: string } | null>(null)
   useLayoutEffect(() => {
     const root = chatSurface.current
-    if (root) return bindChatPinch(root)
+    // 缩放中同一条提示原地刷新字号，松手后自动消失。
+    if (root) return bindChatPinch(root, (size) => {
+      if (size !== null) toast(t('对话字号 {size}px', { size }), { key: 'chat-font', duration: 1500 })
+    })
   }, [])
   useLayoutEffect(() => {
     const capture = () => {
@@ -127,8 +131,10 @@ export function ChatPage() {
   const interrupted = !running && view?.activity === 'interrupted'
   const turnError = !running && !interrupted ? view?.error : undefined
   const currentStop = running && stopRequest?.chatKey === chatKey && stopRequest.turnId === interruptTurnIdOf(view) ? stopRequest : null
-  const stopping = currentStop !== null && currentStop.error === null
-  const stopError = currentStop?.error
+  const stopping = currentStop !== null
+  // 中断失败回来时本轮可能已结束或已切走，只对仍在运行的同一轮提示失败。
+  const liveTurn = useRef<string | null>(null)
+  liveTurn.current = running ? JSON.stringify([chatKey, interruptTurnIdOf(view)]) : null
   const activeItemIds = running ? view.turns?.find((turn) => turn.id === view.activeTurnId)?.itemIds : undefined
   const progress = running && approvals.length === 0
     ? view.activity === 'input' ? t('等待输入…')
@@ -176,9 +182,11 @@ export function ChatPage() {
   const skills = useSkills((s) => skillKey ? s.lists[skillKey]?.items : undefined)
   const loadSkills = useSkills((s) => s.load)
   const skillRpc = session?.opened ? session.rpc : undefined
+  // pi 的技能要借运行中的会话进程读取，会话载入后再取一次。
+  const loadedThreadId = view ? selectedThreadId : null
   useEffect(() => {
-    if (skillKey && skillRpc) void loadSkills(skillKey, cwd || null, skillRpc, selectedAgent === 'claude' && !running)
-  }, [skillKey, cwd, skillRpc, loadSkills, selectedAgent, running])
+    if (skillKey && skillRpc) void loadSkills(skillKey, cwd || null, skillRpc, selectedAgent !== 'codex' && !running)
+  }, [skillKey, cwd, skillRpc, loadSkills, selectedAgent, running, loadedThreadId])
   const imageUnavailable = resolveSelection(models ?? [], modelPrefs).model?.imageInput === false
     ? t('当前模型不支持图片') : undefined
   const fileActions = useMemo<FileActions>(() => ({
@@ -257,28 +265,28 @@ export function ChatPage() {
   async function stopTurn() {
     const turnId = interruptTurnIdOf(view)
     if (!running || turnId === null || stopping) return
-    const request = { chatKey, turnId, error: null }
+    const request = { chatKey, turnId }
     setStopRequest(request)
     try {
       await interrupt()
       setStopRequest((current) => current === request ? null : current)
     } catch (err) {
-      const error = t('未能中断本轮。{message}', { message: translateMessage(friendlyError(err, t('请重试'))) })
-      setStopRequest((current) => current === request ? { ...request, error } : current)
+      setStopRequest((current) => current === request ? null : current)
+      if (liveTurn.current === JSON.stringify([chatKey, turnId])) toast(t('未能中断本轮。{message}', { message: translateMessage(friendlyError(err, t('请重试'))) }), { tone: 'error' })
     }
   }
 
   const latestReply = items.findLast((item) => item.kind === 'agent' && !item.streaming && item.text.trim())
   const commandReason = (id: ChatCommandId) => {
     if (id === 'model' && !session?.opened) return t('请先连接当前 Agent')
-    if (id === 'diff' && !cwd) return t('请先选择项目')
     return chatCommandUnavailable(id, {
       agent: selectedAgent, thread: !!selectedThreadId, running, busy: sending || compacting || commandPending,
       compactBlocked: compactionBlockedReason, hasReply: !!latestReply,
     })
   }
   const closeCommand = () => setCommandDialog(null)
-  const showCommandMessage = (message: string) => setCommandFeedback({ key: chatKey, message })
+  // 弹窗外的命令反馈走悬浮提示；弹窗内的失败原因留在弹窗里。
+  const showCommandMessage = (message: string) => toast(message)
 
   function runCommand(id: ChatCommandId) {
     const blocked = commandReason(id)
@@ -318,11 +326,13 @@ export function ChatPage() {
     try {
       if (id === 'archive') await state.archiveConversation(selectedTargetId, address)
       else if (id === 'fork') await state.forkConversation()
-      else if (selectedAgent === 'codex') await state.renameConversation(selectedTargetId, selectedThreadId, name)
-      else if (activeId) changeThreadPreference(activeId, address, { title: name })
+      else {
+        const saved = await state.renameConversation(selectedTargetId, selectedThreadId, name, selectedAgent)
+        if (activeId) changeThreadPreference(activeId, address, { title: saved === 'local' ? name : undefined })
+      }
       setCommandDialog((current) => current?.key === chatKey && current.id === id ? null : current)
     } catch (error) {
-      showCommandMessage(friendlyError(error, t('会话操作失败')))
+      setCommandFeedback({ key: chatKey, message: friendlyError(error, t('会话操作失败')) })
     } finally {
       setCommandPending(false)
     }
@@ -356,9 +366,8 @@ export function ChatPage() {
             )}
             {/* 常驻新建入口：不必先回到会话列表；无当前项目时由按钮内弹出项目选择。 */}
             <NewSessionButton project={project} projects={projects} iconOnly className="qn-header-icon size-[44px] shrink-0" />
-            {/* 对话中直接进入项目文件、终端、Git 差异等页面，不必先退回项目列表。 */}
-            {project && <ProjectTools key={project.id} project={project} compact className="qn-header-icon size-[44px] shrink-0"
-              actions={[{ icon: GitCompare, label: t('Git 差异'), onClick: () => runCommand('diff') }]} />}
+            {/* 对话中直接进入项目文件、终端等页面，不必先退回项目列表。 */}
+            {project && <ProjectTools key={project.id} project={project} compact className="qn-header-icon size-[44px] shrink-0" />}
           </>
         }
       />
@@ -448,14 +457,6 @@ export function ChatPage() {
             </Button>
           )}
         </div>
-        {(error || notice || stopError || (commandMessage && !activeCommand)) && (
-          <div className="bg-qn-panel px-3 pt-1">
-            {error && <Note message={error} tone="error" onClose={clearError} />}
-            {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
-            {stopError && <div role="alert"><Note message={stopError} tone="error" onClose={() => setStopRequest(null)} /></div>}
-            {commandMessage && !activeCommand && <Note message={commandMessage} onClose={() => setCommandFeedback(null)} />}
-          </div>
-        )}
         <PendingSteers key={`steer:${chatKey}`} items={items} running={running} agentName={agentLabel(selectedAgent)}
           onRestore={(text) => {
             // 输入框已有内容时追加在后面，不覆盖用户正在写的草稿。
@@ -491,11 +492,11 @@ ${text}` : text)
           placeholder={agentPlaceholder(selectedAgent)}
           canSteer={!!view?.activeTurnId}
           steerHint={selectedAgent === 'claude' ? t('本轮结束时可能进入下一轮') : undefined}
-          commands={{ run: runCommand, unavailable: commandReason }}
+          commands={{ run: runCommand, unavailable: commandReason, hidden: MOBILE_HIDDEN_COMMANDS }}
           skills={skills}
           toolbar={
             <>
-              {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">{t('无审批：工具直接执行')}</span>}
+              {selectedAgent === 'pi' && <NoApprovalNotice />}
               {selectedTargetId && selectedThreadId && selectedAgent !== 'pi' && (
                 <AccessModePicker key={chatKey} agent={selectedAgent} mode={accessSelection} effectiveMode={nextAccessMode}
                   inheritedMode={inheritedAccessMode}
@@ -523,16 +524,13 @@ ${text}` : text)
       </div>
       {switching && <SessionSwitcher onClose={() => setSwitching(false)} />}
       {activeCommand === 'help' && <Dialog title={t('对话命令')} onClose={closeCommand}>
-        <ul className="space-y-2">{chatCommands.map(({ id, name, description }) => (
+        <ul className="space-y-2">{chatCommands.filter(({ id }) => !MOBILE_HIDDEN_COMMANDS.includes(id)).map(({ id, name, description }) => (
           <li key={name}><span className="font-medium">/{name}</span> <span className="text-sm text-qn-muted">{commandReason(id) ?? description}</span></li>
         ))}</ul>
       </Dialog>}
       {activeCommand === 'status' && selectedTargetId && <Dialog title={t('{agent} 额度', { agent: agentLabel(selectedAgent) })} onClose={closeCommand}>
         <AgentQuota targetId={selectedTargetId} agent={selectedAgent} showUsage />
       </Dialog>}
-      {activeCommand === 'diff' && selectedTargetId && cwd && (
-        <GitChangesDialog key={chatKey} targetId={selectedTargetId} cwd={cwd} onClose={closeCommand} />
-      )}
       {activeCommand === 'permissions' && <Dialog title={t('会话访问权限')} onClose={closeCommand}>
         <p className="text-sm">{accessOptions[selectedAgent].find((option) => option.mode === accessMode)?.label ?? t('pi 不经审批直接执行工具')}</p>
         <p className="text-sm text-qn-muted">{accessOptions[selectedAgent].find((option) => option.mode === accessMode)?.hint}</p>

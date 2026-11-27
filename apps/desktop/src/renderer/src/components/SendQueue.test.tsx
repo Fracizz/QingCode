@@ -69,8 +69,8 @@ it('排队消息用带标签的缩略图打开图片预览，用图标查看附�
   }
 })
 
-it('Claude 与 pi 不支持分支，第二个去向换成侧边栏开始', () => {
+it('三端都能分支继续，Claude 与 pi 另保留侧边栏开始', () => {
   expect(newThreadActions('codex').map(({ mode }) => mode)).toEqual(['start', 'continue'])
-  expect(newThreadActions('claude').map(({ mode }) => mode)).toEqual(['start', 'side'])
-  expect(newThreadActions('pi').map(({ mode }) => mode)).toEqual(['start', 'side'])
+  expect(newThreadActions('claude').map(({ mode }) => mode)).toEqual(['start', 'continue', 'side'])
+  expect(newThreadActions('pi').map(({ mode }) => mode)).toEqual(['start', 'continue', 'side'])
 })

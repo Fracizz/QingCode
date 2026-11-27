@@ -18,6 +18,8 @@ export type ModelPrefs = {
   model: string | null
   effort: string | null
   fast: boolean
+  /** 只用于会话记录：写入时会话历史里的配置，用来发现另一端是否换过模型。 */
+  seen?: { model: string | null; effort: string | null }
 }
 
 export const EMPTY_PREFS: ModelPrefs = { model: null, effort: null, fast: false }
@@ -157,6 +159,7 @@ export function parsePrefs(raw: string | null | undefined): Record<string, Model
         model: text(entry.model) || null,
         effort: text(entry.effort) || null,
         fast: entry.fast === true,
+        ...parseSeen(entry.seen),
       }
     }
     return result
@@ -166,3 +169,9 @@ export function parsePrefs(raw: string | null | undefined): Record<string, Model
 }
 
 export { contextUsage, formatTokens, type ContextUsage } from '@qn/codex-client'
+
+/** 会话记录里的 seen（写入时会话历史的配置），见 @qn/codex-client 的 ThreadModelPrefs。 */
+function parseSeen(value: unknown): { seen?: { model: string | null; effort: string | null } } {
+  if (!isRecord(value)) return {}
+  return { seen: { model: text(value.model) || null, effort: text(value.effort) || null } }
+}

@@ -1,8 +1,10 @@
 import { t } from '@qn/codex-client'
-import { useEffect, useMemo, useRef } from 'react'
+import { Code, Eye } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { basename, imageDataUrl, isImagePath } from '../fileLinks'
 import { useApp } from '../store'
-import { diffRows, formatBytes, numberLines, viewKind, type DiffRow } from '../viewer'
+import { diffRows, formatBytes, isMarkdownPath, numberLines, parentDir, viewKind, type DiffRow } from '../viewer'
+import { FileActionsContext, Markdown, type FileActions } from './MessageItem'
 import { Badge, Button, Header, Loading, Note } from './ui'
 import { ZoomableImage } from './ZoomableImage'
 
@@ -62,12 +64,23 @@ export function FileViewer() {
   const loadMore = useApp((s) => s.loadMoreFile)
   const openFile = useApp((s) => s.openFile)
   const openDiff = useApp((s) => s.openDiff)
+  // 记下用户手动切换过视图的文件；换文件后自动回到默认视图。
+  const [flipped, setFlipped] = useState<string | null>(null)
+  const viewKey = viewer ? `${viewer.path}:${viewer.line ?? ''}` : ''
+  const markdownActions = useMemo<FileActions | null>(() => viewer?.mode === 'file' ? {
+    cwd: parentDir(viewer.path),
+    openFile: (location) => void openFile(location),
+    openDiff: (path, diff) => void openDiff({ path, diff: diff ?? null }),
+  } : null, [viewer?.mode, viewer?.path, openFile, openDiff])
 
   if (!viewer) return null
   const file = viewer.file
   const kind = file ? viewKind(file) : null
   const title = basename(viewer.path) || viewer.path
   const imageRequested = viewer.mode === 'file' && isImagePath(viewer.path)
+  const markdown = viewer.mode === 'file' && kind === 'text' && isMarkdownPath(viewer.path)
+  // Markdown 默认预览；带行号跳转时默认源码，才能定位到目标行。
+  const preview = markdown && (!viewer.line) !== (flipped === viewKey)
 
   return (
     <div className="qn-viewer" data-image={imageRequested || undefined}
@@ -76,32 +89,34 @@ export function FileViewer() {
         title={viewer.mode === 'diff' ? t('差异 · {name}', { name: title }) : title}
         subtitle={viewer.path}
         onBack={close}
-        right={<Badge>{t('只读')}</Badge>}
+        right={(
+          <>
+            {markdown && (
+              <Button variant="ghost" className="qn-header-icon" aria-pressed={!preview}
+                aria-label={preview ? t('查看源码') : t('Markdown 预览')}
+                onClick={() => setFlipped(flipped === viewKey ? null : viewKey)}>
+                {preview ? <Code size={19} aria-hidden /> : <Eye size={19} aria-hidden />}
+              </Button>
+            )}
+            <Badge>{t('只读')}</Badge>
+          </>
+        )}
       />
       <div className={`qn-body qn-scroll${kind === 'image' ? ' flex flex-col' : ''}`}>
         {viewer.notice && <Note message={viewer.notice} tone="warn" />}
-        {viewer.error && (
+        {viewer.error && (viewer.mode === 'diff' ? <Note message={viewer.error} tone="warn" /> : (
           <Note
             message={viewer.error}
             tone="error"
             actionLabel={t('重试')}
-            onAction={() =>
-              void (viewer.mode === 'diff'
-                ? openDiff({ path: viewer.path, diff: viewer.diffSource === 'card' ? viewer.diff : null })
-                : file
-                  ? loadMore()
-                  : openFile({ path: viewer.path, ...(viewer.line ? { line: viewer.line } : {}) }))
-            }
+            onAction={() => void (file ? loadMore() : openFile({ path: viewer.path, ...(viewer.line ? { line: viewer.line } : {}) }))}
           />
-        )}
-        {viewer.loading && <Loading text={viewer.mode === 'diff' ? t('正在读取差异…') : imageRequested ? t('正在读取图片…') : t('正在读取文件…')} />}
+        ))}
+        {viewer.loading && <Loading text={imageRequested ? t('正在读取图片…') : t('正在读取文件…')} />}
 
         {viewer.mode === 'diff' && viewer.diff !== null && (
           <>
             <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-qn-muted">
-              <Badge tone={viewer.diffSource === 'git' ? 'accent' : 'muted'}>
-                {viewer.diffSource === 'git' ? t('Git 工作区差异') : t('改动卡片自带差异')}
-              </Badge>
               {viewer.diffTruncated && <Badge tone="warn">{t('已截断')}</Badge>}
               <Button
                 variant="ghost"
@@ -130,7 +145,14 @@ export function FileViewer() {
             {kind === 'binary' && (
               <Note message={t('这是二进制文件，无法以文本显示。')} />
             )}
-            {kind === 'text' && <TextView content={file.content} line={viewer.line} />}
+            {preview && (
+              <FileActionsContext.Provider value={markdownActions}>
+                <div className="qn-markdown qn-markdown-file break-words text-sm">
+                  <Markdown text={file.content} streaming={false} />
+                </div>
+              </FileActionsContext.Provider>
+            )}
+            {kind === 'text' && !preview && <TextView content={file.content} line={viewer.line} />}
             {kind === 'text' && file.truncated && (
               <div className="mt-3 flex items-center gap-2">
                 <span className="min-w-0 flex-1 text-[11px] text-qn-muted">

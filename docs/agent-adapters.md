@@ -2,6 +2,7 @@
 
 > 状态：v1（2026-11-26）。适用于 `packages/server` 内所有 Agent host / bridge、`packages/codex-client`、桌面端与手机端涉及 Agent 的界面。
 > 与 `docs/mvp.md` 冲突时，**合规条款以本文为准**，功能与接口以 mvp 为准；发现冲突须报告总管，不得自行绕过。
+> 各 Agent 已接入哪些能力见 [能力矩阵](agent-capabilities.md)。
 > 依据：各厂商官方文档（见 §9），并参考 t3code（pingdotgg/t3code）`AGENTS.md` 与 `docs/internals/03_providers.md` 的适配约束。本文不是法律意见。
 
 ## 0. 一句话

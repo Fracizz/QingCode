@@ -24,6 +24,8 @@ export interface SessionIo {
   readDir(dir: string): string[]
   stat(file: string): { mtimeMs: number }
   readHead(file: string, bytes: number): string
+  /** 头部之后的末尾一块，用来取最近一次改名；省略时只看头部。 */
+  readTail?(file: string, bytes: number): string
 }
 
 const HEAD_BYTES = 64 * 1024
@@ -71,7 +73,8 @@ export function parseSessionLines(lines: string[]): ParsedSessionHeader | null {
       header = record
       continue
     }
-    if (record.type === 'session_info' && !name) name = scalarText(record.name)
+    // 改名按追加记录保存，后写的覆盖先写的，空名称表示清除。
+    if (record.type === 'session_info') name = scalarText(record.name).trim()
     if (record.type === 'message' && !preview) {
       const message = asRecord(record.message)
       if (scalarText(message?.role) !== 'user') continue
@@ -118,6 +121,42 @@ const defaultIo: SessionIo = {
       fs.closeSync(fd)
     }
   },
+  readTail: (file, bytes) => {
+    if (!fs.lstatSync(file).isFile()) return ''
+    const fd = fs.openSync(file, 'r')
+    try {
+      const size = fs.fstatSync(fd).size
+      const start = Math.max(HEAD_BYTES, size - bytes)
+      if (size <= start) return ''
+      const buffer = Buffer.alloc(size - start)
+      const read = fs.readSync(fd, buffer, 0, buffer.length, start)
+      return buffer.subarray(0, read).toString('utf8')
+    } finally {
+      fs.closeSync(fd)
+    }
+  },
+}
+
+/** 末尾一块里最后一次改名；没有改名记录时返回 null。 */
+function tailName(io: SessionIo, file: string): string | null {
+  let tail: string
+  try {
+    tail = io.readTail?.(file, HEAD_BYTES) ?? ''
+  } catch {
+    return null
+  }
+  const lines = tail.split('\n')
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]!
+    if (!line.includes('"session_info"')) continue
+    try {
+      const record = asRecord(JSON.parse(line))
+      if (record?.type === 'session_info') return scalarText(record.name).trim()
+    } catch {
+      // 分块切开的半行不是完整 JSON，继续向前找。
+    }
+  }
+  return null
 }
 
 export function listPiSessions(
@@ -160,11 +199,12 @@ export function listPiSessions(
       } catch {
         updatedAt = undefined
       }
+      const name = tailName(io, file) ?? parsed.name
       const meta: SessionMeta = {
         id: parsed.id,
         cwd: sessionCwd,
         preview: parsed.preview ?? '',
-        ...(parsed.name ? { name: parsed.name } : {}),
+        ...(name ? { name } : {}),
         ...(parsed.createdAt !== undefined ? { createdAt: parsed.createdAt } : {}),
         ...(updatedAt !== undefined ? { updatedAt } : {}),
       }

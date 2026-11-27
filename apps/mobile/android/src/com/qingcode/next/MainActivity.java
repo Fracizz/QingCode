@@ -95,6 +95,8 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
 
   @Override protected void onPause() {
     resumed = false;
+    // 后台连接开启时 WebView 不暂停，页面可能仍是 visible；显式通知页面把排队消息交给电脑代发。
+    if (webView != null) webView.evaluateJavascript("if (typeof window.__qnPause === 'function') window.__qnPause()", null);
     if (webView != null && !connectionServiceStarted) webView.onPause();
     super.onPause();
   }

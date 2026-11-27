@@ -5,7 +5,7 @@ import type { Project } from '../types'
 import { groupWorkspaceThreads, openWorkspaceThread, useWorkspace, useWorkspacePreferences, visibleWorkspaceThreads, workspaceThreadKey, type WorkspaceThread } from '../workspace'
 import { ProjectOrigin, WorkspaceSearch, WorkspaceThreadRow } from './WorkspaceHome'
 import { NewSessionButton } from './NewSessionButton'
-import { Button, Dialog, Note } from './ui'
+import { Button, Dialog } from './ui'
 
 const emptyThreads: WorkspaceThread[] = []
 
@@ -24,7 +24,6 @@ export function SessionSwitcher({ onClose }: { onClose: () => void }) {
   const preferences = useWorkspacePreferences()
   const [scope, setScope] = useState<'project' | 'all'>('project')
   const [query, setQuery] = useState('')
-  const [openError, setOpenError] = useState<string | null>(null)
   const pendingOpen = useRef<Promise<boolean> | null>(null)
   const currentProject = currentProjects.find((project) => project.id === projectId && project.targetId === targetId)
   const groups = useMemo(() => {
@@ -50,14 +49,13 @@ export function SessionSwitcher({ onClose }: { onClose: () => void }) {
   }
 
   async function selectThread(thread: WorkspaceThread, project: Project) {
-    setOpenError(null)
     const task = openWorkspaceThread(thread, project)
     pendingOpen.current = task
     const opened = await task
     if (pendingOpen.current !== task) return
     pendingOpen.current = null
+    // 打开失败的原因由全局悬浮提示展示。
     if (opened) onClose()
-    else setOpenError(useApp.getState().error)
   }
 
   return (
@@ -68,7 +66,6 @@ export function SessionSwitcher({ onClose }: { onClose: () => void }) {
       </div>
       {scope === 'project' && currentProject && <NewSessionButton project={currentProject} className="w-full" onCreated={onClose} />}
       <WorkspaceSearch label={t('搜索会话')} query={query} onChange={setQuery} />
-      {openError && <Note tone="error" message={openError} onClose={() => setOpenError(null)} />}
       <div className="qn-switcher-list">
         {groups.length ? groups.map(({ project, threads }) => (
           <section key={project.id} className="qn-workspace-group">

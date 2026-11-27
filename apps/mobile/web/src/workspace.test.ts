@@ -4,7 +4,7 @@ import { createGateway, setGateway } from './client'
 import { MOCK_FP } from './mock'
 import { useApp } from './store'
 import type { Connection, Project, Target } from './types'
-import { applyGroupOrder, changeThreadPreference, closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, moveWorkspaceProject, orderWorkspaceProjects, recentThreadStatus, registerBackHandler, startWorkspaceObserver, stickyGroupOrder, workspaceGroupKey, pinnedFirst, toggleProjectPin, workspaceProjectKey, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
+import { applyGroupOrder, changeThreadPreference, closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, moveWorkspaceProject, orderWorkspaceProjects, orderWorkspaceThreads, placeWorkspaceThread, recentThreadStatus, registerBackHandler, startWorkspaceObserver, stickyGroupOrder, workspaceGroupKey, pinnedFirst, toggleProjectPin, workspaceProjectKey, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
 
 const laptop: Project = { id: 'laptop', targetId: 'local', name: 'sandbox', path: 'C:\\sandbox', lastOpenedAt: 1 }
 const remote: Project = { id: 'remote', targetId: 'ssh', name: 'sandbox', path: '/srv/sandbox', lastOpenedAt: 0 }
@@ -78,6 +78,7 @@ describe('移动工作台', () => {
     const older = thread(laptop, { agent: 'claude' })
     const newer = thread(laptop, { id: 'newer', updatedAt: 2 })
     const nextProject = { ...laptop, id: 'second' }
+    const third = thread(laptop, { id: 'third', title: '拖到前面', updatedAt: 3 })
     setGateway(gateway)
     useApp.setState({ connections: [connection], activeId: desktopId })
     useWorkspace.setState({ preferences: {} })
@@ -87,6 +88,7 @@ describe('移动工作台', () => {
       moveWorkspaceProject(desktopId, nextProject, [laptop, nextProject], -1)
       toggleProjectPin(desktopId, remote)
       toggleProjectPin(desktopId, laptop)
+      placeWorkspaceThread(desktopId, laptop, [newer, third], 0, 1)
       await vi.waitFor(async () => expect(await gateway.storageGet('workspace.sessions')).toContain('本地别名'))
       stop()
       useWorkspace.setState({ preferences: {} })
@@ -96,6 +98,9 @@ describe('移动工作台', () => {
       expect(groupWorkspaceThreads([newer, older], [laptop], '', prefs)[0]?.threads.map(({ title }) => title))
         .toEqual(['本地别名', newer.title])
       expect(groupWorkspaceThreads([newer, older], [laptop], '本地别名', prefs)[0]?.threads).toHaveLength(1)
+      // 拖动保存的会话顺序持久化；置顶仍优先。
+      expect(groupWorkspaceThreads([newer, older, third], [laptop], '', prefs)[0]?.threads.map(({ title }) => title))
+        .toEqual(['本地别名', third.title, newer.title])
       expect(orderWorkspaceProjects([laptop, nextProject], prefs?.projectOrders.local)).toEqual([nextProject, laptop])
       // 置顶项目持久化，后置顶的排在前面；再次切换即取消。
       expect(prefs?.pinnedProjects).toEqual([workspaceProjectKey(laptop), workspaceProjectKey(remote)])
@@ -326,4 +331,18 @@ it('重新配对换了证书指纹后丢弃该电脑的会话缓存，只改地�
     useWorkspace.setState(workspace)
     setGateway(null)
   }
+})
+
+describe('会话拖动排序', () => {
+  it('排过的会话按保存顺序，没排过的新会话保持原顺序排在最前', () => {
+    const a = thread(laptop, { id: 'a' })
+    const b = thread(laptop, { id: 'b' })
+    const c = thread(laptop, { id: 'c' })
+    const fresh = thread(laptop, { id: 'fresh' })
+    const key = (item: WorkspaceThread) => JSON.stringify([item.targetId, item.agent, item.id])
+    expect(orderWorkspaceThreads([a, b, c], []).map(({ id }) => id)).toEqual(['a', 'b', 'c'])
+    expect(orderWorkspaceThreads([fresh, a, b, c], [key(c), key(a), key(b)]).map(({ id }) => id)).toEqual(['fresh', 'c', 'a', 'b'])
+    // 保存过但已不在列表里的会话不影响其余顺序。
+    expect(orderWorkspaceThreads([a, b], [JSON.stringify(['local', 'codex', 'gone']), key(b), key(a)]).map(({ id }) => id)).toEqual(['b', 'a'])
+  })
 })

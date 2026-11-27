@@ -9,7 +9,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PROTOCOL_VERSION, encodeFrame, FrameDecoder } from '@qn/protocol'
+import { AGENT_CAPABILITIES, PROTOCOL_VERSION, encodeFrame, FrameDecoder } from '@qn/protocol'
 import { build } from 'esbuild'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { readToken, resolvePaths } from '../paths'
@@ -172,7 +172,7 @@ describe('pi 桥端到端（daemon + 假 pi RPC）', () => {
     expect((await client.hello(token)).t).toBe('welcome')
     const opened = await client.req('codex.open', { agent: 'pi', piPath })
     expect(opened.initialize).toBeNull()
-    expect(opened.capabilities).toEqual({ approvals: false, rateLimits: false, ephemeralNoTools: true })
+    expect(opened.capabilities).toEqual(AGENT_CAPABILITIES.pi)
     expect(opened.agentVersion).toBe('test')
     expect(opened.lastSeq).toBe(0)
     expect(await client.req('codex.attach', { agent: 'pi', sinceSeq: 0 })).toMatchObject({

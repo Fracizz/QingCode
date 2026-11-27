@@ -38,6 +38,9 @@ export type {
   ThreadUnreadEvent,
 } from './messages'
 
+export { AGENT_CAPABILITIES, agentResumeCommand } from './agents'
+export type { AgentCapabilities } from './agents'
+
 export { attachFramedStream } from './node'
 export type { FramedStream, FramedHandlers, FramedConnection } from './node'
 

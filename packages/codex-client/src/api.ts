@@ -253,8 +253,18 @@ export async function openThreadHistory(
     ? await rpc.request('thread/resume', { threadId, excludeTurns: true })
     : await rpc.request('thread/read', { threadId, includeTurns: false })
   assertHistoryCurrent(isCurrent)
-  const thread = result?.thread
-  if (thread?.id !== threadId) throw new Error(t('返回的会话与所选会话不一致，请重试'))
+  const raw = result?.thread
+  if (raw?.id !== threadId) throw new Error(t('返回的会话与所选会话不一致，请重试'))
+  // thread/resume 在外层回报会话的模型、强度与服务档位（快速）；Thread 没带时（如较早的 Codex）补进去，
+  // 客户端据此恢复该会话的选择。serviceTier 不在 Thread 协议里，只作为客户端附加字段。
+  const outer = 'model' in result ? (result as ThreadResumeResponse) : null
+  const thread: Thread & { serviceTier?: string | null } = {
+    ...raw,
+    ...(!raw.model && outer?.model
+      ? { model: outer.model, reasoningEffort: raw.reasoningEffort ?? outer.reasoningEffort ?? null }
+      : {}),
+    ...(outer && 'serviceTier' in outer ? { serviceTier: outer.serviceTier ?? null } : {}),
+  }
   if (thread.turns?.length) return { thread, earlier: null }
   const cursor = 'turnsBackwardsCursor' in result && typeof result.turnsBackwardsCursor === 'string'
     ? { turns: result.turnsBackwardsCursor } : null

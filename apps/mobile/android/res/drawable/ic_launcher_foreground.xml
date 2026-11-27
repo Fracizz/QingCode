@@ -1,21 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 前景沿用 branding/icon.svg 的 512 坐标系，按圆环与光标条的整体外框 (86,104)-(420,404) 居中缩放 0.145，
-     约占启动器 72dp 可见区域的三分之二，光标条右下角距中心约 31dp，仍在 33dp 安全圆内。纯色，无渐变。 -->
+<!-- 前景沿用 branding/icon.svg 的 512 坐标系，图形外框 (108,124)-(404,388) 以 (256,256) 为中心缩放 0.125，
+     宽约 37dp。部分启动器只露出 66dp 左右，0.145 时图形顶到边缘、显得拥挤，缩小后与常见应用的留白接近。纯色，无渐变。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <group
-        android:scaleX="0.145"
-        android:scaleY="0.145"
-        android:translateX="17.32"
-        android:translateY="17.17">
+        android:scaleX="0.125"
+        android:scaleY="0.125"
+        android:translateX="22"
+        android:translateY="22">
         <path
             android:fillColor="#FF4ECDB5"
-            android:pathData="M248,403.52A150,150 0,1 1,372.59 316H301.24A90,90 0,1 0,248 343.2Z" />
+            android:pathData="M250,387.62A132,132 0,1 1,359.53 312H299.9A82,82 0,1 0,250 337.39Z" />
         <path
             android:fillColor="#FFFFFFFF"
-            android:pathData="M280,336h128a12,12 0,0 1,12 12v32a12,12 0,0 1,-12 12h-128a12,12 0,0 1,-12 -12v-32a12,12 0,0 1,12 -12z" />
+            android:pathData="M278,330h116a10,10 0,0 1,10 10v28a10,10 0,0 1,-10 10h-116a10,10 0,0 1,-10 -10v-28a10,10 0,0 1,10 -10z" />
     </group>
 </vector>

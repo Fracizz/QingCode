@@ -214,10 +214,12 @@ describe('EventStreamController', () => {
     emit({ stream: 's1', closed: true, error: '事件流已断开' })
     expect(handlers.onClose).toHaveBeenCalledExactlyOnceWith()
     expect(handlers.onUnavailable).not.toHaveBeenCalled()
-    expect(scheduled).toHaveLength(1)
-    expect(scheduled[0]?.ms).toBe(1000)
+    // 15 秒的是前台心跳看门狗，这里只看重连退避。
+    const retries = () => scheduled.filter((item) => item.ms !== 15_000)
+    expect(retries()).toHaveLength(1)
+    expect(retries()[0]?.ms).toBe(1000)
 
-    scheduled[0]?.fn()
+    retries()[0]?.fn()
     await flush()
     expect(gateway.openEvents).toHaveBeenCalledTimes(2)
     expect(handlers.onOpen).toHaveBeenLastCalledWith(true)
@@ -226,7 +228,7 @@ describe('EventStreamController', () => {
     controller.stop()
     expect(gateway.closeEvents).toHaveBeenCalledWith('s1')
     emit({ stream: 's1', closed: true, error: null })
-    expect(scheduled).toHaveLength(1)
+    expect(retries()).toHaveLength(1)
   })
 
   it('没有活动连接时不发起请求；打开失败会安排重试', async () => {
@@ -318,6 +320,37 @@ describe('EventStreamController', () => {
     expect(handlers.onRepair).toHaveBeenCalledExactlyOnceWith('unauthorized', '设备已被撤销，请重新配对')
     controller.wake(true)
     expect(gateway.openEvents).toHaveBeenCalledTimes(2)
-    expect(schedule).not.toHaveBeenCalled()
+    // 只允许前台看门狗定时，不能安排重连。
+    expect((schedule.mock.calls as unknown as Array<[unknown, number]>).filter(([, ms]) => ms !== 15_000)).toHaveLength(0)
+  })
+
+  it('前台流半开时看门狗按心跳超时重连，有心跳则保持', async () => {
+    vi.useFakeTimers()
+    const { gateway, emit } = fakeStreamGateway()
+    const handlers = { onEvent: vi.fn(), onOpen: vi.fn(), onClose: vi.fn(), onUnavailable: vi.fn() }
+    const controller = new EventStreamController(gateway, () => CONN, handlers)
+    try {
+      controller.start()
+      await vi.advanceTimersByTimeAsync(0)
+      // 网关每 20 秒心跳一次，连接正常时不应重连。
+      for (let index = 0; index < 4; index++) {
+        await vi.advanceTimersByTimeAsync(20_000)
+        emit({ stream: 's1', event: { name: 'ping' } })
+      }
+      expect(gateway.openEvents).toHaveBeenCalledTimes(1)
+      // 之后再也收不到帧（半开连接，原生层不报断开）。
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(gateway.openEvents).toHaveBeenCalledTimes(2)
+      expect(handlers.onClose).toHaveBeenCalledTimes(1)
+      expect(handlers.onOpen).toHaveBeenLastCalledWith(true)
+      // 锁屏后不做检查，交给恢复前台时的 wake。
+      controller.setForeground(false)
+      const calls = gateway.openEvents.mock.calls.length
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(gateway.openEvents).toHaveBeenCalledTimes(calls)
+    } finally {
+      controller.stop()
+      vi.useRealTimers()
+    }
   })
 })

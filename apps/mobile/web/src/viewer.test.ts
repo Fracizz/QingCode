@@ -4,8 +4,10 @@ import {
   classifyDiffLine,
   diffRows,
   formatBytes,
+  isMarkdownPath,
   nextOffset,
   numberLines,
+  parentDir,
   parseFsRead,
   viewerError,
   viewKind,
@@ -99,5 +101,21 @@ describe('统一 diff 着色', () => {
     expect(viewerError({ code: 'forbidden' }, '失败')).toContain('版本过旧')
     expect(viewerError({ message: '其他错误' }, '失败')).toBe('其他错误')
     expect(viewerError(null, '失败')).toBe('失败')
+  })
+})
+
+describe('Markdown 预览辅助', () => {
+  it('按扩展名识别 Markdown', () => {
+    expect(isMarkdownPath('docs/README.md')).toBe(true)
+    expect(isMarkdownPath('notes.MARKDOWN')).toBe(true)
+    expect(isMarkdownPath('src/main.ts')).toBe(false)
+  })
+
+  it('取文件所在目录，根目录保留分隔符', () => {
+    expect(parentDir('/repo/docs/a.md')).toBe('/repo/docs')
+    expect(parentDir('/a.md')).toBe('/')
+    expect(parentDir('C:\\repo\\a.md')).toBe('C:\\repo')
+    expect(parentDir('C:\\a.md')).toBe('C:\\')
+    expect(parentDir('a.md')).toBe('')
   })
 })

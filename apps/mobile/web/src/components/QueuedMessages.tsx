@@ -1,4 +1,4 @@
-import { accessOptions, resolveAccessMode, type AccessSelection, t, translateMessage } from '@qn/codex-client'
+import { AGENT_CAPABILITIES, accessOptions, resolveAccessMode, type AccessSelection, t, translateMessage } from '@qn/codex-client'
 import { GitBranch, ListOrdered, MessageSquarePlus, MoreHorizontal, Pencil, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { UNCONFIRMED_QUEUED_SEND } from '../queuedSends'
@@ -23,7 +23,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
   const steer = useApp((state) => state.steerQueuedSend)
   const sendInNewThread = useApp((state) => state.sendQueuedInNewThread)
   const agent = useApp((state) => state.selectedAgent)
-  const canContinue = agent === 'codex'
+  const canContinue = AGENT_CAPABILITIES[agent].fork
   const [edit, setEdit] = useState<{ id: string; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState(false)
@@ -186,7 +186,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
         <Dialog title={destinationTitle} onClose={closeDestination}>
           <p className="mb-2 text-sm text-qn-muted">
             {continuing
-              ? canContinue ? t('继承已结束轮次的上下文，在新会话里发送这条消息。') : t('当前仅 Codex 支持继承会话上下文。')
+              ? canContinue ? t('继承已结束轮次的上下文，在新会话里发送这条消息。') : t('当前会话不支持创建分支')
               : t('从空白会话开始，用这条消息作为第一条消息。')}
           </p>
           {movingMessage ? (

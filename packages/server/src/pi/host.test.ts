@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ServerMessage } from '@qn/protocol'
+import { AGENT_CAPABILITIES, type ServerMessage } from '@qn/protocol'
 import type { AgentHostHub } from '../codexHost'
 import { createPiHost } from './host'
 import type { PiRpcProcess, PiRpcOptions, RpcRecord } from './rpc'
@@ -10,6 +10,7 @@ import type { PiSessionInfo } from './sessions'
 
 interface FakeRpc extends PiRpcProcess {
   emit(record: RpcRecord): void
+  dialog(record: RpcRecord): void
 }
 
 interface FakeState {
@@ -21,10 +22,12 @@ interface FakeState {
   messages: RpcRecord[]
   compact?: () => Promise<RpcRecord>
   handleCommand?: (type: string, payload: RpcRecord) => RpcRecord | undefined
+  dialogResponses?: RpcRecord[]
 }
 
 function fakeRpc(state: FakeState): FakeRpc {
   const listeners = new Set<(record: RpcRecord) => void>()
+  let onDialog: ((record: RpcRecord) => void) | undefined
   const rpc = {
     running: true,
     pid: 4321,
@@ -67,6 +70,13 @@ function fakeRpc(state: FakeState): FakeRpc {
       }
     },
     onExit: () => () => undefined,
+    onDialog: (cb: (record: RpcRecord) => void) => {
+      onDialog = cb
+      return () => undefined
+    },
+    respondDialog: (response: RpcRecord) => { (state.dialogResponses ??= []).push(response) },
+    releaseDialog: () => undefined,
+    dialog: (record: RpcRecord) => onDialog?.(record),
     emit: (record: RpcRecord) => {
       for (const cb of [...listeners]) cb(record)
     },
@@ -340,11 +350,7 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
     expect(opened.initialize).toBeNull()
     expect(opened.agentVersion).toBe('1.6.1')
     expect(opened.lastSeq).toBe(0)
-    expect((opened as { capabilities?: unknown }).capabilities).toEqual({
-      approvals: false,
-      rateLimits: false,
-      ephemeralNoTools: true,
-    })
+    expect((opened as { capabilities?: unknown }).capabilities).toEqual(AGENT_CAPABILITIES.pi)
     // 打开阶段只做 --version 探测，不开会话、不发 prompt。
     expect(state.commands).toEqual([])
     expect(host.status()).toMatchObject({ running: true, activeTurns: 0 })
@@ -523,4 +529,72 @@ it('pi 取消创建临时会话时释放待建进程，允许重试', async () =
   await flush()
   expect(responseFor(sent, 2)?.result).toHaveProperty('thread.id', 'fake-session')
   host.shutdown()
+})
+
+describe('PiHost 扩展对话框、改名、技能与上下文占用', () => {
+  const threadId = 'fake-session'
+  const sessions = [{ meta: { id: threadId, cwd: '/work' }, sessionFile: '/tmp/fake-session.jsonl' }]
+  const start = async () => {
+    const h = harness(sessions)
+    const request = (id: number, method: string, params: RpcRecord = {}) =>
+      h.host.handleClientMessage(1, { id, method, params: { threadId, ...params } })
+    await h.host.open({})
+    request(1, 'turn/start', { input: [{ type: 'text', text: '问' }] })
+    await flush()
+    const turnId = (responseFor(h.sent, 1)?.result as { turn: { id: string } }).turn.id
+    const method = (name: string) => h.broadcasts.filter(({ msg }) => msg.method === name).map(({ msg }) => msg)
+    return { ...h, request, turnId, method }
+  }
+
+  it('对话框作为提问交给用户，回答写回 pi 并撤掉卡片', async () => {
+    const h = await start()
+    h.rpc().dialog({ type: 'extension_ui_request', id: 'ui-1', method: 'confirm', title: '继续？' })
+    const asked = h.method('item/tool/requestUserInput')[0]!
+    expect(asked.params).toMatchObject({ threadId, turnId: h.turnId })
+    expect(h.state.dialogResponses).toBeUndefined()
+    h.host.handleClientMessage(1, { id: asked.id, result: { answers: { q0: { answers: ['是'] } } } })
+    await flush()
+    expect(h.state.dialogResponses).toEqual([{ type: 'extension_ui_response', id: 'ui-1', confirmed: true }])
+    expect(h.method('serverRequest/resolved')[0]?.params).toMatchObject({ requestId: asked.id })
+    h.host.shutdown()
+  })
+
+  it('停止本轮时取消未回答的对话框', async () => {
+    const h = await start()
+    h.rpc().dialog({ type: 'extension_ui_request', id: 'ui-2', method: 'input', title: '输入' })
+    h.request(2, 'turn/interrupt')
+    await flush()
+    expect(h.state.dialogResponses).toEqual([{ type: 'extension_ui_response', id: 'ui-2', cancelled: true }])
+    expect(h.method('serverRequest/resolved')).toHaveLength(1)
+    h.host.shutdown()
+  })
+
+  it('经官方 RPC 改名、列技能并上报上下文占用', async () => {
+    const h = await start()
+    h.state.handleCommand = (type) => {
+      if (type === 'get_commands') {
+        return { success: true, data: { commands: [
+          { name: 'skill:review', description: '审查', source: 'skill', sourceInfo: { path: '/s', scope: 'project' } },
+          { name: 'fix', source: 'prompt' },
+        ] } }
+      }
+      if (type === 'get_session_stats') {
+        return { success: true, data: { contextUsage: { tokens: 600, contextWindow: 2000 } } }
+      }
+      return undefined
+    }
+    h.request(2, 'thread/name/set', { name: ' 新名字 ' })
+    h.request(3, 'skills/list', { cwds: ['/work'] })
+    h.rpc().emit({ type: 'agent_settled' })
+    await flush()
+    expect(responseFor(h.sent, 2)?.result).toEqual({})
+    expect(h.method('thread/name/updated')[0]?.params).toEqual({ threadId, threadName: '新名字' })
+    expect(responseFor(h.sent, 3)?.result).toEqual({ data: [{ cwd: '/work', errors: [], skills: [
+      { name: 'skill:review', description: '审查', path: '/s', scope: 'repo', enabled: true },
+    ] }] })
+    expect(h.method('thread/tokenUsage/updated').at(-1)?.params).toMatchObject({
+      turnId: h.turnId, tokenUsage: { modelContextWindow: 2000, last: { totalTokens: 600 } },
+    })
+    h.host.shutdown()
+  })
 })

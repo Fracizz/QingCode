@@ -51,6 +51,8 @@ export function exitedAgent(payload: unknown): AgentKind | null {
 export type MobileAgentSettings = {
   defaultAgent: AgentKind
   fastHistoryOpen?: true
+  /** 电脑网关支持锁屏后代发排队消息（mobile.queue.put / take）。 */
+  backgroundQueue?: true
   globalAccessMode?: GlobalAccessMode
   agents: Record<string, Partial<Record<AgentKind, { enabled: boolean }>>>
 }
@@ -71,6 +73,7 @@ export function parseMobileAgents(value: unknown): MobileAgentSettings | null {
   return {
     defaultAgent: isAgentKind(value.defaultAgent) ? value.defaultAgent : DEFAULT_AGENT,
     ...(value.fastHistoryOpen === true ? { fastHistoryOpen: true } : {}),
+    ...(value.backgroundQueue === true ? { backgroundQueue: true } : {}),
     ...(isGlobalAccessMode(value.globalAccessMode) ? { globalAccessMode: value.globalAccessMode } : {}),
     agents,
   }

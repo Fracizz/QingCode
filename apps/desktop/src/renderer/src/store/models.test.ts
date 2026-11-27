@@ -57,7 +57,7 @@ describe('按会话记模型与推理强度', () => {
     const { seedFromHistory, setPrefs } = useModels.getState()
     setPrefs('codex', { model: 'a', effort: 'low', fast: true })
     seedFromHistory('local', 'codex', 'old', { model: 'b', effort: 'high' })
-    expect(prefsFor(useModels.getState(), 'local', 'codex', 'old')).toEqual({ model: 'b', effort: 'high', fast: true })
+    expect(prefsFor(useModels.getState(), 'local', 'codex', 'old')).toMatchObject({ model: 'b', effort: 'high', fast: true })
 
     setPrefs('codex', { effort: 'medium' }, { targetId: 'local', threadId: 'old' })
     seedFromHistory('local', 'codex', 'old', { model: 'b', effort: 'high' })
@@ -75,7 +75,7 @@ describe('按会话记模型与推理强度', () => {
       loading: false, error: null,
     } } }))
     seedFromHistory('local', 'claude', 't1', { model: 'claude-opus-5-5', effort: null })
-    expect(prefsFor(useModels.getState(), 'local', 'claude', 't1')).toEqual({ model: 'opus', effort: 'xhigh', fast: false })
+    expect(prefsFor(useModels.getState(), 'local', 'claude', 't1')).toMatchObject({ model: 'opus', effort: 'xhigh', fast: false })
     seedFromHistory('local', 'claude', 't2', { model: 'claude-mystery-1', effort: null })
     expect(useModels.getState().threadPrefs[threadPrefsKey('local', 'claude', 't2')]).toBeUndefined()
   })

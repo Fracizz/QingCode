@@ -183,11 +183,15 @@ export type EventStreamHandlers = {
 
 type TimerHandle = ReturnType<typeof setTimeout>
 const OFFLINE_GRACE_MS = 15_000
+// 网关 20 秒一次心跳；超过两次没收到任何帧视为半开连接。
+const STALE_STREAM_MS = 45_000
+const WATCHDOG_INTERVAL_MS = 15_000
 
 export class EventStreamController {
   private stream: string | null = null
   private off: (() => void) | null = null
   private timer: TimerHandle | null = null
+  private watchdog: TimerHandle | null = null
   private attempts = 0
   private generation = 0
   private stopped = true
@@ -215,6 +219,7 @@ export class EventStreamController {
     this.stopped = true
     this.generation += 1
     this.clearTimer()
+    this.clearWatchdog()
     this.opening = false
     this.attempts = 0
     this.firstFailureAt = null
@@ -230,13 +235,14 @@ export class EventStreamController {
     if (foreground) {
       this.attempts = 0
       this.wake()
-    }
+      this.armWatchdog()
+    } else this.clearWatchdog()
   }
 
   wake(force = false): void {
     if (this.stopped || this.opening) return
     // 网关 20 秒一次心跳，休眠后原有 socket 可能还没报告断开。
-    if (force || !this.stream || Date.now() - this.lastMessageAt > 45_000) {
+    if (force || !this.stream || Date.now() - this.lastMessageAt > STALE_STREAM_MS) {
       if (this.stream) {
         this.closeStream()
         this.handlers.onClose()
@@ -263,6 +269,7 @@ export class EventStreamController {
       this.attempts = 0
       this.firstFailureAt = null
       this.reportedUnavailable = false
+      this.armWatchdog()
       this.handlers.onOpen(reconnected)
     } catch (err) {
       if (this.stopped || generation !== this.generation) return
@@ -324,6 +331,28 @@ export class EventStreamController {
       this.timer = null
       if (!this.stopped) void this.open(this.generation, true)
     }, delay)
+  }
+
+  /**
+   * 原生事件流不设读超时，Wi-Fi 切换、NAT 过期后可能半开且永远不报断开。
+   * 前台时定期检查心跳，超时就重连并按游标回放，避免漏掉 turn/completed 而一直显示思考中。
+   */
+  private armWatchdog(): void {
+    this.clearWatchdog()
+    if (this.stopped || !this.foreground) return
+    this.watchdog = this.schedule(() => {
+      this.watchdog = null
+      if (this.stopped || !this.foreground) return
+      if (this.stream && Date.now() - this.lastMessageAt > STALE_STREAM_MS) this.wake(true)
+      this.armWatchdog()
+    }, WATCHDOG_INTERVAL_MS)
+  }
+
+  private clearWatchdog(): void {
+    if (this.watchdog !== null) {
+      this.cancel(this.watchdog)
+      this.watchdog = null
+    }
   }
 
   private clearTimer(): void {

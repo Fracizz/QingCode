@@ -13,6 +13,7 @@ import {
   interruptTurnIdOf,
   loadRecentThreadHistory,
   loadThread,
+  noteTurnConfig,
   moveOptimisticUsers,
   prependThreadHistory,
   resolveServerRequest,
@@ -121,6 +122,15 @@ it('加载会话时记下 Thread 上的模型与推理强度，后续不带配�
   const again = loadThread(loaded, { id: 't1', turns: [] } as unknown as LoadableThread)
   expect(threadOf(again).savedConfig).toEqual({ model: 'gpt-5.5', effort: 'high' })
   expect(threadOf(loadThread(emptyState(), { id: 't1', model: null, turns: [] } as unknown as LoadableThread)).savedConfig).toBeUndefined()
+})
+
+it('thread/resume 补进的服务档位记入会话配置，thread/read 的快照沿用原值', () => {
+  const resumed = loadThread(emptyState(), { id: 't1', model: 'gpt-5.5', reasoningEffort: null, serviceTier: 'priority', turns: [] } as unknown as LoadableThread)
+  expect(threadOf(resumed).savedConfig).toEqual({ model: 'gpt-5.5', effort: null, serviceTier: 'priority' })
+  const read = loadThread(resumed, { id: 't1', model: 'gpt-5.5', reasoningEffort: null, turns: [] } as unknown as LoadableThread)
+  expect(threadOf(read).savedConfig?.serviceTier).toBe('priority')
+  const off = loadThread(read, { id: 't1', model: 'gpt-5.5', serviceTier: null, turns: [] } as unknown as LoadableThread)
+  expect(threadOf(off).savedConfig?.serviceTier).toBeNull()
 })
 
 describe('跨端会话状态', () => {
@@ -915,4 +925,53 @@ describe('interruptTurnIdOf', () => {
     expect(interruptTurnIdOf({ ...base, status: 'idle', activeTurnId: null })).toBeNull()
     expect(interruptTurnIdOf(undefined)).toBeNull()
   })
+})
+
+describe('已结束轮次的迟到帧', () => {
+  const started = (s: ConversationState) => applyNotification(s, note('turn/started', { threadId: 't1', turn: { id: 'u1', status: 'inProgress', items: [] } }))
+  const delta = (params: Params) => note('item/agentMessage/delta', { threadId: 't1', itemId: 'a1', delta: '晚到', ...params })
+
+  it('turn/completed 之后的增量、item/started 和 turn/started 不会把会话拉回运行中', () => {
+    let s = started(emptyState())
+    s = applyNotification(s, delta({ turnId: 'u1' }))
+    s = applyNotification(s, note('turn/completed', { threadId: 't1', turn: { id: 'u1', status: 'completed', items: [] } }))
+    expect(s.threads.t1!.status).toBe('idle')
+
+    // 重连回放的旧帧晚于实时 turn/completed 到达。
+    s = applyNotification(s, delta({ turnId: 'u1' }))
+    s = applyNotification(s, note('item/started', { threadId: 't1', turnId: 'u1', item: { type: 'reasoning', id: 'r1', summary: [] } }))
+    s = started(s)
+    // 缺 turnId 的增量按条目归属判断。
+    s = applyNotification(s, delta({}))
+    const thread = s.threads.t1!
+    expect(thread.status).toBe('idle')
+    expect(thread.activeTurnId).toBeNull()
+    expect(sessionStatus(thread)).toBe('completed')
+  })
+
+  it('新一轮的帧照常标记运行中', () => {
+    let s = started(emptyState())
+    s = applyNotification(s, note('turn/completed', { threadId: 't1', turn: { id: 'u1', status: 'completed', items: [] } }))
+    s = applyNotification(s, note('item/agentMessage/delta', { threadId: 't1', turnId: 'u2', itemId: 'a2', delta: '新' }))
+    expect(s.threads.t1!.status).toBe('running')
+    expect(s.threads.t1!.activeTurnId).toBe('u2')
+  })
+})
+
+it('中途切换模型的提示插在本轮用户消息前，重新加载历史后仍在原位', () => {
+  const base = loadThread(emptyState(), { id: 't1', turns: [{ id: 'turn-1', status: 'completed', items: [
+    { type: 'userMessage', id: 'u1', clientId: 'c1', content: [{ type: 'text', text: '第一条', text_elements: [] }] },
+    { type: 'userMessage', id: 'u2', clientId: 'c2', content: [{ type: 'text', text: '第二条', text_elements: [] }] },
+  ] }] } as unknown as LoadableThread)
+  const noted = noteTurnConfig(base, 't1', { model: 'gpt-small', effort: 'low' }, { id: 'n1', text: '模型已切换', anchor: 'c2' })
+  expect(threadOf(noted).items.map((item) => item.id)).toEqual(['c1', 'n1', 'c2'])
+  expect(threadOf(noted).lastTurnConfig).toEqual({ model: 'gpt-small', effort: 'low' })
+  const reloaded = loadThread(noted, { id: 't1', turns: [{ id: 'turn-1', status: 'completed', items: [
+    { type: 'userMessage', id: 'u1', clientId: 'c1', content: [{ type: 'text', text: '第一条', text_elements: [] }] },
+    { type: 'userMessage', id: 'u2', clientId: 'c2', content: [{ type: 'text', text: '第二条', text_elements: [] }] },
+  ] }] } as unknown as LoadableThread)
+  expect(threadOf(reloaded).items.map((item) => item.id)).toEqual(['c1', 'n1', 'c2'])
+  // 消息还没回显时放在末尾。
+  const pending = noteTurnConfig(base, 't1', { model: 'gpt-big', effort: null }, { id: 'n2', text: '模型已切换', anchor: 'c3' })
+  expect(threadOf(pending).items.at(-1)?.id).toBe('n2')
 })

@@ -1,5 +1,6 @@
 /** getSessionMessages / listSessions 的历史 → v2 Thread/turns/items（纯函数）。 */
 import { emptyMapState, mapHistoryMessage } from './items'
+import { parseLocalCommand } from './localCommand'
 import { userTaskNotification } from './taskNotification'
 import type { ThreadStatus } from '../../../../vendor/codex-protocol/ts/v2/ThreadStatus'
 import { isSteerPlacement, type SteerPlacement } from '../steerHistory'
@@ -130,10 +131,19 @@ export function sessionMessagesToThread(
   for (let index = 0; index < messages.length; index++) {
     const entry = asRecord(messages[index])
     const raw = entry?.message ?? messages[index]
-    const apiMessage = asRecord(raw)
+    let apiMessage = asRecord(raw)
     if (!apiMessage) continue
-    const role = scalarText(apiMessage.role)
+    let role = scalarText(apiMessage.role)
     const messageId = scalarText(entry?.uuid)
+    // 终端里执行的本地斜杠命令：命令显示为用户输入，输出作为该轮的回复，说明性记录直接略过。
+    const local = role === 'user' ? parseLocalCommand(apiMessage.content) : undefined
+    if (local?.kind === 'skip') continue
+    if (local?.kind === 'command') apiMessage = { ...apiMessage, content: local.text }
+    if (local?.kind === 'output') {
+      // 输出不是新的用户输入，改按回复处理，留在命令所在的轮次里。
+      role = 'assistant'
+      apiMessage = { role, id: messageId, content: [{ type: 'text', text: local.text }] }
+    }
     const steer = steers?.get(messageId)
     // SDK 的 assistant/user 包装类型与 Anthropic API 的 message 对象不同，这里补一层。
     const sdkMessage: Json = {

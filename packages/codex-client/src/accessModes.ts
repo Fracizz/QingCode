@@ -1,7 +1,6 @@
 import { t } from '../../protocol/src/i18n'
+import type { AgentKind } from '../../protocol/src/messages'
 import type { TurnStartParams } from './codex-types'
-
-type AgentKind = 'codex' | 'claude' | 'pi'
 
 // 会话与总控共用三档：请求批准（Agent 自身配置）、替我批准（自动审查）、完全访问。
 export type AccessMode = 'default' | 'auto' | 'fullAccess'

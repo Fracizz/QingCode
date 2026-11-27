@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createServer, type Server as HttpsServer } from 'node:https'
 import { isGlobalAccessMode, resolveAccessMode, turnAccessOverride, type GlobalAccessMode } from '@qn/codex-client'
@@ -6,6 +7,7 @@ import { redactToken } from '../remoteCommands'
 import { RouterError, toWireError, type CodexReplyRoute } from '../router'
 import { openMobileHistory } from './history'
 import { mobileProjectFiles } from './projectAccess'
+import { MobileQueueRelay, parseRelayPut, type RelayRequest } from './queue'
 import type { MobileCertificate } from './cert'
 import type { DeviceStore, MobileDevice, PairFailureState } from './pairing'
 import { constantTimeEqual, isPairLocked, normalizePairFailure, recordPairFailure } from './pairing'
@@ -66,6 +68,9 @@ const RPC_METHODS = new Set([
   'mobile.files.list',
   'mobile.files.search',
   'mobile.files.read',
+  // 锁屏后的排队代发：手机逐条交给电脑，回到前台再收回。
+  'mobile.queue.put',
+  'mobile.queue.take',
   ...MOBILE_TERMINAL_METHODS,
 ])
 
@@ -79,10 +84,8 @@ const SERVER_REQ_METHODS = new Set([
   // 未读状态电脑与手机共用：手机看过的会话在电脑上也算已读。
   'thread.unread.list',
   'thread.unread.set',
-  // 手机端只读查看文件与差异；fs.write / fs.delete / git.stage / git.commit / run.* 等写方法一律不放行。
+  // 手机端只读查看文件；fs.write / fs.delete / git.* / run.* 等方法一律不放行（手机版已移除 Git 差异）。
   'fs.read',
-  'git.status',
-  'git.diff',
 ])
 
 const FORWARDED_EVENTS = new Set(['target.state', 'codex.recv', 'server.evt', 'settings.access'])
@@ -338,6 +341,10 @@ export class MobileGateway {
   private readonly failures = new Map<string, PairFailureState>()
   private readonly eventClients = new Set<EventClient>()
   private readonly terminals = new MobileTerminals()
+  private readonly queue = new MobileQueueRelay({
+    send: (request) => this.relaySend(request),
+    notify: (deviceId, update) => this.broadcast({ name: 'mobile.queue', payload: update }, deviceId),
+  })
   private server: HttpsServer | null = null
   private unsubscribe: (() => void) | null = null
   private certificate: MobileCertificate | null = null
@@ -378,6 +385,10 @@ export class MobileGateway {
     )
     this.server = server
     this.unsubscribe = this.options.router.onEmit((name, payload) => {
+      // 代发队列靠轮次事件判断何时续发；点对点回复（seq 为 null）不是轮次通知。
+      if (name === 'codex.recv' && isRecord(payload) && payload.seq !== null && typeof payload.targetId === 'string') {
+        this.queue.onNotification(payload.targetId, payload.agent, payload.msg)
+      }
       if (name === 'server.evt') {
         const terminal = this.terminals.toDevice(payload)
         if (terminal) {
@@ -420,6 +431,7 @@ export class MobileGateway {
     this.unsubscribe?.()
     this.unsubscribe = null
     this.terminals.clear()
+    this.queue.clear()
     this.closeAllEventClients()
     if (!server) return
     await new Promise<void>((resolve) => {
@@ -557,7 +569,16 @@ export class MobileGateway {
       if (method === 'mobile.agents') {
         const settings = await this.readSettings()
         mobileGlobalAccess(settings)
-        return this.sendJson(res, 200, { ...mobileAgentsFromSettings(settings), fastHistoryOpen: true })
+        return this.sendJson(res, 200, { ...mobileAgentsFromSettings(settings), fastHistoryOpen: true, backgroundQueue: true })
+      }
+      if (method === 'mobile.queue.put') {
+        const put = parseRelayPut(params)
+        if (!put) throw new RouterError('invalid_params', '排队消息参数无效')
+        this.queue.put(device.id, put.address, put.item, put.running)
+        return this.sendJson(res, 200, { ok: true })
+      }
+      if (method === 'mobile.queue.take') {
+        return this.sendJson(res, 200, { queues: await this.queue.take(device.id) })
       }
       if (method === 'mobile.history.open') {
         if (!isRecord(params) || typeof params.targetId !== 'string' || !params.targetId ||
@@ -578,18 +599,7 @@ export class MobileGateway {
         }
       }
       if (method === 'codex.send' || method === 'mobile.turn.start') {
-        // 独立方法让旧网关拒绝请求，避免按默认权限误发该轮。
-        if (method === 'mobile.turn.start') {
-          const settings = isRecord(params) && params.inheritAccess === true ? await this.readSettings() : undefined
-          params = mobileTurnParams(params, settings)
-        } else if (isRecord(params) && isRecord(params.msg) && params.msg.method === 'turn/start' && isRecord(params.msg.params)) {
-          // 旧手机和读取总控失败的手机都可能走普通入口，由网关补上当前总控。
-          const agent = isAgent(params.agent) ? params.agent : 'codex'
-          if (agent !== 'pi') {
-            const mode = resolveAccessMode(agent, mobileGlobalAccess(await this.readSettings()))
-            params = { ...params, msg: { ...params.msg, params: { ...params.msg.params, ...turnAccessOverride(agent, mode) } } }
-          }
-        }
+        params = await this.turnParams(method, params)
         if (isRecord(body.params) && body.params.replyViaHttp === true && isRecord(params) &&
             isJsonRpcRequest(params.msg) && params.msg.method === 'turn/start') {
           return this.sendJson(res, 200, { reply: await this.invokeTurn(res, params) })
@@ -618,26 +628,65 @@ export class MobileGateway {
     }
   }
 
+  /** 发送一轮前补上访问模式：手机直发与锁屏代发共用，保证两条路径的权限一致。 */
+  private async turnParams(method: 'codex.send' | 'mobile.turn.start', params: unknown): Promise<unknown> {
+    // 独立方法让旧网关拒绝请求，避免按默认权限误发该轮。
+    if (method === 'mobile.turn.start') {
+      const settings = isRecord(params) && params.inheritAccess === true ? await this.readSettings() : undefined
+      return mobileTurnParams(params, settings)
+    }
+    if (isRecord(params) && isRecord(params.msg) && params.msg.method === 'turn/start' && isRecord(params.msg.params)) {
+      // 旧手机和读取总控失败的手机都可能走普通入口，由网关补上当前总控。
+      const agent = isAgent(params.agent) ? params.agent : 'codex'
+      if (agent !== 'pi') {
+        const mode = resolveAccessMode(agent, mobileGlobalAccess(await this.readSettings()))
+        return { ...params, msg: { ...params.msg, params: { ...params.msg.params, ...turnAccessOverride(agent, mode) } } }
+      }
+    }
+    return params
+  }
+
+  /** 代发队列里的一条：与手机直发走同一套参数处理，回包超时视为结果未确认。 */
+  private async relaySend(request: RelayRequest): Promise<unknown> {
+    const raw = forwardRpcParams({ method: request.method, params: request.params }, request.method)
+    if (!isRecord(raw) || !isRecord(raw.msg)) throw new RouterError('invalid_params', '排队消息参数无效')
+    // 每次发送生成新的请求 ID，与手机自身的 RPC 编号互不干扰。
+    const params = await this.turnParams(request.method, { ...raw, msg: { ...raw.msg, id: randomUUID() } })
+    if (!isRecord(params)) throw new RouterError('invalid_params', '排队消息参数无效')
+    try {
+      return await this.awaitTurnReply(params, AbortSignal.timeout(25_000))
+    } catch (err) {
+      // 已转发但没等到回包时，目标机可能已经开始这一轮，交给用户核对。
+      if (isRecord(err) && (err.code === 'timeout' || err.code === 'network')) {
+        throw { unconfirmed: true, message: '发送结果未确认' }
+      }
+      throw err
+    }
+  }
+
   private async invokeTurn(res: ServerResponse, params: JsonRecord): Promise<unknown> {
     const lifetime = new AbortController()
     const close = () => lifetime.abort()
     res.once('close', close)
-    const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(25_000)])
     try {
-      return await new Promise<unknown>((resolve, reject) => {
-        signal.throwIfAborted()
-        const abort = () => reject(new RouterError('timeout', '发送结果未确认'))
-        signal.addEventListener('abort', abort, { once: true })
-        // 回包跟随发送请求，即使手机的事件流重连，也可以确认目标是否收到了这一轮。
-        void this.options.router.invoke('codex.send', params, {
-          signal,
-          receive: ({ msg }) => resolve(msg),
-        }).catch(reject)
-      })
+      return await this.awaitTurnReply(params, AbortSignal.any([lifetime.signal, AbortSignal.timeout(25_000)]))
     } finally {
       res.off('close', close)
       lifetime.abort()
     }
+  }
+
+  private awaitTurnReply(params: JsonRecord, signal: AbortSignal): Promise<unknown> {
+    return new Promise<unknown>((resolve, reject) => {
+      signal.throwIfAborted()
+      const abort = () => reject(new RouterError('timeout', '发送结果未确认'))
+      signal.addEventListener('abort', abort, { once: true })
+      // 回包跟随发送请求，即使手机的事件流重连，也可以确认目标是否收到了这一轮。
+      void this.options.router.invoke('codex.send', params, {
+        signal,
+        receive: ({ msg }) => resolve(msg),
+      }).catch(reject)
+    })
   }
 
   private invokeCodex(deviceId: string, params: unknown): Promise<unknown> {

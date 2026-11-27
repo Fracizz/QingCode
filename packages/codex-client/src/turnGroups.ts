@@ -124,6 +124,11 @@ export function groupTurns(items: readonly ItemView[], turns: readonly TurnMeta[
       flush(false)
       out.push(entry)
     } else if (entry.item.kind !== 'subagent') {
+      if (entry.item.kind === 'notice') {
+        flush(false)
+        out.push(entry)
+        continue
+      }
       if (entry.item.kind === 'backgroundTask') {
         flush(itemsInSegment.some((item) => liveItems.has(item.id)))
         out.push(entry)

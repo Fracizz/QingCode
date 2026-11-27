@@ -1,5 +1,5 @@
 // 模型与推理强度的纯逻辑：model/list 归一化、偏好解析、turn/start 覆盖项。移植自桌面 lib/models.ts + store/models.ts。
-import { localizeModelDescription, type TurnOverrides, getLocale, t, translateMessage } from '@qn/codex-client'
+import { historyModelPrefs, localizeModelDescription, reconcileThreadPrefs, type SavedThreadConfig, type TurnOverrides, getLocale, t, translateMessage } from '@qn/codex-client'
 import type { AgentKind } from './types'
 
 export type ModelOption = {
@@ -20,6 +20,8 @@ export type ModelPrefs = {
   model: string | null
   effort: string | null
   fast: boolean
+  /** 只用于会话记录：写入时会话历史里的配置，用来发现另一端是否换过模型。 */
+  seen?: { model: string | null; effort: string | null }
 }
 
 export const EMPTY_PREFS: ModelPrefs = { model: null, effort: null, fast: false }
@@ -181,10 +183,53 @@ export function parsePrefs(raw: string | null | undefined): Record<string, Model
         model: text(entry.model) || null,
         effort: text(entry.effort) || null,
         fast: entry.fast === true,
+        ...parseSeen(entry.seen),
       }
     }
     return result
   } catch {
     return {}
   }
+}
+
+// 每个会话一条记录；只保留最近改动/发送过的会话，避免本地存储无限增长。
+const THREAD_PREFS_LIMIT = 500
+
+/** 会话自己的模型选择与 agent 默认存在同一张表里，用 `#threadId` 后缀区分。 */
+export const threadPrefsKey = (sessionId: string, threadId: string) => `${sessionId}#${threadId}`
+
+export type { SavedThreadConfig } from '@qn/codex-client'
+
+/**
+ * 当前会话生效的偏好：本机对该会话的记录（另一端用别的模型发过消息时改用历史）> 会话历史里的配置 > agent 默认。
+ */
+export function prefsFor(
+  table: Record<string, ModelPrefs>,
+  agent: AgentKind,
+  sessionId: string,
+  threadId: string | null,
+  models: readonly ModelOption[] = [],
+  saved?: SavedThreadConfig,
+): ModelPrefs {
+  const base = { ...EMPTY_PREFS, ...table[sessionId] }
+  delete base.seen
+  if (!threadId) return base
+  const own = table[threadPrefsKey(sessionId, threadId)]
+  if (own) return reconcileThreadPrefs(agent, models, own, saved) ?? own
+  return historyModelPrefs(agent, models, base, saved) ?? base
+}
+
+/** 写入会话记录并挪到末尾（最近使用）；会话记录超出上限时丢弃最早的，agent 默认不受影响。 */
+export function putThreadPrefs(table: Record<string, ModelPrefs>, key: string, prefs: ModelPrefs): Record<string, ModelPrefs> {
+  const entries = Object.entries(table).filter(([item]) => item !== key)
+  entries.push([key, { ...prefs }])
+  const threads = entries.filter(([item]) => item.includes('#'))
+  const drop = new Set(threads.slice(0, Math.max(0, threads.length - THREAD_PREFS_LIMIT)).map(([item]) => item))
+  return Object.fromEntries(entries.filter(([item]) => !drop.has(item)))
+}
+
+/** 会话记录里的 seen（写入时会话历史的配置），见 @qn/codex-client 的 ThreadModelPrefs。 */
+function parseSeen(value: unknown): { seen?: { model: string | null; effort: string | null } } {
+  if (!isRecord(value)) return {}
+  return { seen: { model: text(value.model) || null, effort: text(value.effort) || null } }
 }

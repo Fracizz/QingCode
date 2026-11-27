@@ -1,6 +1,6 @@
 import { sessionStatusLabels, type SessionStatus, t, translateMessage } from '@qn/codex-client'
 import { Archive, ChartColumn, Check, ChevronDown, ChevronRight, Cloud, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { sessionKey } from '../agents'
 import { pageName } from '../names'
 import { useApp } from '../store'
@@ -15,6 +15,7 @@ import {
   orderWorkspaceProjects,
   pinnedFirst,
   placeWorkspaceProject,
+  placeWorkspaceThread,
   renameCachedThread,
   recentThreadStatus,
   threadPreviewLine,
@@ -185,9 +186,18 @@ export function WorkspaceThreadRow({
     gesture.current = { id: event.pointerId, x: event.clientX, y: event.clientY, axis: null }
   }
 
+  /** 长按进入拖动排序后，本次触摸只用于排序，不再左滑归档或打开会话。 */
+  const sorting = () => row.current?.closest('[data-sorting="true"]') != null
+
   function moveSwipe(event: PointerEvent<HTMLButtonElement>) {
     const start = gesture.current
     if (!start || start.id !== event.pointerId) return
+    if (sorting()) {
+      start.axis = 'vertical'
+      suppressClick.current = true
+      setDragOffset(null)
+      return
+    }
     const dx = event.clientX - start.x
     if (!start.axis) {
       start.axis = threadSwipeAxis(dx, event.clientY - start.y)
@@ -204,7 +214,7 @@ export function WorkspaceThreadRow({
     if (!start || start.id !== event.pointerId) return
     gesture.current = null
     setDragOffset(null)
-    if (cancelled) {
+    if (cancelled || sorting()) {
       suppressClick.current = true
       return
     }
@@ -280,14 +290,11 @@ export function WorkspaceThreadRow({
     setRenaming(true)
     setRenameError(null)
     try {
-      if (thread.agent === 'codex') {
-        const connection = useApp.getState().connections.find((item) => item.id === desktopId)
-        await renameConversation(thread.targetId, thread.id, title)
-        if (connection && useApp.getState().connections.some((item) => item.id === desktopId && item.fp === connection.fp)) {
-          renameCachedThread(desktopId, thread, title)
-        }
-      } else {
-        changeThreadPreference(desktopId, thread, { title })
+      const connection = useApp.getState().connections.find((item) => item.id === desktopId)
+      const saved = await renameConversation(thread.targetId, thread.id, title, thread.agent)
+      if (connection && useApp.getState().connections.some((item) => item.id === desktopId && item.fp === connection.fp)) {
+        changeThreadPreference(desktopId, thread, { title: saved === 'local' ? title : undefined })
+        if (saved === 'native') renameCachedThread(desktopId, thread, title)
       }
       setMenu(null)
     } catch (err) {
@@ -364,7 +371,7 @@ export function WorkspaceThreadRow({
               setMenu(null)
             }}>{preference?.pinned ? t('取消置顶（仅此手机）') : t('置顶（仅此手机）')}</SheetAction>
             <SheetAction icon={Pencil} onClick={() => { setName(thread.title); setMenu('rename') }}>
-              {thread.agent !== 'codex' ? t('重命名（仅此手机）') : t('重命名')}
+              {t('重命名')}
             </SheetAction>
             <SheetAction icon={Archive} disabled={archiving} onClick={() => { setMenu(null); void archive() }}>
               {t('归档')}
@@ -400,34 +407,31 @@ export function WorkspaceProjectRow({ project, target, onOpen, sortable = false 
   )
 }
 
-function WorkspaceThreadList({ threads, projectName, searching, onOpen }: {
+function WorkspaceThreadList({ project, threads, searching, onOpen }: {
+  project: Project
   threads: WorkspaceThread[]
-  projectName: string
   searching: boolean
   onOpen: (thread: WorkspaceThread) => void
 }) {
+  const desktopId = useApp((s) => s.activeId)
   const [expanded, setExpanded] = useState(false)
-  const olderThreadsId = useId()
-  const preview = searching ? threads : threads.slice(0, THREAD_PREVIEW_LIMIT)
-  const remaining = threads.length - preview.length
+  const shown = searching || expanded ? threads : threads.slice(0, THREAD_PREVIEW_LIMIT)
+  const remaining = threads.length - Math.min(threads.length, THREAD_PREVIEW_LIMIT)
   const label = expanded ? t('收起') : t('显示更多（{count} 条）', { count: remaining })
-  const renderRow = (thread: WorkspaceThread) => (
-    <WorkspaceThreadRow key={workspaceThreadKey(thread)} thread={thread} onOpen={() => onOpen(thread)} />
-  )
 
   return (
     <div className="qn-list-group qn-list-plain">
-      {preview.map(renderRow)}
-      {remaining > 0 && (
-        <>
-          <button type="button" className="qn-session-more qn-pressable" aria-label={`${label} · ${projectName}`}
-            aria-expanded={expanded} aria-controls={olderThreadsId} onClick={() => setExpanded((value) => !value)}>
-            {label}<ChevronDown size={16} aria-hidden />
-          </button>
-          <div id={olderThreadsId} className="qn-session-overflow" hidden={!expanded}>
-            {expanded && threads.slice(THREAD_PREVIEW_LIMIT).map(renderRow)}
-          </div>
-        </>
+      {/* 长按拖动排序；收起时只排前几条，序号与完整列表一致，保存时按完整列表算。 */}
+      <SortableList items={shown} itemKey={workspaceThreadKey} disabled={searching || !desktopId} className=""
+        label={t('{name} 的会话', { name: project.name })}
+        onMove={(from, to) => { if (desktopId) placeWorkspaceThread(desktopId, project, threads, from, to) }}>
+        {(thread) => <WorkspaceThreadRow thread={thread} onOpen={() => onOpen(thread)} />}
+      </SortableList>
+      {!searching && remaining > 0 && (
+        <button type="button" className="qn-session-more qn-pressable" aria-label={`${label} · ${project.name}`}
+          aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+          {label}<ChevronDown size={16} aria-hidden />
+        </button>
       )}
     </div>
   )
@@ -441,9 +445,6 @@ export function WorkspaceHome() {
   const connected = useApp((s) => s.eventsConnected)
   const repairReason = useApp((s) => s.activeId ? s.needsRepair[s.activeId] : undefined)
   const beginRepair = useApp((s) => s.beginRepair)
-  const notice = useApp((s) => s.notice)
-  const error = useApp((s) => s.error)
-  const clearError = useApp((s) => s.clearError)
   const targets = useApp((s) => s.targets)
   const loadTargets = useApp((s) => s.loadTargets)
   const loadProjects = useWorkspace((s) => s.loadProjects)
@@ -499,8 +500,6 @@ export function WorkspaceHome() {
         <Note message={repairReason === 'fingerprint' ? t('电脑证书已变化，请核对后重新配对。') : t('电脑已撤销此设备的授权。')}
           tone="error" actionLabel={t('重新配对')} onAction={() => beginRepair(desktopId)} />
       )}
-      {notice && <Note message={notice} tone="warn" />}
-      {error && <Note message={error} tone="error" onClose={clearError} />}
       {connected && projectList?.error && !repairReason && (
         <Note message={t('读取项目失败，请检查电脑和网络。')} tone="error" actionLabel={t('重试')} onAction={() => void refresh()} />
       )}
@@ -551,7 +550,7 @@ export function WorkspaceHome() {
                   {targets.some((item) => item.id === project.targetId) && <NewSessionButton project={project} iconOnly className="qn-list-action qn-new-session" />}
                   <ProjectTools project={project} compact />
                 </div>
-                <WorkspaceThreadList threads={threads} projectName={project.name} searching={searching}
+                <WorkspaceThreadList project={project} threads={threads} searching={searching}
                   onOpen={(thread) => void openWorkspaceThread(thread, project)} />
               </section>
             )) : (

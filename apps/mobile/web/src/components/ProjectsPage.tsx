@@ -5,7 +5,7 @@ import { pageName } from '../names'
 import { useApp } from '../store'
 import { filterProjects, orderWorkspaceProjects, placeWorkspaceProject, useWorkspacePreferences } from '../workspace'
 import { SortableList } from './SortableList'
-import { Button, Empty, Header, Loading, Note } from './ui'
+import { Button, Empty, Header, Loading } from './ui'
 import { WorkspaceProjectRow, WorkspaceSearch } from './WorkspaceHome'
 
 export function ProjectsPage() {
@@ -13,8 +13,6 @@ export function ProjectsPage() {
   const selectedTargetId = useApp((s) => s.selectedTargetId)
   const projects = useApp((s) => s.projects)
   const loading = useApp((s) => s.projectsLoading)
-  const error = useApp((s) => s.error)
-  const clearError = useApp((s) => s.clearError)
   const goBack = useApp((s) => s.goBack)
   const selectProject = useApp((s) => s.selectProject)
   const openDirectory = useApp((s) => s.openDirectory)
@@ -32,7 +30,6 @@ export function ProjectsPage() {
     <>
       <Header title={pageName('projects')} subtitle={target?.name} onBack={goBack} />
       <main className="qn-body qn-scroll">
-        {error && <Note message={error} tone="error" onClose={clearError} />}
         {projects.length > 0 && <WorkspaceSearch label={t('按项目、主机或路径搜索')} query={query} onChange={setQuery} />}
         {loading && <Loading text={t('正在读取项目…')} />}
         {!loading && list.length === 0 && <Empty>{query ? t('没有匹配的项目。') : t('该目标下还没有项目。')}</Empty>}

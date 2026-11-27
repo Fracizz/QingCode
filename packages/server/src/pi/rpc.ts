@@ -4,6 +4,7 @@
  */
 import { spawn } from 'node:child_process'
 import { redact } from '../log'
+import { isPiDialogRequest } from './extensionUi'
 import type { PiCommand } from './resolve'
 
 export type RpcRecord = Record<string, unknown>
@@ -43,7 +44,7 @@ export function splitJsonl(buffer: string): SplitResult {
   return { records, remainder, invalid }
 }
 
-/** 响应按 id 关联；扩展 UI 记录不代答（合规：每个对话框都必须由用户本人决定）。 */
+/** 响应按 id 关联；扩展 UI 记录单独分流，对话框交给用户本人决定。 */
 export function classifyRecord(record: unknown): RecordKind {
   if (typeof record !== 'object' || record === null || Array.isArray(record)) return 'event'
   const type = (record as RpcRecord).type
@@ -99,13 +100,16 @@ export interface PiExitInfo {
 interface Waiter {
   resolve(record: RpcRecord): void
   reject(err: Error): void
-  timer: ReturnType<typeof setTimeout>
+  timer: ReturnType<typeof setTimeout> | null
+  arm(): void
 }
 
 export class PiRpcProcess {
   private readonly pending = new Map<string, Waiter>()
   private readonly eventListeners = new Set<(record: RpcRecord) => void>()
   private readonly exitListeners = new Set<(info: PiExitInfo) => void>()
+  private readonly dialogListeners = new Set<(record: RpcRecord) => void>()
+  private readonly openDialogs = new Set<string>()
   private child: PiProcessLike | null = null
   private stdoutRemainder = ''
   private stderrRemainder = ''
@@ -150,12 +154,21 @@ export class PiRpcProcess {
     }
     const id = `qn-pi-${++this.counter}`
     return new Promise<RpcRecord>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id)
-        reject(new Error(`pi ${type} 超时`))
-      }, timeoutMs)
-      timer.unref?.()
-      this.pending.set(id, { resolve, reject, timer })
+      const waiter: Waiter = {
+        resolve,
+        reject,
+        timer: null,
+        arm: () => {
+          waiter.timer = setTimeout(() => {
+            this.pending.delete(id)
+            reject(new Error(`pi ${type} 超时`))
+          }, timeoutMs)
+          waiter.timer.unref?.()
+        },
+      }
+      this.pending.set(id, waiter)
+      // 等用户回答对话框期间命令回执本来就不会到，计时推迟到回答之后。
+      if (this.openDialogs.size === 0) waiter.arm()
       this.write({ id, type, ...payload })
     })
   }
@@ -165,6 +178,27 @@ export class PiRpcProcess {
     return () => {
       this.eventListeners.delete(cb)
     }
+  }
+
+  onDialog(cb: (record: RpcRecord) => void): () => void {
+    this.dialogListeners.add(cb)
+    return () => {
+      this.dialogListeners.delete(cb)
+    }
+  }
+
+  /** 把用户对扩展对话框的回答写回 pi。 */
+  respondDialog(response: RpcRecord): void {
+    const id = typeof response.id === 'string' ? response.id : ''
+    if (!this.openDialogs.has(id)) return
+    this.write(response)
+    this.releaseDialog(id)
+  }
+
+  /** 对话框已结束（已回答，或 pi 按 timeout 自行收场），恢复命令计时。 */
+  releaseDialog(id: string): void {
+    if (!this.openDialogs.delete(id) || this.openDialogs.size > 0) return
+    for (const waiter of this.pending.values()) waiter.arm()
   }
 
   onExit(cb: (info: PiExitInfo) => void): () => void {
@@ -223,16 +257,25 @@ export class PiRpcProcess {
         const id = typeof record.id === 'string' ? record.id : null
         const waiter = id ? this.pending.get(id) : null
         if (waiter && id) {
-          clearTimeout(waiter.timer)
+          clearTimer(waiter)
           this.pending.delete(id)
           waiter.resolve(record)
         }
         continue
       }
-      // 扩展 UI 请求不自动应答；pi 自带 timeout 会自行兜底。
-      if (kind === 'extension_ui') continue
+      // 通知类扩展 UI 记录不需要回应；对话框会阻塞 pi，交给上层展示给用户。
+      if (kind === 'extension_ui') {
+        if (isPiDialogRequest(record)) this.openDialog(record)
+        continue
+      }
       for (const cb of [...this.eventListeners]) cb(record)
     }
+  }
+
+  private openDialog(record: RpcRecord): void {
+    this.openDialogs.add(record.id as string)
+    for (const waiter of this.pending.values()) clearTimer(waiter)
+    for (const cb of [...this.dialogListeners]) cb(record)
   }
 
   private onStderr(chunk: string): void {
@@ -259,11 +302,17 @@ export class PiRpcProcess {
 
   private rejectPending(err: Error): void {
     for (const waiter of this.pending.values()) {
-      clearTimeout(waiter.timer)
+      clearTimer(waiter)
       waiter.reject(err)
     }
     this.pending.clear()
+    this.openDialogs.clear()
   }
+}
+
+function clearTimer(waiter: Waiter): void {
+  if (waiter.timer) clearTimeout(waiter.timer)
+  waiter.timer = null
 }
 
 function toText(chunk: Buffer | string): string {

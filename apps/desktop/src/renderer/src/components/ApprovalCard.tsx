@@ -17,6 +17,7 @@ export function ApprovalCard({
   if (approval.questions && approval.questions.length > 0 && onAnswer) {
     return <UserInputCard approval={approval} onSubmit={onAnswer} />
   }
+  const allows = (decision: ApprovalDecision) => !approval.decisions || approval.decisions.includes(decision)
   return (
     <div className="rounded-lg border border-qn-border-strong bg-amber-400/5 p-3">
       <div className="mb-2 flex items-center gap-2">
@@ -28,12 +29,16 @@ export function ApprovalCard({
         {approval.detail}
       </pre>
       <div className="flex flex-wrap gap-2">
-        <button className="qn-button" onClick={() => onDecide('accept')}>
-          {t('允许')}
-        </button>
-        <button className="qn-button-subtle" onClick={() => onDecide('acceptForSession')}>
-          {t('本会话允许')}
-        </button>
+        {allows('accept') && (
+          <button className="qn-button" onClick={() => onDecide('accept')}>
+            {t('允许')}
+          </button>
+        )}
+        {allows('acceptForSession') && (
+          <button className="qn-button-subtle" onClick={() => onDecide('acceptForSession')}>
+            {t('本会话允许')}
+          </button>
+        )}
         <button className="qn-button-subtle text-qn-danger" onClick={() => onDecide('decline')}>
           {t('拒绝')}
         </button>

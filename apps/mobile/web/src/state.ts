@@ -1,5 +1,5 @@
 // 手机端状态纯逻辑：未知 JSON 的归一化、事件折叠、注释拼接。无 DOM / 网络依赖。
-import { approvalResponse, threadActivityFromStatus, type ApprovalDecision, type ApprovalView, type ThreadActivity, type UserInput, getLocale, t, translateMessage } from '@qn/codex-client'
+import { ELICITATION_METHOD, approvalResponse, threadActivityFromStatus, type ApprovalDecision, type ApprovalView, type ThreadActivity, type UserInput, getLocale, t, translateMessage } from '@qn/codex-client'
 import { isValidHost, normalizeFingerprint, parsePort } from './link'
 import type { AgentKind, Connection, Project, SshAuth, Target, TargetState, TargetStateEvent } from './types'
 
@@ -100,6 +100,9 @@ export function availableApprovalDecisions(approval: ApprovalView, agent: AgentK
     case 'item/permissions/requestApproval':
       decisions = withSession
       break
+    case ELICITATION_METHOD:
+      decisions = approval.decisions?.includes('accept') ? ['accept', 'decline', 'cancel'] : ['decline', 'cancel']
+      break
     default:
       return []
   }
@@ -109,6 +112,7 @@ export function availableApprovalDecisions(approval: ApprovalView, agent: AgentK
 
 export function mobileApprovalReply(approval: ApprovalView, decision: MobileApprovalDecision): unknown {
   if (decision !== 'cancel') return approvalResponse(approval, decision)
+  if (approval.method === ELICITATION_METHOD) return { action: 'cancel', content: null, _meta: null }
   const legacy = approval.method === 'execCommandApproval' || approval.method === 'applyPatchApproval'
   return { decision: legacy ? 'abort' : 'cancel' }
 }

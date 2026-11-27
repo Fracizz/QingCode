@@ -8,6 +8,7 @@ import { allowLocalUrl, isImagePath, parseFileHref, resolvePath, segmentPaths, t
 import { copyText } from '../client'
 import { ImageThumbnail } from './ImageThumbnail'
 import { SubagentDetails } from './SubagentDetails'
+import { TerminalIcon } from './TerminalIcon'
 import { Badge, Button, Dialog, LoadingIcon, SheetAction } from './ui'
 
 /** 消息里的路径按会话 cwd 解析，点击后在只读查看页打开；没有提供时路径只是普通文本。 */
@@ -164,7 +165,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, components }: { text: 
  * 消息 Markdown。memo：会话里任一消息更新都会重渲染整列消息，文本没变的不必重新解析。
  * 流式时按块渲染，已完成的块走缓存，每个增量只重新解析末尾一块；结束后整条解析一次。
  */
-const Markdown = memo(function Markdown({ text, streaming }: { text: string; streaming: boolean }): ReactNode {
+export const Markdown = memo(function Markdown({ text, streaming }: { text: string; streaming: boolean }): ReactNode {
   const actions = useContext(FileActionsContext)
   const components = useMemo(() => markdownComponents(actions, streaming), [actions, streaming])
   const blocks = useMemo(() => streaming ? splitMarkdownBlocks(text) : null, [streaming, text])
@@ -258,7 +259,7 @@ function CommandItem({
   return (
     <LazyDetails className="qn-tool" summary={
       <summary className="qn-tool-row">
-        <Terminal size={14} className="shrink-0 text-qn-muted" aria-hidden />
+        <TerminalIcon running={status === 'running'} className={status === 'running' ? '' : 'text-qn-muted'} />
         <span className="min-w-0 flex-1 truncate">{status === 'running' ? t('正在运行 ') : t('已运行 ')}<code className="qn-mono">{item.command || t('（命令）')}</code></span>
         {status === 'failed' && typeof item.exitCode === 'number' && <span className="text-qn-danger">{t('退出码 {code}', { code: item.exitCode })}</span>}
         <ToolStatusIcon status={status} />
@@ -300,10 +301,13 @@ export function ToolGroup({ items, onQuote, trail = false }: {
 }) {
   const running = items.some((item) => toolStatus(item) === 'running')
   const failed = items.some((item) => toolStatus(item) === 'failed')
+  // 与电脑版一致：含命令的分组用终端图标，运行中由图标动效表示；失败时随整行标红。
+  const hasCommands = items.some((item) => item.kind === 'command')
   return (
     <LazyDetails className={`qn-tool-group${trail ? ' qn-tool-trail' : ''}${failed ? ' qn-tool-failed' : ''}`} summary={
       <summary className="qn-tool-row">
-        {running ? <LoadingIcon className="text-qn-accent" />
+        {hasCommands ? <TerminalIcon running={running} />
+          : running ? <LoadingIcon className="text-qn-accent" />
           : failed ? <CircleX size={14} className="shrink-0 text-qn-danger" aria-hidden />
             : <ListChecks size={14} className="shrink-0 text-qn-muted" aria-hidden />}
         <span className="min-w-0 flex-1 truncate">{toolSummary(items)}</span>
@@ -570,6 +574,15 @@ export function MessageItem({
       return <CommandItem item={item} onQuote={onQuote} />
     case 'fileChange':
       return <FileChangeItem item={item} onQuote={onQuote} />
+    case 'notice':
+      // 本机提示（如中途切换模型）：居中细线分隔，不当作消息或工具步骤。
+      return (
+        <div role="status" className="flex items-center gap-3 py-1 text-xs text-qn-muted">
+          <span className="h-px flex-1 bg-qn-border" aria-hidden />
+          <span className="min-w-0 truncate">{item.text}</span>
+          <span className="h-px flex-1 bg-qn-border" aria-hidden />
+        </div>
+      )
     case 'backgroundTask': {
       const label = backgroundTaskLabel(item.status)
       // Claude 的后台任务通知可能把整段结果放进摘要：标题最多两行，全文收进展开区，避免一条通知占满屏幕。

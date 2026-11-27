@@ -63,6 +63,22 @@ export function appendRead(prev: FsReadView, next: FsReadView): FsReadView {
 
 export type ViewKind = 'text' | 'image' | 'binary'
 
+const MARKDOWN_EXT = /\.(?:md|markdown|mdown|mkd)$/i
+
+/** Markdown 文件在查看页默认渲染预览，可切回源码。 */
+export function isMarkdownPath(path: string): boolean {
+  return MARKDOWN_EXT.test(path)
+}
+
+/** 文件所在目录：预览里的相对链接、图片按它解析，与电脑版一致。 */
+export function parentDir(path: string): string {
+  const index = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  if (index < 0) return ''
+  // 根目录（/ 或 C:\）要保留分隔符，否则相对路径会拼错。
+  const dir = path.slice(0, index)
+  return index === 0 || /^[A-Za-z]:$/.test(dir) ? path.slice(0, index + 1) : dir
+}
+
 export function viewKind(view: FsReadView): ViewKind {
   if (view.encoding === 'base64') return isImagePath(view.path) && view.content ? 'image' : 'binary'
   return view.binary ? 'binary' : 'text'

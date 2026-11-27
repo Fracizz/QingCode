@@ -1,4 +1,7 @@
-import { chatCommandQuery, exactChatCommand, matchingChatCommands, t, translateMessage, type ChatCommandId, type UserInput } from '@qn/codex-client'
+import {
+  chatCommandQuery, exactChatCommand, hasSkillToken, insertSkillToken, matchingChatCommands, t, takeSkillTokens, translateMessage,
+  type ChatCommandId, type UserInput,
+} from '@qn/codex-client'
 import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, Slash, Square, Wand2, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
@@ -10,7 +13,8 @@ import type { SendMode } from '../store'
 import { matchingSkills, type SkillItem } from '../skills'
 import type { Project } from '../types'
 import { ImageThumbnail } from './ImageThumbnail'
-import { Button, Dialog, LoadingIcon, Note } from './ui'
+import { Button, Dialog, LoadingIcon } from './ui'
+import { toast } from '../toast'
 
 export type ComposerProps = {
   draftKey: string
@@ -38,7 +42,7 @@ export type ComposerProps = {
   trailing?: ReactNode
   canSteer: boolean
   steerHint?: string
-  commands?: { run: (id: ChatCommandId) => void; unavailable: (id: ChatCommandId) => string | null }
+  commands?: { run: (id: ChatCommandId) => void; unavailable: (id: ChatCommandId) => string | null; hidden?: readonly ChatCommandId[] }
   /** 输入 / 时与对话命令一起列出的技能；选中后作为 skill 输入随消息发送。 */
   skills?: readonly SkillItem[]
 }
@@ -49,11 +53,11 @@ type SlashEntry = { kind: 'command'; id: ChatCommandId; name: string; descriptio
 // 相册选择保留在当前应用进程中，避免将大段图片数据写进加密草稿。
 const photoDrafts = new Map<string, DraftImage[]>()
 const NO_IMAGES: DraftImage[] = []
-// 已选技能同样只留在内存草稿里，切换会话再回来仍在。
+// 选过的技能（名字→路径）同样只留在内存草稿里，发送时按正文里仍在的 /名字 取用。
 const skillDrafts = new Map<string, SkillItem[]>()
 const NO_SKILLS: SkillItem[] = []
-// 技能名可含 : . _（如 plugin:skill），比对话命令的查询更宽。
-const SKILL_QUERY = /^\s*\/([\p{L}\p{N}_.:-]*)$/u
+// 技能名可含 : . _（如 plugin:skill），比对话命令的查询更宽；/ 在开头或空白后即可，一条消息能挂多个技能。
+const SKILL_QUERY = /(?:^|\s)\/([\p{L}\p{N}_.:-]*)$/u
 
 function rememberSkills(key: string, skills: SkillItem[]) {
   skillDrafts.delete(key)
@@ -78,7 +82,6 @@ export function Composer({
   const [images, setImages] = useState(() => photoDrafts.get(draftKey) ?? NO_IMAGES)
   const [pickedSkills, setPickedSkills] = useState(() => skillDrafts.get(draftKey) ?? NO_SKILLS)
   const [picking, setPicking] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
   const [caret, setCaret] = useState<number | null>(null)
   const [imeActive, setImeActive] = useState(false)
   const [activeCommand, setActiveCommand] = useState(0)
@@ -96,9 +99,10 @@ export function Composer({
   const slashQuery = commandQuery ?? skillQuery
   const commandMatches: SlashEntry[] = [
     ...(commandQuery === undefined ? [] : matchingChatCommands(commandQuery)
+      .filter(({ id }) => !commands?.hidden?.includes(id))
       .map(({ id, name, description }) => ({ kind: 'command' as const, id, name, description }))),
     ...(skillQuery === undefined || !skills ? [] : matchingSkills(skills, skillQuery)
-      .filter((skill) => !pickedSkills.some((item) => item.name === skill.name))
+      .filter((skill) => !hasSkillToken(text, skill.name))
       .map((skill) => ({ kind: 'skill' as const, skill }))),
   ]
 
@@ -148,7 +152,6 @@ export function Composer({
   async function pickImages() {
     if (disabled || imageUnavailable || picking || images.length >= MAX_IMAGES) return
     setPicking(true)
-    setStatus(null)
     try {
       const result = await callDevice<{ images: unknown[]; skipped: number }>('images.pick', {
         maxCount: MAX_IMAGES - images.length,
@@ -158,37 +161,39 @@ export function Composer({
       const incoming = Array.isArray(result?.images) ? result.images.filter(isDraftImage) : []
       const next = [...images, ...incoming].slice(0, MAX_IMAGES)
       if (attachmentBytes(next) > IMAGE_BYTES) {
-        setStatus(t('图片超过可用空间，请选择较小的图片'))
+        toast(t('图片超过可用空间，请选择较小的图片'), { tone: 'warn' })
         return
       }
       updateImages(next)
       if (result?.skipped) {
-        setStatus(result.skipped === 1 ? t('有 1 张图片无法添加，请选择较小的图片')
-          : t('有 {count} 张图片无法添加，请选择较小的图片', { count: result.skipped }))
+        toast(result.skipped === 1 ? t('有 1 张图片无法添加，请选择较小的图片')
+          : t('有 {count} 张图片无法添加，请选择较小的图片', { count: result.skipped }), { tone: 'warn' })
       }
     } catch (error) {
-      if (mounted.current) setStatus(friendlyError(error, t('无法选择图片')))
+      if (mounted.current) toast(friendlyError(error, t('无法选择图片')), { tone: 'warn' })
     } finally {
       if (mounted.current) setPicking(false)
     }
   }
 
   const canSend = (!disabled && !sending && !compacting && !picking &&
-    (!imageUnavailable || images.length === 0) && Boolean(text.trim() || images.length || pickedSkills.length || annotations.length))
+    (!imageUnavailable || images.length === 0) && Boolean(text.trim() || images.length || annotations.length))
 
   async function submit(mode: SendMode = 'queue') {
     const command = exactChatCommand(text)
-    if (commands && !disabled && !composing.current && command) {
+    if (commands && !disabled && !composing.current && command && !commands.hidden?.includes(command.id)) {
       chooseCommand(command.id)
       return
     }
     if (!canSend || composing.current) return
     setCaret(null)
+    // 技能以 /名字 留在正文里，发送时拆成 skill 输入，发给 Agent 的内容与选技能卡片时一致。
+    const { text: body, skills: used } = takeSkillTokens(text, pickedSkills)
     const attachments: UserInput[] = [
-      ...pickedSkills.map((skill): UserInput => ({ type: 'skill', name: skill.name, path: skill.path })),
+      ...used.map((skill): UserInput => ({ type: 'skill', name: skill.name, path: skill.path })),
       ...images.map((image): UserInput => ({ type: 'image', url: image.dataUrl })),
     ]
-    if (await onSend(text, attachments, mode)) {
+    if (await onSend(body, attachments, mode)) {
       updateImages([])
       updateSkills([])
     }
@@ -197,10 +202,17 @@ export function Composer({
   function chooseSlash(entry: SlashEntry) {
     if (entry.kind === 'command') { chooseCommand(entry.id); return }
     if (composing.current) return
-    updateSkills([...pickedSkills, entry.skill])
-    onChangeText('')
-    setCaret(null)
-    requestAnimationFrame(() => textarea.current?.focus())
+    if (skillQuery === undefined) return
+    if (!pickedSkills.some((item) => item.name === entry.skill.name)) updateSkills([...pickedSkills, entry.skill])
+    const end = text.length
+    const next = insertSkillToken(text, end - skillQuery.length - 1, end, entry.skill.name)
+    onChangeText(next.text)
+    setCaret(next.caret)
+    requestAnimationFrame(() => {
+      const input = textarea.current
+      input?.focus()
+      input?.setSelectionRange(next.caret, next.caret)
+    })
   }
 
   function chooseCommand(id: ChatCommandId) {
@@ -212,10 +224,6 @@ export function Composer({
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.nativeEvent.isComposing || composing.current) return
-    if (event.key === 'Backspace' && text === '' && pickedSkills.length > 0) {
-      updateSkills(pickedSkills.slice(0, -1))
-      return
-    }
     if (slashQuery !== undefined) {
       if (event.key === 'Escape') {
         event.preventDefault()
@@ -261,7 +269,6 @@ export function Composer({
 
   return (
     <div className="qn-footer qn-composer-footer relative">
-      {status && <Note message={status} tone="warn" onClose={() => setStatus(null)} />}
       {quoteDraft && (
         <div className="mb-2 rounded-xl border border-qn-border bg-qn-card p-2">
           <div className="qn-mono mb-2 max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-xs text-qn-muted">{quoteDraft}</div>
@@ -351,20 +358,6 @@ export function Composer({
             ))}
           </ul>
         )}
-        {pickedSkills.length > 0 && (
-          <ul className="qn-composer-skills" aria-label={t('已选技能')}>
-            {pickedSkills.map((skill) => (
-              <li key={skill.name} className="qn-skill-chip">
-                <Wand2 size={13} aria-hidden />
-                <span className="truncate" title={skill.name}>{skill.name}</span>
-                <button type="button" disabled={sending} aria-label={t('移除技能 {name}', { name: skill.name })}
-                  onClick={() => updateSkills(pickedSkills.filter((item) => item.name !== skill.name))}>
-                  <X size={12} strokeWidth={2.5} aria-hidden />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
         <textarea
           ref={textarea}
           className="qn-textarea"
@@ -394,7 +387,7 @@ export function Composer({
             {running && !canSend && !sending && (
               <Button variant="danger" className="qn-stop-button" aria-label={interrupting ? t('正在中断') : t('停止运行')}
                 aria-busy={interrupting} disabled={sending || interrupting} onClick={onInterrupt}>
-                {interrupting ? <LoadingIcon size={14} /> : <Square size={11} fill="currentColor" aria-hidden />}
+                {interrupting ? <LoadingIcon size={14} /> : <Square size={10} fill="currentColor" aria-hidden />}
               </Button>
             )}
             {/* 长按发送键可选「立即发送」（停止本轮后发送），输入后仍能中断当前轮。 */}
@@ -467,7 +460,7 @@ function SendButton({ running, sending, disabled, canSteer, steerHint = t('补�
           }
           onSend('queue')
         }}>
-        {sending ? <LoadingIcon size={16} /> : <ArrowUp size={18} strokeWidth={2.25} aria-hidden />}
+        {sending ? <LoadingIcon size={16} /> : <ArrowUp size={17} strokeWidth={2.25} aria-hidden />}
       </Button>
       {/* 发送键旁不再放下拉箭头：手机上几乎不用，还挤占输入区；其他发送方式靠长按发送键。 */}
       {open && (

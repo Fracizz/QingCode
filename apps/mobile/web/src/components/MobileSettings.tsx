@@ -12,6 +12,7 @@ import { getWindowNativePort, NativeRequestError, setNativeLocale } from '../nat
 import { friendlyError } from '../state'
 import { releaseEventStream, useApp } from '../store'
 import { Button, Dialog, Field, Note } from './ui'
+import { toast } from '../toast'
 
 type UpdateCheck = { available: boolean; versionName: string; versionCode: number; id?: string }
 const UPDATE_URL = 'mobile.updateUrl'
@@ -139,7 +140,6 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
   const [url, setUrl] = useState('')
   const [busy, setBusy] = useState<'check' | 'install' | null>(null)
   const [candidate, setCandidate] = useState<UpdateCheck | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const background = useApp((state) => state.backgroundConnectionEnabled)
   const [savingBackground, setSavingBackground] = useState(false)
@@ -208,7 +208,6 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
   }
 
   const check = async () => {
-    setNotice(null)
     setError(null)
     setCandidate(null)
     let endpoint: URL
@@ -224,7 +223,7 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
       await getGateway().storageSet(UPDATE_URL, endpoint.href)
       const result = await callDevice<UpdateCheck>('updates.check', { url: endpoint.href }, 300_000)
       setCandidate(result)
-      if (!result.available) setNotice(t('当前已是此地址提供的最新版本。'))
+      if (!result.available) toast(t('当前已是此地址提供的最新版本。'), { tone: 'ok' })
     } catch (err) {
       setError(friendlyError(err, t('检查更新失败')))
     } finally {
@@ -234,11 +233,10 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
 
   const install = async (id?: string) => {
     setError(null)
-    setNotice(null)
     setBusy('install')
     try {
       const result = await callDevice<{ started: boolean }>('updates.install', id ? { id } : {}, 300_000)
-      if (result.started) setNotice(t('在 Android 系统界面中确认安装。'))
+      if (result.started) toast(t('在 Android 系统界面中确认安装。'))
     } catch (err) {
       setError(friendlyError(err, t('无法安装所选 APK')))
     } finally {
@@ -304,7 +302,6 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
         )}
 
         {error && <Note tone="error" message={error} />}
-        {notice && <Note message={notice} />}
         <SettingGroup title={t('关于与更新')}
           footnote={t('QingCode Next 是第三方客户端，与 OpenAI、Anthropic 无隶属关系。Agent 用量计入你自己的账号。')}>
           <div className="qn-setting-row">

@@ -5,17 +5,22 @@ import { redact } from '../log'
 
 type SessionListOptions = { dir?: string; limit?: number; includeWorktrees?: boolean }
 type MessageListOptions = { dir?: string }
+type MutationOptions = { dir?: string }
 type SessionRequest =
   | { method: 'list'; options?: SessionListOptions }
   | { method: 'info'; sessionId: string }
   | { method: 'messages'; sessionId: string; options?: MessageListOptions }
   | { method: 'fork'; sessionId: string; options: ForkSessionOptions }
+  | { method: 'delete'; sessionId: string; options: MutationOptions }
+  | { method: 'rename'; sessionId: string; title: string; options: MutationOptions }
 
 export interface ClaudeSessionReader {
   listSessions(options?: SessionListOptions): Promise<unknown[]>
   getSessionInfo?(sessionId: string): Promise<unknown>
   getSessionMessages(sessionId: string, options?: MessageListOptions): Promise<unknown[]>
   forkSession?(sessionId: string, options: ForkSessionOptions): Promise<ForkSessionResult>
+  deleteSession?(sessionId: string, options: MutationOptions): Promise<void>
+  renameSession?(sessionId: string, title: string, options: MutationOptions): Promise<void>
 }
 
 type Reply = { result: unknown } | { error: string }
@@ -42,6 +47,8 @@ export function isolatedClaudeSessionReader(directory: string): ClaudeSessionRea
     getSessionInfo: (sessionId) => read({ method: 'info', sessionId }),
     getSessionMessages: (sessionId, options) => read({ method: 'messages', sessionId, options }),
     forkSession: (sessionId, options) => read({ method: 'fork', sessionId, options }),
+    deleteSession: (sessionId, options) => read({ method: 'delete', sessionId, options }),
+    renameSession: (sessionId, title, options) => read({ method: 'rename', sessionId, title, options }),
   }
 }
 
@@ -63,6 +70,14 @@ export async function runClaudeHistoryWorker(): Promise<boolean> {
         break
       case 'fork':
         result = await sdk.forkSession(request.sessionId, request.options)
+        break
+      case 'delete':
+        await sdk.deleteSession(request.sessionId, request.options)
+        result = null
+        break
+      case 'rename':
+        await sdk.renameSession(request.sessionId, request.title, request.options)
+        result = null
         break
     }
     parentPort.postMessage({ result } satisfies Reply)

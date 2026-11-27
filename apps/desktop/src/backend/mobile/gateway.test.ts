@@ -275,11 +275,11 @@ describe('手机网关纯逻辑', () => {
     expect(parseBearerToken('Basic abc')).toBeNull()
   })
 
-  it('server.req 只放行只读文件 / Git 方法，写方法一律拒绝', () => {
-    for (const method of ['fs.read', 'git.status', 'git.diff']) {
-      expect(checkRpcWhitelist('server.req', { targetId: 'local', method }).ok).toBe(true)
-    }
+  it('server.req 只放行只读文件方法，Git 与写方法一律拒绝', () => {
+    expect(checkRpcWhitelist('server.req', { targetId: 'local', method: 'fs.read' }).ok).toBe(true)
     for (const method of [
+      'git.status',
+      'git.diff',
       'fs.write',
       'fs.delete',
       'fs.mkdir',
@@ -581,7 +581,7 @@ describe('手机网关 HTTPS 集成', () => {
 
     const agents = await requestJson('/rpc', 'POST', { method: 'mobile.agents', params: {} }, token)
     expect(agents.status).toBe(200)
-    expect(agents.json()).toEqual({ ...mobileAgentsFromSettings(APP_SETTINGS), fastHistoryOpen: true })
+    expect(agents.json()).toEqual({ ...mobileAgentsFromSettings(APP_SETTINGS), fastHistoryOpen: true, backgroundQueue: true })
     expect(agents.text).not.toContain('claude.exe')
 
     const claudeOpened = await requestJson(

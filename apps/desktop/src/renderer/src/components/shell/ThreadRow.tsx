@@ -1,4 +1,4 @@
-import { t, isActiveThread, sessionStatus, sessionStatusLabels, type SessionStatus } from '@qn/codex-client'
+import { AGENT_CAPABILITIES, agentResumeCommand, t, isActiveThread, sessionStatus, sessionStatusLabels, type SessionStatus } from '@qn/codex-client'
 import { memo, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ComponentProps, type ReactNode } from 'react'
 import { ContextMenu } from 'radix-ui'
 import {
@@ -18,7 +18,7 @@ import {
   ShieldAlert,
   Trash2,
 } from 'lucide-react'
-import { agentLabel, DEFAULT_AGENT, sessionKey } from '../../lib/agents'
+import { agentLabel, sessionKey } from '../../lib/agents'
 import { copyText } from '../../lib/clipboard'
 import { cn } from '../../lib/cn'
 import { formatTime, threadKey, threadPreviewText, type ThreadSummary } from '../../lib/threads'
@@ -160,7 +160,6 @@ export const ThreadRow = memo(function ThreadRow({
   const key = threadKey(thread.agent, thread.id)
   const prefs = useThreadPrefs((s) => s.byTarget[targetId])
   const setPinned = useThreadPrefs((s) => s.setPinned)
-  const setLocalName = useThreadPrefs((s) => s.setLocalName)
   const forget = useThreadPrefs((s) => s.forget)
 
   const now = useMinuteNow()
@@ -175,8 +174,7 @@ export const ThreadRow = memo(function ThreadRow({
   const statusLabel = opening ? t('正在打开会话') : sessionStatusLabels[status]
   const running = isActiveThread(status)
   const showActions = status !== 'pending' && status !== 'input'
-  // Claude 侧没有会话管理 RPC：重命名/归档退化为本机记录，分支与永久删除不可用。
-  const native = thread.agent === 'codex'
+  const capabilities = AGENT_CAPABILITIES[thread.agent]
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(thread.title)
@@ -205,11 +203,7 @@ export const ThreadRow = memo(function ThreadRow({
     setEditing(false)
     const name = draft.trim()
     if (!name || name === thread.title) return
-    if (native) {
-      if (await renameThread(thread.id, thread.agent, name)) setLocalName(targetId, key, null)
-    } else {
-      setLocalName(targetId, key, name)
-    }
+    await renameThread(thread.id, thread.agent, name)
   }
 
   const archive = async (): Promise<void> => {
@@ -224,8 +218,7 @@ export const ThreadRow = memo(function ThreadRow({
     if (ok) forget(targetId, key)
   }
 
-  const resumeCommand =
-    thread.agent === DEFAULT_AGENT ? `codex resume ${thread.id}` : `claude --resume ${thread.id}`
+  const resumeCommand = agentResumeCommand(thread.agent, thread.id)
 
   if (editing) {
     return (
@@ -329,13 +322,13 @@ export const ThreadRow = memo(function ThreadRow({
           <ShortcutItem
             icon={<GitBranch size={14} />}
             hint="X"
-            disabled={!native || running}
+            disabled={!capabilities.fork || running}
             onSelect={() => {
               onActivate()
               void forkThread(thread.id, thread.agent)
             }}
           >
-            {native ? t('创建聊天分支') : t('创建聊天分支（Claude 暂不支持）')}
+            {t('创建聊天分支')}
           </ShortcutItem>
           <ContextMenu.Sub>
             <ContextMenu.SubTrigger className={cn(menuItemClass, 'text-qn-text')}>
@@ -366,7 +359,7 @@ export const ThreadRow = memo(function ThreadRow({
           <ShortcutItem
             icon={<Trash2 size={14} />}
             danger
-            disabled={!native || running}
+            disabled={!capabilities.delete || running}
             onSelect={() => setConfirmDelete(true)}
           >
             {t('永久删除')}
@@ -377,7 +370,7 @@ export const ThreadRow = memo(function ThreadRow({
       {confirmDelete && (
         <Modal
           title={t('永久删除会话？')}
-          description={t('「{title}」及其全部记录将从 Codex 中删除，无法恢复。', { title: thread.title })}
+          description={t('「{title}」及其全部记录将从 {agent} 中删除，无法恢复。', { title: thread.title, agent: agentLabel(thread.agent) })}
           onClose={() => setConfirmDelete(false)}
           width="max-w-md"
           footer={

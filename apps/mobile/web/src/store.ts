@@ -20,6 +20,8 @@ import {
   listThreads,
   loadRecentThreadHistory,
   loadThread,
+  noteTurnConfig,
+  turnModelNote,
   openThreadHistory,
   pickAccount,
   pickAccountUsage,
@@ -35,8 +37,10 @@ import {
   startThread,
   startThreadCompaction,
   steerTurn,
-  userInputResponse,
+  userAnswerResponse,
   type ApprovalView,
+  AGENT_CAPABILITIES,
+  CodexRpcError,
   type AccessMode,
   type AccessSelection,
   type AccountSummary,
@@ -62,6 +66,7 @@ import {
   DEFAULT_AGENT,
   enabledAgents,
   exitedAgent,
+  isAgentKind,
   mergeThreadSummaries,
   parseMobileAgents,
   pickDefaultAgent,
@@ -80,11 +85,15 @@ import {
   parsePort,
 } from './link'
 import {
-  EMPTY_PREFS,
   overridesFor,
   parsePrefs,
+  prefsFor,
+  putThreadPrefs,
+  EMPTY_PREFS,
   resolveSelection,
+  threadPrefsKey,
   toModelOptions,
+  triggerLabel,
   type ModelList,
   type ModelPrefs,
 } from './models'
@@ -127,7 +136,7 @@ import {
   MobileCodexTransport,
   openSeq,
 } from './transport'
-import { mobileTurnFits, queuedInput, QUEUE_STORAGE_KEY, restoreQueues, serializeQueues, UNCONFIRMED_QUEUED_SEND, type MobileTurnAccess, type QueuedSend } from './queuedSends'
+import { applyRelayResult, mobileTurnFits, queuedInput, QUEUE_STORAGE_KEY, relayRequest, restoreQueues, serializeQueues, UNCONFIRMED_QUEUED_SEND, type MobileTurnAccess, type QueuedSend } from './queuedSends'
 import { deliverTerminalEvent } from './terminalEvents'
 import { echoedSteerIds, withoutPendingSteers, withPendingSteer, type PendingSteer } from './pendingSteers'
 import type {
@@ -149,6 +158,8 @@ import { appendRead, nextOffset, parseFsRead, READ_CHUNK_BYTES, viewerError, typ
 declare global {
   interface Window {
     __qnResume?: () => void
+    /** 原生壳在 Activity 暂停（锁屏、切走）时调用：后台连接开启时 WebView 不暂停，页面可能仍是 visible。 */
+    __qnPause?: () => void
   }
 }
 
@@ -231,7 +242,7 @@ export type AgentSession = {
   lastSeq: number | null
 }
 
-/** 只读查看页：文件（fs.read）或差异（git.diff，失败回退到改动卡片自带 diff）。 */
+/** 只读查看页：文件（fs.read）或改动卡片自带的差异。手机版不提供 Git 差异。 */
 export type ViewerState = {
   mode: 'file' | 'diff'
   targetId: string
@@ -243,7 +254,7 @@ export type ViewerState = {
   error: string | null
   file: FsReadView | null
   diff: string | null
-  diffSource: 'git' | 'card' | null
+  diffSource: 'card' | null
   diffTruncated: boolean
   notice: string | null
 }
@@ -362,7 +373,8 @@ type AppState = {
   archiveConversation: (targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>) => Promise<void>
   listArchivedConversations: (project: Project) => Promise<{ threads: ThreadSummary[]; error: string | null }>
   restoreConversation: (targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>) => Promise<void>
-  renameConversation: (targetId: string, threadId: string, name: string) => Promise<void>
+  /** 返回 'local' 表示目标机不支持原生重命名，由调用方记在本机。 */
+  renameConversation: (targetId: string, threadId: string, name: string, agent?: AgentKind) => Promise<'native' | 'local'>
   compactConversation: () => Promise<boolean>
   forkConversation: () => Promise<void>
   setDraftText: (text: string) => void
@@ -380,7 +392,8 @@ type AppState = {
   /** 回答 Agent 的提问（item/tool/requestUserInput）；answers 为空对象表示跳过。 */
   respondUserInput: (requestId: RequestId, answers: Record<string, string[]>) => Promise<boolean>
   loadModels: (targetId: string, agent: AgentKind, force?: boolean) => Promise<void>
-  setModelPrefs: (targetId: string, agent: AgentKind, prefs: ModelPrefs) => void
+  /** 带 threadId 时只改该会话；不带（草稿）时改 agent 默认，作为之后新会话的初始选择。 */
+  setModelPrefs: (targetId: string, agent: AgentKind, prefs: ModelPrefs, threadId?: string | null) => void
   refreshRateLimits: (targetId: string) => Promise<void>
   refreshClaudeRateLimits: (targetId: string) => Promise<boolean>
   refreshAccountUsage: (targetId: string) => Promise<void>
@@ -437,6 +450,13 @@ function selectedSendAddress(state: AppState): SendAddress | null {
   return activeId && selectedTargetId && selectedThreadId
     ? { desktopId: activeId, targetId: selectedTargetId, agent: selectedAgent, threadId: selectedThreadId }
     : null
+}
+
+/** 某会话当前生效的模型偏好：本机记录 > 会话历史配置 > agent 默认；threadId 为 null 表示草稿。 */
+export function modelPrefsOf(state: AppState, targetId: string, agent: AgentKind, threadId: string | null): ModelPrefs {
+  const sessionId = sessionKey(targetId, agent)
+  const saved = threadId ? state.sessions[sessionId]?.state.threads[threadId]?.savedConfig : undefined
+  return prefsFor(state.modelPrefs, agent, sessionId, threadId, state.models[sessionId]?.models, saved)
 }
 
 export function selectedQueuedSends(state: AppState): QueuedSend[] | undefined {
@@ -612,6 +632,11 @@ export const useApp = create<AppState>((set, get) => {
   const editingQueue = new Set<string>()
   const savingQueue = new Set<string>()
   const queueingDrafts = new Set<string>()
+  // 已交给电脑网关代发的会话队列：期间手机不再自己发送，回到前台时收回。
+  const remoteQueues = new Set<string>()
+  const handingOff = new Set<string>()
+  let takeBackTask: Promise<void> | null = null
+  let appPaused = false
 
   const queueStorageWrite = (key: string, write: () => Promise<void>): Promise<void> => {
     const previous = storageWrites.get(key) ?? Promise.resolve()
@@ -1053,11 +1078,24 @@ export const useApp = create<AppState>((set, get) => {
       throw new Error('消息和附件合计超过 1 MiB，请移除部分内容后再发送')
     }
     const clientUserMessageId = makeId()
+    // 与上一轮相比换了模型或强度时，在本轮消息前留一行提示（参考 Codex）。
+    const models = get().models[session.key]?.models ?? []
+    const modelNote = turnModelNote(agent, models, opened?.state.threads[threadId], overrides, clientUserMessageId,
+      (config) => triggerLabel(resolveSelection(models, { ...EMPTY_PREFS, model: config.model, effort: config.effort })))
     const params = { threadId, input, clientUserMessageId, model: overrides.model || undefined, effort: overrides.effort || undefined,
       serviceTier: overrides.serviceTier, mobileAccessMode: access }
     const { turn } = accessMode === 'default' && inheritAccess === undefined
       ? await sendInput(session.rpc, threadId, input, overrides, clientUserMessageId)
       : await session.rpc.request('turn/start', params)
+    if (modelNote && get().sessions[session.key]?.transport === session.transport) {
+      patchSession(session.key, (value) => ({
+        ...value, state: noteTurnConfig(value.state, threadId, modelNote.config, modelNote.notice),
+      }), session)
+      // 本轮配置记为 seen：之后历史回报的就是它，不会被当成另一端的改动。
+      const recordKey = threadPrefsKey(session.key, threadId)
+      const own = get().modelPrefs[recordKey]
+      if (own) get().setModelPrefs(targetId, agent, { ...own, seen: { ...modelNote.config } }, threadId)
+    }
     const current = get().sessions[session.key]
     if (current?.transport !== session.transport || completedTurns.get(session.transport)?.has(turn.id)) return
     // 极短的一轮可能先完成，轮次响应也可能已是终态。
@@ -1087,6 +1125,11 @@ export const useApp = create<AppState>((set, get) => {
     const next = state.queuedSends[key]?.[0]
     const session = state.sessions[sessionKey(targetId, agent)]
     const view = session?.state.threads[threadId]
+    if (remoteQueues.has(key) || handingOff.has(key)) return
+    if (takeBackTask) {
+      void takeBackTask.then(() => flushQueue(address, retry))
+      return
+    }
     if (state.activeId !== desktopId || !next || next.sending || next.saving || submitting.has(key) || state.compactingThreads[key]
       || editingQueue.has(next.id) || savingQueue.has(next.id)
       || isArchived(desktopId, targetId, { agent, id: threadId })) return
@@ -1162,6 +1205,106 @@ export const useApp = create<AppState>((set, get) => {
     }
     // 快速完成可能已在 RPC 返回前收到结束事件，锁解除后再检查一次。
     if (epoch === desktopEpoch && !get().queuedSends[key]?.[0]?.error) void flushQueue(address)
+    // 锁屏时正在发送的那条结束后，剩余消息再交给电脑。
+    if (epoch === desktopEpoch && inBackground()) void handOffQueue(address)
+  }
+
+  function inBackground(): boolean {
+    return appPaused || (typeof document !== 'undefined' && document.visibilityState === 'hidden')
+  }
+
+  /** 把一个会话的排队消息逐条交给电脑网关；交出第一条后该会话即归网关发送。 */
+  async function handOffQueue(address: SendAddress): Promise<void> {
+    const key = sendKey(address)
+    const state = get()
+    const conn = activeConnection(state)
+    const list = state.queuedSends[key]
+    if (!conn || conn.id !== address.desktopId || !state.agentSettings?.backgroundQueue || !state.eventsConnected) return
+    if (remoteQueues.has(key) || handingOff.has(key) || submitting.has(key) || takeBackTask || !list?.length || list[0]!.error) return
+    if (list.some((item) => item.sending || item.saving || editingQueue.has(item.id) || savingQueue.has(item.id))) return
+    const { targetId, agent, threadId } = address
+    const session = state.sessions[sessionKey(targetId, agent)]
+    const view = session?.state.threads[threadId]
+    if (!session?.opened || session.linkInterrupted || !view || queueLimited(address)) return
+    // 网关不会替手机恢复 Codex 会话；没恢复过的留给手机回到前台后处理。
+    if (agent === 'codex' && !session.resumedCodexThreads.has(threadId)) return
+    const running = view.status === 'running' || !!state.compactingThreads[key]
+    // 上一轮被中断时手机本身也会暂停队列，交给电脑前保持一致。
+    if (!running && (view.status !== 'idle' || view.activity === 'interrupted')) return
+    const epoch = desktopEpoch
+    handingOff.add(key)
+    let handed = 0
+    try {
+      for (const item of list) {
+        const access = mobileTurnAccess(get(), agent, accessPreference(get(), address) ?? item.accessMode)
+        const request = relayRequest(targetId, threadId, agent, item, access, !!session.accessSupported, makeId())
+        await getGateway().rpc(conn, 'mobile.queue.put', { targetId, agent, threadId, id: item.id, running, request })
+        if (epoch !== desktopEpoch) return
+        handed += 1
+        remoteQueues.add(key)
+      }
+    } catch {
+      // 交接失败的消息留在手机本地，回到前台后按原规则继续；已交出的部分由电脑发送。
+    } finally {
+      handingOff.delete(key)
+      if (handed === 0) remoteQueues.delete(key)
+    }
+  }
+
+  function handOffQueues(): void {
+    const desktopId = get().activeId
+    if (!desktopId || !get().agentSettings?.backgroundQueue) return
+    for (const address of pendingQueueAddresses(desktopId)) void handOffQueue(address)
+  }
+
+  /** 回到前台：收回交给电脑的队列，去掉电脑已发出的消息，再由手机继续发送。 */
+  function takeBackQueues(): Promise<void> {
+    if (takeBackTask) return takeBackTask
+    const conn = activeConnection(get())
+    if (!conn || !get().eventsConnected) return Promise.resolve()
+    const epoch = desktopEpoch
+    const task = (async () => {
+      // 先等进行中的交接结束，否则收回后还可能再交出一条。
+      while (handingOff.size > 0) await new Promise((resolve) => setTimeout(resolve, 50))
+      const owned = [...remoteQueues].filter((key) => key.startsWith(`[${JSON.stringify(conn.id)},`))
+      let queues: unknown[] = []
+      try {
+        const result = await getGateway().rpc<unknown>(conn, 'mobile.queue.take', {})
+        queues = isRecord(result) && Array.isArray(result.queues) ? result.queues : []
+      } catch (err) {
+        // 旧电脑没有代发能力时不会有已交出的队列；其他失败保留归属，下次回到前台再收。
+        if (owned.length && !['forbidden', 'unknown_method', 'method_not_found', '-32601'].includes(errorCode(err))) return
+      }
+      if (epoch !== desktopEpoch) return
+      const known = new Set<string>()
+      for (const entry of queues) {
+        if (!isRecord(entry) || typeof entry.targetId !== 'string' || typeof entry.threadId !== 'string' || !isAgentKind(entry.agent)) continue
+        const key = sendKey({ desktopId: conn.id, targetId: entry.targetId, agent: entry.agent, threadId: entry.threadId })
+        const sentIds = Array.isArray(entry.sentIds) ? entry.sentIds.filter((id): id is string => typeof id === 'string') : []
+        known.add(key)
+        await updateQueue(key, (list) => applyRelayResult(list, sentIds, typeof entry.error === 'string' ? entry.error : undefined))
+      }
+      // 交出过但电脑已没有记录（电脑端重启）：无法确认发送情况，暂停等用户核对。
+      for (const key of owned) {
+        if (!known.has(key)) await updateQueue(key, (list) => applyRelayResult(list, [], undefined, false))
+        remoteQueues.delete(key)
+      }
+    })()
+    takeBackTask = task
+    void task.catch(() => undefined).finally(() => {
+      if (takeBackTask === task) takeBackTask = null
+    })
+    return task
+  }
+
+  /** 电脑代发后推来的进度：手机仍在后台运行时及时去掉已发出的消息。 */
+  function applyRelayUpdate(payload: unknown): void {
+    const desktopId = get().activeId
+    if (!desktopId || !isRecord(payload) || typeof payload.targetId !== 'string' || typeof payload.threadId !== 'string' || !isAgentKind(payload.agent)) return
+    const key = sendKey({ desktopId, targetId: payload.targetId, agent: payload.agent, threadId: payload.threadId })
+    if (!remoteQueues.has(key)) return
+    const sentIds = Array.isArray(payload.sentIds) ? payload.sentIds.filter((id): id is string => typeof id === 'string') : []
+    void updateQueue(key, (list) => applyRelayResult(list, sentIds, typeof payload.error === 'string' ? payload.error : undefined))
   }
 
   // 打开会话时可以等短暂的重连，持续失联由连接状态统一提示。
@@ -1405,7 +1548,7 @@ export const useApp = create<AppState>((set, get) => {
         set((state) => {
           const approvalSubmitting = { ...state.approvalSubmitting }
           delete approvalSubmitting[String(resolved)]
-          return { approvalSubmitting, notice: t('审批已处理') }
+          return { approvalSubmitting }
         })
       }
       if (agent === 'claude' && method === 'account/rateLimits/updated') {
@@ -1578,6 +1721,18 @@ export const useApp = create<AppState>((set, get) => {
     }
   }
 
+  /** 长时间离开后回到前台：事件流可能未被判定断开却漏了结束事件，重新读取仍显示运行中的当前会话。 */
+  const reconcileSelectedRunning = (): void => {
+    const state = get()
+    const { selectedTargetId, selectedAgent, selectedThreadId } = state
+    if (state.page !== 'chat' || !selectedTargetId || !selectedThreadId || !state.eventsConnected || reconnectTask) return
+    const session = state.sessions[sessionKey(selectedTargetId, selectedAgent)]
+    if (!session?.opened || session.state.threads[selectedThreadId]?.status !== 'running') return
+    const epoch = desktopEpoch
+    const streamEpoch = eventStreamEpoch
+    void reloadConversation(session, selectedThreadId, () => epoch === desktopEpoch && streamEpoch === eventStreamEpoch)
+  }
+
   const showsConversation = (session: AgentSession): boolean => {
     const state = get()
     return state.page === 'chat' && state.selectedThreadId !== null
@@ -1595,10 +1750,7 @@ export const useApp = create<AppState>((set, get) => {
     if (!selectedTargetId || !selectedThreadId || approvalSubmitting[submittingKey]) return false
     const session = sessions[sessionKey(selectedTargetId, selectedAgent)]
     const approval = session?.state.threads[selectedThreadId]?.pendingApprovals.find((item) => item.requestId === requestId)
-    if (!session || !approval) {
-      set({ notice: t('该审批已处理或失效') })
-      return false
-    }
+    if (!session || !approval) return false
     const invalid = check(approval, selectedAgent)
     if (invalid) {
       set({ error: invalid })
@@ -1714,13 +1866,37 @@ export const useApp = create<AppState>((set, get) => {
           syncing = syncing.then(() => callDevice('background.connection', { active })).catch(() => undefined)
         })
       }
+      const resumeQueues = () => {
+        const desktopId = get().activeId
+        void takeBackQueues().then(() => {
+          if (!desktopId || get().activeId !== desktopId) return
+          for (const address of pendingQueueAddresses(desktopId)) void flushQueue(address)
+        })
+      }
+      // 记录进入后台的时间；离开超过阈值再回来时核对当前会话状态。
+      let hiddenAt: number | null = null
+      const RECONCILE_AFTER_MS = 30_000
+      const markHidden = () => { hiddenAt ??= Date.now() }
+      const reconcileAfterIdle = () => {
+        const since = hiddenAt
+        hiddenAt = null
+        if (since !== null && Date.now() - since >= RECONCILE_AFTER_MS) reconcileSelectedRunning()
+      }
       const onResume = () => {
+        appPaused = false
         if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
         controller?.wake()
+        resumeQueues()
+        reconcileAfterIdle()
       }
       if (typeof window !== 'undefined') {
         window.__qnBack = () => get().goBack()
         window.__qnResume = onResume
+        window.__qnPause = () => {
+          appPaused = true
+          markHidden()
+          handOffQueues()
+        }
         window.addEventListener('online', () => {
           if (document.visibilityState !== 'hidden') controller?.wake(true)
         })
@@ -1738,10 +1914,14 @@ export const useApp = create<AppState>((set, get) => {
               if (reconnectTask !== task) return
               reconnectTask = null
               if (!desktopId || epoch !== eventStreamEpoch || get().activeId !== desktopId || !get().eventsConnected) return
-              for (const address of pendingQueueAddresses(desktopId)) void flushQueue(address)
+              // 仍在后台时继续交给电脑；在前台则先收回再由手机发送。
+              if (inBackground()) handOffQueues()
+              else resumeQueues()
             }, () => { if (reconnectTask === task) reconnectTask = null })
           }
           set({ eventsConnected: true, eventsError: null })
+          // 首次连上：收回上次（可能在应用被杀前）交给电脑的队列。
+          if (!reconnected && !inBackground()) void takeBackQueues()
           if (reconnected && get().page === 'targets') void get().loadTargets()
           const conn = activeConnection(get())
           if (conn && pendingRestore) void restoreSavedChat(conn)
@@ -1760,10 +1940,14 @@ export const useApp = create<AppState>((set, get) => {
         const updateForeground = () => {
           const foreground = document.visibilityState !== 'hidden'
           controller?.setForeground(foreground)
-          const { activeId, backgroundConnectionEnabled } = get()
-          if (foreground && activeId && !backgroundConnectionEnabled) {
-            for (const address of pendingQueueAddresses(activeId)) void flushQueue(address)
+          if (!foreground) {
+            markHidden()
+            handOffQueues()
+            return
           }
+          appPaused = false
+          resumeQueues()
+          reconcileAfterIdle()
         }
         document.addEventListener('visibilitychange', updateForeground)
         updateForeground()
@@ -2644,7 +2828,10 @@ export const useApp = create<AppState>((set, get) => {
           const queueAddresses = queued()
           const threadIds = new Set(queueAddresses.map((address) => address.threadId))
           const selected = get().selectedThreadId
-          if ((session.linkInterrupted || restarted || info.truncated) && selected && showsConversation(session)) threadIds.add(selected)
+          // 断线期间可能错过 turn/completed：正在看的会话仍显示运行中时也重新读取，避免卡在运行中。
+          const selectedView = selected ? get().sessions[session.key]?.state.threads[selected] : undefined
+          if ((session.linkInterrupted || restarted || info.truncated || selectedView?.status === 'running')
+            && selected && showsConversation(session)) threadIds.add(selected)
           // attach 的 HTTP 回包可能早于事件流；用当前会话状态判断队列能否继续。
           await Promise.all([...threadIds].map(async (threadId) => {
             const loaded = await reloadConversation(session, threadId, isCurrent)
@@ -3009,15 +3196,21 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    renameConversation: async (targetId, threadId, name) => {
+    renameConversation: async (targetId, threadId, name, agent = 'codex') => {
       const epoch = desktopEpoch
       const title = name.trim()
       if (!title) throw new Error(t('请输入会话名称'))
-      const session = await conversationSession(targetId, 'codex', epoch)
-      await setThreadName(session.rpc, threadId, title)
-      if (epoch === desktopEpoch && get().selectedTargetId === targetId) {
-        set(({ threads }) => ({ threads: threads.map((item) => item.agent === 'codex' && item.id === threadId ? { ...item, title } : item) }))
+      const session = await conversationSession(targetId, agent, epoch)
+      try {
+        await setThreadName(session.rpc, threadId, title)
+      } catch (err) {
+        if (agent !== 'codex' && err instanceof CodexRpcError && err.code === -32601) return 'local'
+        throw err
       }
+      if (epoch === desktopEpoch && get().selectedTargetId === targetId) {
+        set(({ threads }) => ({ threads: threads.map((item) => item.agent === agent && item.id === threadId ? { ...item, title } : item) }))
+      }
+      return 'native'
     },
 
     setDraftText: (text) => {
@@ -3046,7 +3239,7 @@ export const useApp = create<AppState>((set, get) => {
     forkConversation: async () => {
       const source = get()
       const address = selectedSendAddress(source)
-      if (!address || address.agent !== 'codex') throw new Error(t('当前会话不支持创建分支'))
+      if (!address || !AGENT_CAPABILITIES[address.agent].fork) throw new Error(t('当前会话不支持创建分支'))
       const navigation = navigationEpoch
       const epoch = desktopEpoch
       const { targetId, agent, threadId } = address
@@ -3132,7 +3325,8 @@ export const useApp = create<AppState>((set, get) => {
       if (queueKey && initial.compactingThreads[queueKey]) return false
       const view = address ? initial.sessions[sessionId]?.state.threads[address.threadId] : undefined
       const models = initial.models[sessionId]?.models ?? []
-      const prefs = initial.modelPrefs[sessionId] ?? EMPTY_PREFS
+      // 模型与推理强度按会话记：已有会话用它自己的选择（没记录时取历史配置），草稿用 agent 默认。
+      const prefs = modelPrefsOf(initial, targetId, agent, initial.selectedThreadId)
       const hasImage = attachments.some((item) => item.type === 'image' || item.type === 'localImage')
       if (attachments.some((item) => item.type === 'localImage')
         || (hasImage && resolveSelection(models, prefs).model?.imageInput === false)) {
@@ -3161,8 +3355,17 @@ export const useApp = create<AppState>((set, get) => {
           saveDraft(sentDraftKey, { text: '', annotations: [] })
         }
       }
+      // 发送（含排队）时把实际使用的选择固定到会话上，之后改默认不会再影响它。
+      const rememberPrefs = (threadId: string) => {
+        if (epoch !== desktopEpoch) return
+        const remembered = get().modelPrefs[threadPrefsKey(sessionId, threadId)]
+        if (remembered?.model !== prefs.model || remembered?.effort !== prefs.effort || remembered?.fast !== prefs.fast) {
+          get().setModelPrefs(targetId, agent, prefs, threadId)
+        }
+      }
       const enqueue = async (chat: SendAddress, sentDraftKey: string) => {
         const chatKey = sendKey(chat)
+        rememberPrefs(chat.threadId)
         const item = { ...message, id: makeId(), overrides, saving: true }
         if (!keepDraft) queueingDrafts.add(sentDraftKey)
         try {
@@ -3216,6 +3419,7 @@ export const useApp = create<AppState>((set, get) => {
           if (epoch !== desktopEpoch || navigation !== navigationEpoch) return false
         }
         if (!address || !queueKey) return false
+        rememberPrefs(threadId)
         const current = get().sessions[session.key]?.state.threads[threadId]
         if (expectedTurnId) {
           if (current?.status !== 'running' || current.activeTurnId !== expectedTurnId) {
@@ -3378,7 +3582,7 @@ export const useApp = create<AppState>((set, get) => {
       const address = selectedSendAddress(state)
       if (!address || !state.eventsConnected || reconnectTask || state.sending) return false
       const { targetId, agent, threadId } = address
-      if (mode === 'continue' && agent !== 'codex') return false
+      if (mode === 'continue' && !AGENT_CAPABILITIES[agent].fork) return false
       const key = sendKey(address)
       const session = state.sessions[sessionKey(targetId, agent)]
       const item = state.queuedSends[key]?.find((entry) => entry.id === id)
@@ -3525,7 +3729,7 @@ export const useApp = create<AppState>((set, get) => {
     respondUserInput: (requestId, answers) => replyServerRequest(
       requestId,
       (approval) => approval.questions?.length ? null : t('当前请求不支持该审批选项'),
-      () => userInputResponse(answers),
+      (approval) => userAnswerResponse(approval, answers),
     ),
 
     loadModels: async (targetId, agent, force = false) => {
@@ -3560,10 +3764,16 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    setModelPrefs: (targetId, agent, prefs) => {
+    setModelPrefs: (targetId, agent, prefs, threadId) => {
       const { activeId, modelPrefs } = get()
       if (!activeId) return
-      const next = { ...modelPrefs, [sessionKey(targetId, agent)]: prefs }
+      const sessionId = sessionKey(targetId, agent)
+      // 记下改选时会话历史的配置；之后历史变了才说明是另一端换过模型。
+      const saved = threadId ? get().sessions[sessionId]?.state.threads[threadId]?.savedConfig : undefined
+      const record = !prefs.seen && saved ? { ...prefs, seen: { model: saved.model, effort: saved.effort } } : prefs
+      const next = threadId
+        ? putThreadPrefs(modelPrefs, threadPrefsKey(sessionId, threadId), record)
+        : { ...modelPrefs, [sessionId]: prefs }
       set({ modelPrefs: next })
       desktopModelPrefs[activeId] = next
       saveRecord(STORAGE_DESKTOP_MODEL_PREFS, desktopModelPrefs)
@@ -3695,52 +3905,26 @@ export const useApp = create<AppState>((set, get) => {
     openDiff: async (request) => {
       const targetId = get().selectedTargetId
       if (!targetId || !request.path) return
-      const cwd = currentCwd(get())
-      const fallback = typeof request.diff === 'string' && request.diff.trim() ? request.diff : null
-      const token = ++viewerToken
+      // 只显示 Agent 改动卡片自带的 diff，不再读取 Git 工作区。
+      const diff = typeof request.diff === 'string' && request.diff.trim() ? request.diff : null
+      viewerToken += 1
       set({
         viewer: {
           mode: 'diff',
           targetId,
           path: request.path,
-          cwd,
+          cwd: currentCwd(get()),
           line: null,
-          loading: true,
+          loading: false,
           loadingMore: false,
-          error: null,
+          error: diff ? null : t('这次改动没有附带差异'),
           file: null,
-          diff: null,
-          diffSource: null,
+          diff,
+          diffSource: diff ? 'card' : null,
           diffTruncated: false,
           notice: null,
         },
       })
-      const useFallback = (notice: string | null, error: string | null) =>
-        patchViewer(token, fallback
-          ? { loading: false, diff: fallback, diffSource: 'card', notice }
-          : { loading: false, error })
-      if (!cwd) {
-        useFallback(t('没有项目目录，显示改动卡片自带的差异'), t('没有项目目录，无法读取 Git 差异'))
-        return
-      }
-      try {
-        const raw = await serverReq<unknown>(targetId, 'git.diff', { cwd, path: request.path })
-        const diff = isRecord(raw) && typeof raw.diff === 'string' ? raw.diff : ''
-        if (diff.trim()) {
-          patchViewer(token, {
-            loading: false,
-            diff,
-            diffSource: 'git',
-            diffTruncated: isRecord(raw) && raw.truncated === true,
-          })
-        } else {
-          // 已提交或已被还原的改动在工作区里没有差异，回退到 Agent 当时给出的 diff。
-          useFallback(t('Git 工作区中没有该文件的未提交差异，显示改动卡片自带的差异'), t('Git 工作区中没有该文件的未提交差异'))
-        }
-      } catch (err) {
-        const message = viewerError(err, t('读取 Git 差异失败'))
-        useFallback(t('{message}，显示改动卡片自带的差异', { message: translateMessage(message) }), message)
-      }
     },
 
     closeViewer: () => {
@@ -3775,6 +3959,9 @@ export const useApp = create<AppState>((set, get) => {
       switch (event.name) {
         case 'settings.access':
           void get().loadAgentSettings()
+          return
+        case 'mobile.queue':
+          applyRelayUpdate(event.payload)
           return
         case 'mobile.terminal': {
           const desktopId = get().activeId

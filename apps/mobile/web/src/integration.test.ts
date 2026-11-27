@@ -389,7 +389,7 @@ describe('模拟网关全链路', () => {
     expect(selectedAccessMode(state())).toBe('auto')
     accessRpc.mockRestore()
 
-    // 只读查看：文本分段续读、行号定位，差异优先 git.diff，失败回退到卡片 diff。
+    // 只读查看：文本分段续读、行号定位，差异只显示改动卡片自带的 diff，不读 Git。
     await state().openFile({ path: 'D:\code\qingcode-next\README.md', line: 3 })
     expect(state().viewer?.file?.truncated).toBe(true)
     expect(state().viewer?.line).toBe(3)
@@ -403,12 +403,14 @@ describe('模拟网关全链路', () => {
     expect(state().viewer?.error).toBe('文件不存在或已被删除')
     state().closeViewer()
 
+    const gitDiff = vi.spyOn(gateway, 'rpc')
     await state().openDiff({ path: 'D:\code\qingcode-next\a.ts', diff: '+card' })
-    expect(state().viewer?.diffSource).toBe('git')
-    expect(state().viewer?.diff).toContain('@@')
-    await state().openDiff({ path: 'D:\code\qingcode-next\clean.ts', diff: '+card' })
     expect(state().viewer?.diffSource).toBe('card')
     expect(state().viewer?.diff).toBe('+card')
+    await state().openDiff({ path: 'D:\code\qingcode-next\clean.ts' })
+    expect(state().viewer?.error).toBe('这次改动没有附带差异')
+    expect(gitDiff).not.toHaveBeenCalled()
+    gitDiff.mockRestore()
     state().closeViewer()
 
     state().setDraftText('失败仍保留')
@@ -435,6 +437,20 @@ describe('模拟网关全链路', () => {
       agent: 'claude', msg: expect.objectContaining({ method: 'thread/read' }),
     }))
     rpc.mockRestore()
+
+    // 断线期间漏了 turn/completed：回放完整但当前会话仍显示运行中时，也要重新读取历史纠正状态。
+    const selectedThread = state().selectedThreadId!
+    const claudeSession = state().sessions['claude:local']!
+    useApp.setState({ sessions: { ...state().sessions, 'claude:local': { ...claudeSession, state: { threads: {
+      ...claudeSession.state.threads,
+      [selectedThread]: { ...claudeSession.state.threads[selectedThread]!, status: 'running', activity: 'running' },
+    } } } } })
+    const stuck = vi.spyOn(gateway, 'rpc')
+    await state().attachOpened()
+    expect(stuck).toHaveBeenCalledWith(edited, 'codex.send', expect.objectContaining({
+      agent: 'claude', msg: expect.objectContaining({ method: 'thread/read' }),
+    }))
+    stuck.mockRestore()
 
     const firstTransport = state().sessions['claude:local']!.transport
     await state().activate(edited.id, 'targets')

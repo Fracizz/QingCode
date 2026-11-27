@@ -10,6 +10,7 @@ import type { Project } from '../types'
 import { formatBytes } from '../viewer'
 import { threadPreferenceKey, toggleProjectPin, useWorkspace, useWorkspacePreferences, workspaceProjectKey } from '../workspace'
 import { AgentTag, Button, Dialog, Empty, Loading, Note, SheetAction } from './ui'
+import { toast } from '../toast'
 
 const CHUNK_BYTES = 256 * 1024
 const TerminalPanel = lazy(async () => ({ default: (await import('./TerminalPanel')).TerminalPanel }))
@@ -149,7 +150,6 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
   const [needsTarget, setNeedsTarget] = useState(false)
   const [selected, setSelected] = useState<ProjectFile | null>(null)
   const [progress, setProgress] = useState<{ bytes: number; size: number } | null>(null)
-  const [completed, setCompleted] = useState('')
   const operation = useRef<AbortController | null>(null)
   const targetState = useApp((s) => s.targetStates[project.targetId]?.state)
   const requestConnect = useApp((s) => s.requestConnect)
@@ -187,7 +187,6 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
     setPath(next)
     setQuery('')
     setSelected(null)
-    setCompleted('')
   }
 
   async function download(file: ProjectFile) {
@@ -195,7 +194,6 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
     const controller = new AbortController()
     operation.current = controller
     setMessage(null)
-    setCompleted('')
     setProgress({ bytes: 0, size: file.size })
     let downloadId: string | null = null
     try {
@@ -231,11 +229,11 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
       const saved = await callDevice<{ name: string }>('download.finish', { id: downloadId }, 300_000)
       downloadId = null
       if (!controller.signal.aborted) {
-        setCompleted(t('已保存 {name}', { name: saved.name }))
+        toast(t('已保存 {name}', { name: saved.name }), { tone: 'ok' })
         setSelected(null)
       }
     } catch (error) {
-      if (!controller.signal.aborted) setMessage(friendlyError(error, t('下载失败')))
+      if (!controller.signal.aborted) toast(friendlyError(error, t('下载失败')), { tone: 'error' })
     } finally {
       if (downloadId) await callDevice('download.cancel', { id: downloadId }).catch(() => undefined)
       setProgress(null)
@@ -260,7 +258,6 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
         </div>
         {message && <Note message={message} tone="error" onClose={() => setMessage(null)}
           actionLabel={needsTarget ? t('连接目标') : undefined} onAction={needsTarget ? () => requestConnect(project.targetId) : undefined} />}
-        {completed && <Note message={completed} onClose={() => setCompleted('')} />}
         {selected && (
           <div className="rounded-xl border border-qn-border bg-qn-card px-3 py-2">
             <p className="break-all text-sm font-medium">{selected.name}</p>

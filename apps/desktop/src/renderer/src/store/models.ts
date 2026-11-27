@@ -1,10 +1,11 @@
 import { t, translateMessage } from '@qn/codex-client'
 import { create } from 'zustand'
-import { listModels, type CodexRpcLike, type TurnOverrides } from '@qn/codex-client'
+import { historyModelPrefs, listModels, reconcileThreadPrefs, type CodexRpcLike, type SavedThreadConfig, type TurnOverrides } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { sessionKey } from '../lib/agents'
 import {
   EMPTY_PREFS,
+  fastTier,
   parsePrefs,
   resolveSelection,
   toModelOptions,
@@ -51,11 +52,14 @@ type ModelsState = {
   setPrefs: (agent: AgentKind, patch: Partial<ModelPrefs>, scope?: PrefsScope) => void
   /** 把发送时实际使用的选择记到会话上，之后改默认不会再影响它。 */
   rememberThreadPrefs: (targetId: string, agent: AgentKind, threadId: string, prefs: ModelPrefs) => void
-  /** 打开历史会话时，本机还没有记录就用会话历史里的配置作为它的选择；已有本机选择时不覆盖。 */
+  /** 发送成功后把本轮配置记为 seen：之后历史回报的就是它，不会被当成另一端的改动。 */
+  markThreadSent: (targetId: string, agent: AgentKind, threadId: string, config: { model: string; effort: string | null }) => void
+  /** 打开历史会话时，本机还没有记录就用会话历史里的配置；已有记录时只在另一端换过模型后改用历史。 */
   seedFromHistory: (targetId: string, agent: AgentKind, threadId: string, saved: SavedThreadConfig | undefined) => void
 }
 
-export type PrefsScope = { targetId: string; threadId: string | null }
+/** saved：当前会话历史里的配置，改选时记为 seen。 */
+export type PrefsScope = { targetId: string; threadId: string | null; saved?: SavedThreadConfig }
 
 export const threadPrefsKey = (targetId: string, agent: AgentKind, threadId: string) =>
   `${sessionKey(targetId, agent)}#${threadId}`
@@ -94,32 +98,12 @@ export function prefsFor(
   return own ?? state.prefs[agent] ?? EMPTY_PREFS
 }
 
-export type SavedThreadConfig = { model: string; effort: string | null }
-
-/**
- * 历史回报的模型 → 选择器里的选项。精确匹配优先；Claude 历史记的是完整模型 ID（如 claude-opus-5-5），
- * 而选择器给的是别名（opus / sonnet[1m]），按去掉方括号后缀的别名被完整 ID 包含来对应，取最长的无后缀别名。
- * 对不上时返回 null，让选择器回落到默认模型，避免显示一个列表里不存在的选择。
- */
-export function matchModelOption(models: readonly ModelOption[], id: string): string | null {
-  if (models.some((item) => item.model === id)) return id
-  const base = (value: string) => value.replace(/\[[^\]]*\]/g, '').trim().toLowerCase()
-  const target = base(id)
-  let best: ModelOption | undefined
-  for (const item of models) {
-    const alias = base(item.model)
-    if (!alias || item.model === 'default' || !target.includes(alias)) continue
-    const plain = item.model.toLowerCase() === alias
-    const bestPlain = best ? best.model.toLowerCase() === base(best.model) : false
-    if (!best || (plain && !bestPlain) || (plain === bestPlain && alias.length > base(best.model).length)) best = item
-  }
-  return best?.model ?? null
-}
+export type { SavedThreadConfig } from '@qn/codex-client'
+export { matchModelOption } from '@qn/codex-client'
 
 /**
  * 会话历史里的模型与强度 → 偏好；模型列表还没加载时返回 null，等列表就绪后再落记录。
- * Codex 的强度为 null 表示会话没设，沿用模型默认；Claude 历史不含强度、pi 也可能缺，缺失时沿用 agent 默认。
- * 快速档历史里没有，沿用 agent 默认。
+ * 规则见 @qn/codex-client 的 historyModelPrefs（Codex 强度为 null 沿用模型默认，快速档按服务档位恢复）。
  */
 export function historyPrefs(
   state: Pick<ModelsState, 'prefs'>,
@@ -127,15 +111,12 @@ export function historyPrefs(
   saved: SavedThreadConfig | undefined,
   models: readonly ModelOption[],
 ): ModelPrefs | null {
-  if (!saved || models.length === 0) return null
-  const base = { ...EMPTY_PREFS, ...state.prefs[agent] }
-  const model = matchModelOption(models, saved.model)
-  if (!model) return null
-  return { ...base, model, effort: agent === 'codex' ? saved.effort : (saved.effort ?? base.effort) }
+  return historyModelPrefs(agent, models, { ...EMPTY_PREFS, ...state.prefs[agent] }, saved)
 }
 
 const samePrefs = (a: ModelPrefs | undefined, b: ModelPrefs) =>
-  a !== undefined && a.model === b.model && a.effort === b.effort && a.fast === b.fast
+  a !== undefined && a.model === b.model && a.effort === b.effort && a.fast === b.fast &&
+  a.seen?.model === b.seen?.model && a.seen?.effort === b.seen?.effort
 
 export const useModels = create<ModelsState>((set, get) => ({
   lists: {},
@@ -182,12 +163,16 @@ export const useModels = create<ModelsState>((set, get) => ({
     if (scope?.threadId) {
       const key = threadPrefsKey(scope.targetId, agent, scope.threadId)
       const next = { ...EMPTY_PREFS, ...prefsFor(state, scope.targetId, agent, scope.threadId), ...patch }
+      // 记下改选时会话历史的配置；之后历史变了才说明是另一端换过模型。
+      const saved = scope.saved
+      if (!next.seen && saved) next.seen = { model: saved.model, effort: saved.effort }
       const threadPrefs = putThreadPrefs(state.threadPrefs, key, next)
       set({ threadPrefs })
       writePrefs(THREAD_PREFS_KEY, threadPrefs)
       return
     }
-    const prefs = { ...state.prefs, [agent]: { ...EMPTY_PREFS, ...state.prefs[agent], ...patch } }
+    const { seen: _seen, ...defaults } = { ...EMPTY_PREFS, ...state.prefs[agent], ...patch }
+    const prefs = { ...state.prefs, [agent]: defaults }
     set({ prefs })
     writePrefs(PREFS_KEY, prefs)
   },
@@ -201,10 +186,17 @@ export const useModels = create<ModelsState>((set, get) => ({
     writePrefs(THREAD_PREFS_KEY, threadPrefs)
   },
 
+  markThreadSent: (targetId, agent, threadId, config) => {
+    const own = get().threadPrefs[threadPrefsKey(targetId, agent, threadId)]
+    if (own) get().rememberThreadPrefs(targetId, agent, threadId, { ...own, seen: { ...config } })
+  },
+
   seedFromHistory: (targetId, agent, threadId, saved) => {
     const state = get()
-    if (state.threadPrefs[threadPrefsKey(targetId, agent, threadId)]) return
-    const prefs = historyPrefs(state, agent, saved, state.lists[sessionKey(targetId, agent)]?.models ?? [])
+    const models = state.lists[sessionKey(targetId, agent)]?.models ?? []
+    const own = state.threadPrefs[threadPrefsKey(targetId, agent, threadId)]
+    // 已有本机记录时对照历史：另一端用别的模型发过消息就改用历史，否则保持本机选择。
+    const prefs = own ? reconcileThreadPrefs(agent, models, own, saved) : historyPrefs(state, agent, saved, models)
     if (prefs) state.rememberThreadPrefs(targetId, agent, threadId, prefs)
   },
 }))

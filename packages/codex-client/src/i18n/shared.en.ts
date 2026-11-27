@@ -23,6 +23,7 @@ export default {
 
   // 对话与审批
   '正在压缩会话…': 'Compacting session…',
+  '模型已切换为 {model}': 'Model changed to {model}',
   '已压缩会话上下文': 'Session context compacted',
   '原因: {reason}': 'Reason: {reason}',
   '命令需要确认': 'Command needs confirmation',
@@ -114,7 +115,7 @@ export default {
   '归档当前会话': 'Archive this session',
   '当前没有运行中的轮次': 'No turn is running',
   'pi 暂无账号额度数据': 'pi has no account quota data',
-  '仅 Codex 支持创建会话分支': 'Only Codex can fork sessions',
+  '当前会话不支持创建分支': 'This session cannot be forked',
   '当前没有可复制的回复': 'No reply to copy',
   '请先打开会话': 'Open the session first',
   '请先等待当前操作结束': 'Wait for the current action to finish',
@@ -138,6 +139,10 @@ export default {
   '上报时间 {time}': 'Reported {time}',
   // Agent 提问卡片（桌面与手机共用）
   'Agent 需要你的回答': 'The agent needs your answer',
+  'MCP 服务请求': 'MCP server request',
+  '（选填）': ' (optional)',
+  '是': 'Yes',
+  '否': 'No',
   '等待回答': 'Awaiting answer',
   '其他（自行输入）': 'Other (type your own)',
   '输入你的回答': 'Type your answer',

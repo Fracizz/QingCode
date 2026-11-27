@@ -559,22 +559,6 @@ export class MockNativePort implements NativePort {
         return { running: agent !== 'pi', pid: 4242, activeTurns: 0 }
       case 'fs.read':
         return mockRead(str(inner.path), inner)
-      case 'git.status':
-        return {
-          root: 'D:\\code\\qingcode-next',
-          branch: 'next',
-          head: 'abc1234',
-          ahead: 0,
-          behind: 0,
-          files: [{ path: 'apps/mobile/web/src/store.ts', index: '.', worktree: 'M', conflict: false }],
-        }
-      case 'git.diff': {
-        const path = str(inner.path)
-        if (!str(inner.cwd)) throw new MockError('params', '缺少 cwd')
-        // 名字里带 clean 的文件模拟"已提交、无工作区差异"，用于验证回退到卡片 diff。
-        if (/clean/i.test(path)) return { diff: '', truncated: false }
-        return { diff: mockDiff(path), truncated: false }
-      }
       default:
         throw new MockError('forbidden', '该 server.req 方法不在手机网关白名单内')
     }

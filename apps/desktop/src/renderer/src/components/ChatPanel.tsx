@@ -3,7 +3,7 @@ import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { CodexRpcLike, ItemView, ThreadView } from '@qn/codex-client'
 import { accessOptions, chatCommands, chatCommandUnavailable, claudeQuotaBlocked, collectSubagents, contextUsage, DRAFT_THREAD_ID,
-  estimatedTurnUsage, formatTokens, includeWorkSummary, t, translateMessage, type ChatCommandId } from '@qn/codex-client'
+  estimatedTurnUsage, formatTokens, includeWorkSummary, t, takeSkillTokens, translateMessage, type ChatCommandId } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { buildAnnotatedMessage, sideChatExcerpt, type Annotation } from '../lib/annotations'
 import { agentLabel, sessionKey } from '../lib/agents'
@@ -337,8 +337,10 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   }
 
   const submit = async (text: string, mode: SendMode): Promise<boolean> => {
-    const message = buildAnnotatedMessage(annotations, composeMessageText(text, attachments))
-    const input = buildUserInput(message, attachments, skills)
+    // 技能以 /名字 写在正文里，发送时拆成 skill 输入；手动删掉标记的技能不再发送。
+    const { text: body, skills: used } = takeSkillTokens(text, skills)
+    const message = buildAnnotatedMessage(annotations, composeMessageText(body, attachments))
+    const input = buildUserInput(message, attachments, used)
     const newDraft = currentThreadId === null
     if (input.length === 0 || (newDraft && sendingDraftKey.current)) return false
     let createdKey: string | null = null
@@ -557,10 +559,12 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const skillList = useSkills((s) => skillKey ? s.lists[skillKey] : undefined)
   const loadSkills = useSkills((s) => s.load)
   const skillRpc = opened ? rpc : undefined
-  const refreshClaudeSkills = currentAgent === 'claude' && !running
+  const refreshBridgeSkills = currentAgent !== 'codex' && !running
+  // pi 的技能要借运行中的会话进程读取，会话载入后再取一次。
+  const loadedThreadId = view ? currentThreadId : null
   useEffect(() => {
-    if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, refreshClaudeSkills)
-  }, [skillKey, currentCwd, skillRpc, loadSkills, refreshClaudeSkills])
+    if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, refreshBridgeSkills)
+  }, [skillKey, currentCwd, skillRpc, loadSkills, refreshBridgeSkills, loadedThreadId])
 
   const threads = useCodex(currentThreads)
   const localTitle = useThreadPrefs((s) => currentTargetId && currentThreadId
@@ -637,10 +641,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
         let ok: boolean
         if (id === 'archive') ok = await state.archiveThread(currentThreadId, currentAgent)
         else if (id === 'fork') ok = await state.forkThread(currentThreadId, currentAgent)
-        else {
-          ok = currentAgent !== 'codex' || await state.renameThread(currentThreadId, currentAgent, name)
-          if (ok) useThreadPrefs.getState().setLocalName(currentTargetId, threadKey(currentAgent, currentThreadId), currentAgent === 'codex' ? null : name)
-        }
+        else ok = await state.renameThread(currentThreadId, currentAgent, name)
         if (!ok) {
           const reason = useCodex.getState().error
           showCommandMessage(reason ? translateMessage(reason) : t('会话操作失败'))

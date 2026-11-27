@@ -88,8 +88,6 @@ it('在空白会话或历史分支发送指定排队消息，原会话继续运�
     await expect(advance(state().send('Claude 原会话'), 25)).resolves.toBe(true)
     await expect(advance(state().send('Claude 排队消息'), 30)).resolves.toBe(true)
     const queued = queue()[0]!
-    await expect(state().sendQueuedInNewThread(queued.id, 'continue')).resolves.toBe(false)
-    expect(queue()[0]?.id).toBe(queued.id)
     rejectStart = true
     await expect(advance(state().sendQueuedInNewThread(queued.id, 'start'), 35)).resolves.toBe(false)
     expect(state().selectedThreadId).toBe('c-demo')

@@ -38,9 +38,9 @@ const startAction = { mode: 'start', label: t('新会话开始'), Icon: MessageS
 const continueAction = { mode: 'continue', label: t('新对话继续'), Icon: GitBranch } as const
 const sideAction = { mode: 'side', label: t('侧边栏开始'), Icon: PanelRightOpen } as const
 
-/** 能分支的 Agent 在侧边继续当前上下文；Claude / pi 不支持分支，改为在侧边栏开空白侧聊。 */
+/** 能分支的 Agent 可在侧边继续当前上下文；Claude / pi 另保留空白侧聊入口。 */
 export function newThreadActions(agent: AgentKind) {
-  return [startAction, canContinueQueued(agent) ? continueAction : sideAction]
+  return [startAction, ...(canContinueQueued(agent) ? [continueAction] : []), ...(agent === 'codex' ? [] : [sideAction])]
 }
 
 const destinationText = {
@@ -242,7 +242,7 @@ export function SendQueue({
               {moved.text.trim() || t('附件或技能')}
             </p>
           ) : <p className="text-qn-muted">{t('这条消息已离开队列。')}</p>}
-          {continuing && !canContinue && <p role="status" className="mt-2 text-ui-sm text-qn-warn">{t('当前仅 Codex 支持继承会话上下文。')}</p>}
+          {continuing && !canContinue && <p role="status" className="mt-2 text-ui-sm text-qn-warn">{t('当前会话不支持创建分支')}</p>}
           {continuing && canContinue && !hasFinishedTurn && (
             <p role="status" className="mt-2 text-ui-sm text-qn-warn">{t('当前还没有已结束的一轮，可用「新会话开始」。')}</p>
           )}

@@ -17,7 +17,8 @@ import type {
 import { t, translateMessage } from '../../protocol/src/i18n'
 import type { ThreadHistoryCursor, ThreadHistoryPage } from './api'
 import { describeSubagentItem, subagentThreadMetadata, type SubagentItemView, type SubagentThreadMetadata } from './subagents'
-import { USER_INPUT_METHOD, parseUserInputQuestions, type UserInputQuestion } from './userInput'
+import { USER_INPUT_METHOD, parseUserInputQuestions, userInputResponse, type UserInputQuestion } from './userInput'
+import { ELICITATION_METHOD, elicitationAnswer, elicitationDecision, elicitationDetail, elicitationView } from './elicitation'
 import { isActiveThread, isThreadOutcome, threadActivityFromStatus, type ThreadActivity, type ThreadOutcome } from './threadStatus'
 
 export type ConversationState = { threads: Record<string, ThreadView> }
@@ -36,7 +37,10 @@ export type ThreadView = {
   /** 每轮的结果、计时与所含条目，用于显示工作过程和停止提示。 */
   turns?: TurnMeta[]
   /** Thread 上记录的模型与推理强度（Codex 为该会话最近一次的配置），用于恢复会话时的初始选择。 */
-  savedConfig?: { model: string; effort: string | null }
+  /** serviceTier：undefined 表示历史没回报（如 thread/read），null 表示未开快速等档位。 */
+  savedConfig?: { model: string; effort: string | null; serviceTier?: string | null }
+  /** 本机最近一次发送时显式指定的模型与强度，用于判断下一轮是否中途切换了模型。 */
+  lastTurnConfig?: { model: string; effort: string | null }
 }
 
 export type TurnMeta = {
@@ -72,6 +76,8 @@ export type ItemView =
   | SubagentItemView
   | { kind: 'backgroundTask'; id: string; status: 'completed' | 'failed' | 'stopped'; summary: string; result: string }
   | { kind: 'other'; id: string; type: string; summary: string; status?: string }
+  /** 本机插入的提示（如中途切换模型），不来自 Agent；anchor 为它所在那条用户消息的 clientId。 */
+  | { kind: 'notice'; id: string; text: string; anchor?: string }
 
 export function backgroundTaskLabel(status: Extract<ItemView, { kind: 'backgroundTask' }>['status']): string {
   if (status === 'failed') return t('后台任务失败')
@@ -88,8 +94,14 @@ export type ApprovalView = {
   detail: string
   method: string
   raw: unknown
-  /** item/tool/requestUserInput 的问题；有值时界面按问答渲染，而不是允许/拒绝。 */
+  /** 提问或表单的问题；有值时界面按问答渲染，而不是允许/拒绝。 */
   questions?: UserInputQuestion[]
+  /** 问答卡片上方的说明。 */
+  intro?: string
+  /** 不回答按钮的文案；缺省为“跳过”。 */
+  skipLabel?: string
+  /** 可选的审批决定；缺省表示三种都可以。 */
+  decisions?: ApprovalDecision[]
 }
 
 export type ApprovalDecision = 'accept' | 'acceptForSession' | 'decline'
@@ -212,6 +224,50 @@ export function userItemFromInput(id: string, input: UserInput[]): Extract<ItemV
   if (files.length > 0) view.files = files
   if (skills.length > 0) view.skills = skills
   return view
+}
+
+/** 重新加载历史时，把本机插入的提示放回它所在的用户消息之前；找不到那条消息就丢弃。 */
+function restoreNotices(previous: readonly ItemView[] | undefined, items: ItemView[]): ItemView[] {
+  const notices = previous?.filter((item): item is Extract<ItemView, { kind: 'notice' }> => item.kind === 'notice' && !!item.anchor)
+  if (!notices?.length) return items
+  const out: ItemView[] = []
+  const placed = new Set<string>()
+  for (const item of items) {
+    if (item.kind === 'user') {
+      for (const notice of notices) {
+        if (!placed.has(notice.id) && (notice.anchor === item.id || notice.anchor === item.clientId)) {
+          out.push(notice)
+          placed.add(notice.id)
+        }
+      }
+    }
+    if (item.kind !== 'notice' || !placed.has(item.id)) out.push(item)
+  }
+  return out
+}
+
+/**
+ * 记下本轮显式指定的模型与强度；notice 不为空时在本轮的用户消息之前插入提示
+ * （消息还没回显时放在末尾，回显的消息会排在它后面）。
+ */
+export function noteTurnConfig(
+  s: ConversationState,
+  threadId: string,
+  config: { model: string; effort: string | null },
+  notice?: { id: string; text: string; anchor: string },
+): ConversationState {
+  if (!threadId) return s
+  return withThread(s, threadId, (thread) => {
+    const next = { ...thread, lastTurnConfig: config }
+    if (!notice || thread.items.some((item) => item.id === notice.id)) return next
+    const item: ItemView = { kind: 'notice', ...notice }
+    const index = thread.items.findIndex((entry) =>
+      entry.kind === 'user' && (entry.id === notice.anchor || entry.clientId === notice.anchor))
+    const items = index >= 0
+      ? [...thread.items.slice(0, index), item, ...thread.items.slice(index)]
+      : [...thread.items, item]
+    return { ...next, items }
+  })
 }
 
 /** 点击发送时立刻落一条气泡，不等建会话 / turn 的网络回包。 */
@@ -405,7 +461,10 @@ function withItem(
 
   return withThread(s, threadId, (thread) => {
     const otherTurn = thread.status === 'running' && thread.activeTurnId && turnId && thread.activeTurnId !== turnId
-    const isRunning = markRunning && !otherTurn
+    // 已结束轮次的迟到帧（重连回放晚于实时帧等）只合并内容，不能把会话拉回运行中，
+    // 否则不会再有 turn/completed，界面会一直显示思考中。
+    const finished = finishedTurn(thread, turnId, itemId)
+    const isRunning = markRunning && !otherTurn && !finished
     // 新条目出现说明之前的文本/推理已经输出完：有的 Agent 不会为每条消息发 item/completed，
     // 不收尾的话上一条消息的流式光标会一直挂着。
     const base = backgroundTask || otherTurn || thread.items.some((item) => item.id === itemId) ? thread : finalizeItems(thread)
@@ -413,7 +472,7 @@ function withItem(
       ...thread,
       items: replaceItem(base.items, itemId, () => create(itemId), update),
       status: isRunning ? 'running' : thread.status,
-      activeTurnId: !otherTurn && (isRunning || thread.status === 'running') && turnId ? turnId : thread.activeTurnId,
+      activeTurnId: !otherTurn && !finished && (isRunning || thread.status === 'running') && turnId ? turnId : thread.activeTurnId,
     }
     if (isRunning) {
       if (next.activity !== 'pending' && next.activity !== 'input') next.activity = 'running'
@@ -703,6 +762,12 @@ function turnMeta(
   return { id: turnId, ...(outcome ? { outcome } : {}), startedAtMs, durationMs, itemIds: [...itemIds] }
 }
 
+/** 条目所属轮次已有结果：优先按 turnId 判断，缺 turnId 时按条目归属判断。 */
+function finishedTurn(thread: ThreadView, turnId: string, itemId: string): boolean {
+  return thread.turns?.some((turn) => turn.outcome !== undefined &&
+    (turnId ? turn.id === turnId : turn.itemIds.includes(itemId))) ?? false
+}
+
 function upsertTurnMeta(
   thread: ThreadView,
   turnId: string,
@@ -860,15 +925,25 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
     id,
     status,
     activeTurnId,
-    items: [...items.values()],
+    items: restoreNotices(previous?.items, [...items.values()]),
     pendingApprovals: previous?.pendingApprovals ?? [],
   }
   const subagent = subagentThreadMetadata(raw) ?? previous?.subagent
   if (subagent) next.subagent = subagent
+  // thread/read 不回报服务档位，沿用之前 thread/resume 记下的值。
+  const serviceTier = 'serviceTier' in raw
+    ? (typeof raw.serviceTier === 'string' && raw.serviceTier ? raw.serviceTier : null)
+    : previous?.savedConfig?.serviceTier
   const savedConfig = typeof raw.model === 'string' && raw.model
-    ? { model: raw.model, effort: typeof raw.reasoningEffort === 'string' && raw.reasoningEffort ? raw.reasoningEffort : null }
+    ? {
+        model: raw.model,
+        effort: typeof raw.reasoningEffort === 'string' && raw.reasoningEffort ? raw.reasoningEffort : null,
+        ...(serviceTier !== undefined ? { serviceTier } : {}),
+      }
     : previous?.savedConfig
   if (savedConfig) next.savedConfig = savedConfig
+  // 历史回报了模型时它就是最新配置（可能已被另一端改过），本机上一轮的记录不再作为比较基准。
+  if (previous?.lastTurnConfig && !(typeof raw.model === 'string' && raw.model)) next.lastTurnConfig = previous.lastTurnConfig
   if (previous?.tokenUsage !== undefined) next.tokenUsage = previous.tokenUsage
   if (turns.size || previous?.turns) next.turns = [...turns.values()]
   if (status === 'running') {
@@ -973,6 +1048,10 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
       if (!id) return s
       const turnId = turnIdFrom(params)
       return withThread(s, id, (current) => {
+        // 乱序回放的 turn/started 晚于 turn/completed 到达时，只补条目。
+        if (turnId && current.turns?.some((turn) => turn.id === turnId && turn.outcome !== undefined)) {
+          return mergeTurnItems(current, params.turn, false)
+        }
         let next: ThreadView = {
           ...clearError(current),
           status: 'running',
@@ -1242,6 +1321,11 @@ export function applyServerRequest(s: ConversationState, r: ServerRequest): Conv
       title = t('Agent 需要你的回答')
       detail = parseUserInputQuestions(params).map((question) => question.question).join('\n') || t('需要用户处理')
       break
+    case ELICITATION_METHOD:
+      kind = 'other'
+      title = t('MCP 服务请求')
+      detail = elicitationDetail(params)
+      break
     default:
       kind = 'other'
       title = t('其他请求')
@@ -1260,6 +1344,7 @@ export function applyServerRequest(s: ConversationState, r: ServerRequest): Conv
     method,
     raw: r,
     ...(method === USER_INPUT_METHOD ? { questions: parseUserInputQuestions(params) } : {}),
+    ...(method === ELICITATION_METHOD ? elicitationView(params, detail) : {}),
   }
 
   return withThread(s, threadId, (thread) => {
@@ -1267,6 +1352,8 @@ export function applyServerRequest(s: ConversationState, r: ServerRequest): Conv
       ...thread.pendingApprovals.filter((existing) => existing.requestId !== requestId),
       approval,
     ]
+    // turnId 明确为 null 的请求（pi 扩展、MCP）可能发生在轮次之外，不能把会话改成运行中。
+    if (params.turnId === null) return { ...thread, pendingApprovals }
     const next: ThreadView = {
       ...clearError(thread),
       status: 'running',
@@ -1316,6 +1403,11 @@ function legacyDecision(decision: ApprovalDecision): ReviewDecision {
   return { denied: { rejection: '用户拒绝该操作' } }
 }
 
+/** 问答卡片的提交结果；空对象表示用户点了跳过或拒绝。 */
+export function userAnswerResponse(a: ApprovalView, answers: Readonly<Record<string, readonly string[]>>): unknown {
+  return a.method === ELICITATION_METHOD ? elicitationAnswer(approvalParams(a), answers) : userInputResponse(answers)
+}
+
 export function approvalResponse(a: ApprovalView, decision: ApprovalDecision): unknown {
   const params = approvalParams(a)
   switch (a.method) {
@@ -1345,6 +1437,9 @@ export function approvalResponse(a: ApprovalView, decision: ApprovalDecision): u
       const response: ApplyPatchApprovalResponse = { decision: legacyDecision(decision) }
       return response
     }
+    case ELICITATION_METHOD:
+      // 只有可直接确认的请求接受 accept，其余一律按拒绝回复。
+      return elicitationDecision(decision === 'accept' && a.decisions?.includes('accept') === true)
     default: {
       // 未知请求没有可推导的响应体，交由调用方按具体 method 处理
       return {}

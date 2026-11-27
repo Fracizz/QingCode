@@ -329,6 +329,20 @@ export function finishPendingItems(ctx: MapContext, state: MapState, failed = fa
   return out
 }
 
+/**
+ * get_session_stats 的 contextUsage → tokenUsage。压缩刚结束时 pi 给 null，此时返回 null 不覆盖现有读数。
+ * 与 Claude 一致：last 表示当前上下文占用，客户端据此与窗口相除。
+ */
+export function piContextTokenUsage(context: unknown, total: PiUsage | null): Json | null {
+  const data = asRecord(context)
+  const tokens = finite(data?.tokens)
+  const window = finite(data?.contextWindow)
+  if (tokens === null || tokens < 0 || window === null || window <= 0) return null
+  const base: Json = total ? piTokenUsage(total) : { estimated: true }
+  const last = { ...(asRecord(base.last) ?? {}), totalTokens: tokens }
+  return { ...base, total: base.total ?? last, last, modelContextWindow: window }
+}
+
 /** turn 结束通知（turn/completed + tokenUsage）由纯函数生成，实时流与异常兜底共用。 */
 export function finishTurnNotifications(
   ctx: MapContext,

@@ -18,6 +18,7 @@ import type { Project } from '../types'
 import { registerBackHandler } from '../workspace'
 import { Button, Dialog, Loading, Note } from './ui'
 import './terminal.css'
+import { toast } from '../toast'
 
 const controlKeys = [
   ['Esc', '\x1b', 'Esc'], ['Tab', '\t', 'Tab'], ['^C', '\x03', 'Ctrl+C'],
@@ -308,7 +309,6 @@ function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTe
   const [found, setFound] = useState(true)
   const [selectableText, setSelectableText] = useState<string | null>(null)
   const [writing, setWriting] = useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!host.current) return
@@ -335,12 +335,10 @@ function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTe
     setWriting(false)
   }
   const paste = () => {
-    setActionError(null)
-    void controls.current?.paste().catch((error: unknown) => setActionError(friendlyError(error, t('无法粘贴剪贴板'))))
+    void controls.current?.paste().catch((error: unknown) => toast(friendlyError(error, t('无法粘贴剪贴板')), { tone: 'error' }))
   }
   const copy = () => {
-    setActionError(null)
-    void controls.current?.copy().catch((error: unknown) => setActionError(friendlyError(error, t('无法复制选区'))))
+    void controls.current?.copy().catch((error: unknown) => toast(friendlyError(error, t('无法复制选区')), { tone: 'error' }))
   }
   const sendWithKeyboard = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey) || event.nativeEvent.isComposing) return
@@ -362,7 +360,6 @@ function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTe
       {status.historyLost && <p className="text-xs text-qn-warn">{t('部分历史超出目标的输出缓冲，已显示剩余记录。')}</p>}
       {status.error && <Note message={status.error} tone="error" actionLabel={ready ? t('重试接回') : undefined}
         onAction={() => controls.current?.attach()} />}
-      {actionError && <Note message={actionError} tone="error" onClose={() => setActionError(null)} />}
 
       {menu && <Dialog title={t('终端操作')} onClose={onCloseMenu}>
         <div className="grid gap-1">

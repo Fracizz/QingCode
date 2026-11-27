@@ -30,7 +30,8 @@ export function saveChatFont(value: number): boolean {
   }
 }
 
-export function bindChatPinch(root: HTMLElement): () => void {
+/** onScale 在缩放中回报当前字号，手势结束回报 null，供界面显示字号提示。 */
+export function bindChatPinch(root: HTMLElement, onScale?: (size: number | null) => void): () => void {
   let size = readChatFont()
   let gesture: { distance: number; size: number; ids: number[] } | null = null
   const apply = () => root.style.setProperty('--chat-font', size + 'px')
@@ -39,6 +40,7 @@ export function bindChatPinch(root: HTMLElement): () => void {
     if (!gesture) return
     gesture = null
     saveChatFont(size)
+    onScale?.(null)
   }
   function update(event: TouchEvent) {
     const touches = Array.from(event.touches)
@@ -52,10 +54,14 @@ export function bindChatPinch(root: HTMLElement): () => void {
     if (event.cancelable) event.preventDefault()
     if (!gesture || !touches.every((touch) => gesture?.ids.includes(touch.identifier))) {
       gesture = { distance, size, ids: touches.map((touch) => touch.identifier) }
+      onScale?.(size)
       return
     }
-    size = fitChatFont(gesture.size * distance / gesture.distance)
+    const next = fitChatFont(gesture.size * distance / gesture.distance)
+    if (next === size) return
+    size = next
     apply()
+    onScale?.(size)
   }
   const events = ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const
   for (const name of events) root.addEventListener(name, update, { passive: false })

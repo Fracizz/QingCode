@@ -139,6 +139,20 @@ describe('getSessionMessages → v2 Thread/turns/items', () => {
     expect(result.turns[1]).toMatchObject({ status: 'completed', error: null })
   })
 
+  it('终端本地斜杠命令：命令显示为用户输入，输出作为同一轮回复，说明记录略过', () => {
+    const result = sessionMessagesToThread(meta, [
+      sessionMessage('user', '<local-command-caveat>Caveat: ignore</local-command-caveat>', 'c0'),
+      sessionMessage('user', '<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>sonnet</command-args>', 'c1'),
+      sessionMessage('user', '<local-command-stdout>Set model to sonnet</local-command-stdout>', 'c2'),
+      sessionMessage('user', [{ type: 'text', text: '继续' }], 'u1'),
+    ])
+    expect(result.turns).toHaveLength(2)
+    const items = (result.turns[0] as Json).items as Json[]
+    expect(items.map((item) => item.type)).toEqual(['userMessage', 'agentMessage'])
+    expect(((items[0]!.content as Json[])[0] as Json).text).toBe('/model sonnet')
+    expect(items[1]!.text).toBe('Set model to sonnet')
+  })
+
   it('没有用户文本时所有消息归为一个 turn；空历史返回空 turns', () => {
     const result = sessionMessagesToThread(meta, [
       sessionMessage('assistant', [{ type: 'text', text: '孤立回复' }], 'm1'),

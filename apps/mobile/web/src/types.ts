@@ -1,6 +1,8 @@
 // 与电脑 backend 的线协议形状保持一致（复制自 apps/desktop/src/shared/backendApi.ts，不跨包 import）。
 
-export type AgentKind = 'codex' | 'claude' | 'pi'
+import type { AgentKind } from '@qn/codex-client'
+
+export type { AgentKind }
 
 export type SshAuth =
   | { kind: 'password' }
@@ -62,6 +64,8 @@ export type RpcMethod =
   | 'mobile.files.list'
   | 'mobile.files.search'
   | 'mobile.files.read'
+  | 'mobile.queue.put'
+  | 'mobile.queue.take'
   | 'mobile.term.open'
   | 'mobile.term.list'
   | 'mobile.term.attach'
@@ -77,10 +81,8 @@ export type ServerReqMethod =
   | 'codex.open'
   | 'codex.attach'
   | 'codex.status'
-  // 只读文件 / Git，用于手机端查看文件与差异；写方法一律不在白名单内。
+  // 只读文件，用于手机端查看；写方法与 Git 一律不在白名单内。
   | 'fs.read'
-  | 'git.status'
-  | 'git.diff'
 
 export type FsEntry = { name: string; kind: 'dir' | 'file' | 'symlink' }
 export type FsListResult = { path: string; entries: FsEntry[] }

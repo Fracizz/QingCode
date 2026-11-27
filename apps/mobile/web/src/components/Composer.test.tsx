@@ -7,7 +7,7 @@ import { Composer } from './Composer'
 
 const skill = { name: 'pdf', description: '处理 PDF', scope: '用户', path: '/skills/pdf/SKILL.md' }
 
-it('输入 / 列出技能，选中后成为标签并作为 skill 输入随消息发送', async () => {
+it('输入 / 列出技能，选中后以 /名字 留在输入框里，发送时拆成 skill 输入', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.createElement('div')
   document.body.append(host)
@@ -36,15 +36,22 @@ it('输入 / 列出技能，选中后成为标签并作为 skill 输入随消息
     const option = button('处理 PDF')
     expect(option).toBeDefined()
     await act(() => option!.click())
-    expect(textarea().value).toBe('')
-    expect(host.querySelector('[aria-label="已选技能"]')?.textContent).toContain('pdf')
+    expect(textarea().value).toBe('/pdf ')
 
-    await type('总结一下')
+    await type('/pdf 总结一下')
     await act(() => button('发送')!.click())
     expect(onSend).toHaveBeenCalledTimes(1)
     expect(onSend.mock.calls[0]![0]).toBe('总结一下')
     expect(onSend.mock.calls[0]![1]).toEqual([{ type: 'skill', name: 'pdf', path: '/skills/pdf/SKILL.md' }])
-    expect(host.querySelector('[aria-label="已选技能"]')).toBeNull()
+
+    // 手动删掉标记后不再随消息发送技能。
+    await type('再总结 /pd')
+    await act(() => button('处理 PDF')!.click())
+    expect(textarea().value).toBe('再总结 /pdf ')
+    await type('再总结 ')
+    await act(() => button('发送')!.click())
+    expect(onSend.mock.calls[1]![0]).toBe('再总结 ')
+    expect(onSend.mock.calls[1]![1]).toEqual([])
   } finally {
     await act(() => root.unmount())
     host.remove()

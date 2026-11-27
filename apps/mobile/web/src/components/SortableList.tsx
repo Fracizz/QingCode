@@ -7,12 +7,13 @@ type Drag = { from: number; to: number; offset: number; height: number }
  * 长按某一行后上下拖动排序（手机端没有悬停与拖拽手柄，长按是最自然的入口）。
  * 触摸事件用原生非 passive 监听：拖动中要阻止页面滚动，React 的 touchmove 是 passive 的。
  */
-export function SortableList<T>({ items, itemKey, onMove, disabled = false, label, children }: {
+export function SortableList<T>({ items, itemKey, onMove, disabled = false, label, className = 'qn-list-group', children }: {
   items: readonly T[]
   itemKey: (item: T) => string
   onMove: (from: number, to: number) => void
   disabled?: boolean
   label: string
+  className?: string
   children: (item: T) => ReactNode
 }) {
   const list = useRef<HTMLDivElement>(null)
@@ -109,7 +110,7 @@ export function SortableList<T>({ items, itemKey, onMove, disabled = false, labe
   }, [disabled])
 
   return (
-    <div ref={list} className="qn-list-group qn-sortable" data-sorting={drag !== null} aria-label={label}>
+    <div ref={list} className={`${className} qn-sortable`} data-sorting={drag !== null} aria-label={label}>
       {items.map((item, index) => {
         const dragging = drag?.from === index
         const shift = drag && !dragging ? shiftFor(index, drag.from, drag.to, drag.height) : 0

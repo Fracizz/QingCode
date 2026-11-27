@@ -53,8 +53,8 @@ it('行内只留引导、更多、移除，新会话入口在更多面板中且�
     await act(() => useApp.setState({ selectedAgent: 'claude' }))
     await act(() => button('更多操作').click())
     await act(() => button('新对话继续').click())
-    expect(host.querySelector('dialog')?.textContent).toContain('仅 Codex 支持')
-    expect(button('在新会话发送').disabled).toBe(true)
+    expect(host.querySelector('dialog')?.textContent).toContain('继承已结束轮次的上下文')
+    expect(button('在新会话发送').disabled).toBe(false)
   } finally {
     await act(() => root.unmount())
     for (const name of ['showModal', 'close']) {

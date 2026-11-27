@@ -33,9 +33,6 @@ export function TargetsPage() {
   const eventsConnected = useApp((s) => s.eventsConnected)
   const eventsError = useApp((s) => s.eventsError)
   const error = useApp((s) => s.error)
-  const notice = useApp((s) => s.notice)
-  const clearError = useApp((s) => s.clearError)
-  const clearNotice = useApp((s) => s.clearNotice)
   const goBack = useApp((s) => s.goBack)
   const loadTargets = useApp((s) => s.loadTargets)
   const loadAgentSettings = useApp((s) => s.loadAgentSettings)
@@ -57,8 +54,6 @@ export function TargetsPage() {
           aria-label={t('刷新目标')}><WorkspaceIcon name="refresh" /></Button>} />
       <div className="qn-body qn-scroll">
         {repair && conn && <Note tone="error" message={t('请重新配对这台电脑。')} actionLabel={t('重新配对')} onAction={() => beginRepair(conn.id)} />}
-        {error && <Note message={error} tone="error" onClose={clearError} />}
-        {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
         {connectingTarget?.kind === 'ssh' && <Note message={t('首次连接或 SSH 指纹变化时，请在电脑上确认指纹。')} />}
         {targets.length === 0 ? (error || repair || eventsError ? <Empty>{t('没有可用的目标。')}</Empty> : <Loading text={t('正在读取目标…')} />) : (
           <div className="qn-list-group">

@@ -1,14 +1,14 @@
-import type { UserInput } from '@qn/codex-client'
+import { AGENT_CAPABILITIES, type UserInput } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 
 /** 排队消息转到新会话的方式：空白会话开始，或继承已结束轮次的上下文继续。 */
 /**
- * 排队消息移出当前会话的去向：start 新会话开始；continue 分支继承上下文并在侧边打开（仅 Codex）；
+ * 排队消息移出当前会话的去向：start 新会话开始；continue 分支继承上下文并在侧边打开；
  * side 在侧边栏开一个空白侧边对话发送（不支持分支的 Claude / pi 用它代替 continue）。
  */
 export type PendingThreadMode = 'start' | 'continue' | 'side'
 
-export const canContinueQueued = (agent: AgentKind) => agent === 'codex'
+export const canContinueQueued = (agent: AgentKind) => AGENT_CAPABILITIES[agent].fork
 
 /**
  * 把排队消息的正文换成新文本，附件、图片和技能保持不变。

@@ -86,7 +86,6 @@ export function UsageHome() {
   const loadAgentSettings = useApp((s) => s.loadAgentSettings)
   const eventsError = useApp((s) => s.eventsError)
   const error = useApp((s) => s.error)
-  const clearError = useApp((s) => s.clearError)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const selected = targets.find((target) => target.id === selectedId)
 
@@ -105,7 +104,6 @@ export function UsageHome() {
           <RotateCw size={20} strokeWidth={1.75} aria-hidden />
         </Button>
       </div>
-      {error && <Note message={error} tone="error" onClose={clearError} />}
       {targets.length === 0 ? (eventsError || error ? <Empty>{t('没有可用的目标。')}</Empty> : <Loading text={t('正在读取目标…')} />) : (
         <>
           <div className="qn-list-label"><span>{t('{count} 台主机', { count: targets.length })}</span></div>

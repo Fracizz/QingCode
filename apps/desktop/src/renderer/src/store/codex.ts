@@ -8,7 +8,7 @@ import {
   applyNotification,
   applyServerRequest,
   approvalResponse,
-  userInputResponse,
+  userAnswerResponse,
   archiveThread,
   claudeQuotaBlocked,
   clearDraftThread,
@@ -24,6 +24,8 @@ import {
   listThreads,
   loadRecentThreadHistory,
   loadThread,
+  noteTurnConfig,
+  turnModelNote,
   moveOptimisticUsers,
   openThreadHistory,
   prependThreadHistory,
@@ -41,6 +43,7 @@ import {
   userItemFromInput,
   type ApprovalDecision,
   type ApprovalView,
+  CodexRpcError,
   type ConversationState,
   type ItemView,
   type RequestId,
@@ -92,6 +95,7 @@ import { threadKey } from '../lib/threads'
 import { useDock } from './dock'
 import { useAgentPrefs } from './agentPrefs'
 import { overridesFor, prefsFor, useModels } from './models'
+import { EMPTY_PREFS, resolveSelection, triggerLabel } from '../lib/models'
 import { useTargets } from './targets'
 import { useThreadPrefs } from './threadPrefs'
 import { markThreadUnread, parseUnreadChange, pullThreadUnread } from './unreadSync'
@@ -1121,11 +1125,22 @@ export const useCodex = create<CodexState>((set, get) => {
       // 文件类 mention 对 Codex 改成正文里的路径说明（Codex 的 mention 只认 app/plugin）。
       const adaptedInput = adaptTurnInput(session.agent, input)
       const clientUserMessageId = pendingUser.id
+      // 与上一轮相比换了模型或强度时，在本轮消息前留一行提示（参考 Codex）。
+      const models = useModels.getState().lists[session.key]?.models ?? []
+      const modelNote = turnModelNote(session.agent, models, get().sessions[session.key]?.state.threads[threadId], overrides, clientUserMessageId,
+        (config) => triggerLabel(resolveSelection(models, { ...EMPTY_PREFS, model: config.model, effort: config.effort })))
       const { turn } = access
         ? await session.rpc.request('turn/start', {
           threadId, input: adaptedInput, ...overrides, ...access, clientUserMessageId,
         })
         : await sendInput(session.rpc, threadId, adaptedInput, overrides, clientUserMessageId)
+      if (modelNote) {
+        patchSession(session.key, (value) => ({
+          ...value,
+          state: noteTurnConfig(value.state, threadId, modelNote.config, modelNote.notice),
+        }))
+        useModels.getState().markThreadSent(session.targetId, session.agent, threadId, modelNote.config)
+      }
       // 快速完成的轮次可能在 RPC 回包前已收到事件，不要把它重新标成运行中。
       if (!observed.has(turn.id)) {
         const method = turn.status === 'inProgress' ? 'turn/started' : 'turn/completed'
@@ -2312,14 +2327,26 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     respondUserInput: (chat, requestId, answers) => {
-      replyServerRequest(chat, requestId, () => userInputResponse(answers))
+      replyServerRequest(chat, requestId, (approval) => userAnswerResponse(approval, answers))
     },
 
     renameThread: async (threadId, agent, name) => {
       const targetId = get().currentTargetId
-      const ok = await withSession(agent, threadId, t('重命名失败'), (session) => setThreadName(session.rpc, threadId, name).then(() => true))
-      if (ok === null) return false
-      if (targetId) refreshThreadListsFor(targetId, agent, threadId)
+      const saved = await withSession(agent, threadId, t('重命名失败'), async (session) => {
+        try {
+          await setThreadName(session.rpc, threadId, name)
+          return 'native' as const
+        } catch (err) {
+          // 目标机上的旧版 server 没有 Claude / pi 重命名，退回只在本机记录。
+          if (agent !== 'codex' && err instanceof CodexRpcError && err.code === -32601) return 'local' as const
+          throw err
+        }
+      })
+      if (saved === null) return false
+      if (targetId) {
+        useThreadPrefs.getState().setLocalName(targetId, threadKey(agent, threadId), saved === 'local' ? name : null)
+        refreshThreadListsFor(targetId, agent, threadId)
+      }
       return true
     },
 

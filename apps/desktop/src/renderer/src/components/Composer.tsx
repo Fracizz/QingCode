@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref, type RefObject } from 'react'
-import { accessOptions, exactChatCommand, resolveAccessMode, t, translateMessage } from '@qn/codex-client'
+import { accessOptions, exactChatCommand, hasSkillToken, insertSkillToken, resolveAccessMode, t, translateMessage } from '@qn/codex-client'
 import { ArrowUp, CircleAlert, FileText, ImageOff, Paperclip, Shield, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
@@ -220,7 +220,8 @@ export function Composer({
   const menuOpen = query !== null && !dismissed && !disabled
   const standaloneSlash = token && !value.slice(0, token.start).trim() && !value.slice(token.end).trim()
   const matches = menuOpen && slash ? filterSlashItems(
-    slash.items.filter((item) => item.kind === 'skill' || standaloneSlash),
+    // 已写进输入框的技能不再重复列出。
+    slash.items.filter((item) => item.kind === 'skill' ? !hasSkillToken(value, item.name) : standaloneSlash),
     query,
   ) : []
 
@@ -258,14 +259,14 @@ export function Composer({
     imageSupport.allowed,
     imageSupport.reason ?? undefined,
   ), [attach?.attachments, imageSupport.allowed, imageSupport.reason])
-  const hasAttachmentsOrSkills = attachments.length > 0 || (slash?.skills.length ?? 0) > 0
+  const hasAttachments = attachments.length > 0
   const blocked = attach?.blockedReason ?? imageBlock
   const shortcut = sendKey === 'ctrlEnter' ? 'Ctrl+Enter' : 'Enter'
   const newlineShortcut = sendKey === 'ctrlEnter' ? 'Enter' : 'Shift+Enter'
   const sendHint = running
     ? t('排队（{shortcut}）· 本轮结束后发送', { shortcut })
     : t('发送（{shortcut}）· 换行（{newline}）', { shortcut, newline: newlineShortcut })
-  const canSend = !disabled && !sending && !compacting && !blocked && (value.trim() !== '' || hasAttachmentsOrSkills || annotationCount > 0)
+  const canSend = !disabled && !sending && !compacting && !blocked && (value.trim() !== '' || hasAttachments || annotationCount > 0)
 
   const submit = (mode: SendMode = 'queue') => {
     const command = slash && exactChatCommand(value)
@@ -280,16 +281,25 @@ export function Composer({
 
   const choose = (item: SlashItem | undefined) => {
     if (!item || !slash) return
-    // 只去掉当前这个 "/片段"，其余正文原样保留；光标落到末尾，剩下的 /技能 可以接着选。
-    const nextValue = consumeSlashToken(value, caret)
-    onChange(nextValue)
-    setCaret(nextValue.length)
     if (item.kind === 'skill') {
+      // 技能以 /名字 留在输入框里，左右各留一个空格；发送时再拆成 skill 输入。
+      const token = slashToken(value, caret)
+      if (!token) return
+      const next = insertSkillToken(value, token.start, token.end, item.name)
       const picked = { name: item.name, path: item.path ?? '' }
       if (!slash.skills.some((skill) => skill.name === picked.name)) {
         slash.onSkillsChange([...slash.skills, picked])
       }
-    } else slash.onCommand(item.id)
+      pendingCaret.current = next.caret
+      onChange(next.text)
+      setCaret(next.caret)
+    } else {
+      // 命令只去掉当前这个 "/片段"，其余正文原样保留。
+      const nextValue = consumeSlashToken(value, caret)
+      onChange(nextValue)
+      setCaret(nextValue.length)
+      slash.onCommand(item.id)
+    }
     areaRef.current?.focus()
   }
 
@@ -348,11 +358,6 @@ export function Composer({
         setDismissed(true)
         return
       }
-    }
-    // 空输入时退格先移除最后选的技能，和 Codex 的 chip 行为一致。
-    if (event.key === 'Backspace' && value === '' && slash && slash.skills.length > 0) {
-      slash.onSkillsChange(slash.skills.slice(0, -1))
-      return
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       // 设置 → 通用 → 发送快捷键：Enter 发送，或 Ctrl+Enter 发送（此时 Enter 换行）。
@@ -451,7 +456,7 @@ export function Composer({
             disabled && 'opacity-70',
           )}
         >
-          {hasAttachmentsOrSkills && (
+          {hasAttachments && (
             <div className="qn-scroll flex max-h-[clamp(4.25rem,12cqh,6rem)] flex-wrap items-center gap-2 overflow-y-auto px-3 pt-3">
               {attach && attachments.map((item) => (
                 <AttachmentChip
@@ -465,20 +470,6 @@ export function Composer({
                     else imagePreviewTriggers.current.delete(token)
                   } : undefined}
                 />
-              ))}
-              {slash?.skills.map((skill) => (
-                <span key={skill.name} className="inline-flex h-7 max-w-[min(14rem,100%)] items-center gap-1 rounded-lg bg-qn-brand/10 pl-2 pr-1 text-ui text-qn-brand">
-                  <Wand2 size={13} className="shrink-0" />
-                  <span className="truncate" title={skill.name}>{skill.name}</span>
-                  <button
-                    type="button"
-                    className="inline-flex size-5 shrink-0 items-center justify-center rounded-md hover:bg-qn-brand/20"
-                    aria-label={t('移除技能 {name}', { name: skill.name })}
-                    onClick={() => slash.onSkillsChange(slash.skills.filter((item) => item.name !== skill.name))}
-                  >
-                    <X size={12} />
-                  </button>
-                </span>
               ))}
             </div>
           )}

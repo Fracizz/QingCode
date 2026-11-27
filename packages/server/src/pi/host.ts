@@ -1,11 +1,11 @@
 /**
  * pi 桥：对客户端说 codex app-server v2 JSON-RPC，实际经 pi 官方 RPC 模式驱动用户已装的 pi。
  * 每个会话一个 pi 进程；多客户端广播、seq 缓冲、未决请求仍由 JsonRpcAgentHost 统一处理。
- * pi 没有审批机制：这里绝不生成审批请求，也不代答扩展 UI 对话框。
+ * pi 没有审批机制：这里绝不生成审批请求。扩展 UI 对话框作为提问交给用户，不代答。
  */
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import { classifyJsonRpc, type JsonRpcId } from '@qn/protocol'
+import { AGENT_CAPABILITIES, classifyJsonRpc, type AgentCapabilities, type JsonRpcId } from '@qn/protocol'
 import {
   AgentHostError,
   JsonRpcAgentHost,
@@ -35,10 +35,12 @@ import { SteerHistoryStore } from '../steerHistory'
 import { VERSION } from '../version'
 import { nativeAgentCwd } from '../workspace/paths'
 import { PiRpcError } from './errors'
+import { parsePiDialog, piDialogQuestions, piDialogResponse, type PiDialog } from './extensionUi'
 import {
   emptyMapState,
   finishTurnNotifications,
   mapPiEvent,
+  piContextTokenUsage,
   messagesToThread,
   parsePiSteer,
   piThread,
@@ -50,16 +52,9 @@ import { resolvePiExecutable, type PiExecutable } from './resolve'
 import { readVersionAsync } from '../versionProbe'
 import { PiRpcProcess, type PiRpcOptions, type RpcRecord } from './rpc'
 import { isPiLevel, parsePiModelKey, piModelList } from './models'
-import { listPiSessions, readPiSessionConfig, type PiSessionConfig, type PiSessionInfo } from './sessions'
+import { listPiSessions, readPiSessionConfig, sameCwd, type PiSessionConfig, type PiSessionInfo } from './sessions'
+import { piSkills } from './skills'
 import { resolvePiPrompt } from './turnInput'
-
-export interface PiCapabilities {
-  approvals: false
-  rateLimits: false
-  ephemeralNoTools: true
-}
-
-export const PI_CAPABILITIES: PiCapabilities = { approvals: false, rateLimits: false, ephemeralNoTools: true }
 
 export interface PiHostOptions {
   resolve?: (piPath?: string) => PiExecutable
@@ -89,7 +84,17 @@ interface PiSession {
   thinkingLevel?: string
 }
 
+interface OpenDialog {
+  session: PiSession
+  rpc: PiRpcProcess
+  dialog: PiDialog
+  /** 发起时所属的轮次；轮次结束时一并撤掉。 */
+  turnId: string | null
+  timer: ReturnType<typeof setTimeout> | null
+}
+
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000
+const PENDING_PREFIX = 'qn-pi-pending-'
 
 export function createPiHost(
   hub: AgentHostHub,
@@ -109,9 +114,12 @@ export class PiHost extends JsonRpcAgentHost {
   private readonly steerHistory: SteerHistoryStore<UserMessageIdentity>
   private readonly archives: ArchiveStore
   private counter = 0
+  private readonly dialogs = new Map<JsonRpcId, OpenDialog>()
   // 最近一次从运行中进程取到的模型列表，daemon 生命周期内复用
   private cachedModels: Json | null = null
   private modelListRequest: Promise<Json> | null = null
+  // 按 cwd 缓存最近一次取到的技能，进程空闲关闭后仍可选择
+  private readonly cachedSkills = new Map<string, Json[]>()
 
   constructor(
     hub: AgentHostHub,
@@ -127,9 +135,9 @@ export class PiHost extends JsonRpcAgentHost {
   /** codex.open {agent:'pi'} 的结果：能力字段让前端如实标注无审批、无额度。 */
   override async open(
     options: AgentOpenOptions = {},
-  ): Promise<CodexOpenResult & { capabilities: PiCapabilities }> {
+  ): Promise<CodexOpenResult & { capabilities: AgentCapabilities }> {
     const result = await super.open(options)
-    return { ...result, initialize: null, capabilities: { ...PI_CAPABILITIES } }
+    return { ...result, initialize: null, capabilities: { ...AGENT_CAPABILITIES.pi } }
   }
 
   protected async openAgent(options: AgentOpenOptions): Promise<{ initialize: unknown; agentVersion?: string }> {
@@ -183,7 +191,11 @@ export class PiHost extends JsonRpcAgentHost {
 
   private async dispatch(msg: RpcRecord): Promise<void> {
     const kind = classifyJsonRpc(msg)
-    // pi 没有审批，客户端发来的响应不应被当作审批决定。
+    // 客户端的响应只对应扩展对话框（pi 没有审批请求）。
+    if (kind === 'response') {
+      this.closeDialog(msg.id as JsonRpcId, msg)
+      return
+    }
     if (kind !== 'request') return
     const id = msg.id as JsonRpcId
     const method = scalarText(msg.method)
@@ -234,6 +246,10 @@ export class PiHost extends JsonRpcAgentHost {
       case 'thread/turns/list':
       case 'thread/items/list':
         return this.threadRead(method, params)
+      case 'thread/name/set':
+        return this.threadRename(params)
+      case 'skills/list':
+        return this.skillList(params)
       case 'thread/compact/start':
         return this.compactThread(params)
       case 'turn/start':
@@ -281,7 +297,7 @@ export class PiHost extends JsonRpcAgentHost {
   private async threadStart(params: Json): Promise<Json> {
     const cwd = typeof params.cwd === 'string' && params.cwd ? nativeAgentCwd(params.cwd) : process.cwd()
     const ephemeral = params.ephemeral === true
-    const pendingId = `qn-pi-pending-${++this.counter}`
+    const pendingId = `${PENDING_PREFIX}${++this.counter}`
     const session = this.sessionFor(pendingId, { id: pendingId, cwd, preview: '', ephemeral })
     let data: Json
     try {
@@ -469,6 +485,59 @@ export class PiHost extends JsonRpcAgentHost {
     return { turn }
   }
 
+  private async threadRename(params: Json): Promise<Json> {
+    const threadId = scalarText(params.threadId)
+    const name = scalarText(params.name).trim()
+    if (!threadId || !name) throw new PiRpcError(-32602, 'threadId 与会话名称不能为空')
+    const meta = await this.metaFor(threadId)
+    if (meta.ephemeral) throw new PiRpcError(-32602, '临时会话不能重命名')
+    const session = this.sessionFor(threadId, meta)
+    const rpc = await this.ensureRpc(session)
+    const response = await rpc.command('set_session_name', { name })
+    if (response.success !== true) throw new PiRpcError(-32603, 'pi 未能重命名会话')
+    meta.name = name
+    session.meta.name = name
+    this.touch(session)
+    this.notify({ method: 'thread/name/updated', params: { threadId, threadName: name } })
+    return {}
+  }
+
+  private async skillList(params: Json): Promise<Json> {
+    const cwds = Array.isArray(params.cwds)
+      ? params.cwds.filter((dir): dir is string => typeof dir === 'string' && dir.length > 0)
+      : []
+    const data = await Promise.all(cwds.map(async (requested) => {
+      const cwd = nativeAgentCwd(requested)
+      // 与模型列表一样只借用运行中的会话进程（R9），没有时返回缓存。
+      const rpc = [...this.sessions.values()].find((session) =>
+        !session.meta.ephemeral && session.rpc?.running && sameCwd(session.meta.cwd, cwd))?.rpc
+      if (rpc) {
+        try {
+          const response = await rpc.command('get_commands')
+          if (response.success === true) this.cachedSkills.set(cwd, piSkills(asRecord(response.data)?.commands))
+        } catch (err) {
+          this.hub.log(`pi 技能列表读取失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
+        }
+      }
+      return { cwd: requested, skills: this.cachedSkills.get(cwd) ?? [], errors: [] }
+    }))
+    return { data }
+  }
+
+  /** 占用以 pi 自己的统计为准；取不到时保留事件流里的本轮用量。 */
+  private async reportContextUsage(session: PiSession, turnId: string, total: MapState['totalUsage']): Promise<void> {
+    const rpc = session.rpc
+    if (!rpc?.running) return
+    try {
+      const response = await rpc.command('get_session_stats')
+      if (response.success !== true || session.rpc !== rpc) return
+      const tokenUsage = piContextTokenUsage(asRecord(response.data)?.contextUsage, total)
+      if (tokenUsage) this.notify({ method: 'thread/tokenUsage/updated', params: { threadId: session.meta.id, turnId, tokenUsage } })
+    } catch (err) {
+      this.hub.log(`pi 上下文用量读取失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
+    }
+  }
+
   private modelList(): Promise<Json> {
     // 并发的 model/list（桌面多个组件、手机同时请求）合并为一组 RPC，避免对 pi 进程重复串行发三条命令。
     this.modelListRequest ??= this.fetchModelList().finally(() => {
@@ -565,6 +634,8 @@ export class PiHost extends JsonRpcAgentHost {
       throw new PiRpcError(-32602, '没有运行中的 turn')
     }
     const turnId = session.turnId
+    // 停止本轮等于放弃回答，否则 pi 会一直停在对话框上。
+    this.dismissDialogs((open) => open.session === session, true)
     await session.rpc.command('abort')
     // abort 会等会话 idle；若 pi 没发 agent_settled，兜底按中断结束本轮。
     if (session.turnId) {
@@ -634,10 +705,12 @@ export class PiHost extends JsonRpcAgentHost {
     session.state = mapped.state
     for (const note of mapped.notifications) this.notify(note)
     if (mapped.turnEnd) {
+      this.dismissDialogs((open) => open.session === session && open.turnId === ctx.turnId, true)
       session.turnId = null
       delete session.pendingUserItem
       this.historyPages.clear(session.meta.id)
       this.touch(session)
+      void this.reportContextUsage(session, ctx.turnId, session.state.totalUsage)
     }
   }
 
@@ -676,6 +749,7 @@ export class PiHost extends JsonRpcAgentHost {
     if (session.rpc !== rpc) return
     session.rpc = null
     session.pendingSteers.clear()
+    this.dismissDialogs((open) => open.rpc === rpc, false)
     if (session.turnId) this.finishTurn(session, 'failed', 'pi 进程提前退出')
     if (session.meta.ephemeral) this.forgetTemporary(session.meta.id)
     this.hub.log(`pi 会话进程退出 (thread=${session.meta.id} code=${String(info.code)})`) // i18n-ignore: 仅进日志
@@ -692,6 +766,7 @@ export class PiHost extends JsonRpcAgentHost {
         this.notify({ method: 'item/completed', params: { threadId: session.meta.id, turnId, item } })
       }
     }
+    this.dismissDialogs((open) => open.session === session && open.turnId === turnId, true)
     for (const note of finishTurnNotifications(ctx, session.state, status, error)) this.notify(note)
     session.turnId = null
     delete session.pendingUserItem
@@ -769,6 +844,7 @@ export class PiHost extends JsonRpcAgentHost {
     delete session.model
     delete session.thinkingLevel
     rpc.onEvent((event) => this.onPiEvent(session, event))
+    rpc.onDialog((record) => this.onPiDialog(session, rpc, record))
     rpc.onExit((info) => this.onRpcExit(session, rpc, info))
     try {
       rpc.start()
@@ -793,9 +869,47 @@ export class PiHost extends JsonRpcAgentHost {
   private closeRpc(session: PiSession): void {
     const rpc = session.rpc
     if (!rpc) return
+    this.dismissDialogs((open) => open.rpc === rpc, true)
     session.rpc = null
     session.pendingSteers.clear()
     rpc.close()
+  }
+
+  private onPiDialog(session: PiSession, rpc: PiRpcProcess, record: RpcRecord): void {
+    const dialog = parsePiDialog(record)
+    if (!dialog) return
+    // 尚未建好或仅用于分叉的临时进程没有可展示问题的会话，只能取消。
+    if (session.rpc !== rpc || this.sessions.get(session.meta.id) !== session || session.meta.id.startsWith(PENDING_PREFIX)) {
+      this.hub.log('pi 扩展对话框发生在会话就绪之前，已取消') // i18n-ignore: 仅进日志
+      rpc.respondDialog({ type: 'extension_ui_response', id: dialog.id, cancelled: true })
+      return
+    }
+    const requestId = `qn-pi-ui-${++this.counter}`
+    const timer = dialog.timeoutMs === null ? null : setTimeout(() => this.closeDialog(requestId, null), dialog.timeoutMs)
+    timer?.unref?.()
+    this.dialogs.set(requestId, { session, rpc, dialog, turnId: session.turnId, timer })
+    this.emit({
+      id: requestId,
+      method: 'item/tool/requestUserInput',
+      params: { threadId: session.meta.id, turnId: session.turnId, questions: piDialogQuestions(dialog) },
+    })
+  }
+
+  /** response 为 null 表示 pi 已按 timeout 收场，只撤卡片不回写。 */
+  private closeDialog(requestId: JsonRpcId, response: unknown): void {
+    const open = this.dialogs.get(requestId)
+    if (!open) return
+    this.dialogs.delete(requestId)
+    if (open.timer) clearTimeout(open.timer)
+    if (response === null) open.rpc.releaseDialog(open.dialog.id)
+    else open.rpc.respondDialog(piDialogResponse(open.dialog, response))
+    this.notify({ method: 'serverRequest/resolved', params: { threadId: open.session.meta.id, requestId } })
+  }
+
+  private dismissDialogs(match: (open: OpenDialog) => boolean, reply: boolean): void {
+    for (const [requestId, open] of this.dialogs) {
+      if (match(open)) this.closeDialog(requestId, reply ? {} : null)
+    }
   }
 
   private forgetTemporary(threadId: string): void {

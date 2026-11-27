@@ -392,6 +392,15 @@ function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, o
       return <CommandItem item={item} />
     case 'fileChange':
       return <FileChangeItem item={item} />
+    case 'notice':
+      // 本机提示（如中途切换模型）：居中细线分隔，不当作消息或工具步骤。
+      return (
+        <div role="status" className="flex items-center gap-3 text-ui text-qn-muted">
+          <span className="h-px flex-1 bg-qn-border" aria-hidden />
+          <span className="min-w-0 truncate">{item.text}</span>
+          <span className="h-px flex-1 bg-qn-border" aria-hidden />
+        </div>
+      )
     case 'backgroundTask': {
       const label = backgroundTaskLabel(item.status)
       return (

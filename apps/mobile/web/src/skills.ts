@@ -18,7 +18,7 @@ export function skillsKey(targetId: string, agent: AgentKind, cwd: string | null
 
 const SCOPE_LABEL: Record<string, string> = { user: t('用户'), repo: t('项目'), system: t('系统'), admin: t('管理员') }
 
-/** 与电脑版同一份 skills/list：Codex 原生支持，Claude / pi 由目标机上的桥扫描各自的技能目录。 */
+/** 与电脑版同一份 skills/list：Codex 原生支持，Claude 由桥列出，pi 由桥向运行中的会话进程查询。 */
 export const useSkills = create<SkillsState>((set, get) => ({
   lists: {},
 

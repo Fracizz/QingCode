@@ -3,7 +3,7 @@
  * 审批、中断、空闲关闭与错误恢复。只发 v2 JSON-RPC，与客户端的渲染链路完全复用。
  */
 import { randomUUID } from 'node:crypto'
-import type { Options, PermissionMode, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { ElicitationRequest, ElicitationResult, Options, PermissionMode, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ThreadStatus } from '../../../../vendor/codex-protocol/ts/v2/ThreadStatus'
 import { classifyJsonRpc, type JsonRpcId } from '@qn/protocol'
 import {
@@ -41,6 +41,7 @@ import { isolatedClaudeSessionReader, type ClaudeSessionReader } from './session
 import { ClaudeStatusLine, statusLineProfile } from './statusLine'
 import { resolveTurnInput, type ContentBlock, type TurnContent } from './userInput'
 import { ASK_USER_TOOL, askUserResult, buildUserInputRequest } from './askUser'
+import { buildElicitationRequest, elicitationResult } from './elicitation'
 import { resolveClaudeExecutable, type ClaudeExecutable } from './resolve'
 import { readVersionAsync } from '../versionProbe'
 import {
@@ -148,6 +149,8 @@ async function loadSdk(): Promise<ClaudeDeps> {
       getSessionInfo: (sessionId) => sdk.getSessionInfo(sessionId),
       getSessionMessages: (sessionId, options) => sdk.getSessionMessages(sessionId, options),
       forkSession: (sessionId, options) => sdk.forkSession(sessionId, options),
+      deleteSession: (sessionId, options) => sdk.deleteSession(sessionId, options),
+      renameSession: (sessionId, title, options) => sdk.renameSession(sessionId, title, options),
     }
   })()
   return sdkPromise
@@ -205,6 +208,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private readonly scopes = new Map<string | undefined, ClaudeScope>()
   private readonly statusLines = new Map<string, ClaudeStatusLine>()
   private readonly approvals = new Map<JsonRpcId, PendingApproval>()
+  private readonly elicitations = new Map<JsonRpcId, { session: BridgeSession; resolve(result: ElicitationResult): void }>()
   private readonly idleTimeoutMs: number
   private readonly steerHistory: SteerHistoryStore<ClaudeSteerHistory>
   private readonly archives: ArchiveStore
@@ -290,6 +294,8 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       pending.resolve({ behavior: 'deny', message: 'server 正在退出' }) // i18n-ignore: 回给模型的拒绝原因
     }
     this.approvals.clear()
+    for (const pending of this.elicitations.values()) pending.resolve({ action: 'cancel' })
+    this.elicitations.clear()
     this.scopes.clear()
   }
 
@@ -481,6 +487,10 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         }
         return {}
       }
+      case 'thread/delete':
+        return this.deleteThread(scope, params)
+      case 'thread/name/set':
+        return this.renameThread(scope, params)
       case 'thread/start': {
         const id = randomUUID()
         const ephemeral = params.ephemeral === true
@@ -697,6 +707,42 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     session.permissionMode = mode
   }
 
+  private async deleteThread(scope: ClaudeScope, params: Json): Promise<Json> {
+    const threadId = scalarText(params.threadId)
+    if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
+    const session = await this.sessionFor(scope, threadId)
+    if (session.meta.ephemeral) throw new BridgeRpcError(-32602, '临时会话不能删除')
+    if (session.turnId || session.preparingTurn) throw new BridgeRpcError(-32602, '请先停止当前轮次')
+    const reader = this.sessionReader(scope)
+    if (!reader.deleteSession) throw new BridgeRpcError(-32601, 'Claude 不支持删除会话')
+    // 先关掉仍在运行的 query，避免删除后又把会话写回磁盘。
+    if (session.idleTimer) clearTimeout(session.idleTimer)
+    closeQuery(session)
+    await reader.deleteSession(threadId, { dir: session.meta.cwd })
+    scope.historyPages.clear(threadId)
+    scope.sessions.delete(threadId)
+    scope.metas.delete(threadId)
+    this.archives.set(threadId, false)
+    this.notify({ method: 'thread/deleted', params: { threadId } })
+    return {}
+  }
+
+  private async renameThread(scope: ClaudeScope, params: Json): Promise<Json> {
+    const threadId = scalarText(params.threadId)
+    const name = scalarText(params.name).trim()
+    if (!threadId || !name) throw new BridgeRpcError(-32602, 'threadId 与会话名称不能为空')
+    const session = await this.sessionFor(scope, threadId)
+    if (session.meta.ephemeral) throw new BridgeRpcError(-32602, '临时会话不能重命名')
+    const reader = this.sessionReader(scope)
+    if (!reader.renameSession) throw new BridgeRpcError(-32601, 'Claude 不支持重命名会话')
+    await reader.renameSession(threadId, name, { dir: session.meta.cwd })
+    session.meta.name = name
+    const meta = scope.metas.get(threadId)
+    if (meta) meta.name = name
+    this.notify({ method: 'thread/name/updated', params: { threadId, threadName: name } })
+    return {}
+  }
+
   private async forkThread(scope: ClaudeScope, params: Json): Promise<Json> {
     const threadId = scalarText(params.threadId)
     if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
@@ -834,6 +880,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
           signal: extra.signal,
           decisionReason: extra.decisionReason,
         }),
+      onElicitation: (request, extra) => this.onElicitation(session, request, extra.signal),
       pathToClaudeCodeExecutable: this.claude?.path ?? '',
       env: agentConfigEnv(envStrings(), 'CLAUDE_CONFIG_DIR', session.scope.directory),
       stderr: (data: string) => this.hub.log(`claude stderr: ${redact(data)}`),
@@ -981,7 +1028,9 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const pending = [...this.approvals.values()].filter((item) => item.session === session)
     const flags: ('waitingOnApproval' | 'waitingOnUserInput')[] = []
     if (pending.some((item) => !item.toResult)) flags.push('waitingOnApproval')
-    if (pending.some((item) => item.toResult)) flags.push('waitingOnUserInput')
+    if (pending.some((item) => item.toResult) || [...this.elicitations.values()].some((item) => item.session === session)) {
+      flags.push('waitingOnUserInput')
+    }
     return { type: 'active', activeFlags: flags }
   }
 
@@ -1030,8 +1079,28 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     })
   }
 
+  private onElicitation(session: BridgeSession, request: ElicitationRequest, signal: AbortSignal): Promise<ElicitationResult> {
+    const requestId = `qn-claude-elicitation-${++this.requestCounter}`
+    return new Promise<ElicitationResult>((resolve) => {
+      this.elicitations.set(requestId, { session, resolve })
+      signal.addEventListener('abort', () => {
+        if (!this.elicitations.delete(requestId)) return
+        resolve({ action: 'cancel' })
+        this.notify({ method: 'serverRequest/resolved', params: { threadId: session.meta.id, requestId } })
+      }, { once: true })
+      this.emit(buildElicitationRequest(requestId, session.meta.id, session.turnId, request))
+    })
+  }
+
   private resolveApproval(msg: Json): void {
     const id = msg.id as JsonRpcId
+    const elicitation = this.elicitations.get(id)
+    if (elicitation) {
+      this.elicitations.delete(id)
+      elicitation.resolve(elicitationResult(msg))
+      this.notify({ method: 'serverRequest/resolved', params: { requestId: id } })
+      return
+    }
     const pending = this.approvals.get(id)
     if (!pending) return
     this.approvals.delete(id)

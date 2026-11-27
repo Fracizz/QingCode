@@ -1,7 +1,7 @@
-import type { GlobalAccessMode } from '@qn/codex-client'
+import type { AgentKind, GlobalAccessMode } from '@qn/codex-client'
 
 /** 目标上可用的对话 Agent（mvp §11、T22）；缺省为 codex。 */
-export type AgentKind = 'codex' | 'claude' | 'pi'
+export type { AgentKind }
 
 // 渲染进程 ↔ backend 的线协议类型（mvp.md §5）。这里只描述形状，不含任何 IO。
 
@@ -174,7 +174,7 @@ export type SettingsSendKey = 'enter' | 'ctrlEnter'
 export type SettingsDensity = 'comfortable' | 'compact'
 /** 界面主题：深色为默认，灰色是抬亮的中性灰，浅色是白底。 */
 export type SettingsTheme = 'dark' | 'gray' | 'light'
-export type SettingsAgentKind = 'codex' | 'claude' | 'pi'
+export type SettingsAgentKind = AgentKind
 export const AUTO_ARCHIVE_DAYS = [0, 1, 7, 14, 30, 60, 90, 180] as const
 export type AutoArchiveDays = (typeof AUTO_ARCHIVE_DAYS)[number]
 

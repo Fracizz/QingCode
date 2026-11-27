@@ -1,3 +1,4 @@
+import type { AgentCapabilities } from './agents'
 import type { WorkspaceMethods } from './workspace'
 import { PROTOCOL_VERSION } from './constants'
 import { hasOwn, isErrorMessage, isNumber, isRecord, isString } from './guards'
@@ -79,13 +80,8 @@ export interface ServerMethods extends WorkspaceMethods {
       lastSeq: number
       codexVersion?: string
       agentVersion?: string
-      capabilities?: {
-        approvals: boolean
-        rateLimits: boolean
-        ephemeralNoTools?: boolean
-        accessModes?: boolean
-        agentConfigDir?: boolean
-      }
+      /** 旧版 server 只带其中一部分字段。 */
+      capabilities?: Partial<AgentCapabilities> & Pick<AgentCapabilities, 'approvals' | 'rateLimits'>
     }
   }
   'codex.attach': {

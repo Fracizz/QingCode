@@ -1,7 +1,8 @@
 import { t } from '@qn/codex-client'
 import { ArrowDown } from 'lucide-react'
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { LoadingIcon, Note } from './ui'
+import { LoadingIcon } from './ui'
+import { toast } from '../toast'
 
 const TOUCH_SLOP = 8
 const REFRESH_DISTANCE = 56
@@ -27,7 +28,6 @@ export function PullToRefresh({
   const main = useRef<HTMLElement>(null)
   const [distance, setDistance] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
-  const [failed, setFailed] = useState(false)
   const isDisabled = useEffectEvent(() => disabled)
   const refresh = useEffectEvent(() => onRefresh())
 
@@ -94,11 +94,10 @@ export function PullToRefresh({
         || pullDistance(touch.clientY - current.y) < REFRESH_DISTANCE) return
       pending = true
       setRefreshing(true)
-      setFailed(false)
       try {
         await refresh()
       } catch {
-        if (mounted) setFailed(true)
+        if (mounted) toast(t('刷新失败，请重试。'), { tone: 'error' })
       } finally {
         pending = false
         if (mounted) setRefreshing(false)
@@ -122,7 +121,6 @@ export function PullToRefresh({
   return (
     <div className="qn-pull-refresh">
       <main ref={main} className={`${className} qn-pull-scroll`} aria-label={label} aria-busy={refreshing}>
-        {failed && <Note message={t('刷新失败，请重试。')} tone="error" onClose={() => setFailed(false)} />}
         {children}
       </main>
       {(distance > 0 || refreshing) && (

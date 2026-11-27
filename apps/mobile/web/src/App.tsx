@@ -7,6 +7,7 @@ import { CredentialDialog, DirectoryDialog } from './components/Dialogs'
 import { FileViewer } from './components/FileViewer'
 import { ProjectsPage } from './components/ProjectsPage'
 import { TargetsPage } from './components/TargetsPage'
+import { Toaster } from './components/Toaster'
 import { ThreadsPage } from './components/ThreadsPage'
 import { UsageHome } from './components/UsagePage'
 import { WorkspaceHome, WorkspaceNav } from './components/WorkspaceHome'
@@ -109,7 +110,7 @@ export function App() {
       {/* 工作台三个标签页都铺顶部氛围光（同 rust 版 .dashboard::before）。 */}
       {(page === 'connections' || workspace) && <div className="qn-glow" data-state={glow} aria-hidden />}
       {connectionWarning && page !== 'form' && (
-        <div className="shrink-0 border-b border-qn-border bg-qn-panel px-3 pt-2" role="status">
+        <div className="qn-app-banner shrink-0 border-b border-qn-border bg-qn-panel px-3 pt-2" role="status">
           <Note message={connectionWarning} tone="warn" />
         </div>
       )}
@@ -126,6 +127,7 @@ export function App() {
       <CredentialDialog />
       <DirectoryDialog />
       <FileViewer />
+      <Toaster />
     </div>
   )
 }

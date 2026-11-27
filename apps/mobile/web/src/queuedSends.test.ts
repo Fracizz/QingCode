@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { archivedThreadKey } from './agents'
-import { mobileTurnFits, queuedInput, restoreQueues, serializeQueues, type QueuedSend } from './queuedSends'
+import { applyRelayResult, mobileTurnFits, queuedInput, relayRequest, restoreQueues, serializeQueues, UNCONFIRMED_QUEUED_SEND, type QueuedSend } from './queuedSends'
 import type { Connection } from './types'
 
 const conn: Connection = {
@@ -30,5 +30,34 @@ describe('手机发送队列', () => {
     expect(input).toEqual([{ type: 'text', text: '> 上下文\n备注\n\n修订', text_elements: [] }, image])
     expect(mobileTurnFits('local', 'codex', 'thread', input, {}, 'turn')).toBe(true)
     expect(mobileTurnFits('local', 'codex', 'thread', [{ type: 'text', text: '字'.repeat(350_000), text_elements: [] }], {})).toBe(false)
+  })
+})
+
+describe('锁屏交给电脑代发', () => {
+  it('按手机直发的规则组装请求：默认权限走 codex.send，其余带上访问模式', () => {
+    const plain = relayRequest('local', 'thread', 'codex', { ...item, overrides: { model: 'gpt', serviceTier: null } },
+      { accessMode: 'default' }, false, 'client-1')
+    expect(plain).toEqual({
+      method: 'codex.send',
+      params: { targetId: 'local', agent: 'codex', msg: { method: 'turn/start', params: {
+        threadId: 'thread', input: queuedInput('codex', item), clientUserMessageId: 'client-1', model: 'gpt', serviceTier: null,
+      } } },
+    })
+    const managed = relayRequest('local', 'thread', 'claude', item, { accessMode: 'auto', inheritAccess: false }, true, 'client-2')
+    expect(managed).toMatchObject({ method: 'mobile.turn.start', params: { accessMode: 'auto', inheritAccess: false } })
+    expect(() => relayRequest('local', 'thread', 'claude', item, { accessMode: 'auto' }, false, 'c')).toThrow('访问模式')
+  })
+
+  it('收回时去掉电脑已发出的消息，暂停原因落到队首；电脑丢失记录时标为未确认', () => {
+    const list = [item, { ...item, id: 'second' }, { ...item, id: 'third' }]
+    expect(applyRelayResult(list, ['first'], undefined).map((entry) => entry.id)).toEqual(['second', 'third'])
+    expect(applyRelayResult(list, ['first', 'second'], '上一轮未完成，队列已暂停')[0])
+      .toMatchObject({ id: 'third', error: '上一轮未完成，队列已暂停' })
+    // 应用重开后队首带着恢复提示，电脑仍在正常代发时清除提示继续发送。
+    const restored = [{ ...item, error: '已恢复排队消息，等待继续发送' }]
+    expect(applyRelayResult(restored, [], undefined)[0]?.error).toBeUndefined()
+    expect(applyRelayResult(list, [], undefined, false)[0]?.error).toBe(UNCONFIRMED_QUEUED_SEND)
+    expect(applyRelayResult(list, ['first', 'second', 'third'], undefined)).toEqual([])
+    expect(applyRelayResult(list, [], undefined)).toBe(list)
   })
 })

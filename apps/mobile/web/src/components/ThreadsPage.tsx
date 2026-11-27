@@ -7,7 +7,8 @@ import { Button, Empty, Header, Loading, Note } from './ui'
 import { ProjectTools } from './ProjectTools'
 import { NewSessionButton } from './NewSessionButton'
 import { WorkspaceIcon, WorkspaceSearch, WorkspaceThreadRow } from './WorkspaceHome'
-import { groupWorkspaceThreads, useWorkspacePreferences } from '../workspace'
+import { SortableList } from './SortableList'
+import { groupWorkspaceThreads, placeWorkspaceThread, useWorkspacePreferences } from '../workspace'
 
 export function ThreadsPage() {
   const projects = useApp((s) => s.projects)
@@ -19,14 +20,11 @@ export function ThreadsPage() {
   const agentErrors = useApp((s) => s.agentErrors)
   const agentSettings = useApp((s) => s.agentSettings)
   const targets = useApp((s) => s.targets)
-  const error = useApp((s) => s.error)
-  const notice = useApp((s) => s.notice)
-  const clearError = useApp((s) => s.clearError)
-  const clearNotice = useApp((s) => s.clearNotice)
   const goBack = useApp((s) => s.goBack)
   const refreshThreads = useApp((s) => s.refreshThreads)
   const openThread = useApp((s) => s.openThread)
   const preferences = useWorkspacePreferences()
+  const desktopId = useApp((s) => s.activeId)
   const [query, setQuery] = useState('')
   // 从对话页返回时用最近会话占位，避免等待完整列表期间显示空状态。
   const [settled, setSettled] = useState(threads.length > 0)
@@ -61,8 +59,6 @@ export function ThreadsPage() {
         }
       />
       <div className="qn-body qn-scroll">
-        {error && <Note message={error} tone="error" onClose={clearError} />}
-        {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
         {threadsError ? (
           <Note message={threadsError} tone="error" actionLabel={t('重试')} onAction={() => void refreshThreads()} />
         ) : (
@@ -84,12 +80,13 @@ export function ThreadsPage() {
           <Empty>{query ? t('没有匹配的会话。') : t('还没有会话。点「新建会话」开始。')}</Empty>
         )}
         {shown.length > 0 && (
-          <div className="qn-list-group qn-list-plain mt-3">
-            {shown.map((thread) => (
-              <WorkspaceThreadRow key={threadKey(thread.agent, thread.id)} thread={thread}
-                onOpen={() => void openThread(thread.id, thread.agent)} />
-            ))}
-          </div>
+          // 与首页分组共用一份会话顺序；搜索时不排序，避免只按筛选结果保存。
+          <SortableList items={shown} itemKey={(thread) => threadKey(thread.agent, thread.id)}
+            disabled={Boolean(query.trim()) || !desktopId || !project} className="qn-list-group qn-list-plain mt-3"
+            label={t('{name} 的会话', { name: project?.name ?? '' })}
+            onMove={(from, to) => { if (desktopId && project) placeWorkspaceThread(desktopId, project, shown, from, to) }}>
+            {(thread) => <WorkspaceThreadRow thread={thread} onOpen={() => void openThread(thread.id, thread.agent)} />}
+          </SortableList>
         )}
       </div>
       {project && <div className="qn-footer flex gap-2">

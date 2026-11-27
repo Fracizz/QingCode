@@ -6,7 +6,10 @@ import {
   overridesFor,
   parsePrefs,
   pickModel,
+  prefsFor,
+  putThreadPrefs,
   resolveSelection,
+  threadPrefsKey,
   toModelOptions,
   triggerLabel,
   visibleModels,
@@ -104,5 +107,60 @@ describe('turn/start 覆盖项', () => {
     })
     expect(parsePrefs('not json')).toEqual({})
     expect(parsePrefs(null)).toEqual({})
+  })
+})
+
+describe('按会话记忆模型偏好', () => {
+  const models = toModelOptions(RAW)
+  const sid = 'codex:local'
+
+  it('会话记录优先，其次会话历史配置，最后 agent 默认', () => {
+    const table = {
+      [sid]: { model: 'gpt-big', effort: 'high', fast: true },
+      [threadPrefsKey(sid, 't1')]: { model: 'gpt-big', effort: 'low', fast: false },
+    }
+    expect(prefsFor(table, 'codex', sid, null, models)).toEqual(table[sid])
+    expect(prefsFor(table, 'codex', sid, 't1', models)).toEqual(table[threadPrefsKey(sid, 't1')])
+    expect(prefsFor(table, 'codex', sid, 't2', models, { model: 'gpt-big', effort: null }))
+      .toMatchObject({ model: 'gpt-big', effort: null, fast: true })
+    // 历史模型不在列表里或列表未加载时回落 agent 默认。
+    expect(prefsFor(table, 'codex', sid, 't2', models, { model: 'gone', effort: 'low' })).toEqual(table[sid])
+    expect(prefsFor(table, 'codex', sid, 't2', [], { model: 'gpt-big', effort: 'low' })).toEqual(table[sid])
+    expect(prefsFor({}, 'codex', sid, 't3', models)).toEqual(EMPTY_PREFS)
+  })
+
+  it('Claude 历史的完整模型 ID 对应到别名，缺强度时沿用默认', () => {
+    const claude = toModelOptions([
+      { model: 'default', displayName: '默认' },
+      { model: 'opus', displayName: 'Opus' },
+      { model: 'opus[1m]', displayName: 'Opus 1M' },
+    ])
+    const table = { 'claude:local': { model: null, effort: 'max', fast: false } }
+    expect(prefsFor(table, 'claude', 'claude:local', 't', claude, { model: 'claude-opus-5-5', effort: null }))
+      .toMatchObject({ model: 'opus', effort: 'max', fast: false })
+  })
+
+  it('Codex 历史回报的服务档位恢复快速开关，没回报时沿用默认', () => {
+    const table = { [sid]: { model: null, effort: null, fast: true } }
+    expect(prefsFor(table, 'codex', sid, 't', models, { model: 'gpt-big', effort: null, serviceTier: null }).fast).toBe(false)
+    expect(prefsFor({}, 'codex', sid, 't', models, { model: 'gpt-big', effort: null, serviceTier: 'priority' }).fast).toBe(true)
+    expect(prefsFor(table, 'codex', sid, 't', models, { model: 'gpt-big', effort: null }).fast).toBe(true)
+  })
+
+  it('电脑端用别的模型发过消息后，手机改用历史里的配置', () => {
+    const key = threadPrefsKey(sid, 't')
+    const table = { [key]: { model: 'gpt-big', effort: 'high', fast: false, seen: { model: 'gpt-big', effort: 'high' } } }
+    expect(prefsFor(table, 'codex', sid, 't', models, { model: 'gpt-big', effort: 'high' })).toBe(table[key])
+    expect(prefsFor(table, 'codex', sid, 't', models, { model: 'gpt-small', effort: 'minimal' }))
+      .toMatchObject({ model: 'gpt-small', effort: 'minimal' })
+  })
+
+  it('会话记录有上限，agent 默认不被淘汰', () => {
+    let table: Record<string, typeof EMPTY_PREFS> = { [sid]: EMPTY_PREFS }
+    for (let i = 0; i < 510; i++) table = putThreadPrefs(table, threadPrefsKey(sid, `t${i}`), EMPTY_PREFS)
+    expect(table[sid]).toEqual(EMPTY_PREFS)
+    expect(table[threadPrefsKey(sid, 't0')]).toBeUndefined()
+    expect(table[threadPrefsKey(sid, 't509')]).toEqual(EMPTY_PREFS)
+    expect(Object.keys(table)).toHaveLength(501)
   })
 })

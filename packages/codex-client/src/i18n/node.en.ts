@@ -604,4 +604,12 @@ export default {
   'pi 拒绝了引导消息': 'pi rejected the steering message',
   'Git 远端地址列表过长': 'The Git remote list is too long',
   'Git 工作目录路径过长，Windows 无法启动 Git 进程': 'The Git working directory path is too long for Windows to start Git',
+
+  // 会话删除与重命名
+  '临时会话不能删除': 'Temporary sessions cannot be deleted',
+  'Claude 不支持删除会话': 'Claude does not support deleting sessions',
+  'threadId 与会话名称不能为空': 'threadId and session name cannot be empty',
+  '临时会话不能重命名': 'Temporary sessions cannot be renamed',
+  'Claude 不支持重命名会话': 'Claude does not support renaming sessions',
+  'pi 未能重命名会话': 'pi could not rename the session',
 } satisfies Record<string, string>

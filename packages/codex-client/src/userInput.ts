@@ -1,5 +1,6 @@
 // item/tool/requestUserInput（Agent 向用户提问）的纯逻辑：解析问题、组装回答。
-// Codex 计划模式与 Claude 的 AskUserQuestion（server 端映射而来）共用这一请求。
+// Codex 计划模式、Claude 的 AskUserQuestion 与 pi 扩展对话框（后两者由 server 映射）共用这一请求；
+// MCP elicitation 的表单也转成同一套问题。
 import type { ToolRequestUserInputResponse } from './codex-types'
 
 export const USER_INPUT_METHOD = 'item/tool/requestUserInput'
@@ -16,6 +17,13 @@ export type UserInputQuestion = {
   /** 扩展字段：Claude AskUserQuestion 的多选；Codex 官方请求不带，按单选处理。 */
   multiSelect: boolean
   options: UserInputOption[]
+  /** 以下为扩展字段，Codex 官方请求不带。 */
+  optional?: boolean
+  inputType?: 'number' | 'integer'
+  multiline?: boolean
+  prefill?: string
+  /** 选项是固定文案，界面按当前语言显示，回传值不变。 */
+  localizedOptions?: boolean
 }
 
 type JsonRecord = Record<string, unknown>
@@ -50,6 +58,9 @@ export function parseUserInputQuestions(params: unknown): UserInputQuestion[] {
       isSecret: record.isSecret === true,
       multiSelect: record.multiSelect === true,
       options,
+      ...(record.multiline === true ? { multiline: true } : {}),
+      ...(text(record.prefill) ? { prefill: text(record.prefill) } : {}),
+      ...(record.localizedOptions === true ? { localizedOptions: true } : {}),
     })
   })
   return result
@@ -65,19 +76,29 @@ export function userInputResponse(answers: Readonly<Record<string, readonly stri
   return { answers: result }
 }
 
-/** 每个问题都至少有一个非空答案时才允许提交。 */
+/** 必答题都有非空答案、数字题填的是数字时才允许提交。 */
 export function userInputComplete(
   questions: readonly UserInputQuestion[],
   answers: Readonly<Record<string, readonly string[]>>,
 ): boolean {
-  return questions.length > 0 && questions.every((question) =>
-    (answers[question.id] ?? []).some((value) => value.trim() !== ''))
+  return questions.length > 0 && questions.every((question) => {
+    const values = (answers[question.id] ?? []).filter((value) => value.trim() !== '')
+    if (!values.length) return question.optional === true
+    if (!question.inputType) return true
+    return values.every((value) => question.inputType === 'integer'
+      ? Number.isSafeInteger(Number(value)) : Number.isFinite(Number(value)))
+  })
 }
 
 /** 界面上单个问题的选择状态：选中的选项 + 自由输入；桌面与手机共用。 */
 export type UserInputDraft = { picked: string[]; other: string }
 
 export const EMPTY_USER_INPUT_DRAFT: UserInputDraft = { picked: [], other: '' }
+
+/** 尚未改动时的草稿；带预填内容的问题以预填内容起步。 */
+export function initialUserInputDraft(question: UserInputQuestion): UserInputDraft {
+  return question.prefill ? { picked: [], other: question.prefill } : EMPTY_USER_INPUT_DRAFT
+}
 
 /** 点选项：多选切换；单选与自由输入互斥，再点一次取消。 */
 export function pickUserInputOption(question: UserInputQuestion, draft: UserInputDraft, label: string): UserInputDraft {
@@ -99,7 +120,7 @@ export function userInputAnswers(
   drafts: Readonly<Record<string, UserInputDraft>>,
 ): Record<string, string[]> {
   return Object.fromEntries(questions.map((question) => {
-    const draft = drafts[question.id] ?? EMPTY_USER_INPUT_DRAFT
+    const draft = drafts[question.id] ?? initialUserInputDraft(question)
     return [question.id, [...draft.picked, ...(draft.other.trim() ? [draft.other.trim()] : [])]]
   }))
 }

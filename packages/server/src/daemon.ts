@@ -9,6 +9,7 @@ import {
   type FramedConnection,
   type Req,
   type ServerMessage,
+  AGENT_CAPABILITIES,
 } from '@qn/protocol'
 import {
   AgentHostError,
@@ -215,9 +216,6 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
             ...(agent === 'claude' ? { claudeConfigDir: p?.claudeConfigDir } : {}),
           }
           const opened = await hosts[agent].open(openOptions)
-          const capabilities = agent === 'pi'
-            ? asRecord((opened as { capabilities?: unknown }).capabilities)
-            : { approvals: true, rateLimits: true, accessModes: true, agentConfigDir: true }
           return sendOk(session, id, {
             initialize: opened.initialize ?? null,
             lastSeq: opened.lastSeq,
@@ -226,7 +224,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
               ? { codexVersion: opened.codexVersion }
               : {}),
             ...(opened.agentVersion ? { agentVersion: opened.agentVersion } : {}),
-            ...(capabilities ? { capabilities } : {}),
+            capabilities: AGENT_CAPABILITIES[agent],
           })
         }
         case 'codex.attach': {
@@ -236,7 +234,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
           session.attached.add(agent)
           return sendOk(session, id, {
             ...hosts[agent].attach(session.id, p.sinceSeq),
-            accessModes: agent === 'codex' || agent === 'claude',
+            accessModes: AGENT_CAPABILITIES[agent].accessModes,
           })
         }
         case 'codex.status':
