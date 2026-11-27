@@ -14,7 +14,7 @@ vi.mock('./ui', () => ({
   }) => <button type="button" aria-label={label} {...props} />,
 }))
 
-it('排队消息用小图打开图片预览，用图标查看附件和技能', async () => {
+it('排队消息用带标签的缩略图打开图片预览，用图标查看附件和技能', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const chat = { targetId: 'remote', agent: 'codex', threadId: 'thread' } as const
   const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l7sAAAAASUVORK5CYII='
@@ -42,7 +42,7 @@ it('排队消息用小图打开图片预览，用图标查看附件和技能', a
     const close = vi.fn()
     Object.assign(dialog, { showModal, close })
     expect(row?.textContent).toContain('排队正文')
-    expect(thumbnail.classList.contains('size-6')).toBe(true)
+    expect(thumbnail.textContent).toBe('图片 1')
     expect(thumbnail.querySelector('img')?.getAttribute('src')).toBe(image)
     expect(imageOnly?.querySelector('button[aria-haspopup="dialog"]')).not.toBeNull()
     expect(imageOnly?.textContent).not.toContain('附件或技能')

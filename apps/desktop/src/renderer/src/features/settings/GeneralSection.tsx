@@ -21,6 +21,7 @@ import { SectionHeading, Segmented, SettingRow } from './fields'
 const globalAccessOptions = [
   { value: 'default', label: 'Agent 默认权限' },
   { value: 'restricted', label: '受限权限' },
+  { value: 'auto', label: '自动' },
   { value: 'fullAccess', label: '完全访问' },
 ]
 
@@ -94,7 +95,7 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
       {visible('globalAccessMode') && (
         <SettingRow
           title="权限总控"
-          description="使用「继承总控」的会话采用此设置，桌面与手机端同步生效。受限权限对应 Codex 只读、Claude 计划模式；完全访问对应 Codex 完全访问、Claude 跳过审批。"
+          description="使用「继承总控」的会话采用此设置，桌面与手机端同步生效。受限权限对应 Codex 只读、Claude 计划模式；自动对应 Claude 自动模式，Codex 沿用自身配置；完全访问对应 Codex 完全访问、Claude 跳过审批。"
         >
           <Select
             aria-label="权限总控"

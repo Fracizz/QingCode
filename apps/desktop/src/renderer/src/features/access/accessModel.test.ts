@@ -21,11 +21,16 @@ describe('会话访问模式', () => {
     expect(getAccessMode(rememberAccessMode(emptyAccessMemory, session, 'readOnly'), session, 'fullAccess')).toBe('readOnly')
   })
 
-  it('总控为完全访问时，Codex 关闭沙箱、Claude 跳过审批，显式选择仍优先', () => {
-    expect(getAccessMode(emptyAccessMemory, draft, 'fullAccess')).toBe('fullAccess')
-    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'claude' }, 'fullAccess')).toBe('bypassPermissions')
-    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'pi' }, 'fullAccess')).toBe('default')
-    expect(getAccessMode(rememberAccessMode(emptyAccessMemory, session, 'readOnly'), session, 'fullAccess')).toBe('readOnly')
+  it('总控为自动时，Claude 使用自动模式，Codex 与 pi 沿用 Agent 默认', () => {
+    const claude = { ...session, agent: 'claude' } as const
+    expect(getAccessMode(emptyAccessMemory, claude, 'auto')).toBe('auto')
+    expect(turnAccessOverride('claude', 'auto')).toEqual({ claudePermissionMode: 'auto' })
+    expect(getAccessMode(emptyAccessMemory, draft, 'auto')).toBe('default')
+    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'pi' }, 'auto')).toBe('default')
+    expect(getAccessMode(rememberAccessMode(emptyAccessMemory, claude, 'auto'), claude)).toBe('auto')
+    // Codex 没有该档位，会话级选择被忽略。
+    expect(getAccessMode(rememberAccessMode(emptyAccessMemory, session, 'auto'), session)).toBe('default')
+    expect(turnAccessOverride('codex', 'auto')).toBeNull()
   })
 
   it('在草稿转会话后保留选择，新草稿、其他目标和其他会话使用默认权限', () => {

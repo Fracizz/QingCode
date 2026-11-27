@@ -91,6 +91,16 @@ export function refreshThreadOrder(previous: ThreadSummary[], incoming: ThreadSu
   return [...remaining.values(), ...existing]
 }
 
+/**
+ * 刚建的会话在首轮结束前，Agent 的 thread/list 可能还查不到（Codex 首轮落盘后才列出）。
+ * 把本地记下的会话补进列表，cwd 为 null 的列表不限项目；服务端已返回的以服务端为准。
+ */
+export function withLocalThreads(incoming: ThreadSummary[], local: readonly ThreadSummary[], cwd: string | null): ThreadSummary[] {
+  const known = new Set(incoming.map((thread) => threadKey(thread.agent, thread.id)))
+  const missing = local.filter((thread) => !known.has(threadKey(thread.agent, thread.id)) && (cwd === null || thread.cwd === cwd))
+  return missing.length ? mergeThreadSummaries([missing, incoming]) : incoming
+}
+
 export function formatTime(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return '—'
   const date = new Date(ms)

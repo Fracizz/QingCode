@@ -45,9 +45,10 @@ import {
 import type { ServerResult } from '@qn/protocol'
 import type { AgentKind } from '../../../shared/backendApi'
 import { call, on } from '../lib/backend'
+import { canContinueQueued, canSteerQueued, replacePendingText, type PendingThreadMode } from './pendingQueue'
 import { attachResult, BackendCodexTransport, maxSeq, openSeq } from '../lib/codexTransport'
 import { describeCodexOpenError, friendlyError, isActiveWriterError } from '../lib/errors'
-import { mergeThreadSummaries, refreshThreadOrder, toThreadSummaries, type ThreadSummary } from '../lib/threads'
+import { mergeThreadSummaries, refreshThreadOrder, toThreadSummaries, withLocalThreads, type ThreadSummary } from '../lib/threads'
 import { archivedThreadSummaries, isInactiveForArchive } from '../lib/threadPrefs'
 import {
   AGENTS,
@@ -235,6 +236,14 @@ type CodexState = {
   sendSide: (text: string, mode: SendMode) => Promise<void>
   removePendingSend: (chat: ChatAddress, id: number) => void
   retryPendingSend: (chat: ChatAddress) => void
+  /** 暂停该排队消息的自动发送并返回释放函数；消息正在发送或已被暂停时返回 null。 */
+  holdPendingSend: (chat: ChatAddress, id: number) => ((resume?: boolean) => void) | null
+  /** 修改排队消息正文，附件与技能保留；需先 holdPendingSend。 */
+  editPendingSend: (chat: ChatAddress, id: number, text: string) => boolean
+  /** 把排队消息补充到当前一轮（仅 Codex）。 */
+  steerPendingSend: (chat: ChatAddress, id: number) => Promise<boolean>
+  /** 把排队消息移到新会话发送，并切换到新会话。 */
+  sendPendingInNewThread: (chat: ChatAddress, id: number, mode: PendingThreadMode) => Promise<boolean>
   openSideChat: (quote?: string) => void
   addSideAnnotation: (quote: string, comment: string) => void
   editSideAnnotation: (id: string, quote: string) => void
@@ -287,11 +296,25 @@ export const useCodex = create<CodexState>((set, get) => {
   const submitting = new Set<string>()
   const changingParentThreads = new Set<string>()
   const replacing = new Set<string>()
+  /** 正在重新编辑或选择新会话的排队消息，自动发送要跳过，避免用户还在改时被发出。 */
+  const holdingPending = new Set<number>()
   let nextPendingId = 0
   let nextSideAnnotationId = 0
   const sideAnnotation = (quote: string, comment = ''): Annotation =>
     ({ id: `side-${++nextSideAnnotationId}`, quote, comment })
   const threadListRequests = new Map<string, symbol>()
+  /** 本窗口新建、服务端列表还没返回的会话，按 pendingSendKey 记录；列表查到后移除。 */
+  const localThreads = new Map<string, { targetId: string; summary: ThreadSummary }>()
+  const localThreadsFor = (targetId: string, incoming: ThreadSummary[]): ThreadSummary[] => {
+    const listed = new Set(incoming.map((thread) => threadKey(thread.agent, thread.id)))
+    const result: ThreadSummary[] = []
+    for (const [key, entry] of localThreads) {
+      if (entry.targetId !== targetId) continue
+      if (listed.has(threadKey(entry.summary.agent, entry.summary.id))) localThreads.delete(key)
+      else result.push(entry.summary)
+    }
+    return result
+  }
   let openThreadToken = 0
 
   const refreshThreadListsFor = (targetId: string, agent: AgentKind, threadId?: string, cwd?: string) => {
@@ -682,6 +705,7 @@ export const useCodex = create<CodexState>((set, get) => {
   }
 
   function removeFromThreadLists({ targetId, agent, threadId }: ChatAddress) {
+    localThreads.delete(pendingSendKey({ targetId, agent, threadId }))
     set((state) => ({
       threadLists: Object.fromEntries(Object.entries(state.threadLists).map(([id, list]) => {
         if (list.targetId !== targetId) return [id, list]
@@ -918,7 +942,7 @@ export const useCodex = create<CodexState>((set, get) => {
     const session = get().sessions[sessionKey(chat.targetId, chat.agent)]
     const view = session?.state.threads[chat.threadId]
     const next = get().pendingSends[key]?.[0]
-    if (!session?.opened || !view || !next || submitting.has(key)) return
+    if (!session?.opened || !view || !next || submitting.has(key) || holdingPending.has(next.id)) return
     if (session.openedConfig?.directory !== configDirFor(chat.targetId, chat.agent)) return
     if (view.status === 'running' || (!retry && (view.status !== 'idle' || next.error))) return
 
@@ -1123,7 +1147,8 @@ export const useCodex = create<CodexState>((set, get) => {
         if (threadListRequests.get(key) !== request) return
         const { threads, error } = await loadThreadList(targetId, cwd ?? undefined)
         if (threadListRequests.get(key) === request) {
-          update(refreshThreadOrder(get().threadLists[key]?.threads ?? noThreads, threads), false, error)
+          const merged = withLocalThreads(threads, localThreadsFor(targetId, threads), cwd)
+          update(refreshThreadOrder(get().threadLists[key]?.threads ?? noThreads, merged), false, error)
         }
       } catch (err) {
         if (threadListRequests.get(key) === request) {
@@ -1437,6 +1462,17 @@ export const useCodex = create<CodexState>((set, get) => {
           threadId = createdThreadId
           chat = { targetId, agent, threadId: createdThreadId }
           chatKey = pendingSendKey(chat)
+          // 首轮结束前 thread/list 可能查不到新会话，先用本地摘要占位，侧栏能立即看到。
+          if (!options?.sideKey) {
+            localThreads.set(chatKey, { targetId, summary: {
+              id: createdThreadId,
+              title: trimmed.split('\n')[0]?.trim() || '未命名会话',
+              preview: trimmed,
+              cwd: created.thread.cwd || context.currentCwd || '',
+              updatedAt: Date.now(),
+              agent,
+            } })
+          }
           submitting.add(chatKey)
           const current = get()
           if (
@@ -1444,8 +1480,9 @@ export const useCodex = create<CodexState>((set, get) => {
             current.access.draftRevision === context.access.draftRevision
           ) {
             set({ currentThreadId: createdThreadId, currentAgent: agent, access: resetDraftAccess(current.access) })
-            void get().refreshThreads()
           }
+          // 用户已切走时也要刷新该目标下的项目列表，让新会话出现在侧栏。
+          if (!options?.sideKey) refreshThreadListsFor(targetId, agent, createdThreadId, created.thread.cwd || context.currentCwd || undefined)
         }
         if (!threadId) return false
         const view = get().sessions[key]?.state.threads[threadId]
@@ -1504,6 +1541,107 @@ export const useCodex = create<CodexState>((set, get) => {
         if (ok) void flushPending(chat, true)
         else pausePending(chat, '连接未就绪，请重新连接后继续')
       })
+    },
+
+    holdPendingSend: (chat, id) => {
+      const item = get().pendingSends[pendingSendKey(chat)]?.find((entry) => entry.id === id)
+      if (!item || item.sending || holdingPending.has(id)) return null
+      holdingPending.add(id)
+      return (resume = true) => {
+        if (holdingPending.delete(id) && resume) void flushPending(chat)
+      }
+    },
+
+    editPendingSend: (chat, id, text) => {
+      const item = get().pendingSends[pendingSendKey(chat)]?.find((entry) => entry.id === id)
+      if (!item || item.sending || !holdingPending.has(id)) return false
+      const input = replacePendingText(item.input, item.text, text)
+      if (!input || turnInputSizeProblem(adaptTurnInput(chat.agent, input))) return false
+      updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, text, input } : entry))
+      return true
+    },
+
+    steerPendingSend: async (chat, id) => {
+      const key = pendingSendKey(chat)
+      const state = get()
+      const session = state.sessions[sessionKey(chat.targetId, chat.agent)]
+      const view = session?.state.threads[chat.threadId]
+      const turnId = view?.status === 'running' ? view.activeTurnId : null
+      const item = state.pendingSends[key]?.find((entry) => entry.id === id)
+      if (!canSteerQueued(chat.agent) || !session?.opened || !turnId || !item || item.sending ||
+        submitting.has(key) || holdingPending.has(id)) return false
+      submitting.add(key)
+      updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: true, error: undefined } : entry))
+      const pendingUser = userItemFromInput(`local-user-${++nextPendingId}`, item.input)
+      addPendingUser(session.key, chat.threadId, pendingUser)
+      try {
+        // https://developers.openai.com/codex/app-server#steer-an-active-turn
+        await steerTurn(session.rpc, chat.threadId, turnId, adaptTurnInput(chat.agent, item.input))
+        updatePending(chat, (list) => list.filter((entry) => entry.id !== id))
+        return true
+      } catch (err) {
+        removePendingUser(session.key, [chat.threadId], pendingUser.id)
+        const error = friendlyError(err, '引导未成功，排队消息已保留')
+        updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: false, error } : entry))
+        return false
+      } finally {
+        submitting.delete(key)
+        void flushPending(chat)
+      }
+    },
+
+    sendPendingInNewThread: async (chat, id, mode) => {
+      const key = pendingSendKey(chat)
+      const state = get()
+      const session = state.sessions[sessionKey(chat.targetId, chat.agent)]
+      const item = state.pendingSends[key]?.find((entry) => entry.id === id)
+      if ((mode === 'continue' && !canContinueQueued(chat.agent)) || !item || item.sending ||
+        submitting.has(key) || holdingPending.has(id) || changingParentThreads.has(key)) return false
+      if (!session?.opened) {
+        updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, error: '连接未就绪，请重新连接后再试' } : entry))
+        return false
+      }
+      const token = openThreadToken
+      const cwd = currentThreads(state).find((thread) => thread.id === chat.threadId && thread.agent === chat.agent)?.cwd ||
+        state.currentCwd
+      let created: string | null = null
+      let pendingUser: PendingUser | null = null
+      submitting.add(key)
+      updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: true, error: undefined } : entry))
+      try {
+        let thread
+        if (mode === 'continue') {
+          // 只分叉到最后一个已结束的轮次，不带入原会话正在执行的工作。
+          const lastTurn = session.state.threads[chat.threadId]?.turns?.filter((turn) => turn.outcome).at(-1)
+          if (!lastTurn) throw new Error('当前还没有已结束的一轮，可用「新会话开始」')
+          ;({ thread } = await forkThread(session.rpc, chat.threadId, lastTurn.id))
+        } else {
+          ;({ thread } = await startThread(session.rpc, cwd ? { cwd } : {}))
+        }
+        if (!thread?.id || thread.id === chat.threadId) throw new Error('未确认新会话已创建，排队消息已保留')
+        const threadId = thread.id
+        created = threadId
+        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }))
+        pendingUser = userItemFromInput(`local-user-${++nextPendingId}`, item.input)
+        addPendingUser(session.key, threadId, pendingUser)
+        // 用户仍停在原会话时跟随切过去；期间打开过别的会话则只在后台发送。
+        if (token === openThreadToken && isMainChat(get(), chat)) set({ currentThreadId: threadId, error: null })
+        // 新会话不继承原会话的单独授权，按权限总控发送。
+        await startTurn(session, threadId, item.input, item.overrides, pendingUser)
+        updatePending(chat, (list) => list.filter((entry) => entry.id !== id))
+        return true
+      } catch (err) {
+        if (created && pendingUser) removePendingUser(session.key, [created], pendingUser.id)
+        const error = friendlyError(err, created ? '新会话已创建但消息未发送，排队消息已保留' : '新会话发送失败，排队消息已保留')
+        updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: false, error } : entry))
+        // 已切到新会话时原队列不在眼前，错误要显示在当前界面上。
+        if (created && isMainChat(get(), { ...chat, threadId: created })) set({ error })
+        return false
+      } finally {
+        submitting.delete(key)
+        if (created) void get().refreshThreads({ targetId: chat.targetId, cwd })
+        void flushPending(chat)
+      }
     },
 
     openSideChat: (quote) => {

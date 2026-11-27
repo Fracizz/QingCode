@@ -5,7 +5,6 @@ import type { Project } from '../../../../shared/backendApi'
 import { sessionKey } from '../../lib/agents'
 import { applyThreadPrefs } from '../../lib/threadPrefs'
 import { threadKey, type ThreadSummary } from '../../lib/threads'
-import { formatRelative } from '../../lib/time'
 import { threadListFor, useCodex } from '../../store/codex'
 import { projectListOf, useProjects, type ProjectPlacement } from '../../store/projects'
 import { useTargets } from '../../store/targets'
@@ -141,7 +140,8 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
         return (
           <div
             key={project.id}
-            className={`relative mb-0.5 pl-5${draggedId === project.id ? ' opacity-50' : ''}`}
+            // 组间留白把"项目 + 它的会话"切成一块块，靠间距而非缩进区分项目与会话；保持紧凑只留 6px。
+            className={`relative pl-5${index > 0 ? ' mt-1.5' : ''}${draggedId === project.id ? ' opacity-50' : ''}`}
             onDragOver={(event) => {
               const target = locateDrop(event, project.id)
               if (target) {
@@ -170,7 +170,6 @@ export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; on
               project={project}
               active={active}
               expanded={expanded}
-              now={now}
               onOpen={() => onProjectClick(project, expanded)}
               onNewDraft={() => newDraftIn(project)}
               sortProps={sortProps}
@@ -198,7 +197,6 @@ function ProjectRow({
   project,
   active,
   expanded,
-  now,
   onOpen,
   onNewDraft,
   sortProps,
@@ -206,7 +204,6 @@ function ProjectRow({
   project: Project
   active: boolean
   expanded: boolean
-  now: number
   onOpen: () => void
   onNewDraft: () => void
   sortProps?: SortProps
@@ -273,11 +270,10 @@ function ProjectRow({
       className={`group/project flex min-h-8 items-center gap-1 rounded-lg pl-(--qn-tree-row-inset) pr-1 text-[length:var(--qn-project-font-size)] leading-tight ${
         active ? 'text-qn-text' : 'text-qn-text/85 hover:bg-qn-hover'
       } ${(active && !expanded) || menuOpen ? 'bg-qn-hover' : ''}`}
-      title={project.path}
     >
       <button
         type="button"
-        className={`group flex min-w-0 flex-1 items-center gap-(--qn-tree-row-inset) self-stretch rounded-md py-px text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent${sortProps ? ' cursor-grab active:cursor-grabbing' : ''}`}
+        className={`group flex min-w-0 flex-1 items-center gap-(--qn-tree-row-inset) self-stretch rounded-md py-px text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent${sortProps ? ' qn-cursor-drag' : ''}`}
         aria-expanded={expanded}
         aria-keyshortcuts={sortProps ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
         draggable={Boolean(sortProps)}
@@ -293,9 +289,7 @@ function ProjectRow({
           </span>
         )}
       </button>
-      <span className={`shrink-0 pr-1.5 text-[length:var(--qn-project-detail-font-size)] text-qn-dim group-hover/project:hidden ${menuOpen ? 'hidden' : ''}`}>
-        {formatRelative(project.lastOpenedAt, now)}
-      </span>
+      {/* 项目行不显示时间：右侧带时间的只有会话行，一眼可分层级。 */}
       <span className={`shrink-0 items-center group-hover/project:flex ${menuOpen ? 'flex' : 'hidden'}`}>
         <Menu open={menuOpen} onOpenChange={setMenuOpen}>
           <MenuTrigger asChild>
@@ -332,15 +326,16 @@ function ProjectRow({
 }
 
 // 首字母头像配色：按项目名哈希取色，保证同名项目颜色稳定。
+// 实色底 + 白字，比半透明底更像分组标签。
 const INITIAL_COLORS = [
-  'bg-sky-500/20 text-sky-300',
-  'bg-emerald-500/20 text-emerald-300',
-  'bg-amber-500/20 text-amber-300',
-  'bg-violet-500/20 text-violet-300',
-  'bg-rose-500/20 text-rose-300',
-  'bg-teal-500/20 text-teal-300',
-  'bg-orange-500/20 text-orange-300',
-  'bg-indigo-500/20 text-indigo-300',
+  'bg-qn-avatar-1',
+  'bg-qn-avatar-2',
+  'bg-qn-avatar-3',
+  'bg-qn-avatar-4',
+  'bg-qn-avatar-5',
+  'bg-qn-avatar-6',
+  'bg-qn-avatar-7',
+  'bg-qn-avatar-8',
 ]
 
 function ProjectInitial({ name }: { name: string }) {
@@ -352,7 +347,7 @@ function ProjectInitial({ name }: { name: string }) {
   // 拉丁字母/数字以基线 + 约 0.36em 让大写字高居中；中日韩字符用 central 基线。
   const latin = /^[\p{Script=Latin}\p{N}]$/u.test(ch)
   return (
-    <span aria-hidden className={`inline-flex size-(--qn-tree-icon-size) shrink-0 rounded-[5px] ${color}`}>
+    <span aria-hidden className={`inline-flex size-(--qn-tree-icon-size) shrink-0 rounded-[5px] text-white ${color}`}>
       <svg width="18" height="18" viewBox="0 0 18 18" className="block">
         <text
           x="9"

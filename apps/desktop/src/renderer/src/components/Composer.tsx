@@ -7,7 +7,13 @@ import {
   consumeSlashToken,
   filterSlashItems,
   formatBytes,
+  imagePlaceholder,
+  insertAtSelection,
+  isImageFile,
+  MAX_ATTACHMENTS,
+  removePlaceholder,
   slashToken,
+  uniqueImageName,
   type Attachment,
   type SkillRef,
   type SlashItem,
@@ -292,8 +298,46 @@ export function Composer({
     const files = [...event.clipboardData.files]
     if (files.length === 0) return
     // 只有文件（截图、资源管理器里复制的文件）时拦下默认粘贴，避免把文件名当文字贴进来。
-    if (!event.clipboardData.getData('text/plain')) event.preventDefault()
-    attach.onAddFiles(files)
+    if (event.clipboardData.getData('text/plain')) {
+      attach.onAddFiles(files)
+      return
+    }
+    event.preventDefault()
+    // 图片在光标处留一个 `[名字]` 占位，说明它在正文中的位置；附件改成同名，卡片与占位能对上。
+    // 当前不能加图片或附件已满时不插占位，避免留下指向不存在附件的文字。
+    const room = MAX_ATTACHMENTS - attachments.length
+    if (!imageSupport.allowed || room <= 0) {
+      attach.onAddFiles(files)
+      return
+    }
+    const taken = new Set([
+      ...attachments.map((item) => item.name),
+      ...[...value.matchAll(/\[([^\]\n]+)\]/g)].map((match) => match[1] ?? ''),
+    ])
+    const placeholders: string[] = []
+    const renamed = files.map((file) => {
+      if (!isImageFile(file) || placeholders.length >= room) return file
+      const name = uniqueImageName(file.name, taken)
+      taken.add(name)
+      placeholders.push(imagePlaceholder(name))
+      return name === file.name ? file : new File([file], name, { type: file.type, lastModified: file.lastModified })
+    })
+    const area = event.currentTarget
+    if (placeholders.length > 0) {
+      const next = insertAtSelection(value, area.selectionStart, area.selectionEnd, placeholders.join(' '))
+      pendingCaret.current = next.caret
+      setCaret(next.caret)
+      onChange(next.value)
+    }
+    attach.onAddFiles(renamed)
+  }
+
+  const removeAttachment = (item: Attachment) => {
+    attach?.onRemoveAttachment(item.id)
+    if (item.kind === 'image') {
+      const next = removePlaceholder(value, item.name)
+      if (next !== value) onChange(next)
+    }
   }
 
   const syncCaret = () => setCaret(areaRef.current?.selectionStart ?? 0)
@@ -363,7 +407,7 @@ export function Composer({
                   key={item.id}
                   item={item}
                   problem={item.kind === 'image' && !imageSupport.allowed ? imageSupport.reason : null}
-                  onRemove={() => attach.onRemoveAttachment(item.id)}
+                  onRemove={() => removeAttachment(item)}
                 />
               ))}
               {slash?.skills.map((skill) => (

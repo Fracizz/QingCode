@@ -1,18 +1,21 @@
 import type { UserInput } from '@qn/codex-client'
-import { FileText, Image as ImageIcon, ListEnd, Wand2, X } from 'lucide-react'
+import { CornerDownRight, FileText, GitBranch, Image as ImageIcon, ListEnd, MessageSquarePlus, Pencil, Wand2, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { isAbsolutePath, joinPath } from '../features/files/fileLinks'
 import { openFile } from '../features/workspace/openers'
+import { sessionKey } from '../lib/agents'
 import { basename } from '../lib/attachments'
 import { pendingSendKey, useCodex } from '../store/codex'
+import { canContinueQueued, canSteerQueued, type PendingThreadMode } from '../store/pendingQueue'
 import { MessageImage } from './MessageImage'
-import { IconButton } from './ui'
+import { IconButton, Modal } from './ui'
 
 function attachmentPreviews(input: readonly UserInput[], targetId: string, cwd: string | null) {
   let imageCount = 0
   return input.flatMap((entry, index) => {
     if (entry.type === 'image' && 'url' in entry && entry.url.startsWith('data:image/')) {
-      return <MessageImage key={index} src={entry.url} label={`附件图片 ${++imageCount}`} compact />
+      return <MessageImage key={index} src={entry.url} label={`图片 ${++imageCount}`} compact />
     }
     if (entry.type !== 'mention' && entry.type !== 'skill' && entry.type !== 'localImage' && entry.type !== 'localAudio') return []
 
@@ -30,22 +33,87 @@ function attachmentPreviews(input: readonly UserInput[], targetId: string, cwd: 
   })
 }
 
-export function SendQueue({ targetId, agent, threadId, running, resumeDisabled, compact, contentWidthClassName = 'max-w-3xl' }: {
+const newThreadActions = [
+  { mode: 'start', label: '新会话开始', Icon: MessageSquarePlus },
+  { mode: 'continue', label: '新会话继续', Icon: GitBranch },
+] as const
+
+export function SendQueue({
+  targetId, agent, threadId, running, resumeDisabled, compact, allowNewThread, contentWidthClassName = 'max-w-3xl',
+}: {
   targetId: string | null
   agent: AgentKind
   threadId: string | null
   running: boolean
   resumeDisabled?: boolean
   compact?: boolean
+  /** 主对话允许把排队消息移到新会话；侧边对话是临时会话，不提供。 */
+  allowNewThread?: boolean
   contentWidthClassName?: string
 }) {
   const chat = targetId && threadId ? { targetId, agent, threadId } : null
   const key = chat ? pendingSendKey(chat) : null
   const pending = useCodex((state) => key ? state.pendingSends[key] : undefined)
   const cwd = useCodex((state) => state.currentTargetId === targetId ? state.currentCwd : null)
+  const view = useCodex((state) => targetId && threadId
+    ? state.sessions[sessionKey(targetId, agent)]?.state.threads[threadId] : undefined)
   const remove = useCodex((state) => state.removePendingSend)
   const retry = useCodex((state) => state.retryPendingSend)
+  const hold = useCodex((state) => state.holdPendingSend)
+  const saveEdit = useCodex((state) => state.editPendingSend)
+  const steer = useCodex((state) => state.steerPendingSend)
+  const sendInNewThread = useCodex((state) => state.sendPendingInNewThread)
+  const [edit, setEdit] = useState<{ id: number; text: string; error?: boolean } | null>(null)
+  const [destination, setDestination] = useState<{ id: number; mode: PendingThreadMode } | null>(null)
+  const [moving, setMoving] = useState(false)
+  // 编辑或选择新会话期间暂停这条消息的自动发送，关闭弹窗时恢复。
+  const release = useRef<((resume?: boolean) => void) | null>(null)
+  useEffect(() => () => release.current?.(), [])
   if (!chat || !pending?.length) return null
+
+  const canSteer = running && canSteerQueued(agent) && !!view?.activeTurnId
+  const canContinue = canContinueQueued(agent)
+  const hasFinishedTurn = !!view?.turns?.some((turn) => turn.outcome)
+
+  const holdItem = (id: number) => {
+    if (release.current) return false
+    release.current = hold(chat, id)
+    return !!release.current
+  }
+  const releaseItem = (resume = true) => {
+    release.current?.(resume)
+    release.current = null
+  }
+  const closeEdit = () => {
+    releaseItem()
+    setEdit(null)
+  }
+  const closeDestination = () => {
+    if (moving) return
+    releaseItem()
+    setDestination(null)
+  }
+  const submitEdit = () => {
+    if (!edit) return
+    if (saveEdit(chat, edit.id, edit.text)) closeEdit()
+    else setEdit({ ...edit, error: true })
+  }
+  const submitDestination = async () => {
+    if (!destination || moving) return
+    releaseItem(false)
+    setMoving(true)
+    try {
+      await sendInNewThread(chat, destination.id, destination.mode)
+      setDestination(null)
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  const edited = pending.find((item) => item.id === edit?.id)
+  const moved = pending.find((item) => item.id === destination?.id)
+  const continuing = destination?.mode === 'continue'
+  const destinationBlocked = continuing && (!canContinue || !hasFinishedTurn)
 
   return (
     <div className={`shrink-0 ${compact ? 'px-3' : 'px-6'}`}>
@@ -80,6 +148,30 @@ export function SendQueue({ targetId, agent, threadId, running, resumeDisabled, 
                       继续发送
                     </button>
                   )}
+                  {!item.sending && canSteer && (
+                    <button
+                      type="button"
+                      className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 text-qn-accent hover:underline"
+                      title="补充到当前一轮"
+                      onClick={() => void steer(chat, item.id)}
+                    >
+                      <CornerDownRight size={12} aria-hidden />引导
+                    </button>
+                  )}
+                  {!item.sending && allowNewThread && newThreadActions.map(({ mode, label, Icon }) => (
+                    <IconButton key={mode} label={label} size="sm" onClick={() => {
+                      if (holdItem(item.id)) setDestination({ id: item.id, mode })
+                    }}>
+                      <Icon size={13} />
+                    </IconButton>
+                  ))}
+                  {!item.sending && (
+                    <IconButton label="重新编辑" size="sm" onClick={() => {
+                      if (holdItem(item.id)) setEdit({ id: item.id, text: item.text })
+                    }}>
+                      <Pencil size={13} />
+                    </IconButton>
+                  )}
                   <IconButton label="移除排队消息" size="sm" disabled={item.sending} onClick={() => remove(chat, item.id)}>
                     <X size={13} />
                   </IconButton>
@@ -90,6 +182,64 @@ export function SendQueue({ targetId, agent, threadId, running, resumeDisabled, 
           })}
         </ul>
       </section>
+      {edit && (
+        <Modal
+          title="重新编辑排队消息"
+          onClose={closeEdit}
+          footer={
+            <div className="flex justify-end gap-2">
+              <button type="button" className="qn-button-subtle" onClick={closeEdit}>取消</button>
+              <button type="button" className="qn-button disabled:opacity-40" onClick={submitEdit}
+                disabled={!edited || edit.text === edited.text}>保存</button>
+            </div>
+          }
+        >
+          {edited ? (
+            <>
+              <textarea
+                autoFocus
+                aria-label="排队消息正文"
+                className="qn-input qn-scroll min-h-28 resize-y"
+                value={edit.text}
+                onChange={(event) => setEdit({ id: edit.id, text: event.target.value })}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) submitEdit()
+                }}
+              />
+              <p className="mt-1.5 text-ui-sm text-qn-muted">附件与技能保持不变。</p>
+              {edit.error && <p role="status" className="mt-1 text-ui-sm text-qn-warn">无法保存：消息为空或超过大小上限。</p>}
+            </>
+          ) : <p className="text-qn-muted">这条消息已离开队列。</p>}
+        </Modal>
+      )}
+      {destination && (
+        <Modal
+          title={continuing ? '新会话继续' : '新会话开始'}
+          description={continuing
+            ? '继承最后一个已结束轮次的上下文，在新会话里发送这条消息。'
+            : '从空白会话开始，用这条消息作为第一条消息。'}
+          onClose={closeDestination}
+          footer={
+            <div className="flex justify-end gap-2">
+              <button type="button" className="qn-button-subtle" disabled={moving} onClick={closeDestination}>取消</button>
+              <button type="button" className="qn-button disabled:opacity-40" disabled={!moved || moving || destinationBlocked}
+                onClick={() => void submitDestination()}>{moving ? '正在发送…' : '在新会话发送'}</button>
+            </div>
+          }
+        >
+          {moved ? (
+            <p className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-inset p-2 text-ui-sm">
+              {moved.text.trim() || '附件或技能'}
+            </p>
+          ) : <p className="text-qn-muted">这条消息已离开队列。</p>}
+          {continuing && !canContinue && <p role="status" className="mt-2 text-ui-sm text-qn-warn">当前仅 Codex 支持继承会话上下文。</p>}
+          {continuing && canContinue && !hasFinishedTurn && (
+            <p role="status" className="mt-2 text-ui-sm text-qn-warn">当前还没有已结束的一轮，可用「新会话开始」。</p>
+          )}
+          <p className="mt-2 text-ui-sm text-qn-muted">新会话按权限总控运行，不继承本会话单独设置的访问模式。</p>
+        </Modal>
+      )}
     </div>
   )
 }
+

@@ -835,7 +835,7 @@ function closeQuery(session: BridgeSession): void {
 
 function parsePermissionMode(value: unknown): PermissionMode {
   if (value === undefined || value === 'default') return 'default'
-  if (value === 'acceptEdits' || value === 'plan' || value === 'bypassPermissions') return value
+  if (value === 'auto' || value === 'acceptEdits' || value === 'plan' || value === 'bypassPermissions') return value
   throw new BridgeRpcError(-32602, '不支持的 Claude 访问模式')
 }
 

@@ -595,6 +595,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           agent={currentAgent}
           threadId={currentThreadId}
           running={running}
+          allowNewThread
           contentWidthClassName={contentWidthClassName}
         />
         <AnnotationBar annotations={annotations} onRemove={removeAnnotation} contentWidthClassName={contentWidthClassName} />

@@ -2,9 +2,9 @@ import type { TurnStartParams } from './codex-types'
 
 type AgentKind = 'codex' | 'claude' | 'pi'
 
-export type AccessMode = 'default' | 'readOnly' | 'fullAccess' | 'plan' | 'acceptEdits' | 'bypassPermissions'
+export type AccessMode = 'default' | 'readOnly' | 'fullAccess' | 'auto' | 'plan' | 'acceptEdits' | 'bypassPermissions'
 export type AccessSelection = AccessMode | 'inherit'
-export type GlobalAccessMode = 'default' | 'restricted' | 'fullAccess'
+export type GlobalAccessMode = 'default' | 'restricted' | 'auto' | 'fullAccess'
 
 type AccessOption<Mode extends AccessSelection = AccessMode> = {
   mode: Mode
@@ -26,6 +26,8 @@ export const accessOptions: Record<AgentKind, readonly AccessOption[]> = {
   ],
   claude: [
     defaultMode,
+    // Claude SDK 原生的 auto 模式：分类器逐次判断，无法判断时仍走 canUseTool 由用户审批。
+    { mode: 'auto', label: '自动', hint: '分类器自动审批，无法判断时询问' },
     { mode: 'plan', label: '计划模式', hint: '分析并制定计划' },
     { mode: 'acceptEdits', label: '接受编辑', hint: 'Agent 自动接受文件编辑' },
     {
@@ -37,7 +39,7 @@ export const accessOptions: Record<AgentKind, readonly AccessOption[]> = {
 }
 
 export function isGlobalAccessMode(value: unknown): value is GlobalAccessMode {
-  return value === 'default' || value === 'restricted' || value === 'fullAccess'
+  return value === 'default' || value === 'restricted' || value === 'auto' || value === 'fullAccess'
 }
 
 export function resolveAccessMode(agent: AgentKind, globalMode: GlobalAccessMode | undefined, selection: AccessSelection = 'inherit'): AccessMode {
@@ -46,6 +48,8 @@ export function resolveAccessMode(agent: AgentKind, globalMode: GlobalAccessMode
     if (agent === 'codex') return 'readOnly'
     if (agent === 'claude') return 'plan'
   }
+  // Codex 没有对应的分类器审批档位，自动总控下沿用 Codex 自身配置。
+  if (globalMode === 'auto' && agent === 'claude') return 'auto'
   if (globalMode === 'fullAccess') {
     if (agent === 'codex') return 'fullAccess'
     if (agent === 'claude') return 'bypassPermissions'
@@ -62,7 +66,7 @@ type CodexAccessOverride = Required<Pick<TurnStartParams, 'approvalPolicy' | 'sa
   qingcodeAccessOverride: true
 }
 
-type ClaudeAccessOverride = { claudePermissionMode: 'plan' | 'acceptEdits' | 'bypassPermissions' }
+type ClaudeAccessOverride = { claudePermissionMode: 'auto' | 'plan' | 'acceptEdits' | 'bypassPermissions' }
 
 export function turnAccessOverride(agent: AgentKind, mode: unknown): CodexAccessOverride | ClaudeAccessOverride | null {
   if (agent === 'codex' && mode === 'readOnly') {
@@ -71,7 +75,7 @@ export function turnAccessOverride(agent: AgentKind, mode: unknown): CodexAccess
   if (agent === 'codex' && mode === 'fullAccess') {
     return { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' }, qingcodeAccessOverride: true }
   }
-  if (agent === 'claude' && (mode === 'plan' || mode === 'acceptEdits' || mode === 'bypassPermissions')) {
+  if (agent === 'claude' && (mode === 'auto' || mode === 'plan' || mode === 'acceptEdits' || mode === 'bypassPermissions')) {
     return { claudePermissionMode: mode }
   }
   return null

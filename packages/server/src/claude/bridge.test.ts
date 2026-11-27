@@ -479,6 +479,11 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
       expect(h.queries[0]?.permissionChanges).toEqual(['acceptEdits'])
       await complete()
 
+      await send('auto', 'auto')
+      expect(h.queries).toHaveLength(1)
+      expect(h.queries[0]?.permissionChanges).toEqual(['acceptEdits', 'auto'])
+      await complete()
+
       await send('bypass', 'bypassPermissions')
       expect(h.queries[0]?.closed).toBe(true)
       expect(h.queries[1]?.options).toMatchObject({

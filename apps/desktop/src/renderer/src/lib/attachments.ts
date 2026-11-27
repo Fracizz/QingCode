@@ -80,6 +80,47 @@ export function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path
 }
 
+/** 粘贴图片在正文里的占位，和附件卡片上的名字一致。 */
+export function imagePlaceholder(name: string): string {
+  return `[${name}]`
+}
+
+/**
+ * 给粘贴的图片取不重名的名字：截图通常都叫 image.png，重名时占位无法对应到具体附件，
+ * 所以依次改成 image-2.png、image-3.png。
+ */
+export function uniqueImageName(name: string, taken: Iterable<string>): string {
+  const used = new Set(taken)
+  const base = name || 'image.png'
+  if (!used.has(base)) return base
+  const dot = base.lastIndexOf('.')
+  const stem = dot > 0 ? base.slice(0, dot) : base
+  const ext = dot > 0 ? base.slice(dot) : ''
+  for (let index = 2; ; index++) {
+    const next = `${stem}-${index}${ext}`
+    if (!used.has(next)) return next
+  }
+}
+
+/** 用 text 替换 [start, end) 选区；与左右正文之间补空格，避免占位和文字粘在一起。返回新值和插入后的光标。 */
+export function insertAtSelection(value: string, start: number, end: number, text: string): { value: string; caret: number } {
+  const left = value.slice(0, start)
+  const right = value.slice(end)
+  const before = left && !/\s$/.test(left) ? ' ' : ''
+  const after = right && !/^\s/.test(right) ? ' ' : ''
+  const inserted = `${before}${text}${after}`
+  return { value: left + inserted + right, caret: left.length + inserted.length }
+}
+
+/** 移除附件时去掉正文里对应的第一个占位，连带吃掉它后面的一个空格。 */
+export function removePlaceholder(value: string, name: string): string {
+  const token = imagePlaceholder(name)
+  const index = value.indexOf(token)
+  if (index < 0) return value
+  const end = index + token.length
+  return value.slice(0, index) + value.slice(value[end] === ' ' ? end + 1 : end)
+}
+
 export type SkillRef = { name: string; path: string }
 
 /** 拼 turn/start 的 input：多个技能按选择顺序在最前（Claude 桥接会转成 /name 前缀），然后文字、图片、附件文件。 */

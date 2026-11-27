@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeThreadSummaries, refreshThreadOrder, threadKey, threadPreviewText, toThreadSummaries, toTimestamp } from './threads'
+import { mergeThreadSummaries, refreshThreadOrder, threadKey, threadPreviewText, toThreadSummaries, toTimestamp, withLocalThreads } from './threads'
 
 describe('会话列表归一化', () => {
   it('兼容秒/毫秒时间戳', () => {
@@ -76,5 +76,23 @@ describe('会话悬浮摘要', () => {
     expect(threadPreviewText({ title: '第一行', preview: ' 第一行后面还有内容 ' })).toBe('第一行后面还有内容')
     expect(threadPreviewText({ title: '第一行', preview: '第一…' })).toBe('第一…')
     expect(threadPreviewText({ title: '第一行', preview: '' })).toBe('')
+  })
+})
+
+describe('withLocalThreads', () => {
+  const summary = (id: string, cwd: string, updatedAt: number) =>
+    ({ id, title: id, preview: '', cwd, updatedAt, agent: 'codex' as const })
+
+  it('补入服务端尚未列出的本地新会话，并按项目过滤', () => {
+    const listed = summary('old', '/p', 1)
+    const fresh = summary('new', '/p', 2)
+    const other = summary('x', '/q', 3)
+    expect(withLocalThreads([listed], [fresh, other], '/p')).toEqual([fresh, listed])
+    expect(withLocalThreads([listed], [fresh, other], null)).toEqual([other, fresh, listed])
+  })
+
+  it('服务端已返回的会话以服务端为准', () => {
+    const server = { ...summary('new', '/p', 5), title: '服务端标题' }
+    expect(withLocalThreads([server], [summary('new', '/p', 2)], '/p')).toEqual([server])
   })
 })

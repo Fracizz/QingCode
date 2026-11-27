@@ -545,6 +545,12 @@ describe('手机网关 HTTPS 集成', () => {
       id: expect.any(String), method: 'turn/start',
       params: { threadId: 'thread', input: [], model: 'test-model', claudePermissionMode: 'plan' },
     } })
+    const claudeAuto = await requestJson('/rpc', 'POST', turnRequest('claude', 'auto'), token)
+    expect(claudeAuto.status).toBe(200)
+    expect(lastCodexSend).toEqual({ targetId: 'local', agent: 'claude', msg: {
+      id: expect.any(String), method: 'turn/start',
+      params: { threadId: 'thread', input: [], model: 'test-model', claudePermissionMode: 'auto' },
+    } })
     const forwardedTurn = lastCodexSend
     const inheritedTurn = (agent: string, mode: string) => {
       const request = turnRequest(agent, mode)
@@ -553,7 +559,7 @@ describe('手机网关 HTTPS 集成', () => {
     const staleAccess = await requestJson('/rpc', 'POST', inheritedTurn('codex', 'default'), token)
     expect(staleAccess.status).toBe(409)
     expect(lastCodexSend).toBe(forwardedTurn)
-    for (const [agent, mode] of [['pi', 'fullAccess'], ['claude', 'readOnly'], ['codex', 'invalid']] as const) {
+    for (const [agent, mode] of [['pi', 'fullAccess'], ['claude', 'readOnly'], ['codex', 'auto'], ['codex', 'invalid']] as const) {
       const rejected = await requestJson('/rpc', 'POST', turnRequest(agent, mode), token)
       expect(rejected.status).toBe(400)
       expect(lastCodexSend).toBe(forwardedTurn)

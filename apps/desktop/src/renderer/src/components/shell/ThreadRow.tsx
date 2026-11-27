@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import { ContextMenu } from 'radix-ui'
 import {
   Archive,
+  Check,
   ChevronRight,
   CircleAlert,
   CirclePause,
@@ -37,10 +38,11 @@ const statusIcons: Record<ThreadRowStatus, ReactNode> = {
   running: <LoadingIcon />,
   pending: <ShieldAlert size={13} className="text-amber-300" aria-hidden />,
   input: <MessageSquare size={13} className="text-amber-300" aria-hidden />,
-  completed: <StatusDot className="size-2 bg-emerald-500" />,
+  // 绿勾只提示「有新结果未查看」（unread）；已查看过的完成会话回到空闲样式，勾消失。
+  completed: <StatusDot className="size-2 bg-qn-muted/60" />,
   failed: <CircleAlert size={13} className="text-qn-danger" aria-hidden />,
   interrupted: <CirclePause size={13} className="text-qn-muted" aria-hidden />,
-  unread: <StatusDot className="size-2 bg-qn-brand" />,
+  unread: <Check size={14} strokeWidth={2.5} className="text-emerald-400" aria-hidden />,
   opening: <LoadingIcon />,
 }
 
