@@ -5,6 +5,7 @@ import type {
   SettingsAgentKind,
   SettingsDensity,
   SettingsSendKey,
+  SettingsTheme,
 } from '../../shared/backendApi'
 import { DEFAULT_FONT_SIZES, sanitizeFontSizes } from '../../shared/fontSizes'
 
@@ -28,6 +29,10 @@ export function isSettingsDensity(value: unknown): value is SettingsDensity {
   return value === 'comfortable' || value === 'compact'
 }
 
+export function isSettingsTheme(value: unknown): value is SettingsTheme {
+  return value === 'dark' || value === 'gray' || value === 'light'
+}
+
 export function isSettingsAgent(value: unknown): value is SettingsAgentKind {
   return value === 'codex' || value === 'claude' || value === 'pi'
 }
@@ -39,6 +44,7 @@ export function defaultAppSettings(): AppSettings {
       autoConnectLast: true,
       defaultAgent: 'codex',
       density: 'comfortable',
+      theme: 'dark',
       ...DEFAULT_FONT_SIZES,
     },
     agents: {},
@@ -110,6 +116,7 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
         ? general.defaultAgent
         : defaults.general.defaultAgent,
       density: isSettingsDensity(general.density) ? general.density : defaults.general.density,
+      theme: isSettingsTheme(general.theme) ? general.theme : defaults.general.theme,
       ...DEFAULT_FONT_SIZES,
       ...sanitizeFontSizes(general),
     },
@@ -127,6 +134,7 @@ export function sanitizeSettingsPatch(raw: unknown): AppSettingsPatch {
   if (typeof general.autoConnectLast === 'boolean') nextGeneral.autoConnectLast = general.autoConnectLast
   if (isSettingsAgent(general.defaultAgent)) nextGeneral.defaultAgent = general.defaultAgent
   if (isSettingsDensity(general.density)) nextGeneral.density = general.density
+  if (isSettingsTheme(general.theme)) nextGeneral.theme = general.theme
   if (Object.keys(nextGeneral).length > 0) patch.general = nextGeneral
 
   const rawAgents = isRecord(root.agents) ? root.agents : {}

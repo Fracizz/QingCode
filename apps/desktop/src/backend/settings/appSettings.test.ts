@@ -20,6 +20,7 @@ describe('defaultAppSettings', () => {
         autoConnectLast: true,
         defaultAgent: 'codex',
         density: 'comfortable',
+        theme: 'dark',
         ...DEFAULT_FONT_SIZES,
       },
       agents: {},
@@ -70,8 +71,10 @@ describe('sanitizeAppSettings', () => {
       autoConnectLast: true,
       defaultAgent: 'pi',
       density: 'compact',
+      theme: 'light',
       ...DEFAULT_FONT_SIZES,
     })
+    expect(sanitizeAppSettings({ general: { theme: 'sepia' } }).general.theme).toBe('dark')
     expect(result.agents.local).toEqual({
       codex: { enabled: false, path: 'C:\\bin\\codex.exe', configDir: 'D:\\codex-home' },
       claude: { enabled: true, configDir: 'D:\\claude-home' },
@@ -101,7 +104,7 @@ describe('sanitizeAppSettings', () => {
 describe('sanitizeSettingsPatch', () => {
   it('只保留白名单字段，空字符串用于清空路径', () => {
     const patch = sanitizeSettingsPatch({
-      general: { sendKey: 'ctrlEnter', density: 'bogus', theme: 'dark' },
+      general: { sendKey: 'ctrlEnter', density: 'bogus', theme: 'gray' },
       agents: {
         local: {
           codex: { enabled: false, path: '', configDir: '  D:\\home  ', extra: 1 },
@@ -112,7 +115,7 @@ describe('sanitizeSettingsPatch', () => {
       extra: true,
     })
     expect(patch).toEqual({
-      general: { sendKey: 'ctrlEnter' },
+      general: { sendKey: 'ctrlEnter', theme: 'gray' },
       agents: {
         local: {
           codex: { enabled: false, path: '', configDir: 'D:\\home' },
@@ -150,6 +153,7 @@ describe('mergeAppSettings', () => {
       autoConnectLast: true,
       defaultAgent: 'claude',
       density: 'compact',
+      theme: 'dark',
       ...DEFAULT_FONT_SIZES,
     })
     expect(next.agents.local?.codex).toEqual({

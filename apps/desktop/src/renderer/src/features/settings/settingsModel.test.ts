@@ -26,6 +26,7 @@ describe('默认设置与白名单', () => {
       autoConnectLast: true,
       defaultAgent: 'codex',
       density: 'comfortable',
+      theme: 'dark',
       ...DEFAULT_FONT_SIZES,
     })
     first.agents.local = { codex: { enabled: false } }
@@ -35,7 +36,7 @@ describe('默认设置与白名单', () => {
   it('非法输入回退默认，字段白名单与 pi 的 configDir 限制生效', () => {
     expect(sanitizeAppSettings(null)).toEqual(defaultAppSettings())
     const result = sanitizeAppSettings({
-      general: { sendKey: 'bad', density: 'compact', defaultAgent: 'pi', theme: 'light' },
+      general: { sendKey: 'bad', density: 'compact', defaultAgent: 'pi', theme: 'sepia' },
       agents: {
         local: {
           codex: { enabled: false, path: '  C:\\bin\\codex.exe  ', configDir: ' D:\\home ', junk: 1 },
@@ -50,6 +51,7 @@ describe('默认设置与白名单', () => {
       autoConnectLast: true,
       defaultAgent: 'pi',
       density: 'compact',
+      theme: 'dark',
       ...DEFAULT_FONT_SIZES,
     })
     expect(result.agents.local?.codex).toEqual({
@@ -64,8 +66,9 @@ describe('默认设置与白名单', () => {
 
   it('补丁只保留已知字段，空字符串用于清空路径', () => {
     expect(sanitizeSettingsPatch({ general: { density: 'compact', theme: 'light' } })).toEqual({
-      general: { density: 'compact' },
+      general: { density: 'compact', theme: 'light' },
     })
+    expect(sanitizeSettingsPatch({ general: { theme: 'sepia' } })).toEqual({})
     expect(sanitizeSettingsPatch({ agents: { local: { codex: { path: '' } } } })).toEqual({
       agents: { local: { codex: { path: '' } } },
     })
@@ -115,11 +118,16 @@ describe('界面元数据与合规文案', () => {
     expect(SETTINGS_AGENT_INFO.every((item) => item.notes.join(' ').includes('不保存任何凭据') || item.id === 'pi')).toBe(true)
   })
 
-  it('表单选项覆盖所有枚举值，浅色主题置灰', () => {
+  it('表单选项覆盖所有枚举值，主题默认深色并提供灰色、浅色', () => {
     expect(SEND_KEY_OPTIONS.map((item) => item.value)).toEqual(['enter', 'ctrlEnter'])
     expect(DENSITY_OPTIONS.map((item) => item.value)).toEqual(['comfortable', 'compact'])
     expect(DEFAULT_AGENT_OPTIONS.map((item) => item.value)).toEqual(['codex', 'claude', 'pi'])
-    expect(THEME_OPTIONS.find((item) => item.value === 'light')?.disabled).toBe(true)
+    expect(THEME_OPTIONS.map((item) => [item.value, item.label])).toEqual([
+      ['dark', '深色'],
+      ['gray', '灰色'],
+      ['light', '浅色'],
+    ])
+    expect(defaultAppSettings().general.theme).toBe('dark')
   })
 
   it('分类与设置项一一对应，section 校验只认已知 id', () => {

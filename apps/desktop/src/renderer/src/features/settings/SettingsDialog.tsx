@@ -108,7 +108,7 @@ export function SettingsDialog({
       open={open}
       onClose={onClose}
       overlayClassName="bg-black/70"
-      className="fixed inset-4 z-50 text-[13px] text-qn-text shadow-[0_24px_80px_rgba(0,0,0,0.6)]"
+      className="fixed inset-4 z-50 text-[13px] text-qn-text shadow-[var(--qn-shadow-dialog)]"
     >
       <header className="flex shrink-0 items-center gap-3 border-b border-qn-border px-5 py-3">
         <Settings2 size={17} className="shrink-0 text-qn-brand" />

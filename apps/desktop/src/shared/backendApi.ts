@@ -166,6 +166,8 @@ export type LegacyImportResult = {
 // T23 设置界面：字段名是写入 userData/settings.json 的白名单，未知字段一律丢弃。
 export type SettingsSendKey = 'enter' | 'ctrlEnter'
 export type SettingsDensity = 'comfortable' | 'compact'
+/** 界面主题：深色为默认，灰色是抬亮的中性灰，浅色是白底。 */
+export type SettingsTheme = 'dark' | 'gray' | 'light'
 export type SettingsAgentKind = 'codex' | 'claude' | 'pi'
 export type AgentPrefs = {
   enabled: boolean
@@ -180,6 +182,7 @@ export type AppSettings = {
     autoConnectLast: boolean
     defaultAgent: SettingsAgentKind
     density: SettingsDensity
+    theme: SettingsTheme
     chatFontSize: number
     composerFontSize: number
     editorFontSize: number

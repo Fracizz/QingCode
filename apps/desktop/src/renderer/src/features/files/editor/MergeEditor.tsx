@@ -99,9 +99,9 @@ export function MergeEditor({
 
   return (
     <div className={cn('relative min-h-0 flex-1', className)}>
-      <div ref={hostRef} className="h-full min-h-0 overflow-hidden bg-[#141414]" />
+      <div ref={hostRef} className="h-full min-h-0 overflow-hidden bg-qn-code" />
       {loading && (
-        <div className="absolute inset-0 grid place-items-center bg-[#141414]">
+        <div className="absolute inset-0 grid place-items-center bg-qn-code">
           <Spinner label="加载差异…" />
         </div>
       )}

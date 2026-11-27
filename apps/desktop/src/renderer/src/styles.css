@@ -30,15 +30,171 @@
   --color-qn-ok: #6fcf8f;
   --color-qn-warn: #e2b55d;
   --color-qn-danger: #ff6b63;
+  /* 叠加色基准：半透明高亮（bg-qn-fg/5 之类）在深色主题叠白、浅色主题叠黑。 */
+  --color-qn-fg: #ffffff;
+  /* 内嵌凹槽（日志、指纹、列表框）：比所在卡片暗一点。 */
+  --color-qn-inset: rgb(0 0 0 / 0.2);
+  /* 代码面（代码块、编辑器、差异、图片预览） */
+  --color-qn-code: #141414;
+  /* 输入框、分段控件底 */
+  --color-qn-field: #161616;
   --font-mono: "Cascadia Mono", "JetBrains Mono", "Consolas", "Microsoft YaHei", monospace;
 }
 
 :root {
   color-scheme: dark;
+  /* 浮层子树内重定向的 hover/active/border，见 .qn-surface-float。 */
+  --qn-float-hover: #333333;
+  --qn-float-active: #3b3b3b;
+  --qn-float-border: #454545;
+  --qn-float-edge: rgb(255 255 255 / 0.1);
+  --qn-float-shadow: 0 0 0 1px rgb(0 0 0 / 0.55), 0 16px 40px rgb(0 0 0 / 0.55);
+  --qn-shadow-dialog: 0 24px 80px rgb(0 0 0 / 0.55);
+  --qn-composer-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 8px 24px rgb(0 0 0 / 0.35);
+  --qn-scrollbar: #3d3d3d;
+  --qn-strong: #e4e4e4;
+  --qn-selection: #264f78;
+  /* Codex 官方标识：深色底用白色版，浅色底用黑色版。 */
+  --qn-codex-mark: #ffffff;
+  /* 编辑器语法色（github-dark-default） */
+  --qn-syn-keyword: #ff7b72;
+  --qn-syn-name: #e6e6e6;
+  --qn-syn-function: #d2a8ff;
+  --qn-syn-constant: #79c0ff;
+  --qn-syn-string: #a5d6ff;
+  --qn-syn-comment: #8b949e;
+  --qn-syn-operator: #ffa657;
+  --qn-syn-inserted: #7ee787;
+  --qn-syn-deleted: #ffa198;
+  --qn-syn-changed: #e2b55d;
+  --qn-syn-invalid: #ff6b63;
+  /* 终端与运行输出的 16 色（参考 VS Code 终端默认配色） */
+  --qn-ansi-0: #5c5c5c;
+  --qn-ansi-1: #f14c4c;
+  --qn-ansi-2: #23d18b;
+  --qn-ansi-3: #f5f543;
+  --qn-ansi-4: #3b8eea;
+  --qn-ansi-5: #d670d6;
+  --qn-ansi-6: #29b8db;
+  --qn-ansi-7: #e5e5e5;
+  --qn-ansi-8: #808080;
+  --qn-ansi-9: #ff6b63;
+  --qn-ansi-10: #6fcf8f;
+  --qn-ansi-11: #ffe36b;
+  --qn-ansi-12: #5fa8ff;
+  --qn-ansi-13: #e48ee4;
+  --qn-ansi-14: #5fd7f0;
+  --qn-ansi-15: #ffffff;
   font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
   /* 保持浏览器默认 16px 根字号：Tailwind 尺寸全是 rem，根字号缩小会让 text-xs 只剩 10.5px。 */
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * 灰色主题：在深色基础上整体抬亮一档的中性灰（偏冷一点点），层级关系与深色一致；语法色沿用深色。
+ * 浅色主题：白底，层级改为 chrome < sidebar < bg，靠描边与轻投影分层；brand/accent 等加深以保证在白底上的对比度。
+ * 对比度实测见 docs/design/contrast.md §2.1。
+ */
+html[data-theme="gray"] {
+  --color-qn-chrome: #232427;
+  --color-qn-bg: #28292c;
+  --color-qn-sidebar: #2b2c2f;
+  --color-qn-panel: #2f3033;
+  --color-qn-elevated: #333437;
+  --color-qn-float: #37383b;
+  --color-qn-hover: #37383b;
+  --color-qn-active: #3e3f43;
+  --color-qn-border: #48494d;
+  --color-qn-border-strong: #5b5c61;
+  --color-qn-outline: #838489;
+  --color-qn-outline-hover: #9b9ca1;
+  --color-qn-composer: #37383b;
+  --color-qn-text: #ececec;
+  --color-qn-prose: #e8e8e8;
+  --color-qn-bubble: #424347;
+  --color-qn-muted: #b4b4b8;
+  --color-qn-dim: #a0a0a5;
+  --color-qn-inset: rgb(0 0 0 / 0.16);
+  --color-qn-code: #232427;
+  --color-qn-field: #252629;
+  --qn-float-hover: #45464a;
+  --qn-float-active: #4d4e52;
+  --qn-float-border: #55565b;
+  --qn-scrollbar: #55565a;
+  --qn-strong: #f2f2f2;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --color-qn-chrome: #ebebeb;
+  --color-qn-bg: #ffffff;
+  --color-qn-sidebar: #f5f5f5;
+  --color-qn-panel: #fafafa;
+  --color-qn-elevated: #ffffff;
+  --color-qn-float: #ffffff;
+  --color-qn-hover: #ececec;
+  --color-qn-active: #e2e2e2;
+  --color-qn-border: #cfcfcf;
+  --color-qn-border-strong: #b8b8b8;
+  --color-qn-outline: #858585;
+  --color-qn-outline-hover: #5f5f5f;
+  --color-qn-composer: #ffffff;
+  --color-qn-text: #1a1a1a;
+  --color-qn-prose: #242424;
+  --color-qn-bubble: #efefef;
+  --color-qn-muted: #575757;
+  --color-qn-dim: #6b6b6b;
+  --color-qn-brand: #0e8f78;
+  --color-qn-accent: #2563eb;
+  --color-qn-ok: #18864b;
+  --color-qn-warn: #9a5b00;
+  --color-qn-danger: #d1242f;
+  --color-qn-fg: #000000;
+  --color-qn-inset: rgb(0 0 0 / 0.035);
+  --color-qn-code: #f6f8fa;
+  --color-qn-field: #ffffff;
+  --qn-float-hover: #efefef;
+  --qn-float-active: #e6e6e6;
+  --qn-float-border: #dedede;
+  --qn-float-edge: rgb(0 0 0 / 0.1);
+  --qn-float-shadow: 0 0 0 1px rgb(0 0 0 / 0.02), 0 12px 32px rgb(0 0 0 / 0.14);
+  --qn-shadow-dialog: 0 24px 64px rgb(0 0 0 / 0.18);
+  --qn-composer-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.08);
+  --qn-scrollbar: #c8c8c8;
+  --qn-strong: #111111;
+  --qn-selection: #b6d6fd;
+  --qn-term-selection: rgba(37, 99, 235, 0.25);
+  --qn-codex-mark: #000000;
+  /* github-light-default */
+  --qn-syn-keyword: #cf222e;
+  --qn-syn-name: #1f2328;
+  --qn-syn-function: #8250df;
+  --qn-syn-constant: #0550ae;
+  --qn-syn-string: #0a3069;
+  --qn-syn-comment: #6e7781;
+  --qn-syn-operator: #953800;
+  --qn-syn-inserted: #116329;
+  --qn-syn-deleted: #82071e;
+  --qn-syn-changed: #9a5b00;
+  --qn-syn-invalid: #cf222e;
+  /* 白底上的 16 色：黄、青、白等原本靠亮度的颜色压暗，保证能读。 */
+  --qn-ansi-0: #000000;
+  --qn-ansi-1: #cd3131;
+  --qn-ansi-2: #107c10;
+  --qn-ansi-3: #7d8000;
+  --qn-ansi-4: #0451a5;
+  --qn-ansi-5: #bc05bc;
+  --qn-ansi-6: #0598bc;
+  --qn-ansi-7: #555555;
+  --qn-ansi-8: #666666;
+  --qn-ansi-9: #cd3131;
+  --qn-ansi-10: #138a13;
+  --qn-ansi-11: #8a8d00;
+  --qn-ansi-12: #0451a5;
+  --qn-ansi-13: #bc05bc;
+  --qn-ansi-14: #0598bc;
+  --qn-ansi-15: #7a7a7a;
 }
 
 /* 紧凑密度：Tailwind v4 的间距工具类都按 --spacing 计算，整体收紧约 12%；字号不动，避免小字难读。 */
@@ -53,6 +209,15 @@ body,
   margin: 0;
   background: var(--color-qn-bg);
   color: var(--color-qn-text);
+}
+
+/* 代码块 token：shiki 同时给出深浅两套颜色，按主题取用，切换主题不必重新着色。 */
+.qn-tk {
+  color: var(--qn-tk-dark);
+}
+
+html[data-theme="light"] .qn-tk {
+  color: var(--qn-tk-light);
 }
 
 body::after {
@@ -75,7 +240,7 @@ button:disabled {
     width: 100%;
     border: 1px solid var(--color-qn-outline);
     border-radius: 8px;
-    background: #161616;
+    background: var(--color-qn-field);
     color: var(--color-qn-text);
     padding: 7px 10px;
     font-size: 13px;
@@ -132,16 +297,14 @@ button:disabled {
    * 否则 bg-qn-hover 这类工具类在浮层里会和底色几乎一样，看不出高亮。
    */
   .qn-surface-float {
-    border: 1px solid rgb(255 255 255 / 0.1);
+    border: 1px solid var(--qn-float-edge);
     border-radius: 12px;
     background: var(--color-qn-float);
     color: var(--color-qn-text);
-    box-shadow:
-      0 0 0 1px rgb(0 0 0 / 0.55),
-      0 16px 40px rgb(0 0 0 / 0.55);
-    --color-qn-hover: #333333;
-    --color-qn-active: #3b3b3b;
-    --color-qn-border: #454545;
+    box-shadow: var(--qn-float-shadow);
+    --color-qn-hover: var(--qn-float-hover);
+    --color-qn-active: var(--qn-float-active);
+    --color-qn-border: var(--qn-float-border);
   }
 
   /* 菜单焦点可以和已展开的子菜单同时高亮，保留行间底色。 */
@@ -156,7 +319,7 @@ button:disabled {
 }
 
 .qn-scroll::-webkit-scrollbar-thumb {
-  background: #3d3d3d;
+  background: var(--qn-scrollbar);
   border-radius: 4px;
 }
 
@@ -438,7 +601,7 @@ body.qn-resizing webview {
 .qn-markdown strong,
 .qn-markdown b {
   font-weight: 600;
-  color: #e4e4e4;
+  color: var(--qn-strong);
 }
 
 .qn-markdown blockquote {

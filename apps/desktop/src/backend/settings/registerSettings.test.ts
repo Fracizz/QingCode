@@ -41,6 +41,7 @@ describe('registerSettingsMethods', () => {
         autoConnectLast: true,
         defaultAgent: 'codex',
         density: 'comfortable',
+        theme: 'dark',
         ...DEFAULT_FONT_SIZES,
       },
       agents: {},
@@ -61,18 +62,18 @@ describe('registerSettingsMethods', () => {
     expect(first.agents.local?.codex).toEqual({ enabled: false, path: 'C:\\bin\\codex.exe' })
 
     const second = (await instance.invoke('settings.save', {
-      general: { density: 'compact', theme: 'light' },
+      general: { density: 'compact', theme: 'light', accentColor: 'pink' },
       agents: { local: { codex: { path: 'D:\\codex.exe' } }, 'ssh-1': { pi: { enabled: true } } },
     })) as AppSettings
     expect(second.general.sendKey).toBe('ctrlEnter')
     expect(second.general.density).toBe('compact')
     expect(second.agents.local?.codex).toEqual({ enabled: false, path: 'D:\\codex.exe' })
     expect(second.agents['ssh-1']?.pi).toEqual({ enabled: true })
-    expect(JSON.stringify(second)).not.toContain('theme')
+    expect(JSON.stringify(second)).not.toContain('accentColor')
 
     expect(await instance.invoke('settings.get', undefined)).toEqual(second)
     const text = await readFile(join(userData, 'settings.json'), 'utf8')
-    expect(JSON.parse(text)).toMatchObject({ general: { density: 'compact' } })
+    expect(JSON.parse(text)).toMatchObject({ general: { density: 'compact', theme: 'light' } })
   })
 
   it('连续保存不同的字号时保留两个设置', async () => {

@@ -207,18 +207,18 @@ export function ContextRing({ tokenUsage }: { tokenUsage: unknown }) {
   if (!usage) return null
   const radius = 7
   const circumference = 2 * Math.PI * radius
-  const tone = usage.percent >= 90 ? '#ff6b63' : usage.percent >= 75 ? '#e2b55d' : '#a1a1aa'
+  const tone = usage.percent >= 90 ? 'var(--color-qn-danger)' : usage.percent >= 75 ? 'var(--color-qn-warn)' : 'var(--color-qn-muted)'
   return (
     <Tip label={`上下文已用 ${usage.percent}% · ${formatTokens(usage.used)} / ${formatTokens(usage.window)} tokens`}>
       <span className="inline-flex h-8 w-8 items-center justify-center" role="img" aria-label={`上下文已用 ${usage.percent}%`}>
         <svg width="18" height="18" viewBox="0 0 18 18" className="-rotate-90">
-          <circle cx="9" cy="9" r={radius} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="2" />
+          <circle cx="9" cy="9" r={radius} fill="none" strokeWidth="2" style={{ stroke: 'color-mix(in srgb, var(--color-qn-fg) 12%, transparent)' }} />
           <circle
             cx="9"
             cy="9"
             r={radius}
             fill="none"
-            stroke={tone}
+            style={{ stroke: tone }}
             strokeWidth="2"
             strokeLinecap="round"
             strokeDasharray={circumference}

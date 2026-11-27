@@ -41,10 +41,10 @@ describe('settingsStore 文件 IO', () => {
 
     await writeAppSettings(userData, {
       ...sample(),
-      general: { ...sample().general, theme: 'light' },
+      general: { ...sample().general, accentColor: 'pink' },
     } as AppSettings)
     const text = await readFile(join(userData, 'settings.json'), 'utf8')
-    expect(text).not.toContain('theme')
+    expect(text).not.toContain('accentColor')
   })
 
   it('可重复写入覆盖旧值', async () => {

@@ -49,6 +49,7 @@ export default function App() {
 
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed)
   const pickerOpen = useUi((s) => s.directoryPickerOpen)
+  const pickerTargetId = useUi((s) => s.directoryPickerTarget) ?? selectedId
 
   const [targetForm, setTargetForm] = useState<{ open: boolean; editing: SshTarget | DirectTarget | null }>({
     open: false,
@@ -97,7 +98,9 @@ export default function App() {
   }, [load])
 
   useEffect(() => {
-    useCodex.getState().setContext(selectedId, null)
+    // 在侧栏点了别的目标下的项目时，项目选择已把会话上下文切过去，这里不能再清空。
+    if (useCodex.getState().currentTargetId !== selectedId) useCodex.getState().setContext(selectedId, null)
+    useProjects.getState().setActiveTarget(selectedId)
     useRateLimits.getState().setActiveTarget(selectedId)
   }, [selectedId])
 
@@ -273,11 +276,12 @@ export default function App() {
       )}
       {pickerOpen && (
         <DirectoryPicker
-          targetId={selectedId}
+          targetId={pickerTargetId}
           onClose={() => useUi.getState().closeDirectoryPicker()}
           onConfirm={(path) => {
             useUi.getState().closeDirectoryPicker()
-            void useProjects.getState().add(selectedId, path)
+            if (pickerTargetId !== selectedId) selectTarget(pickerTargetId)
+            void useProjects.getState().add(pickerTargetId, path)
           }}
         />
       )}

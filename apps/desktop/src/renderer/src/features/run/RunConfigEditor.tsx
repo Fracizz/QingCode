@@ -223,7 +223,7 @@ function TaskCard({
         <div className="text-[12px] text-qn-warn">当前目标是 {OS_LABEL[platform]}，此任务不会在这里运行。</div>
       )}
       {overrideOs.length > 0 && (
-        <div className="flex items-center gap-2 rounded-lg bg-white/[0.04] px-2 py-1.5 text-[12px] text-qn-muted">
+        <div className="flex items-center gap-2 rounded-lg bg-qn-fg/[0.04] px-2 py-1.5 text-[12px] text-qn-muted">
           <span className="min-w-0 flex-1">
             含按系统覆盖（{overrideOs.map((os) => OS_LABEL[os]).join('、')}），保存时原样保留。
           </span>

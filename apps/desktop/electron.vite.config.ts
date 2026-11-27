@@ -51,5 +51,6 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react(), tailwindcss(), devCspPlugin()],
+    server: process.env['QN_DEV_HOST'] ? { host: process.env['QN_DEV_HOST'] } : {},
   },
 })

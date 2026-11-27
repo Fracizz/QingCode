@@ -7,7 +7,8 @@ import { applyThreadPrefs } from '../../lib/threadPrefs'
 import { threadKey } from '../../lib/threads'
 import { formatRelative } from '../../lib/time'
 import { useCodex } from '../../store/codex'
-import { useProjects } from '../../store/projects'
+import { projectListOf, useProjects } from '../../store/projects'
+import { useTargets } from '../../store/targets'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { useUi } from '../../store/ui'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../primitives'
@@ -17,17 +18,16 @@ import { ThreadRow } from './ThreadRow'
 const THREAD_PREVIEW_LIMIT = 8
 
 /**
- * 项目 → 会话两级树（参考 Codex 侧栏）：会话直接缩进挂在项目下面，不再单独占一栏。
- * 会话列表按当前项目 cwd 加载（codex store 一次只持有一个 cwd 的列表），所以同一时间只展开当前项目。
+ * 某个目标下的项目 → 会话两级树（参考 Codex 侧栏）：侧栏里每个铺开的目标各渲染一份。
+ * 会话列表按当前项目 cwd 加载（codex store 一次只持有一个 cwd 的列表），所以全局只展开当前项目。
  */
-export function ProjectTree({ targetId }: { targetId: string }) {
-  const projects = useProjects((s) => s.projects)
-  const selectedId = useProjects((s) => s.selectedId)
-  const loading = useProjects((s) => s.loading)
-  const projectError = useProjects((s) => s.error)
+export function ProjectTree({ targetId, onSelectTarget }: { targetId: string; onSelectTarget: (id: string) => void }) {
+  const { projects, loading, error: projectError } = useProjects((s) => projectListOf(s, targetId))
+  const selectedId = useProjects((s) => (s.targetId === targetId ? s.selectedId : null))
   const load = useProjects((s) => s.load)
   const select = useProjects((s) => s.select)
   const openPicker = useUi((s) => s.openDirectoryPicker)
+  const activeTarget = useTargets((s) => s.selectedId)
 
   const [collapsed, setCollapsed] = useState(false)
   // 相对时间每分钟刷新一次即可。
@@ -42,70 +42,67 @@ export function ProjectTree({ targetId }: { targetId: string }) {
     return () => clearInterval(timer)
   }, [])
 
+  /** 切到项目所在目标（未连接时会发起连接），再打开项目。 */
+  const open = (project: Project) => {
+    if (activeTarget !== targetId) onSelectTarget(targetId)
+    void select(project)
+  }
+
   const onProjectClick = (project: Project) => {
     if (project.id === selectedId) {
       setCollapsed((value) => !value)
       return
     }
     setCollapsed(false)
-    void select(project)
+    open(project)
   }
 
   const newDraftIn = (project: Project) => {
     // 先切到该项目再进入草稿态：会话在发第一条消息时才创建，不留空会话。
-    if (project.id !== selectedId) void select(project)
+    if (project.id !== selectedId) open(project)
     useCodex.getState().startDraft()
     setCollapsed(false)
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center justify-between pb-1 pl-4 pr-2 pt-3">
-        <span className="text-[13px] text-qn-muted">项目</span>
-        <IconButton label="添加项目" className="h-7 w-7" onClick={openPicker}>
-          <FolderPlus size={15} />
-        </IconButton>
-      </div>
+    <div className="pb-1">
+      {loading && projects.length === 0 && (
+        <div className="space-y-1.5 py-1 pl-6 pr-2">
+          {[0, 1].map((key) => (
+            <div key={key} className="h-7 animate-pulse rounded-lg bg-qn-panel" />
+          ))}
+        </div>
+      )}
 
-      <div className="qn-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {loading && projects.length === 0 && (
-          <div className="space-y-1.5 px-2 py-2">
-            {[0, 1, 2].map((key) => (
-              <div key={key} className="h-8 animate-pulse rounded-lg bg-qn-panel" />
-            ))}
+      {!loading && projects.length === 0 && !projectError && (
+        <button
+          type="button"
+          className="flex h-8 w-full items-center gap-2 rounded-lg pl-[30px] text-left text-[13px] text-qn-dim hover:bg-qn-hover hover:text-qn-text"
+          onClick={() => openPicker(targetId)}
+        >
+          <FolderPlus size={14} /> 添加项目
+        </button>
+      )}
+
+      {projects.map((project) => {
+        const active = project.id === selectedId
+        const expanded = active && !collapsed
+        return (
+          <div key={project.id} className="mb-0.5 pl-5">
+            <ProjectRow
+              project={project}
+              active={active}
+              expanded={expanded}
+              now={now}
+              onOpen={() => onProjectClick(project)}
+              onNewDraft={() => newDraftIn(project)}
+            />
+            {expanded && <ThreadList now={now} />}
           </div>
-        )}
+        )
+      })}
 
-        {!loading && projects.length === 0 && !projectError && (
-          <div className="mx-2 mt-2 rounded-xl border border-dashed border-qn-border-strong px-3 py-5 text-center">
-            <FolderPlus size={20} className="mx-auto text-qn-dim" />
-            <p className="mt-2 text-[13px] leading-5 text-qn-muted">还没有项目。添加一个目录，会话会按目录组织。</p>
-            <button type="button" className="qn-button-subtle mt-3" onClick={openPicker}>
-              添加项目
-            </button>
-          </div>
-        )}
-
-        {projects.map((project) => {
-          const active = project.id === selectedId
-          const expanded = active && !collapsed
-          return (
-            <div key={project.id} className="mb-0.5">
-              <ProjectRow
-                project={project}
-                active={active}
-                expanded={expanded}
-                now={now}
-                onOpen={() => onProjectClick(project)}
-                onNewDraft={() => newDraftIn(project)}
-              />
-              {expanded && <ThreadList now={now} />}
-            </div>
-          )
-        })}
-
-        <ErrorNote message={projectError} variant="compact" className="mx-1 mt-2" onRetry={() => void load(targetId)} />
-      </div>
+      <ErrorNote message={projectError} variant="compact" className="mx-1 mt-1" onRetry={() => void load(targetId)} />
     </div>
   )
 }

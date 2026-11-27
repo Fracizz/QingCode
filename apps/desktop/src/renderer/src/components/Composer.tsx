@@ -292,7 +292,7 @@ export function Composer({
         )}
         <div
           className={cn(
-            'rounded-[20px] border border-qn-outline bg-qn-composer shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_8px_24px_rgba(0,0,0,0.35)] transition-colors focus-within:border-qn-outline-hover',
+            'rounded-[20px] border border-qn-outline bg-qn-composer shadow-[var(--qn-composer-shadow)] transition-colors focus-within:border-qn-outline-hover',
             disabled && 'opacity-70',
           )}
         >
@@ -374,7 +374,7 @@ export function Composer({
               <Tip label="随本条消息请求子代理协作，由当前智能体决定如何委派">
                 <button
                   type="button"
-                  className={cn('inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-xs hover:bg-white/10 disabled:opacity-50',
+                  className={cn('inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-xs hover:bg-qn-fg/10 disabled:opacity-50',
                     delegate ? 'bg-qn-accent/10 text-qn-accent' : 'text-qn-muted')}
                   aria-label="本条消息请求子代理"
                   aria-pressed={delegate}
@@ -426,7 +426,7 @@ export function Composer({
                 <span className="inline-flex">
                   <button
                     type="button"
-                    className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-qn-text px-2 text-[12px] font-medium text-black hover:bg-white disabled:bg-white/15 disabled:text-qn-dim disabled:opacity-100"
+                    className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-qn-text px-2 text-[12px] font-medium text-qn-bg hover:bg-qn-text/90 disabled:bg-qn-fg/15 disabled:text-qn-dim disabled:opacity-100"
                     disabled={!canSend}
                     aria-label={running ? '排队' : '发送'}
                     onClick={() => submit()}
@@ -515,7 +515,7 @@ function AttachmentChip({
   return (
     <div
       className={cn(
-        'group/att relative flex h-14 max-w-[15rem] items-center gap-2.5 rounded-lg border bg-white/[0.03] pl-2.5 pr-3',
+        'group/att relative flex h-14 max-w-[15rem] items-center gap-2.5 rounded-lg border bg-qn-fg/[0.03] pl-2.5 pr-3',
         item.status === 'error' ? 'border-qn-danger/40' : 'border-qn-border',
       )}
       title={item.targetPath ?? item.localPath ?? item.name}
@@ -565,7 +565,7 @@ function SlashMenu({
           <span
             className={cn(
               'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
-              item.kind === 'skill' ? 'bg-qn-brand/10 text-qn-brand' : 'bg-white/[0.06] text-qn-muted',
+              item.kind === 'skill' ? 'bg-qn-brand/10 text-qn-brand' : 'bg-qn-fg/[0.06] text-qn-muted',
             )}
           >
             {item.kind === 'skill' ? <Wand2 size={14} /> : <Slash size={14} />}

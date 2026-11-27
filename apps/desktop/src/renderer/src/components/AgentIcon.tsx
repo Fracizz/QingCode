@@ -19,7 +19,7 @@ export function AgentIcon({
   return (
     <span className={`inline-flex shrink-0 items-center gap-1 ${className}`} title={agentLabel(agent)}>
       {mark ? (
-        <svg width={size} height={size} viewBox={mark.viewBox} fill={mark.fill} aria-hidden="true">
+        <svg width={size} height={size} viewBox={mark.viewBox} style={{ fill: mark.fill }} aria-hidden="true">
           <path d={mark.path} />
         </svg>
       ) : (

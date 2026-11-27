@@ -51,7 +51,7 @@ function markdownComponents(streaming: boolean, context: LinkContext | null): Co
     code: ({ className, children }) => {
       const text = typeof children === 'string' ? children : null
       return (
-        <code className={`rounded-md bg-white/[0.07] px-1.5 py-0.5 font-mono text-[0.86em] ${className ?? ''}`}>
+        <code className={`rounded-md bg-qn-fg/[0.07] px-1.5 py-0.5 font-mono text-[0.86em] ${className ?? ''}`}>
           {text !== null && context && !streaming ? (
             <PathText text={text} targetId={context.targetId} cwd={context.cwd} />
           ) : (
@@ -65,7 +65,7 @@ function markdownComponents(streaming: boolean, context: LinkContext | null): Co
         <table className="w-full border-collapse text-[0.93em]">{children}</table>
       </div>
     ),
-    th: ({ children }) => <th className="border-b border-qn-border bg-white/[0.03] px-3 py-1.5 text-left font-medium">{children}</th>,
+    th: ({ children }) => <th className="border-b border-qn-border bg-qn-fg/[0.03] px-3 py-1.5 text-left font-medium">{children}</th>,
     td: ({ children }) => <td className="border-b border-qn-border/60 px-3 py-1.5">{children}</td>,
   }
 }
@@ -120,7 +120,7 @@ function DiffBlock({ text }: { text: string }) {
   return (
     <div>
       {truncated && <div className="px-2 py-1 text-[12px] text-qn-dim">仅显示末尾 {rows.length} 行</div>}
-      <pre className="qn-scroll max-h-72 overflow-auto rounded-lg border border-qn-border bg-[#141414] py-1 font-mono text-[12px] leading-5">
+      <pre className="qn-scroll max-h-72 overflow-auto rounded-lg border border-qn-border bg-qn-code py-1 font-mono text-[12px] leading-5">
         {rows.map((row, index) => (
           <div
             key={index}
@@ -172,7 +172,7 @@ function CommandItem({ item }: { item: Extract<ItemView, { kind: 'command' }> })
     >
       {item.cwd && <div className="mb-1 font-mono text-[12px] text-qn-dim">{item.cwd}</div>}
       {output ? (
-        <pre className="qn-scroll max-h-72 overflow-auto whitespace-pre rounded-lg border border-qn-border bg-[#141414] px-3 py-2 font-mono text-[12px] leading-5 text-qn-text/85">
+        <pre className="qn-scroll max-h-72 overflow-auto whitespace-pre rounded-lg border border-qn-border bg-qn-code px-3 py-2 font-mono text-[12px] leading-5 text-qn-text/85">
           {truncated && <span className="block text-qn-dim">…（仅显示末尾 200 行）</span>}
           {output}
         </pre>
@@ -386,12 +386,12 @@ function UserMessage({ item, onEdit }: {
             </span>
           ))}
           {named.map((path) => (
-            <span key={'i-' + path} title={path} className="inline-flex h-6 max-w-[16rem] items-center gap-1 rounded-md bg-white/[0.06] px-2 text-[12px] text-qn-muted">
+            <span key={'i-' + path} title={path} className="inline-flex h-6 max-w-[16rem] items-center gap-1 rounded-md bg-qn-fg/[0.06] px-2 text-[12px] text-qn-muted">
               <ImageIcon size={12} className="shrink-0" /> <span className="truncate">{basename(path)}</span>
             </span>
           ))}
           {files.map((path) => (
-            <span key={'f-' + path} title={path} className="inline-flex h-6 max-w-[16rem] items-center gap-1 rounded-md bg-white/[0.06] px-2 text-[12px] text-qn-muted">
+            <span key={'f-' + path} title={path} className="inline-flex h-6 max-w-[16rem] items-center gap-1 rounded-md bg-qn-fg/[0.06] px-2 text-[12px] text-qn-muted">
               <FileText size={12} className="shrink-0" /> <span className="truncate">{basename(path)}</span>
             </span>
           ))}
@@ -419,11 +419,11 @@ function UserMessage({ item, onEdit }: {
           {editFailed && <div role="status" className="px-1 text-[12px] text-qn-warn">发送失败，修改已保留</div>}
           <div className="mt-2 flex flex-wrap justify-end gap-1.5 text-[12px]">
             <button type="button" disabled={saving} className="rounded-md px-2 py-1 text-qn-muted hover:bg-qn-hover" onClick={() => setEdit(null)}>取消</button>
-            <button type="submit" disabled={!canSave || saving} className="rounded-md bg-qn-text px-2 py-1 text-black disabled:opacity-40">{saving ? '提交中…' : '发送修订'}</button>
+            <button type="submit" disabled={!canSave || saving} className="rounded-md bg-qn-text px-2 py-1 text-qn-bg disabled:opacity-40">{saving ? '提交中…' : '发送修订'}</button>
           </div>
         </form>
       ) : parsed.text.trim() && (
-        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-white/[0.06] bg-qn-bubble px-4 py-2.5 text-[length:var(--qn-chat-font-size,14px)] leading-[1.7] text-qn-text">
+        <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-qn-fg/[0.06] bg-qn-bubble px-4 py-2.5 text-[length:var(--qn-chat-font-size,14px)] leading-[1.7] text-qn-text">
           {parsed.text}
         </div>
       )}

@@ -66,6 +66,7 @@ describe('settingsStore', () => {
     expect(state.settings.general.density).toBe('compact')
     expect(state.error).toBeNull()
     expect(setAttribute).toHaveBeenCalledWith('data-density', 'compact')
+    expect(setAttribute).toHaveBeenCalledWith('data-theme', 'dark')
     expect(setProperty).toHaveBeenCalledWith('--qn-chat-font-size', '18px')
   })
 
@@ -94,13 +95,17 @@ describe('settingsStore', () => {
       if (method === 'settings.save') throw new BackendCallError('internal', '磁盘已满')
       throw new Error(`未知方法 ${method}`)
     })
-    const update = useSettings.getState().update({ general: { density: 'compact', defaultAgent: 'pi', editorFontSize: 16 } })
+    const update = useSettings.getState().update({ general: { density: 'compact', theme: 'light', defaultAgent: 'pi', editorFontSize: 16 } })
     expect(setProperty).toHaveBeenLastCalledWith('--qn-editor-font-size', '16px')
+    expect(setAttribute).toHaveBeenLastCalledWith('data-theme', 'light')
     await update
     expect(useSettings.getState().settings).toEqual(defaultAppSettings())
     expect(useSettings.getState().error).toContain('磁盘已满')
     expect(useSettings.getState().saving).toBe(false)
-    expect(setAttribute).toHaveBeenLastCalledWith('data-density', 'comfortable')
+    expect(setAttribute.mock.calls.slice(-2)).toEqual([
+      ['data-density', 'comfortable'],
+      ['data-theme', 'dark'],
+    ])
     expect(setProperty).toHaveBeenLastCalledWith('--qn-editor-font-size', '12.5px')
   })
 

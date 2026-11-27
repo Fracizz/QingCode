@@ -27,7 +27,7 @@ describe('outputModel', () => {
   it('stderr 片段带标记，ANSI 状态跨块保留', () => {
     let out = appendOutput(emptyOutput(), '\u001b[32mok', 'stdout')
     out = appendOutput(out, ' still\n', 'stdout')
-    expect(out.lines[0]!.segments).toEqual([{ text: 'ok still', style: { fg: '#23d18b' } }])
+    expect(out.lines[0]!.segments).toEqual([{ text: 'ok still', style: { fg: 'var(--qn-ansi-2)' } }])
     out = appendOutput(out, 'bad\n', 'stderr')
     expect(out.lines[1]!.segments[0]).toMatchObject({ text: 'bad', err: true })
   })

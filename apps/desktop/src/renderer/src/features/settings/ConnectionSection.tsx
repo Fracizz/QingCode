@@ -40,12 +40,12 @@ export function ConnectionSection({
       {targets.map((target) => (
         <li
           key={target.id}
-          className="flex items-center gap-3 rounded-lg border border-qn-border bg-white/[0.02] px-3 py-2"
+          className="flex items-center gap-3 rounded-lg border border-qn-border bg-qn-fg/[0.02] px-3 py-2"
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="truncate text-[13px] text-qn-text">{target.name}</span>
-              <span className="rounded-md bg-white/[0.06] px-1.5 text-[11px] leading-5 text-qn-muted">
+              <span className="rounded-md bg-qn-fg/[0.06] px-1.5 text-[11px] leading-5 text-qn-muted">
                 {kindLabel(target)}
               </span>
             </div>

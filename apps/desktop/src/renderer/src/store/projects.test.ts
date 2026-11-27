@@ -22,3 +22,18 @@ it('切换项目时立即更新会话上下文，迟到的保存不会取消已�
     refresh.mockRestore()
   }
 })
+
+it('多个目标的项目列表分别缓存，活动目标镜像跟随切换', async () => {
+  const a = { id: 'a1', targetId: 'ta', path: '/a', name: 'A', lastOpenedAt: 1 }
+  const b = { id: 'b1', targetId: 'tb', path: '/b', name: 'B', lastOpenedAt: 1 }
+  save.mockResolvedValueOnce([a]).mockResolvedValueOnce([b])
+  await useProjects.getState().load('ta')
+  await useProjects.getState().load('tb')
+  expect(useProjects.getState().byTarget.ta?.projects).toEqual([a])
+  expect(useProjects.getState().byTarget.tb?.projects).toEqual([b])
+
+  useProjects.getState().setActiveTarget('tb')
+  expect(useProjects.getState().projects).toEqual([b])
+  useProjects.getState().setActiveTarget('ta')
+  expect(useProjects.getState().projects).toEqual([a])
+})

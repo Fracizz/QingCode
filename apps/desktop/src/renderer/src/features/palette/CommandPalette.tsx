@@ -51,7 +51,7 @@ function ShortcutKeys({ shortcut }: { shortcut: string }) {
           {chord.split(/\+(?!$)/).map((key, ki) => (
             <kbd
               key={ki}
-              className="rounded border border-qn-border-strong bg-white/5 px-1.5 py-px font-sans text-[11px] leading-4 text-qn-muted"
+              className="rounded border border-qn-border-strong bg-qn-fg/5 px-1.5 py-px font-sans text-[11px] leading-4 text-qn-muted"
             >
               {key}
             </kbd>

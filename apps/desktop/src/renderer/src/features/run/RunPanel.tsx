@@ -241,7 +241,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
           onClose={() => setNotice(null)}
         />
         {view.configSource === 'nestcode' && !view.configError && (
-          <div className="rounded-lg bg-white/[0.04] px-3 py-2 text-[12px] leading-5 text-qn-muted">
+          <div className="rounded-lg bg-qn-fg/[0.04] px-3 py-2 text-[12px] leading-5 text-qn-muted">
             读取自旧版位置 .nestcode/run.json；保存后写入 {RUN_CONFIG_RELATIVE_PATH}。
           </div>
         )}

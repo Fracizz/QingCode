@@ -32,7 +32,7 @@ export function AnnotationBar({
       {open && (
         <div className="qn-scroll mt-2 max-h-40 space-y-2 overflow-y-auto pb-2">
           {annotations.map((annotation) => (
-            <div key={annotation.id} className="rounded-lg border border-qn-border bg-black/20 p-2">
+            <div key={annotation.id} className="rounded-lg border border-qn-border bg-qn-inset p-2">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="whitespace-pre-wrap break-words font-mono text-[12px] leading-4 text-qn-muted">

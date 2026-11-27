@@ -169,7 +169,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
         </div>
       }
     >
-      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-white/[0.03] px-3 py-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-qn-fg/[0.03] px-3 py-2">
         <Smartphone size={16} className="shrink-0 text-qn-accent" />
         <span className="text-[13px]">手机网关</span>
         <Badge tone={status.tone}>{status.label}</Badge>
@@ -316,7 +316,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               {lanOptions.length > 0 ? (
                 <ul className="flex flex-wrap gap-1.5">
                   {lanOptions.map((option) => (
-                    <li key={option.value} className="rounded-md bg-white/[0.05] px-2 py-1 font-mono text-[12px]">
+                    <li key={option.value} className="rounded-md bg-qn-fg/[0.05] px-2 py-1 font-mono text-[12px]">
                       {option.value}
                     </li>
                   ))}
@@ -330,7 +330,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               {draft && draft.publicAddresses.length > 0 && (
                 <ul className="space-y-1">
                   {draft.publicAddresses.map((value, index) => (
-                    <li key={`${value}-${index}`} className="flex items-center gap-2 rounded-lg bg-white/[0.04] py-0.5 pl-3 pr-1">
+                    <li key={`${value}-${index}`} className="flex items-center gap-2 rounded-lg bg-qn-fg/[0.04] py-0.5 pl-3 pr-1">
                       <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{value}</span>
                       <IconButton label="删除对外地址" danger className="h-7 w-7" onClick={() => removeAddress(index)}>
                         <Trash2 size={14} />
@@ -377,7 +377,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               ) : (
                 <ul className="space-y-1.5">
                   {devices.map((device) => (
-                    <li key={device.id} className="flex items-center gap-3 rounded-lg bg-white/[0.04] px-3 py-2">
+                    <li key={device.id} className="flex items-center gap-3 rounded-lg bg-qn-fg/[0.04] px-3 py-2">
                       <Smartphone size={16} className="shrink-0 text-qn-muted" />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-[13px]">{device.name}</div>
@@ -419,7 +419,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
                 </button>
               }
             >
-              <div className="break-all rounded-lg bg-white/[0.04] px-3 py-2 font-mono text-[12px] leading-5 text-qn-muted">
+              <div className="break-all rounded-lg bg-qn-fg/[0.04] px-3 py-2 font-mono text-[12px] leading-5 text-qn-muted">
                 {settings?.fingerprint ? groupFingerprint(settings.fingerprint) : '尚未生成'}
               </div>
               <p className="text-[12px] text-qn-dim">手机首次连接时会核对该指纹，防止中间人冒充这台电脑。</p>

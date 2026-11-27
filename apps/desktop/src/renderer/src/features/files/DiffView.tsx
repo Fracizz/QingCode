@@ -69,7 +69,7 @@ function UnifiedDiffBody({
     )
   }
   return (
-    <div className="qn-scroll min-h-0 flex-1 overflow-auto bg-[#141414] font-mono text-[length:var(--qn-editor-font-size,12.5px)] leading-[1.6]">
+    <div className="qn-scroll min-h-0 flex-1 overflow-auto bg-qn-code font-mono text-[length:var(--qn-editor-font-size,12.5px)] leading-[1.6]">
       {rows.length === 0 ? (
         <EmptyState>没有改动 · {path}</EmptyState>
       ) : (

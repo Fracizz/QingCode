@@ -431,7 +431,7 @@ export function FileExplorer({
         title={node.kind === 'placeholder' ? undefined : node.path}
         className={cn(
           'flex cursor-default select-none items-center gap-1 pr-2 text-[12px] outline-none',
-          selected ? 'bg-qn-accent/20' : 'hover:bg-white/5',
+          selected ? 'bg-qn-accent/20' : 'hover:bg-qn-fg/5',
           node.kind === 'placeholder' && 'text-qn-muted',
         )}
         onClick={() => {

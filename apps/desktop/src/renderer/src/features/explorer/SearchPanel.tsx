@@ -94,7 +94,7 @@ export function SearchPanel({
               <button
                 key={`${hit.path}:${hit.line ?? 0}:${hit.column ?? 0}:${index}`}
                 type="button"
-                className="flex w-full items-start gap-2 px-3 py-0.5 text-left text-[12px] hover:bg-white/5"
+                className="flex w-full items-start gap-2 px-3 py-0.5 text-left text-[12px] hover:bg-qn-fg/5"
                 onClick={() =>
                   openFile({
                     targetId,

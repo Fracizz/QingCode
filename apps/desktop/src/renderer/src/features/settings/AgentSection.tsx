@@ -62,7 +62,7 @@ function AgentRow({
   }
 
   return (
-    <div className="rounded-xl border border-qn-border bg-white/[0.02] p-3">
+    <div className="rounded-xl border border-qn-border bg-qn-fg/[0.02] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="text-[13px] font-medium text-qn-text">{info.label}</span>
@@ -167,7 +167,7 @@ export function AgentSection({ visible }: { visible: (itemId: string) => boolean
               <li key={info.id}>
                 <span className="text-qn-text">{info.label}：</span>
                 {info.loginPrefix}{' '}
-                <code className="rounded-md bg-white/[0.06] px-1 py-0.5 font-mono text-[12px]">
+                <code className="rounded-md bg-qn-fg/[0.06] px-1 py-0.5 font-mono text-[12px]">
                   {info.loginCommand}
                 </code>{' '}
                 {info.loginSuffix}

@@ -15,7 +15,7 @@ export function ImageView({
   const src = useMemo(() => imageDataUrl(content, path), [content, path])
   if (!src) return <BinaryNotice path={path} className={className} />
   return (
-    <div className={cn('qn-scroll flex min-h-0 flex-1 items-center justify-center overflow-auto bg-[#141414] p-4', className)}>
+    <div className={cn('qn-scroll flex min-h-0 flex-1 items-center justify-center overflow-auto bg-qn-code p-4', className)}>
       <img src={src} alt={basename(path)} className="max-h-full max-w-full object-contain" />
     </div>
   )

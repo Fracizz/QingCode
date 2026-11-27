@@ -43,7 +43,7 @@ const cipher: SecretCipher = {
 const PAIR_CODE = 'Pair.Code!'
 const LOCAL_TARGET = { id: 'local' as const, kind: 'local' as const, name: '本机' }
 const APP_SETTINGS: AppSettings = {
-  general: { sendKey: 'enter', autoConnectLast: false, defaultAgent: 'claude', density: 'comfortable', ...DEFAULT_FONT_SIZES },
+  general: { sendKey: 'enter', autoConnectLast: false, defaultAgent: 'claude', density: 'comfortable', theme: 'dark', ...DEFAULT_FONT_SIZES },
   agents: {
     local: {
       codex: { enabled: true, path: '  C:\\tools\\codex.exe  ', configDir: 'C:\\Users\\me\\.codex' },

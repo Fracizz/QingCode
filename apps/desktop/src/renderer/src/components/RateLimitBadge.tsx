@@ -52,7 +52,7 @@ function WindowRow({
           剩余 {Math.round(remaining)}%
         </span>
       </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-qn-fg/10">
         <div
           className={`h-full ${severityBarClass(severityForPercent(value.usedPercent))}`}
           style={{ width: `${remaining}%` }}
@@ -127,7 +127,7 @@ function Body({
       ) : (
         <>
           {entry?.account && (
-            <div className="mb-2 space-y-0.5 rounded-lg bg-black/20 p-2 text-[12px] text-qn-muted">
+            <div className="mb-2 space-y-0.5 rounded-lg bg-qn-inset p-2 text-[12px] text-qn-muted">
               <div>套餐：{entry.account.planType ?? '未知'}</div>
               {entry.account.email && <div className="truncate">账号：{entry.account.email}</div>}
               {entry.account.workspaceName && (
@@ -222,7 +222,7 @@ export function RateLimitBadge({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`flex h-6 items-center gap-1.5 rounded-md border border-qn-border-strong bg-white/[0.03] px-2 text-[12px] leading-4 hover:bg-qn-hover data-[state=open]:bg-qn-hover ${severityTextClass(level)}`}
+          className={`flex h-6 items-center gap-1.5 rounded-md border border-qn-border-strong bg-qn-fg/[0.03] px-2 text-[12px] leading-4 hover:bg-qn-hover data-[state=open]:bg-qn-hover ${severityTextClass(level)}`}
           aria-label={`查看 ${agentLabel(agent)} 额度详情`}
         >
           <Gauge size={13} />

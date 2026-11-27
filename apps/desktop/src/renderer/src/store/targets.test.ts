@@ -35,3 +35,18 @@ it('加载目标时保留上次远程选择，启动连接的状态由后端更�
   expect(useTargets.getState().selectedId).toBe('local')
   expect(stored.get('qn-last-target')).toBe('local')
 })
+
+it('选中的目标加入侧栏，从侧栏移除活动目标时回到本机', () => {
+  const stored = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => stored.set(key, value),
+  })
+  useTargets.getState().select('remote')
+  useTargets.getState().select('other')
+  expect(useTargets.getState().sidebarIds).toEqual(['remote', 'other'])
+  useTargets.getState().hideFromSidebar('other')
+  expect(useTargets.getState().sidebarIds).toEqual(['remote'])
+  expect(useTargets.getState().selectedId).toBe('local')
+  expect(JSON.parse(stored.get('qn-sidebar-targets') ?? '[]')).toEqual(['remote'])
+})

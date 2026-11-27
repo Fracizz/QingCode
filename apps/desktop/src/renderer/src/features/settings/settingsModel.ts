@@ -5,6 +5,7 @@ import type {
   SettingsAgentKind,
   SettingsDensity,
   SettingsSendKey,
+  SettingsTheme,
 } from '../../../../shared/backendApi'
 import { DEFAULT_FONT_SIZES, sanitizeFontSizes, type FontSizeKey } from '../../../../shared/fontSizes'
 
@@ -28,6 +29,10 @@ export function isSettingsDensity(value: unknown): value is SettingsDensity {
   return value === 'comfortable' || value === 'compact'
 }
 
+export function isSettingsTheme(value: unknown): value is SettingsTheme {
+  return value === 'dark' || value === 'gray' || value === 'light'
+}
+
 export function isSettingsAgent(value: unknown): value is SettingsAgentKind {
   return value === 'codex' || value === 'claude' || value === 'pi'
 }
@@ -39,6 +44,7 @@ export function defaultAppSettings(): AppSettings {
       autoConnectLast: true,
       defaultAgent: 'codex',
       density: 'comfortable',
+      theme: 'dark',
       ...DEFAULT_FONT_SIZES,
     },
     agents: {},
@@ -107,6 +113,7 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
         ? general.defaultAgent
         : defaults.general.defaultAgent,
       density: isSettingsDensity(general.density) ? general.density : defaults.general.density,
+      theme: isSettingsTheme(general.theme) ? general.theme : defaults.general.theme,
       ...DEFAULT_FONT_SIZES,
       ...sanitizeFontSizes(general),
     },
@@ -123,6 +130,7 @@ export function sanitizeSettingsPatch(raw: unknown): AppSettingsPatch {
   if (typeof general.autoConnectLast === 'boolean') nextGeneral.autoConnectLast = general.autoConnectLast
   if (isSettingsAgent(general.defaultAgent)) nextGeneral.defaultAgent = general.defaultAgent
   if (isSettingsDensity(general.density)) nextGeneral.density = general.density
+  if (isSettingsTheme(general.theme)) nextGeneral.theme = general.theme
   if (Object.keys(nextGeneral).length > 0) patch.general = nextGeneral
 
   const rawAgents = isRecord(root.agents) ? root.agents : {}
@@ -252,9 +260,10 @@ export const FONT_SIZE_SETTINGS: ReadonlyArray<{
   { id: 'terminalFontSize', title: '终端字号', description: '集成终端的命令输入和输出。', keywords: ['终端', '命令行', 'terminal'] },
 ]
 
-export const THEME_OPTIONS: ReadonlyArray<{ value: string; label: string; disabled?: boolean; hint?: string }> = [
+export const THEME_OPTIONS: ReadonlyArray<{ value: SettingsTheme; label: string }> = [
   { value: 'dark', label: '深色' },
-  { value: 'light', label: '浅色', disabled: true, hint: '即将支持' },
+  { value: 'gray', label: '灰色' },
+  { value: 'light', label: '浅色' },
 ]
 
 export const DEFAULT_AGENT_OPTIONS: ReadonlyArray<{ value: SettingsAgentKind; label: string }> = [
@@ -317,7 +326,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     id: 'theme',
     section: 'general',
     title: '主题',
-    keywords: ['主题', '深色', '浅色', '外观', 'theme', 'dark', 'light', '即将支持'],
+    keywords: ['主题', '深色', '灰色', '浅色', '外观', '配色', 'theme', 'dark', 'gray', 'light'],
   },
   ...FONT_SIZE_SETTINGS.map(({ id, title, keywords }) => ({
     id,

@@ -2,7 +2,11 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import { call } from './lib/backend'
+import { applyTheme, readCachedTheme } from './lib/theme'
 import './styles.css'
+
+// 首帧前先套上次的主题，设置读回后再以落盘值为准。
+applyTheme(readCachedTheme())
 
 const container = document.getElementById('root')
 if (container) {

@@ -8,14 +8,14 @@ describe('parseAnsi', () => {
   it('SGR 颜色、粗体与重置', () => {
     expect(texts('a\u001b[31mred\u001b[1mbold\u001b[0mplain')).toEqual([
       ['a', {}],
-      ['red', { fg: '#f14c4c' }],
-      ['bold', { fg: '#f14c4c', bold: true }],
+      ['red', { fg: 'var(--qn-ansi-1)' }],
+      ['bold', { fg: 'var(--qn-ansi-1)', bold: true }],
       ['plain', {}],
     ])
   })
 
   it('亮色、背景、256 色与真彩色', () => {
-    expect(applySgr({}, [92, 44])).toEqual({ fg: '#6fcf8f', bg: '#3b8eea' })
+    expect(applySgr({}, [92, 44])).toEqual({ fg: 'var(--qn-ansi-10)', bg: 'var(--qn-ansi-4)' })
     expect(applySgr({}, [38, 5, 196]).fg).toBe(color256(196))
     expect(applySgr({}, [48, 2, 1, 2, 255]).bg).toBe('#0102ff')
     expect(applySgr({ fg: '#fff', bold: true }, [39, 22])).toEqual({})
@@ -31,14 +31,14 @@ describe('parseAnsi', () => {
     expect(first.segments.map((s) => s.text)).toEqual(['ok'])
     expect(first.state.pending).toBe('\u001b[3')
     const second = parseAnsi('2mgreen', first.state)
-    expect(second.segments).toEqual([{ text: 'green', style: { fg: '#23d18b' } }])
+    expect(second.segments).toEqual([{ text: 'green', style: { fg: 'var(--qn-ansi-2)' } }])
     expect(parseAnsi('x\u001b', initialAnsiState()).state.pending).toBe('\u001b')
   })
 
   it('样式跨块延续，控制字符被去掉但保留换行和制表符', () => {
     const first = parseAnsi('\u001b[33m', initialAnsiState())
     const second = parseAnsi('a\tb\u0007\n', first.state)
-    expect(second.segments).toEqual([{ text: 'a\tb\n', style: { fg: '#f5f543' } }])
+    expect(second.segments).toEqual([{ text: 'a\tb\n', style: { fg: 'var(--qn-ansi-3)' } }])
   })
 
   it('styleToCss', () => {

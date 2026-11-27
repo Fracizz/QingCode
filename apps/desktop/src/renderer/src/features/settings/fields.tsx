@@ -45,7 +45,7 @@ export function Segmented<T extends string>({
   return (
     <div
       role="group"
-      className={cn('inline-flex rounded-lg border border-qn-border-strong bg-[#161616] p-0.5', className)}
+      className={cn('inline-flex rounded-lg border border-qn-border-strong bg-qn-field p-0.5', className)}
     >
       {options.map((option) => (
         <button
@@ -113,7 +113,7 @@ export function FieldLabel({ children }: { children: ReactNode }) {
 
 export function InfoBlock({ title, children }: { title?: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-qn-border bg-white/[0.02] px-3 py-2.5 text-[12px] leading-5 text-qn-muted">
+    <div className="rounded-xl border border-qn-border bg-qn-fg/[0.02] px-3 py-2.5 text-[12px] leading-5 text-qn-muted">
       {title && <div className="mb-1 text-[13px] text-qn-text">{title}</div>}
       {children}
     </div>

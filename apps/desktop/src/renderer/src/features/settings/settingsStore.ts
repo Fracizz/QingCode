@@ -7,6 +7,7 @@ import type {
 } from '../../../../shared/backendApi'
 import { call } from '../../lib/backend'
 import { friendlyError } from '../../lib/errors'
+import { applyTheme } from '../../lib/theme'
 import {
   defaultAppSettings,
   densityAttribute,
@@ -27,6 +28,7 @@ export function applyDensity(density: SettingsDensity): void {
 function applyAppearance(general: AppSettings['general']): void {
   if (typeof document === 'undefined') return
   applyDensity(general.density)
+  applyTheme(general.theme)
   const { style } = document.documentElement
   style.setProperty('--qn-chat-font-size', `${general.chatFontSize}px`)
   style.setProperty('--qn-composer-font-size', `${general.composerFontSize}px`)

@@ -2,11 +2,12 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type ITheme } from '@xterm/xterm'
 import type { TermDataEvt, TermErrorEvt, TermExitEvt, TermExitInfo, TermInfo, TermOutputChunk, TermResizedEvt } from '@qn/protocol'
 import { DEFAULT_FONT_SIZES } from '../../../../shared/fontSizes'
 import { copyText } from '../../lib/clipboard'
 import { friendlyError } from '../../lib/errors'
+import { THEME_CHANGE_EVENT } from '../../lib/theme'
 import { onServerEvt, serverCall } from '../workspace/serverCall'
 import { planTerminalReplay } from './terminalModel'
 
@@ -18,6 +19,28 @@ export type TerminalStatus = {
   supportsResize: boolean
   exit: TermExitInfo | undefined
   error: string | null
+}
+
+const ANSI_NAMES = [
+  'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
+  'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite',
+] as const
+
+/** 终端配色取自当前主题的 CSS 变量，与运行输出共用同一套 16 色。 */
+function terminalTheme(host: HTMLElement): ITheme {
+  const style = getComputedStyle(host)
+  const read = (name: string) => style.getPropertyValue(name).trim() || undefined
+  const theme: ITheme = {
+    background: read('--color-qn-bg'),
+    foreground: read('--color-qn-text'),
+    cursor: read('--color-qn-brand'),
+    // 只有浅色主题定义了这个变量；深色沿用 xterm 默认的半透明白。
+    selectionBackground: read('--qn-term-selection'),
+  }
+  ANSI_NAMES.forEach((name, index) => {
+    theme[name] = read(`--qn-ansi-${index}`)
+  })
+  return theme
 }
 
 export function initialTerminalStatus(info: TermInfo): TerminalStatus {
@@ -58,7 +81,6 @@ export function mountTerminalSession(
   onSearch: () => void,
 ) {
   const { termId } = info
-  const style = getComputedStyle(host)
   const terminal = new Terminal({
     cols: info.cols,
     rows: info.rows,
@@ -68,11 +90,7 @@ export function mountTerminalSession(
     fontFamily: '"Cascadia Mono", Consolas, "Courier New", monospace',
     fontSize: DEFAULT_FONT_SIZES.terminalFontSize,
     scrollback: 3000,
-    theme: {
-      background: style.getPropertyValue('--color-qn-bg').trim(),
-      foreground: style.getPropertyValue('--color-qn-text').trim(),
-      cursor: style.getPropertyValue('--color-qn-brand').trim(),
-    },
+    theme: terminalTheme(host),
     linkHandler: { activate: openLink },
   })
   const fit = new FitAddon()
@@ -83,6 +101,11 @@ export function mountTerminalSession(
   terminal.unicode.activeVersion = '11'
   terminal.loadAddon(new WebLinksAddon(openLink))
   terminal.open(host)
+  // xterm 用具体色值绘制，主题切换时要重新取一次 CSS 变量。
+  const onThemeChange = () => {
+    terminal.options.theme = terminalTheme(host)
+  }
+  globalThis.addEventListener?.(THEME_CHANGE_EVENT, onThemeChange)
 
   let status = initialTerminalStatus(info)
   let lastSeq = 0
@@ -309,6 +332,7 @@ export function mountTerminalSession(
     dismissError: () => update({ error: null }),
     dispose() {
       disposed = true
+      globalThis.removeEventListener?.(THEME_CHANGE_EVENT, onThemeChange)
       observer.disconnect()
       stopListening()
       if (ready) void serverCall(targetId, 'term.detach', { termId }).catch(() => {})

@@ -1,5 +1,7 @@
 // 进场页（index.html 里的 #qn-splash）的时序与 DOM 控制。纯函数在前，便于单测。
 
+import { SPLASH_LEAVE_EVENT } from './theme'
+
 /** 入场动画最晚结束于约 1000ms（光标 400ms 延迟 + 420ms，再留一点品牌停留）。 */
 export const SPLASH_MIN_VISIBLE_MS = 1200
 export const SPLASH_REDUCED_MIN_VISIBLE_MS = 300
@@ -82,6 +84,7 @@ export function dismissSplash(onLeave?: () => void): Promise<void> {
   dismissing = new Promise<void>((resolve) => {
     window.setTimeout(() => {
       el.classList.add('qn-splash--leave')
+      window.dispatchEvent(new Event(SPLASH_LEAVE_EVENT))
       onLeave?.()
       window.setTimeout(() => {
         el.remove()

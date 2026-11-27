@@ -61,7 +61,7 @@ export function WelcomePane({ onConnect, onAddTarget }: { onConnect: (id: string
               </MenuItem>
             ))}
             <MenuSeparator />
-            <MenuItem icon={<FolderPlus size={14} />} onSelect={openPicker}>
+            <MenuItem icon={<FolderPlus size={14} />} onSelect={() => openPicker()}>
               添加项目…
             </MenuItem>
           </MenuContent>
@@ -92,7 +92,7 @@ export function WelcomePane({ onConnect, onAddTarget }: { onConnect: (id: string
       {active && projects.length === 0 && (
         <div className="mt-6 flex flex-col items-center gap-3">
           <p className="text-[14px] text-qn-muted">添加一个项目目录，会话会按项目归类；也可以不选项目直接开始。</p>
-          <button type="button" className="qn-button inline-flex items-center gap-2 px-4 py-2" onClick={openPicker}>
+          <button type="button" className="qn-button inline-flex items-center gap-2 px-4 py-2" onClick={() => openPicker()}>
             <FolderPlus size={16} /> 添加项目
           </button>
         </div>

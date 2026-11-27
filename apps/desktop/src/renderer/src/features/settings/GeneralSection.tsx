@@ -11,6 +11,7 @@ import {
   isSettingsAgent,
   isSettingsDensity,
   isSettingsSendKey,
+  isSettingsTheme,
 } from './settingsModel'
 import { SectionHeading, Segmented, SettingRow } from './fields'
 
@@ -74,8 +75,14 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
       )}
 
       {visible('theme') && (
-        <SettingRow title="主题" description="当前版本只提供深色主题。">
-          <Segmented value="dark" options={THEME_OPTIONS} onChange={() => undefined} />
+        <SettingRow title="主题" description="深色为默认；灰色整体抬亮一档，浅色为白底。立即生效。">
+          <Segmented
+            value={general.theme}
+            options={THEME_OPTIONS}
+            onChange={(value) => {
+              if (isSettingsTheme(value)) void update({ general: { theme: value } })
+            }}
+          />
         </SettingRow>
       )}
 

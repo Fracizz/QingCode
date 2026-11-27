@@ -34,6 +34,22 @@
 
 旧值对照：`border #2a2a2a/#2e2e2e → #383838`，`border-strong #3a3a3a → #4d4d4d`，`muted #939393 → #a0a0a0`，`dim #6b6b6b → #8a8a8a`（旧 dim 值现在作为 `outline`）。
 
+### 2.1 电脑版灰色 / 浅色主题（`html[data-theme]`）
+
+设置 → 通用 → 主题：深色（默认）/ 灰色 / 浅色。深色即 §2 的值；其余两套只覆盖 token，组件不感知主题。
+
+| Token | 灰色 | 浅色 | 实测（最差表面） |
+|---|---|---|---|
+| `qn-bg` / `qn-panel` / `qn-composer` | `#28292c` / `#2f3033` / `#37383b` | `#ffffff` / `#fafafa` / `#ffffff` | — |
+| `qn-text` | `#ececec` | `#1a1a1a` | 灰 8.4 / 浅 14.6 |
+| `qn-muted` | `#b4b4b8` | `#575757` | 灰 4.78 / 浅 6.06 |
+| `qn-dim` | `#a0a0a5` | `#6b6b6b` | 灰 4.50 / 浅 5.11 |
+| `qn-outline` | `#838489` | `#858585` | 灰 3.14 / 浅 3.38 |
+| `qn-border` | `#48494d` | `#cfcfcf` | 灰 1.47 / 浅 1.43 |
+| `qn-brand` / `qn-accent` | 同深色 | `#0e8f78` / `#2563eb` | 浅 3.86 / 4.95 |
+
+主题相关的非 Tailwind 颜色（语法色 `--qn-syn-*`、终端 16 色 `--qn-ansi-*`、浮层、滚动条、Codex 标识）同样在 `styles.css` 按主题定义；半透明叠加用 `qn-fg`（深色叠白、浅色叠黑），内嵌凹槽用 `qn-inset`，代码面用 `qn-code`，输入底用 `qn-field`。**不要再写 `bg-white/[..]`、`bg-black/20`、`bg-[#141414]` 这类只适合深色的写法。**
+
 ## 3. 写法约定
 
 1. **不写裸色值**。新增颜色先进 `@theme`，组件里用 token；需要更亮的局部变体时像 `.qn-surface-float` 那样在子树里重定向 token。

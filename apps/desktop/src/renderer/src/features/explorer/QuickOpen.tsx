@@ -100,7 +100,7 @@ export function QuickOpen({
           onKeyDown={onKeyDown}
         />
         <ErrorNote message={search.error} />
-        <div className="qn-scroll max-h-[360px] overflow-y-auto rounded-lg border border-qn-border bg-black/20" role="listbox" aria-label="匹配文件">
+        <div className="qn-scroll max-h-[360px] overflow-y-auto rounded-lg border border-qn-border bg-qn-inset" role="listbox" aria-label="匹配文件">
           {ranked.length === 0 && (
             <EmptyState>
               {query.trim() === ''
@@ -116,7 +116,7 @@ export function QuickOpen({
               selected={index === selected}
               className={cn(
                 'gap-2 rounded-none px-3 py-1.5 text-[12px]',
-                index === selected ? 'bg-qn-accent/20' : 'hover:bg-white/5',
+                index === selected ? 'bg-qn-accent/20' : 'hover:bg-qn-fg/5',
               )}
               onMouseEnter={() => setSelected(index)}
               onClick={() => choose(hit.path)}

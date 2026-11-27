@@ -117,6 +117,12 @@ function isAllowedNavigation(url: string): boolean {
 // 与渲染进程 styles.css 的 --color-qn-chrome / 标题栏高度保持一致，否则系统窗口按钮与自绘标题栏会出现色差或错位。
 const CHROME_COLOR = '#141414'
 const CHROME_SYMBOL = '#a1a1aa'
+// 与 styles.css 各主题的 --color-qn-chrome 保持一致，系统窗口按钮区才不会出现色块。
+const THEME_CHROME: Record<string, { color: string; symbolColor: string }> = {
+  dark: { color: CHROME_COLOR, symbolColor: CHROME_SYMBOL },
+  gray: { color: '#232427', symbolColor: '#b4b4b8' },
+  light: { color: '#ebebeb', symbolColor: '#4a4a4a' },
+}
 const TITLEBAR_HEIGHT = 38
 
 // 去掉系统菜单后，开发态仍需要刷新与 DevTools 快捷键。
@@ -207,6 +213,13 @@ function registerIpc(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.on('app:setTheme', (event, theme: unknown) => {
+    const chrome = typeof theme === 'string' && Object.hasOwn(THEME_CHROME, theme) ? THEME_CHROME[theme] : undefined
+    const target = BrowserWindow.fromWebContents(event.sender)
+    if (!chrome || !target || target.isDestroyed()) return
+    target.setBackgroundColor(chrome.color)
+    if (process.platform !== 'darwin') target.setTitleBarOverlay({ ...chrome, height: TITLEBAR_HEIGHT })
+  })
   ipcMain.on('app:smokeDone', () => {
     if (!smoke) return
     if (smokeTimer) clearTimeout(smokeTimer)

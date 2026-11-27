@@ -138,7 +138,7 @@ function CompareDialog({ prompt }: { prompt: Extract<FilePrompt, { kind: 'compar
         </Footer>
       }
     >
-      <div className="flex h-[min(56vh,460px)] flex-col overflow-hidden rounded-lg border border-qn-border bg-[#141414]">
+      <div className="flex h-[min(56vh,460px)] flex-col overflow-hidden rounded-lg border border-qn-border bg-qn-code">
         <div className="flex shrink-0 items-center gap-4 border-b border-qn-border px-3 py-1 text-[11px] text-qn-muted">
           <span className="flex-1 truncate">左 · 本地改动（只读）</span>
           <span className="flex-1 truncate">右 · 磁盘内容（可编辑，保存这一侧）</span>

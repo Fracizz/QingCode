@@ -10,7 +10,7 @@ export function Logo({ size = 16, className = '' }: { size?: number; className?:
       className={`shrink-0 ${className}`}
     >
       <rect width="512" height="512" rx="112" fill="#121415" />
-      <g transform="translate(0 6)">
+      <g transform="translate(256 256) scale(0.84) translate(-256 -250.5)">
         <rect x="96" y="344" width="320" height="64" rx="12" fill="#4ECDB5" />
         <path
           fill="#F3F6F8"

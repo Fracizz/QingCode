@@ -26,7 +26,7 @@ export function MobileSection() {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-qn-border bg-white/[0.02] px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-qn-border bg-qn-fg/[0.02] px-3 py-2.5">
         <Smartphone size={16} className="shrink-0 text-qn-accent" />
         <span className="text-[13px]">手机网关</span>
         <Badge tone={status.tone}>{status.label}</Badge>

@@ -69,7 +69,7 @@ export function TurnErrorNote({ error, compact = false }: { error: string; compa
             </button>
           </div>
           {hasRaw && showRaw && (
-            <pre className="qn-scroll mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-black/20 px-2 py-1.5 font-mono text-[11px] leading-4 text-qn-muted">
+            <pre className="qn-scroll mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-qn-inset px-2 py-1.5 font-mono text-[11px] leading-4 text-qn-muted">
               {view.raw}
             </pre>
           )}
