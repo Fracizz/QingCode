@@ -367,7 +367,9 @@ it('可在发送首条消息前启动 pi，首轮沿用该会话和所选模型'
   const requests = () => callMock.mock.calls.flatMap(([method, params]) => method === 'codex.send' ? [params.msg] : [])
   try {
     expect(await store().ensureOpen('local', 'pi')).toBe(true)
-    const rpc = store().sessions[key].rpc
+    const session = store().sessions[key]
+    expect(session).toBeDefined()
+    const rpc = session!.rpc
     const earlyList = useModels.getState().load('local', 'pi', rpc)
 
     await store().newThread('pi', onCreated)
