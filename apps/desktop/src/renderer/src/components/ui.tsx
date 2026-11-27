@@ -146,7 +146,7 @@ export function Checkbox({
         checked={checked}
         disabled={disabled}
         onCheckedChange={(value) => onChange(value === true)}
-        className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border border-qn-border-strong bg-[#161616] text-white outline-none focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=checked]:border-qn-accent data-[state=checked]:bg-qn-accent"
+        className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border border-qn-outline bg-[#161616] text-white outline-none focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=checked]:border-qn-accent data-[state=checked]:bg-qn-accent"
       >
         <RadixCheckbox.Indicator>
           <Check size={12} strokeWidth={3} />

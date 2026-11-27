@@ -12,13 +12,17 @@
   --color-qn-float: #262626;
   --color-qn-hover: #262626;
   --color-qn-active: #2c2c2c;
-  --color-qn-border: #2a2a2a;
-  --color-qn-border-strong: #3a3a3a;
+  --color-qn-border: #383838;
+  --color-qn-border-strong: #4d4d4d;
+  /* 可输入控件（输入框、对话输入框、复选框）的外框：与所在表面对比度 ≥ 3:1，强光下也能看清边界。见 docs/design/contrast.md。 */
+  --color-qn-outline: #6b6b6b;
+  --color-qn-outline-hover: #858585;
+  --color-qn-composer: #262626;
   --color-qn-text: #e6e6e6;
   /* 对话正文比界面文字再暗一档：大段阅读时纯亮白太刺眼，参考 Codex 的柔和灰。 */
   --color-qn-prose: #d0d0d0;
-  --color-qn-muted: #939393;
-  --color-qn-dim: #6b6b6b;
+  --color-qn-muted: #a0a0a0;
+  --color-qn-dim: #8a8a8a;
   --color-qn-brand: #4ecdb5;
   --color-qn-accent: #4f8cff;
   --color-qn-ok: #6fcf8f;
@@ -67,7 +71,7 @@ button:disabled {
 @layer components {
   .qn-input {
     width: 100%;
-    border: 1px solid var(--color-qn-border-strong);
+    border: 1px solid var(--color-qn-outline);
     border-radius: 8px;
     background: #161616;
     color: var(--color-qn-text);
@@ -85,7 +89,7 @@ button:disabled {
   }
 
   .qn-input:hover:not(:disabled, :focus) {
-    border-color: #505050;
+    border-color: var(--color-qn-outline-hover);
   }
 
   .qn-input:focus {
@@ -133,9 +137,9 @@ button:disabled {
     box-shadow:
       0 0 0 1px rgb(0 0 0 / 0.55),
       0 16px 40px rgb(0 0 0 / 0.55);
-    --color-qn-hover: #313131;
-    --color-qn-active: #383838;
-    --color-qn-border: #343434;
+    --color-qn-hover: #333333;
+    --color-qn-active: #3b3b3b;
+    --color-qn-border: #454545;
   }
 
   /* 菜单焦点可以和已展开的子菜单同时高亮，保留行间底色。 */

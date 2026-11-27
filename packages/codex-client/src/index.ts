@@ -1,6 +1,7 @@
 export * from './api'
 export * from './contextUsage'
 export * from './conversation'
+export * from './modelText'
 export * from './rateLimits'
 export * from './rpc'
 export * from './threadStatus'
