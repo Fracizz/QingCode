@@ -55,7 +55,7 @@ const emptySkills: SkillRef[] = []
 
 function hasDraft(draft: Draft): boolean {
   return !!(draft.text || draft.annotations.length || draft.attachments.length ||
-    Object.values(draft.skills).some((skills) => skills.length))
+    Object.values(draft.skills).some((skills) => skills?.length))
 }
 
 export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) => void; onAddTarget: () => void }) {

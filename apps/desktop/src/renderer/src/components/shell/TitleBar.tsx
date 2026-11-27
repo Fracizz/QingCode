@@ -54,7 +54,7 @@ export function TitleBar({ showWorkspace = true }: { showWorkspace?: boolean }) 
               type="button"
               aria-pressed={view === mode}
               className={`flex items-center gap-1.5 rounded px-2.5 py-0.5 hover:bg-qn-hover ${view === mode ? 'bg-qn-active text-qn-text' : 'text-qn-muted'}`}
-              onClick={() => useDock.getState().setView(mode)}
+              onClick={() => useDock.getState().toggleView(mode)}
             >
               {mode === 'chat' ? <MessageSquare size={13} /> : <FolderOpen size={13} />}
               {mode === 'chat' ? '对话' : '文件'}

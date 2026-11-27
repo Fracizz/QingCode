@@ -77,7 +77,8 @@ describe('默认设置与白名单', () => {
   })
 
   it('补丁只保留已知字段，空字符串用于清空路径', () => {
-    expect(sanitizeSettingsPatch({ general: { globalAccessMode: 'fullAccess' } })).toEqual({})
+    expect(sanitizeSettingsPatch({ general: { globalAccessMode: 'bypassPermissions' } })).toEqual({})
+    expect(sanitizeSettingsPatch({ general: { globalAccessMode: 'fullAccess' } })).toEqual({ general: { globalAccessMode: 'fullAccess' } })
     expect(sanitizeSettingsPatch({ general: { density: 'compact', theme: 'light' } })).toEqual({
       general: { density: 'compact', theme: 'light' },
     })

@@ -37,6 +37,21 @@ it('两个视图共用标签和未保存文本，文件视图不会撑开对话�
   expect(state.tabs[0]).toMatchObject({ view: 'source', content: 'draft', dirty: true })
 })
 
+it('文件视图收起后，快速打开同一文件会显示已有标签和未保存文本', async () => {
+  const location = { targetId: 'ssh', path: '/repo/README.md' }
+  openFile(location)
+  await vi.waitFor(() => expect(useFiles.getState().tabs[0]?.status).toBe('ready'))
+  const { id } = useFiles.getState().tabs[0]!
+  useFiles.getState().edit(id, 'draft')
+  useDock.getState().toggleView('files')
+  expect(useDock.getState().view).toBeNull()
+  expect(useFiles.getState().open).toBe(false)
+
+  openFile(location)
+  expect(useDock.getState().view).toBe('chat')
+  expect(useFiles.getState()).toMatchObject({ activeId: id, open: true, tabs: [{ id, content: 'draft', dirty: true }] })
+})
+
 it('关闭当前项目全部标签不会一并关闭其他项目未保存的文件', async () => {
   openFile({ targetId: 'ssh', path: '/a/readme.md' })
   openFile({ targetId: 'local', path: '/b/src.ts' })
