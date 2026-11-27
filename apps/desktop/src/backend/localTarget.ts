@@ -11,14 +11,16 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
 export function runLocalEnsure(
   electronPath: string,
   serverScript: string,
-  timeoutMs = DEFAULT_ENSURE_TIMEOUT_MS
+  timeoutMs = DEFAULT_ENSURE_TIMEOUT_MS,
+  options: Pick<LocalLinkContext, 'forceReplace' | 'signal'> = {},
 ): Promise<EnsureResult> {
   return new Promise((resolve, reject) => {
     // --replace：安装新版后若旧版 daemon 仍在（且空闲），换成新版，否则会一直跑旧代码。
-    const child = spawn(electronPath, [serverScript, 'ensure', '--replace'], {
+    const child = spawn(electronPath, [serverScript, 'ensure', options.forceReplace ? '--force-replace' : '--replace'], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      signal: options.signal,
     })
     let stdout = ''
     let stderr = ''
@@ -89,8 +91,12 @@ export function openEndpoint(endpoint: string, timeoutMs = DEFAULT_CONNECT_TIMEO
 }
 
 export async function connectLocalTarget(context: LocalLinkContext): Promise<TargetLink> {
-  context.hooks.onState('connecting', '启动本机 daemon')
-  const ensure = await runLocalEnsure(context.electronPath, context.serverScript)
+  context.hooks.onState(
+    context.forceReplace ? 'deploying' : 'connecting',
+    context.forceReplace ? '强制更新本机 Server' : '启动本机 daemon',
+  )
+  const ensure = await runLocalEnsure(context.electronPath, context.serverScript, context.forceReplace ? 20_000 : undefined, context)
+  context.signal?.throwIfAborted()
   // endpoint 由 ensure 直接给出，不在 backend 复制命名管道规则。
   const socket = await openEndpoint(ensure.endpoint)
   try {
@@ -106,6 +112,7 @@ export async function connectLocalTarget(context: LocalLinkContext): Promise<Tar
       },
     })
     return {
+      server: { pid: server.pid, version: server.serverVersion },
       ...(ensure.stale ? { notice: STALE_SERVER_NOTICE } : {}),
       request: (method, params) => server.request(method, params),
       codexSend: (msg, agent) => server.codexSend(msg, agent),

@@ -1,3 +1,4 @@
+import { isGlobalAccessMode } from '@qn/codex-client'
 import type {
   AgentPrefs,
   AppSettings,
@@ -7,6 +8,7 @@ import type {
   SettingsSendKey,
 } from '../../../../shared/backendApi'
 import { DEFAULT_FONT_SIZES, sanitizeFontSizes, type FontSizeKey } from '../../../../shared/fontSizes'
+import { isAutoArchiveDays } from '../../../../shared/backendApi'
 
 // 设置的纯逻辑：默认值/白名单/深合并与后端 settings/appSettings.ts 同形（两层各自独立，避免 renderer 打包 Node IO）。
 // 界面元数据与搜索索引也放这里，便于单测覆盖合规文案与过滤规则。
@@ -37,7 +39,9 @@ export function defaultAppSettings(): AppSettings {
     general: {
       sendKey: 'enter',
       autoConnectLast: true,
+      autoArchiveDays: 0,
       defaultAgent: 'codex',
+      globalAccessMode: 'default',
       density: 'comfortable',
       ...DEFAULT_FONT_SIZES,
     },
@@ -106,7 +110,9 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
       defaultAgent: isSettingsAgent(general.defaultAgent)
         ? general.defaultAgent
         : defaults.general.defaultAgent,
+      autoArchiveDays: isAutoArchiveDays(general.autoArchiveDays) ? general.autoArchiveDays : defaults.general.autoArchiveDays,
       density: isSettingsDensity(general.density) ? general.density : defaults.general.density,
+      globalAccessMode: isGlobalAccessMode(general.globalAccessMode) ? general.globalAccessMode : defaults.general.globalAccessMode,
       ...DEFAULT_FONT_SIZES,
       ...sanitizeFontSizes(general),
     },
@@ -121,7 +127,9 @@ export function sanitizeSettingsPatch(raw: unknown): AppSettingsPatch {
   const nextGeneral: Partial<AppSettings['general']> = sanitizeFontSizes(general)
   if (isSettingsSendKey(general.sendKey)) nextGeneral.sendKey = general.sendKey
   if (typeof general.autoConnectLast === 'boolean') nextGeneral.autoConnectLast = general.autoConnectLast
+  if (isAutoArchiveDays(general.autoArchiveDays)) nextGeneral.autoArchiveDays = general.autoArchiveDays
   if (isSettingsAgent(general.defaultAgent)) nextGeneral.defaultAgent = general.defaultAgent
+  if (isGlobalAccessMode(general.globalAccessMode)) nextGeneral.globalAccessMode = general.globalAccessMode
   if (isSettingsDensity(general.density)) nextGeneral.density = general.density
   if (Object.keys(nextGeneral).length > 0) patch.general = nextGeneral
 
@@ -250,6 +258,9 @@ export const FONT_SIZE_SETTINGS: ReadonlyArray<{
   { id: 'composerFontSize', title: '输入框字号', description: '主对话和侧边聊天的消息输入框，以及编辑历史消息时的输入框。', keywords: ['输入框', '编辑消息', 'composer'] },
   { id: 'editorFontSize', title: '文件与差异字号', description: '代码编辑器、文件预览和差异内容。', keywords: ['文件', '编辑器', '代码', '差异', 'editor', 'diff'] },
   { id: 'terminalFontSize', title: '终端字号', description: '集成终端的命令输入和输出。', keywords: ['终端', '命令行', 'terminal'] },
+  { id: 'sidebarFontSize', title: '侧栏导航字号', description: '左侧的目标切换器、新会话、已归档会话和底部入口。', keywords: ['左侧', '侧栏', '导航', '目标', 'sidebar'] },
+  { id: 'projectFontSize', title: '项目字号', description: '左侧项目列表中的项目名称和重命名输入框。', keywords: ['左侧', '侧栏', '项目', 'project'] },
+  { id: 'sessionFontSize', title: '会话字号', description: '左侧会话列表中的会话标题、时间和重命名输入框，以及归档列表中的会话标题。', keywords: ['左侧', '侧栏', '会话', '历史', 'thread', 'session'] },
 ]
 
 export const THEME_OPTIONS: ReadonlyArray<{ value: string; label: string; disabled?: boolean; hint?: string }> = [
@@ -306,6 +317,18 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     section: 'general',
     title: '新会话默认 Agent',
     keywords: ['默认', '新会话', 'codex', 'claude', 'pi', 'agent'],
+  },
+  {
+    id: 'autoArchiveDays',
+    section: 'general',
+    title: '自动归档不活跃的会话',
+    keywords: ['归档', '会话管理', '聊天', '本机', 'archive'],
+  },
+  {
+    id: 'globalAccessMode',
+    section: 'general',
+    title: '权限总控',
+    keywords: ['权限', '总控', '继承', '访问模式', '只读', '计划模式', 'permission', 'access'],
   },
   {
     id: 'density',

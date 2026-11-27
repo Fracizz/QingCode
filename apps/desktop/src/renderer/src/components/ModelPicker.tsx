@@ -47,9 +47,12 @@ export function ModelPicker({ targetId, agent, threadId, piDraft }: {
   const searchRef = useRef<HTMLInputElement>(null)
 
   const rpc = session?.opened ? session.rpc : undefined
+  const directory = session?.openedConfig?.directory
+  const hasClaudeTurn = agent === 'claude' && threadId !== null &&
+    session?.state.threads[threadId]?.turns?.some((turn) => turn.outcome !== undefined) === true
   useEffect(() => {
-    if (rpc) void load(targetId, agent, rpc, agent === 'pi' && threadId !== null)
-  }, [rpc, threadId, load, targetId, agent])
+    if (rpc) void load(targetId, agent, rpc, agent === 'claude' || (agent === 'pi' && threadId !== null))
+  }, [rpc, threadId, directory, hasClaudeTurn, load, targetId, agent])
 
   const models = list?.models ?? []
   const selection = useMemo(() => resolveSelection(models, prefs), [models, prefs])

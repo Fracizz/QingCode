@@ -99,6 +99,10 @@ export class BackendCodexTransport implements CodexTransport {
     this.lastSeq = advanceSeq(this.lastSeq, seq)
   }
 
+  resetLastSeq(): void {
+    this.lastSeq = null
+  }
+
   dispose(): void {
     if (this.disposed) return
     this.disposed = true

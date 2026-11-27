@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { accessOptions, resolveAccessMode } from '@qn/codex-client'
 import { ArrowUp, ChevronDown, CircleAlert, FileText, ImageOff, Paperclip, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
@@ -13,7 +14,7 @@ import {
 } from '../lib/attachments'
 import { useSetting } from '../features/settings/settingsStore'
 import { AccessModePicker } from '../features/access/AccessModePicker'
-import { accessKey, getAccessMode, type AccessAddress } from '../features/access/accessModel'
+import { accessKey, getAccessSelection, type AccessAddress } from '../features/access/accessModel'
 import {
   applyMention,
   imageSendBlock,
@@ -23,6 +24,9 @@ import {
   type ImageSupport,
   type MentionCandidate,
 } from '../features/composer'
+import { appendProjectMention } from '../features/composer/mentions'
+import { receiveProjectMentions } from '../features/composer/projectMention'
+import { useDock } from '../store/dock'
 import { ImageAttachmentChip } from '../features/composer/ImageAttachmentChip'
 import { Suggestions } from '../features/composer/Suggestions'
 import { pendingSendKey, useCodex } from '../store/codex'
@@ -35,6 +39,11 @@ import { EmptyState, ErrorNote, IconButton } from './ui'
 
 /** 输入框最高占视口 40%，再长就内部滚动，不把消息区挤没。 */
 const MAX_HEIGHT_RATIO = 0.4
+
+function fitTextarea(area: HTMLTextAreaElement): void {
+  area.style.height = 'auto'
+  area.style.height = `${Math.min(area.scrollHeight, Math.round(window.innerHeight * MAX_HEIGHT_RATIO))}px`
+}
 
 type AttachmentProps = {
   attachments: Attachment[]
@@ -75,6 +84,9 @@ export function Composer({
   annotationCount = 0,
   compact = false,
   contentWidthClassName = 'max-w-3xl',
+  context,
+  placeholder,
+  autoFocus,
   leading,
   trailing,
   footer,
@@ -97,6 +109,9 @@ export function Composer({
   annotationCount?: number
   compact?: boolean
   contentWidthClassName?: string
+  context?: ReactNode
+  placeholder?: string
+  autoFocus?: boolean
   leading?: ReactNode
   trailing?: ReactNode
   footer?: ReactNode
@@ -120,22 +135,48 @@ export function Composer({
   const threadId = useCodex((s) => s.currentThreadId)
   const draftRevision = useCodex((s) => s.access.draftRevision)
   const accessAddress: AccessAddress | null = !compact && targetId ? { targetId, agent, threadId } : null
-  const accessMode = useCodex((s) => accessAddress ? getAccessMode(s.access, accessAddress) : 'default')
+  const accessMode = useCodex((s) => accessAddress ? getAccessSelection(s.access, accessAddress) : 'inherit')
+  const inheritedMode = resolveAccessMode(agent, useSetting((settings) => settings.general.globalAccessMode))
   const setAccessMode = useCodex((s) => s.setAccessMode)
   const accessSupported = useCodex((s) => Boolean(targetId && s.sessions[sessionKey(targetId, agent)]?.openedConfig?.accessModes))
   const sendingPending = useCodex((s) => Boolean(targetId && threadId && s.pendingSends[pendingSendKey({ targetId, agent, threadId })]?.[0]?.sending))
 
   useLayoutEffect(() => {
+    if (compact || disabled || !targetId || !root) return
+    return receiveProjectMentions(targetId, root, (relative) => {
+      const next = appendProjectMention(value, relative)
+      pendingCaret.current = next.length
+      setCaret(next.length)
+      useDock.getState().setView('chat')
+      onChange(next)
+    })
+  }, [compact, disabled, targetId, root, value, onChange])
+
+  useLayoutEffect(() => {
     const area = areaRef.current
     if (!area) return
-    area.style.height = 'auto'
-    area.style.height = `${Math.min(area.scrollHeight, Math.round(window.innerHeight * MAX_HEIGHT_RATIO))}px`
+    fitTextarea(area)
     // 插入 `@路径` 后把光标放到插入内容之后（受控 textarea 改值后光标会跳到末尾）。
     if (pendingCaret.current !== null) {
+      area.focus()
       area.setSelectionRange(pendingCaret.current, pendingCaret.current)
       pendingCaret.current = null
     }
   }, [value, contentWidthClassName, fontSize])
+
+  useLayoutEffect(() => {
+    const area = areaRef.current
+    if (!area || typeof ResizeObserver === 'undefined') return
+    let width = area.offsetWidth
+    const observer = new ResizeObserver(() => {
+      // 只因宽度变化重新量高，避免写入高度后触发观察循环。
+      if (width === area.offsetWidth) return
+      width = area.offsetWidth
+      fitTextarea(area)
+    })
+    observer.observe(area)
+    return () => observer.disconnect()
+  }, [])
 
   const token = slash && !imeActive ? slashToken(value, caret) : null
   const query = token?.query ?? null
@@ -151,9 +192,12 @@ export function Composer({
   useEffect(() => setActive(0), [query, mentionQuery])
 
   const attachments = attach?.attachments ?? []
-  const images = attachments.flatMap((item) => (item.kind === 'image' ? [item.dataUrl] : []))
   const imageSupport = attach?.imageSupport ?? { allowed: true, reason: null }
-  const imageBlock = imageSendBlock(images, imageSupport.allowed, imageSupport.reason ?? undefined)
+  const imageBlock = useMemo(() => imageSendBlock(
+    attach?.attachments.flatMap((item) => item.kind === 'image' ? [item.dataUrl] : []) ?? [],
+    imageSupport.allowed,
+    imageSupport.reason ?? undefined,
+  ), [attach?.attachments, imageSupport.allowed, imageSupport.reason])
   const hasAttachmentsOrSkills = attachments.length > 0 || (slash?.skills.length ?? 0) > 0
   const blocked = attach?.blockedReason ?? imageBlock
   const shortcut = sendKey === 'ctrlEnter' ? 'Ctrl+Enter' : 'Enter'
@@ -172,8 +216,8 @@ export function Composer({
     const nextValue = consumeSlashToken(value, caret)
     onChange(nextValue)
     setCaret(nextValue.length)
-    if (item.kind === 'skill' && item.path) {
-      const picked = { name: item.name, path: item.path }
+    if (item.kind === 'skill') {
+      const picked = { name: item.name, path: item.path ?? '' }
       if (!slash.skills.some((skill) => skill.name === picked.name)) {
         slash.onSkillsChange([...slash.skills, picked])
       }
@@ -188,7 +232,6 @@ export function Composer({
     pendingCaret.current = next.caret
     onChange(next.value)
     setCaret(next.caret)
-    areaRef.current?.focus()
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -277,7 +320,7 @@ export function Composer({
           />
         )}
 
-        {(noApprovals || (attach && !imageSupport.allowed)) && (
+        {(noApprovals || (attach && !imageSupport.allowed) || imageBlock) && (
           <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 text-[12px] leading-4">
             {noApprovals && (
               <span className={cn(
@@ -304,6 +347,7 @@ export function Composer({
                 {imageSupport.reason}，图片附件已禁用
               </span>
             )}
+            {imageBlock && imageSupport.allowed && <span className="text-qn-warn">{imageBlock}</span>}
           </div>
         )}
         <div
@@ -338,6 +382,7 @@ export function Composer({
               ))}
             </div>
           )}
+          {context}
           <textarea
             ref={areaRef}
             className={cn(
@@ -347,12 +392,14 @@ export function Composer({
             rows={1}
             value={value}
             disabled={disabled}
+            autoFocus={autoFocus}
+            aria-label={placeholder ?? agentPlaceholder(agent)}
             placeholder={
-              disabled
+              placeholder ?? (disabled
                 ? '请先连接目标'
                 : slash
                   ? `${agentPlaceholder(agent)}，输入 / 使用命令和技能${targetId && root ? '，@ 引用文件' : ''}`
-                  : agentPlaceholder(agent)
+                  : agentPlaceholder(agent))
             }
             onChange={(event) => {
               onChange(event.target.value)
@@ -401,14 +448,19 @@ export function Composer({
             )}
             {leading}
             <div className="flex-1" />
-            {accessAddress && !noApprovals && (accessSupported || accessMode !== 'default') && (
+            {accessAddress && !noApprovals && (
               <AccessModePicker
                 key={`${accessKey(accessAddress)}:${threadId === null ? draftRevision : ''}`}
                 agent={agent}
                 mode={accessMode}
-                disabled={Boolean(disabled || sending || running || sendingPending || !accessSupported)}
+                inheritedMode={inheritedMode}
+                supported={accessSupported}
+                disabled={Boolean(disabled || sending || running || sendingPending)}
                 onChange={(mode) => setAccessMode(accessAddress, draftRevision, mode)}
               />
+            )}
+            {compact && inheritedMode !== 'default' && (
+              <span className="text-xs text-qn-warn">继承总控 · {accessOptions[agent].find((option) => option.mode === inheritedMode)?.label}</span>
             )}
             {trailing}
             {running && (

@@ -2,7 +2,7 @@ import { LOCAL_TARGET } from '../shared/backendApi'
 import { describe, expect, it, vi } from 'vitest'
 import { RouterError } from './router'
 import { TargetManager, retryDelay } from './targets'
-import type { LinkHooks, LocalLinkContext, SshLinkContext, TargetLink } from './types'
+import type { DirectLinkContext, LinkHooks, LocalLinkContext, SshLinkContext, TargetLink } from './types'
 
 vi.mock('./sshTarget', () => ({ connectSshTarget: vi.fn(), runRemoteServerCommands: vi.fn(), testSshTarget: vi.fn() }))
 
@@ -77,6 +77,41 @@ describe('retryDelay', () => {
 })
 
 describe('TargetManager', () => {
+  it('强制更新使用 SSH 和当前凭据，切到新 daemon 时从头回放', async () => {
+    const direct = new FakeLink()
+    const updated = new FakeLink()
+    const events = vi.fn()
+    const createDirect = vi.fn(async (_context: DirectLinkContext) => Object.assign(direct, { server: { pid: 1, version: 'old' } }))
+    const createSsh = vi.fn(async (_context: SshLinkContext) => Object.assign(updated, { server: { pid: 2, version: 'new' } }))
+    const gate = { verify: vi.fn(async () => true), respond: vi.fn(), close: vi.fn() }
+    const manager = new TargetManager({
+      userData: '', resourcesPath: '', electronPath: '', appVersion: 'test', emit: events,
+      createDirect, createSsh, gate, loadSecret: async () => ({ directToken: 'direct-token' }),
+    })
+    const target = {
+      id: 'remote', kind: 'ssh', name: '远程', host: 'host', port: 22, username: 'user', auth: { kind: 'password' },
+      direct: { host: 'host', port: 47390, fingerprint: 'ab'.repeat(32), grantId: 'grant' },
+    } as const
+    try {
+      await manager.connect(target, { password: 'session-password' })
+      await manager.request(target.id, 'codex.open')
+      createDirect.mock.calls[0]?.[0].hooks.onCodexRecv(9, { method: 'turn/started' }, 'codex')
+      const pending = manager.forceUpdate(target.id)
+      await expect(manager.forceUpdate(target.id)).rejects.toMatchObject({ code: 'target_busy' })
+      await pending
+      expect(createDirect).toHaveBeenCalledOnce()
+      expect(direct.closed).toBe(true)
+      expect(createSsh).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        target, gate, forceReplace: true, credentials: { password: 'session-password', directToken: 'direct-token' },
+      }))
+      expect(events).toHaveBeenCalledWith('server.evt', { targetId: target.id, name: 'server.restarted', payload: {} })
+      expect(updated.requests).toEqual([{ method: 'codex.attach', params: { sinceSeq: 0 } }])
+      expect(manager.getState(target.id)).toBe('ready')
+    } finally {
+      manager.shutdown()
+    }
+  })
+
   it('连接本机、透传 req/codex.send、给事件加 targetId、断开后不重连', async () => {
     const { manager, links, hooks, emitted } = harness()
     await manager.connect(LOCAL_TARGET, {})
@@ -340,6 +375,52 @@ describe('TargetManager 直连加速', () => {
       id: target.id, state: 'ready', detail: 'SSH 更新未完成（SSH 不可用），已通过直连连接',
     })
     manager.shutdown()
+  })
+
+  it('启动时 SSH 和直连均失败，状态保留两种失败原因', async () => {
+    const { manager, emit } = make(false, { directToken: 'token' }, false)
+    await manager.connect(target, {}, false, true)
+    expect(emit).toHaveBeenLastCalledWith('target.state', {
+      id: target.id, state: 'error', detail: 'SSH 更新未完成（SSH 不可用），直连也失败（ECONNREFUSED）',
+    })
+    manager.shutdown()
+  })
+
+  it('有已保存的直连时，SSH 更新超时后仍恢复远程，忽略迟到的 SSH 回调', async () => {
+    vi.useFakeTimers()
+    const emit = vi.fn()
+    const stale = new FakeLink()
+    const direct = new FakeLink()
+    let finish!: (link: TargetLink) => void
+    const pending = new Promise<TargetLink>((resolve) => { finish = resolve })
+    const createSsh = vi.fn((_context: SshLinkContext) => pending)
+    const createDirect = vi.fn(async () => direct)
+    const manager = new TargetManager({
+      userData: '', resourcesPath: '', electronPath: '', appVersion: '1', emit, createSsh, createDirect,
+      loadSecret: async () => ({ directToken: 'token' }),
+    })
+    try {
+      const startup = manager.connect(target, {}, false, true)
+      await vi.advanceTimersByTimeAsync(40_000)
+      await startup
+      expect(createDirect).toHaveBeenCalledOnce()
+      const ssh = createSsh.mock.calls[0]?.[0]
+      expect(ssh?.signal?.aborted).toBe(true)
+      expect(emit).toHaveBeenLastCalledWith('target.state', {
+        id: target.id, state: 'ready', detail: 'SSH 更新未完成（SSH 更新或连接超时），已通过直连连接',
+      })
+
+      ssh?.hooks.onState('deploying', '迟到的上传进度')
+      ssh?.hooks.onClose(new Error('迟到的断开'))
+      finish(stale)
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(stale.closed).toBe(true)
+      expect(direct.closed).toBe(false)
+      expect(manager.getState(target.id)).toBe('ready')
+    } finally {
+      manager.shutdown()
+      vi.useRealTimers()
+    }
   })
 
   it('SSH 部署超时后本机仍可用，手动重试成功后忽略迟到的结果', async () => {

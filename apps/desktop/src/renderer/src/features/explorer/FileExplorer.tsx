@@ -28,6 +28,7 @@ import {
   FolderPlus,
   FolderSymlink,
   Image as ImageIcon,
+  MessageSquarePlus,
   Pencil,
   RotateCw,
   Trash2,
@@ -36,6 +37,7 @@ import {
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '../../components/primitives'
 import { Checkbox, ErrorNote, IconButton, Modal } from '../../components/ui'
 import { cn } from '../../lib/cn'
+import { addProjectMention } from '../composer/projectMention'
 import { downloadProjectFile } from '../workspace/download'
 import { openFile } from '../workspace/openers'
 import { explorerScopeKey, useExplorer } from './explorerStore'
@@ -139,6 +141,7 @@ export function FileExplorer({
   )
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [menuPath, setMenuPath] = useState<string | null>(null)
+  const mentionOnClose = useRef<string | null>(null)
   const menuTarget = useRef<MenuTarget>({ path: null, dir: root, kind: 'dir' })
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
   const [recursive, setRecursive] = useState(true)
@@ -299,13 +302,12 @@ export function FileExplorer({
   }
 
   const onContextMenuCapture = (event: ReactMouseEvent<HTMLDivElement>): void => {
-    const element = (event.target as HTMLElement).closest?.('[data-tree-path]')
-    const path = element?.getAttribute('data-tree-path') ?? null
-    const row = path
-      ? rows.find((item) => item.kind === 'node' && isSamePath(item.node.path, path, style))
-      : undefined
-    const kind: ExplorerEntryKind | 'placeholder' =
-      row?.kind === 'node' ? row.node.kind : 'placeholder'
+    const element = (event.target as HTMLElement).closest?.('[data-tree-key]')
+    const index = element ? rows.findIndex((item) => item.key === element.getAttribute('data-tree-key')) : -1
+    const row = rows[index]
+    const node = row?.kind === 'node' ? row.node : null
+    const path = node?.path ?? null
+    const kind = node?.kind ?? 'placeholder'
     const dir = !path
       ? root
       : kind === 'file'
@@ -313,12 +315,7 @@ export function FileExplorer({
         : path
     menuTarget.current = { path, dir, kind }
     setMenuPath(path)
-    if (path) {
-      const index = rows.findIndex(
-        (item) => item.kind === 'node' && isSamePath(item.node.path, path, style),
-      )
-      if (index >= 0) setSelectedIndex(index)
-    }
+    if (index >= 0) setSelectedIndex(index)
   }
 
   const copy = async (text: string): Promise<void> => {
@@ -414,6 +411,7 @@ export function FileExplorer({
     return (
       <div
         key={row.key}
+        data-tree-key={row.key}
         data-tree-path={node.path}
         role="treeitem"
         aria-selected={selected}
@@ -499,7 +497,21 @@ export function FileExplorer({
             </div>
           </div>
         </ContextMenu.Trigger>
-        <ContextMenuContent>
+        <ContextMenuContent onCloseAutoFocus={(event) => {
+          // 等菜单释放焦点，再切换到草稿并聚焦输入框。
+          const relative = mentionOnClose.current
+          mentionOnClose.current = null
+          if (relative === null) return
+          if (addProjectMention(targetId, root, relative)) event.preventDefault()
+          else showNotice('请先打开当前项目的对话')
+        }}>
+          {menuPath && menuTarget.current.kind !== 'placeholder' && (
+            <ContextMenuItem icon={<MessageSquarePlus size={14} />} onSelect={() => {
+              mentionOnClose.current = relativePath(root, menuPath, style)
+            }}>
+              添加到对话
+            </ContextMenuItem>
+          )}
           <ContextMenuItem
             icon={<FilePlus2 size={14} />}
             onSelect={() => beginCreate(menuTarget.current.dir, 'file')}

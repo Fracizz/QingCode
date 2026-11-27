@@ -1,5 +1,4 @@
-export { SettingsDialog } from './SettingsDialog'
-export type { SettingsDialogProps } from './SettingsDialog'
+export { SettingsPage } from './SettingsPage'
 export { useSettings, useSetting, applyDensity } from './settingsStore'
 export { openSettings, closeSettings, useSettingsDialog } from './dialogState'
 export type { SettingsDialogState } from './dialogState'

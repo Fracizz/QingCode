@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Client, type ClientChannel, type ConnectConfig } from 'ssh2'
 import type { TargetProbe } from '../shared/backendApi'
-import { backendConfig } from './config'
 import { fingerprintFromKey } from './hostKeys'
 import {
   buildConnectCommand,
@@ -17,6 +17,7 @@ import {
   buildRuntimeSelfTestCommand,
   buildWindowsConnectCommand,
   buildWindowsEnsureCommand,
+  buildWindowsFallbackProbeCommand,
   buildWindowsMkdirCommand,
   buildWindowsProbeCommand,
   buildWindowsServerCommand,
@@ -43,7 +44,7 @@ import {
   windowsSftpPath,
 } from './remoteCommands'
 import { ServerClient, toFramedStream } from './serverClient'
-import type { SshLinkContext, SshRemoteContext, SshTestContext, TargetCredentials, TargetLink } from './types'
+import type { RemoteServerCommand, SshLinkContext, SshRemoteContext, SshTestContext, TargetCredentials, TargetLink } from './types'
 
 const READY_TIMEOUT_MS = 20_000
 // 等待用户确认主机指纹的时间不计入握手超时；ssh2 自带的 readyTimeout 只作兜底上限。
@@ -271,8 +272,7 @@ async function readServerBundle(resourcesPath: string): Promise<ServerBundle> {
   return { path, bytes, sha256, version: manifest.version }
 }
 
-const NODE_REQUIRED_TEST = '远端需要 Node ≥ 18'
-const NODE_REQUIRED_DEPLOY = '远端需要 Node ≥ 18（请确认 node 在 SSH 会话的 PATH 中）'
+const NODE_REQUIRED = '远端未找到可运行的 Node ≥ 18，请在远端安装后重试'
 
 interface RuntimeCandidate {
   version: string
@@ -281,10 +281,10 @@ interface RuntimeCandidate {
 }
 
 /** 清单不存在时返回 null，让调用方退回「需要 Node ≥ 18」的原有提示。 */
-async function readRuntimeManifest(resourcesPath: string): Promise<RuntimeManifest | null> {
+async function readRuntimeManifest(directory: string): Promise<RuntimeManifest | null> {
   let raw: string
   try {
-    raw = await readFile(join(resourcesPath, 'node-runtime', 'manifest.json'), 'utf8')
+    raw = await readFile(join(directory, 'manifest.json'), 'utf8')
   } catch (cause) {
     if ((cause as { code?: string }).code === 'ENOENT') return null
     throw cause
@@ -299,10 +299,13 @@ async function findRuntimeCandidate(
 ): Promise<RuntimeCandidate | null> {
   const key = runtimeTargetKey(os, arch)
   if (!key) return null
-  const manifest = await readRuntimeManifest(resourcesPath)
-  const entry = manifest?.targets[key]
-  if (!manifest || !entry) return null
-  return { version: manifest.version, file: entry.file, sha256: entry.sha256 }
+  // 开发时运行时随 server 构建，安装包将它放在独立的资源目录。
+  for (const directory of [join(resourcesPath, 'node-runtime'), join(resourcesPath, 'server', 'node-runtime')]) {
+    const manifest = await readRuntimeManifest(directory)
+    const entry = manifest?.targets[key]
+    if (manifest && entry) return { version: manifest.version, file: join(directory, entry.file), sha256: entry.sha256 }
+  }
+  return null
 }
 
 /** 推送内置 Node 到内容寻址目录并自检能否执行；返回供后续命令使用的 node 路径与版本。 */
@@ -313,13 +316,10 @@ async function installRuntimeNode(
   resourcesPath: string
 ): Promise<{ nodePath: string; nodeVersion: string }> {
   const candidate = await findRuntimeCandidate(resourcesPath, probe.os, probe.arch)
-  if (!candidate) throw new Error(NODE_REQUIRED_DEPLOY)
+  if (!candidate) throw new Error(NODE_REQUIRED)
 
-  const localPath = join(resourcesPath, 'node-runtime', candidate.file)
-  const bytes = await readFile(localPath)
-  const sha256 = createHash('sha256').update(bytes).digest('hex')
-  if (sha256 !== candidate.sha256) throw new Error('内置 Node 校验失败，已取消部署')
-
+  const localPath = candidate.file
+  const sha256 = candidate.sha256
   const nodePath = runtimeInstallPath(probe.home, sha256)
   const dir = parentPosixPath(nodePath)
   // 只在 POSIX 分支推送，直接复用同一套 mkdir / sha / 安装命令构造器。
@@ -327,8 +327,15 @@ async function installRuntimeNode(
   const shaCommand = buildShaCommand(probe.sha256sumPath, nodePath)
   let remoteSha = parseRemoteSha((await execChecked(client, shaCommand)).stdout)
   if (remoteSha !== sha256) {
-    onState(`上传 Node 运行时（${formatSize(bytes.byteLength)}）`)
-    const tmp = `${dir}/.node.tmp-${process.pid}-${Date.now()}`
+    const hash = createHash('sha256')
+    let size = 0
+    for await (const chunk of createReadStream(localPath)) {
+      hash.update(chunk)
+      size += chunk.length
+    }
+    if (hash.digest('hex') !== sha256) throw new Error('内置 Node 校验失败，已取消部署')
+    onState(`上传 Node 运行时（${formatSize(size)}）`)
+    const tmp = `${dir}/.node.tmp-${randomUUID()}`
     await sftpUpload(client, localPath, tmp, '上传 Node 运行时失败')
     await execChecked(client, buildRuntimeInstallCommand(tmp, nodePath))
     remoteSha = parseRemoteSha((await execChecked(client, shaCommand)).stdout)
@@ -355,7 +362,7 @@ interface RemoteCommandSet {
   mkdir(dir: string): string
   sha(file: string): string
   install(tmp: string, dest: string): string
-  ensure(script: string): string
+  ensure(script: string, forceReplace?: boolean): string
   connect(script: string): string
   server(script: string, args: readonly string[]): string
   sftpPath(path: string): string
@@ -363,13 +370,14 @@ interface RemoteCommandSet {
 
 function commandsFor(probe: RemoteProbe): RemoteCommandSet {
   if (probe.os === 'Windows') {
+    const { nodePath } = probe
     return {
-      mkdir: buildWindowsMkdirCommand,
-      sha: buildWindowsShaCommand,
-      install: buildWindowsUploadCommand,
-      ensure: buildWindowsEnsureCommand,
-      connect: buildWindowsConnectCommand,
-      server: buildWindowsServerCommand,
+      mkdir: (dir) => buildWindowsMkdirCommand(dir, nodePath),
+      sha: (file) => buildWindowsShaCommand(file, nodePath),
+      install: (tmp, dest) => buildWindowsUploadCommand(tmp, dest, nodePath),
+      ensure: (script, forceReplace) => buildWindowsEnsureCommand(script, nodePath, forceReplace),
+      connect: (script) => buildWindowsConnectCommand(script, nodePath),
+      server: (script, args) => buildWindowsServerCommand(script, args, nodePath),
       sftpPath: windowsSftpPath,
     }
   }
@@ -377,7 +385,7 @@ function commandsFor(probe: RemoteProbe): RemoteCommandSet {
     mkdir: buildMkdirCommand,
     sha: (file) => buildShaCommand(probe.sha256sumPath, file),
     install: buildUploadCommand,
-    ensure: (script) => buildEnsureCommand(probe.nodePath, script),
+    ensure: (script, forceReplace) => buildEnsureCommand(probe.nodePath, script, forceReplace),
     connect: (script) => buildConnectCommand(probe.nodePath, script),
     server: (script, args) => buildServerCommand(probe.nodePath, script, args),
     sftpPath: (path) => path,
@@ -389,15 +397,23 @@ async function probeRemote(client: Client): Promise<RemoteProbe> {
   const posix = await execCommand(client, buildProbeCommand())
   if (isPosixProbe(posix.stdout)) return parseProbe(posix.stdout)
   const windows = await execCommand(client, buildWindowsProbeCommand())
-  if (windows.code !== 0) {
-    throw new Error(NODE_REQUIRED_DEPLOY)
+  if (windows.code === 0) {
+    const probe = parseWindowsProbe(windows.stdout)
+    if (probe.nodePath) return probe
   }
-  return parseWindowsProbe(windows.stdout)
+  const fallback = await execCommand(client, buildWindowsFallbackProbeCommand())
+  if (fallback.code === 0) {
+    const probe = parseWindowsProbe(fallback.stdout)
+    if (probe.nodePath) return probe
+  }
+  throw new Error(NODE_REQUIRED)
 }
 
 type DeployState = (detail: string) => void
 
-async function deployServer(client: Client, onState: DeployState, bundle: ServerBundle, resourcesPath: string): Promise<Deployed> {
+async function deployServer(
+  client: Client, onState: DeployState, bundle: ServerBundle, resourcesPath: string, forceReplace = false,
+): Promise<Deployed> {
   onState('检测远端环境')
   const probe = await probeRemote(client)
   // 内置运行时必须在 commandsFor 之前确定：ensure/connect/server 都要用新 node。
@@ -423,8 +439,8 @@ async function deployServer(client: Client, onState: DeployState, bundle: Server
     if (remoteSha !== bundle.sha256) throw new Error('远端 server 校验失败，已拒绝启动')
   }
 
-  onState('启动 daemon')
-  const ensured = await execChecked(client, commands.ensure(script), ENSURE_TIMEOUT_MS)
+  onState(forceReplace ? '强制更新 Server' : '启动 daemon')
+  const ensured = await execChecked(client, commands.ensure(script, forceReplace), ENSURE_TIMEOUT_MS)
   return {
     connectCommand: commands.connect(script),
     ensure: parseEnsureResult(ensured.stdout),
@@ -463,7 +479,7 @@ async function openServerChannel(client: Client, deployed: Deployed): Promise<{ 
  */
 export async function runRemoteServerCommands(
   context: SshRemoteContext,
-  commands: ReadonlyArray<readonly string[]>
+  commands: readonly RemoteServerCommand[]
 ): Promise<Array<Record<string, unknown>>> {
   const { client, stopVerifying } = await dialTarget(context)
   client.on('error', () => undefined)
@@ -471,7 +487,9 @@ export async function runRemoteServerCommands(
     const bundle = await readServerBundle(context.resourcesPath)
     const deployed = await deployServer(client, (detail) => context.onState?.(detail), bundle, context.resourcesPath)
     const results: Array<Record<string, unknown>> = []
-    for (const args of commands) {
+    for (const command of commands) {
+      const args = typeof command === 'function' ? command(results.at(-1)) : command
+      if (args === null) continue
       const result = await execChecked(client, deployed.serverCommand(args), ENSURE_TIMEOUT_MS)
       results.push(parseJsonLine(result.stdout))
     }
@@ -545,10 +563,9 @@ export async function testSshTarget(context: SshTestContext): Promise<TargetProb
   const { client, stopVerifying } = await dialTarget(context)
   try {
     const probe = await probeRemote(client)
-    // SshTestContext 不带 resourcesPath，内置运行时清单位置退回进程环境注入的配置。
     if (probe.os !== 'Windows' && probe.nodePath === '') {
-      const candidate = await findRuntimeCandidate(backendConfig.resourcesPath, probe.os, probe.arch)
-      if (!candidate) throw new Error(NODE_REQUIRED_TEST)
+      const candidate = await findRuntimeCandidate(context.resourcesPath, probe.os, probe.arch)
+      if (!candidate) throw new Error(NODE_REQUIRED)
       return { os: probe.os, nodeVersion: `内置 ${candidate.version}（连接时推送）` }
     }
     return { os: probe.os, nodeVersion: probe.nodeVersion }
@@ -588,7 +605,7 @@ export async function connectSshTarget(context: SshLinkContext): Promise<TargetL
     signal?.throwIfAborted()
     const bundle = await readServerBundle(context.resourcesPath)
     signal?.throwIfAborted()
-    const deployed = await deployServer(client, (detail) => hooks.onState('deploying', detail), bundle, context.resourcesPath)
+    const deployed = await deployServer(client, (detail) => hooks.onState('deploying', detail), bundle, context.resourcesPath, context.forceReplace)
     signal?.throwIfAborted()
     const { channel, via } = await openServerChannel(client, deployed)
     hooks.onState('connecting', via === 'streamlocal' ? 'SSH 转发连接 daemon' : 'SSH 通道连接 daemon')
@@ -608,6 +625,7 @@ export async function connectSshTarget(context: SshLinkContext): Promise<TargetL
     })
 
     return {
+      server: { pid: server.pid, version: server.serverVersion },
       ...(deployed.ensure.stale ? { notice: STALE_SERVER_NOTICE } : {}),
       request: (method, params) => server.request(method, params),
       codexSend: (msg, agent) => server.codexSend(msg, agent),

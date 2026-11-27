@@ -46,7 +46,7 @@ export type SaveOptions = {
 export type FilesState = {
   tabs: Tab[]
   activeId: string | null
-  /** 面板是否展开；打开任何文件/差异时自动置 true。 */
+  /** 对话旁的文件面板仅在有标签时可以展开。 */
   open: boolean
   /** 保存冲突 / 关闭确认 / 合并对话框。 */
   prompt: FilePrompt | null
@@ -78,8 +78,11 @@ export const useFiles = create<FilesState>((set, get) => ({
   open: false,
   prompt: null,
 
-  setOpen: (open) => set({ open }),
-  activate: (id) => set({ activeId: id, open: get().open || useDock.getState().view === 'chat' }),
+  setOpen: (open) => set((state) => ({ open: open && state.tabs.length > 0 })),
+  activate: (id) => set((state) => {
+    if (!state.tabs.some((tab) => tab.id === id)) return state
+    return { activeId: id, open: state.open || useDock.getState().view === 'chat' }
+  }),
   close: (id) => forceClose(id),
   closeAll: () => {
     set({ tabs: [], activeId: null, open: false, prompt: null })

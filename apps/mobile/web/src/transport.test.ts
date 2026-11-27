@@ -135,6 +135,17 @@ describe('MobileCodexTransport', () => {
     expect(seen[0]).toMatchObject({ id: 'c9', error: { code: -32000, message: '网关拒绝' } })
   })
 
+  it('事件流断开时可通过 HTTPS 回包确认一轮提交', async () => {
+    const transport = new MobileCodexTransport('local', async (msg) => ({
+      reply: { id: (msg as { id: string }).id, result: { turn: { id: 'turn-1' } } },
+    }), 'codex')
+    const receive = vi.fn()
+    transport.onMessage(receive)
+    transport.send({ id: 'c1', method: 'turn/start' })
+    await flush()
+    expect(receive).toHaveBeenCalledExactlyOnceWith({ id: 'c1', result: { turn: { id: 'turn-1' } } }, null)
+  })
+
   it('重复回放只投递一次，旧序号未决审批仍可补收，daemon 换代可从零开始', () => {
     const transport = new MobileCodexTransport('local', async () => null)
     const received = vi.fn()
@@ -178,6 +189,7 @@ describe('EventStreamController', () => {
       onEvent: vi.fn(),
       onOpen: vi.fn(),
       onClose: vi.fn(),
+      onUnavailable: vi.fn(),
     }
     const controller = new EventStreamController(
       gateway,
@@ -200,7 +212,8 @@ describe('EventStreamController', () => {
     expect(handlers.onEvent).toHaveBeenCalledTimes(1)
 
     emit({ stream: 's1', closed: true, error: '事件流已断开' })
-    expect(handlers.onClose).toHaveBeenCalledWith('事件流已断开')
+    expect(handlers.onClose).toHaveBeenCalledExactlyOnceWith()
+    expect(handlers.onUnavailable).not.toHaveBeenCalled()
     expect(scheduled).toHaveLength(1)
     expect(scheduled[0]?.ms).toBe(1000)
 
@@ -208,6 +221,7 @@ describe('EventStreamController', () => {
     await flush()
     expect(gateway.openEvents).toHaveBeenCalledTimes(2)
     expect(handlers.onOpen).toHaveBeenLastCalledWith(true)
+    expect(handlers.onUnavailable).not.toHaveBeenCalled()
 
     controller.stop()
     expect(gateway.closeEvents).toHaveBeenCalledWith('s1')
@@ -219,7 +233,7 @@ describe('EventStreamController', () => {
     const { gateway } = fakeStreamGateway()
     gateway.openEvents.mockRejectedValueOnce(new Error('电脑离线'))
     const scheduled: Array<{ fn: () => void; ms: number }> = []
-    const handlers = { onEvent: vi.fn(), onOpen: vi.fn(), onClose: vi.fn() }
+    const handlers = { onEvent: vi.fn(), onOpen: vi.fn(), onClose: vi.fn(), onUnavailable: vi.fn() }
     const schedule = (fn: () => void, ms: number) => {
       scheduled.push({ fn, ms })
       return scheduled.length as unknown as ReturnType<typeof setTimeout>
@@ -233,8 +247,61 @@ describe('EventStreamController', () => {
     const withConn = new EventStreamController(gateway, () => CONN, handlers, schedule, vi.fn())
     withConn.start()
     await flush()
-    expect(handlers.onClose).toHaveBeenCalledWith('电脑离线')
+    expect(handlers.onUnavailable).not.toHaveBeenCalled()
     expect(scheduled).toHaveLength(1)
+  })
+
+  it('锁屏期间静默重试，恢复前台重新确认，持续失败只提示一次', async () => {
+    vi.useFakeTimers()
+    const { gateway, emit } = fakeStreamGateway()
+    const handlers = { onEvent: vi.fn(), onOpen: vi.fn(), onClose: vi.fn(), onUnavailable: vi.fn() }
+    const controller = new EventStreamController(gateway, () => CONN, handlers)
+    try {
+      controller.start()
+      await vi.advanceTimersByTimeAsync(0)
+      gateway.openEvents.mockRejectedValue(new Error('电脑当前不可达'))
+      // 前台的一次失败发生在锁屏前，不能和解锁后的尝试合并计算。
+      emit({ stream: 's1', closed: true, error: null })
+      await vi.advanceTimersByTimeAsync(1_000)
+      controller.setForeground(false)
+      await vi.advanceTimersByTimeAsync(90_000)
+      expect(gateway.openEvents.mock.calls.length).toBeGreaterThan(2)
+      expect(handlers.onUnavailable).not.toHaveBeenCalled()
+
+      controller.setForeground(true)
+      await vi.advanceTimersByTimeAsync(14_999)
+      expect(handlers.onUnavailable).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(handlers.onUnavailable).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(handlers.onUnavailable).toHaveBeenCalledTimes(1)
+
+      gateway.openEvents.mockResolvedValue('s2')
+      controller.wake()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(handlers.onOpen).toHaveBeenLastCalledWith(true)
+      emit({ stream: 's2', closed: true, error: null })
+      gateway.openEvents.mockRejectedValueOnce(new Error('暂时不可达')).mockResolvedValue('s3')
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(handlers.onOpen).toHaveBeenCalledTimes(3)
+      expect(handlers.onUnavailable).toHaveBeenCalledTimes(1)
+    } finally {
+      controller.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('证书变更立即提示重新配对', async () => {
+    const { gateway } = fakeStreamGateway()
+    gateway.openEvents.mockRejectedValueOnce(Object.assign(new Error('证书指纹不匹配'), { code: 'fingerprint' }))
+    const handlers = { onEvent: vi.fn(), onOpen: vi.fn(), onClose: vi.fn(), onUnavailable: vi.fn(), onRepair: vi.fn() }
+    const schedule = vi.fn()
+    const controller = new EventStreamController(gateway, () => CONN, handlers, schedule)
+    controller.start()
+    await flush()
+    expect(handlers.onRepair).toHaveBeenCalledExactlyOnceWith('fingerprint', '证书指纹不匹配')
+    expect(handlers.onUnavailable).not.toHaveBeenCalled()
+    expect(schedule).not.toHaveBeenCalled()
   })
 
   it('恢复前台可立即检查流，收到设备撤销就停止重试', async () => {

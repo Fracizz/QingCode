@@ -65,6 +65,12 @@ type DirectDraft = {
 
 const emptyDirectDraft: DirectDraft = { name: '', host: '', port: '' }
 
+type DirectConfirmation = {
+  params: EnableDirectParams
+  host: string
+  saved?: { target: SshTarget; credentials: ConnectCredentials }
+}
+
 function directDraftFrom(info: DirectInfo): DirectDraft {
   const host = info.hosts[0] ?? ''
   return { name: info.name ?? `直连 ${host}`.trim(), host, port: String(info.port) }
@@ -131,6 +137,8 @@ export function TargetForm({
     allowPublic: false,
   })
   const [sshDirect, setSshDirect] = useState<SshDirect | undefined>(initial?.kind === 'ssh' ? initial.direct : undefined)
+  const [autoDirect, setAutoDirect] = useState(true)
+  const [directConfirmation, setDirectConfirmation] = useState<DirectConfirmation | null>(null)
   // 新建后测试失败时对话框保留：记下 id，再次保存是更新而不是又建一条。
   const [sshSavedId, setSshSavedId] = useState(initial?.kind === 'ssh' ? initial.id : undefined)
   const [directSavedId, setDirectSavedId] = useState(initial?.kind === 'direct' ? initial.id : undefined)
@@ -265,32 +273,52 @@ export function TargetForm({
     ...(draft.authKind === 'key' && draft.passphrase ? { passphrase: draft.passphrase } : {}),
   })
 
-  const runEnableDirect = async () => {
-    if (!sshId) {
-      setError('请先保存 SSH 连接，再开启直连加速')
-      return
-    }
+  const requestEnableDirect = () => {
+    if (initial?.kind !== 'ssh') return
     const listen = Number(directConfig.listen.trim() || '47390')
     if (!Number.isInteger(listen) || listen < 1 || listen > 65535) {
       setError('远端监听端口需为 1–65535 的整数')
       return
     }
     setError(null)
-    setBusy('enable')
-    try {
-      const params: EnableDirectParams = {
-        id: sshId,
+    setDirectConfirmation({
+      host: initial.host,
+      params: {
+        id: initial.id,
         listen: String(listen),
         ...(directConfig.host.trim() ? { host: directConfig.host.trim() } : {}),
         allowPublic: directConfig.allowPublic,
         ...directCredentials(),
-      }
-      setSshDirect((await enableDirect(params)).direct)
+      },
+    })
+  }
+
+  const finishSave = (target: SshTarget | DirectTarget, credentials: ConnectCredentials) => {
+    if (!alive.current) return
+    onSaved(target, credentials)
+    onClose()
+  }
+
+  const runEnableDirect = async ({ params, saved }: DirectConfirmation) => {
+    setDirectConfirmation(null)
+    setBusy('enable')
+    let target: SshTarget
+    try {
+      target = await enableDirect(params)
     } catch (err) {
-      setError(friendlyError(err, '开启直连加速失败'))
+      const reason = friendlyError(err, '开启直连加速失败')
+      if (saved && alive.current) {
+        useTargets.setState({ notice: `直连加速配置失败，正在通过 SSH 连接。${reason}` })
+        finishSave(saved.target, saved.credentials)
+      } else {
+        setError(reason)
+      }
+      return
     } finally {
       setBusy(null)
     }
+    setSshDirect(target.direct)
+    if (saved) finishSave(target, saved.credentials)
   }
 
   const runDisableDirect = async () => {
@@ -323,8 +351,10 @@ export function TargetForm({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
+    if (busy !== null) return
     const input = buildInput()
     if (!input) return
+    const credentials = typedCredentials()
     setBusy('save')
     let target: SshTarget | DirectTarget
     try {
@@ -336,11 +366,18 @@ export function TargetForm({
       return
     }
     try {
-      const credentials = typedCredentials()
       await test({ ...input, id: target.id }, credentials)
       if (!alive.current) return
-      onSaved(target, credentials)
-      onClose()
+      if (!initial && autoDirect && target.kind === 'ssh' && !target.direct) {
+        const { remember: _remember, ...auth } = credentials
+        setDirectConfirmation({
+          host: target.host,
+          params: { id: target.id, reuseListener: true, ...auth },
+          saved: { target, credentials },
+        })
+      } else {
+        finishSave(target, credentials)
+      }
     } catch (err) {
       setError(`配置已保存，但连接测试失败：${friendlyError(err, '未知错误')}`)
     } finally {
@@ -356,9 +393,7 @@ export function TargetForm({
     try {
       const target = await save(input)
       if (target.kind === 'direct') setDirectSavedId(target.id)
-      if (!alive.current) return
-      onSaved(target, {})
-      onClose()
+      finishSave(target, {})
     } catch (err) {
       setError(friendlyError(err, '保存直连目标失败'))
     } finally {
@@ -384,6 +419,36 @@ export function TargetForm({
     ? (directMode ? '编辑直连目标' : '编辑 SSH 连接')
     : (directMode ? '添加直连目标' : '添加 SSH 连接')
 
+  if (directConfirmation) {
+    const { host, params, saved } = directConfirmation
+    return (
+      <Modal
+        title="确认开启直连加速"
+        description={`将通过 SSH 在 ${host} 上配置 TLS 直连。直连失败时会自动通过 SSH 连接。`}
+        onClose={() => setDirectConfirmation(null)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <button className="qn-button-subtle" type="button" autoFocus onClick={() => {
+              setDirectConfirmation(null)
+              if (saved) finishSave(saved.target, saved.credentials)
+            }}>
+              {saved ? '仅使用 SSH' : '取消'}
+            </button>
+            <button className="qn-button" type="button" onClick={() => void runEnableDirect(directConfirmation)}>
+              确认并开启
+            </button>
+          </div>
+        }
+      >
+        <p className="text-[13px] leading-5 text-qn-muted">
+          {saved
+            ? '将优先使用远端已有的直连监听。首次创建监听时使用 47390 端口，仅接受本机和私网来源。'
+            : `远端监听端口为 ${params.listen}，${params.allowPublic ? '允许公网来源。' : '仅接受本机和私网来源。'}`}
+        </p>
+      </Modal>
+    )
+  }
+
   return (
     <Modal
       title={modalTitle}
@@ -400,7 +465,8 @@ export function TargetForm({
             取消
           </button>
           <button className="qn-button" type="submit" form="target-form" disabled={busy !== null}>
-            {busy === 'save' ? (directMode ? '保存中…' : '保存并测试中…') : '保存'}
+            {busy === 'enable' && !initial ? '正在开启直连加速…'
+              : busy === 'save' ? (directMode ? '保存中…' : '保存并测试中…') : '保存'}
           </button>
         </div>
       }
@@ -409,11 +475,11 @@ export function TargetForm({
         onSubmit={(event) => void (directMode ? submitDirect(event) : submit(event))}>
         {!initial && (
           <div className="flex gap-1 rounded-lg border border-qn-border bg-qn-bg p-1">
-            <button type="button" onClick={() => switchMode('ssh')}
+            <button type="button" disabled={busy !== null} onClick={() => switchMode('ssh')}
               className={`h-8 flex-1 rounded-lg px-3 text-[13px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent ${mode === 'ssh' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
               SSH 连接
             </button>
-            <button type="button" onClick={() => switchMode('direct')}
+            <button type="button" disabled={busy !== null} onClick={() => switchMode('direct')}
               className={`h-8 flex-1 rounded-lg px-3 text-[13px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent ${mode === 'direct' ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text'}`}>
               直连（连接码）
             </button>
@@ -502,6 +568,11 @@ export function TargetForm({
               </p>
             </>
           )}
+          {!initial && (
+            <Checkbox checked={autoDirect} onChange={setAutoDirect} disabled={busy !== null}>
+              开启直连加速
+            </Checkbox>
+          )}
           {initial?.kind === 'ssh' && (
             <div className="mt-3 space-y-2 rounded-lg border border-qn-border px-3 py-2.5">
               <div className="text-[13px] font-medium text-qn-text">直连加速</div>
@@ -540,7 +611,7 @@ export function TargetForm({
                     允许公网来源（不推荐）
                   </Checkbox>
                   <button className="qn-button-subtle" type="button" disabled={busy !== null}
-                    onClick={() => void runEnableDirect()}>
+                    onClick={requestEnableDirect}>
                     {busy === 'enable' ? '正在开启…' : '开启直连加速'}
                   </button>
                 </>

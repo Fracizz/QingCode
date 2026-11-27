@@ -18,7 +18,9 @@ describe('defaultAppSettings', () => {
       general: {
         sendKey: 'enter',
         autoConnectLast: true,
+        autoArchiveDays: 0,
         defaultAgent: 'codex',
+        globalAccessMode: 'default',
         density: 'comfortable',
         ...DEFAULT_FONT_SIZES,
       },
@@ -51,6 +53,7 @@ describe('sanitizeAppSettings', () => {
         sendKey: 'ctrlEnter',
         autoConnectLast: 'yes',
         defaultAgent: 'pi',
+        globalAccessMode: 'fullAccess',
         density: 'compact',
         theme: 'light',
         unknown: 1,
@@ -68,7 +71,9 @@ describe('sanitizeAppSettings', () => {
     expect(result.general).toEqual({
       sendKey: 'ctrlEnter',
       autoConnectLast: true,
+      autoArchiveDays: 0,
       defaultAgent: 'pi',
+      globalAccessMode: 'default',
       density: 'compact',
       ...DEFAULT_FONT_SIZES,
     })
@@ -130,6 +135,13 @@ describe('sanitizeSettingsPatch', () => {
 })
 
 describe('mergeAppSettings', () => {
+  it('保存有效的归档期限并忽略非法补丁', () => {
+    const enabled = mergeAppSettings(defaultAppSettings(), { general: { autoArchiveDays: 90 } })
+    expect(enabled.general.autoArchiveDays).toBe(90)
+    expect(sanitizeSettingsPatch({ general: { autoArchiveDays: '90' } })).toEqual({})
+    expect(mergeAppSettings(enabled, { general: { autoArchiveDays: 0 } }).general.autoArchiveDays).toBe(0)
+  })
+
   it('general 与 agent 偏好分别深合并，不覆盖未提交的字段', () => {
     const current = sanitizeAppSettings({
       general: { sendKey: 'enter', autoConnectLast: true, defaultAgent: 'claude', density: 'comfortable' },
@@ -139,7 +151,7 @@ describe('mergeAppSettings', () => {
       },
     })
     const next = mergeAppSettings(current, {
-      general: { density: 'compact' },
+      general: { density: 'compact', globalAccessMode: 'restricted' },
       agents: {
         local: { codex: { path: 'D:\\new\\codex.exe' } },
         'ssh-2': { pi: { enabled: true } },
@@ -148,7 +160,9 @@ describe('mergeAppSettings', () => {
     expect(next.general).toEqual({
       sendKey: 'enter',
       autoConnectLast: true,
+      autoArchiveDays: 0,
       defaultAgent: 'claude',
+      globalAccessMode: 'restricted',
       density: 'compact',
       ...DEFAULT_FONT_SIZES,
     })

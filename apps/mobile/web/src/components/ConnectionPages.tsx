@@ -36,6 +36,8 @@ function MobileSettings({ onClose }: { onClose: () => void }) {
   const [candidate, setCandidate] = useState<UpdateCheck | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const background = useApp((state) => state.backgroundConnectionEnabled)
+  const [savingBackground, setSavingBackground] = useState(false)
   const native = Boolean(getWindowNativePort())
 
   useEffect(() => {
@@ -54,6 +56,19 @@ function MobileSettings({ onClose }: { onClose: () => void }) {
     }).catch(() => undefined)
     return () => { cancelled = true }
   }, [native])
+
+  const changeBackground = async (enabled: boolean) => {
+    setError(null)
+    setSavingBackground(true)
+    try {
+      await callDevice<boolean>('background.set', { enabled })
+      useApp.setState({ backgroundConnectionEnabled: enabled })
+    } catch (err) {
+      setError(friendlyError(err, '无法保存后台连接设置'))
+    } finally {
+      setSavingBackground(false)
+    }
+  }
 
   const check = async () => {
     setNotice(null)
@@ -100,6 +115,16 @@ function MobileSettings({ onClose }: { onClose: () => void }) {
       <p className="mb-4 text-xs text-qn-muted">QingCode Next 是第三方客户端，与 OpenAI、Anthropic 无隶属关系。Agent 用量计入你自己的账号。</p>
       {error && <Note tone="error" message={error} />}
       {notice && <Note message={notice} />}
+      {native && (
+        <label className="mb-3 flex min-h-11 items-center gap-3 text-sm">
+          <input type="checkbox" role="switch" checked={background} disabled={savingBackground}
+            onChange={(event) => void changeBackground(event.target.checked)} />
+          <span>
+            <span className="block">后台保持连接</span>
+            <span className="block text-xs text-qn-muted">切到后台或锁屏后保持电脑连接，继续处理已排队消息。</span>
+          </span>
+        </label>
+      )}
       {online && (
         <>
           <Field label="更新地址" hint="填写你信任的 HTTPS APK 下载地址。">
@@ -135,7 +160,6 @@ export function ConnectionsPage() {
   const booting = useApp((s) => s.booting)
   const mock = useApp((s) => s.mock)
   const eventsConnected = useApp((s) => s.eventsConnected)
-  const eventsError = useApp((s) => s.eventsError)
   const error = useApp((s) => s.error)
   const notice = useApp((s) => s.notice)
   const needsRepair = useApp((s) => s.needsRepair)
@@ -184,7 +208,6 @@ export function ConnectionsPage() {
         </header>
         {error && <Note message={error} tone="error" onClose={clearError} />}
         {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
-        {eventsError && activeId && !needsRepair[activeId] && <Note message={eventsError} tone="warn" />}
         {booting ? <Loading text="正在读取已保存的连接…" /> : connections.length === 0 ? (
           <div className="qn-onboard">
             <h1 className="qn-hero-title">QingCode</h1>

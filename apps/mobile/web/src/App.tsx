@@ -8,6 +8,7 @@ import { ProjectsPage } from './components/ProjectsPage'
 import { TargetsPage } from './components/TargetsPage'
 import { ThreadsPage } from './components/ThreadsPage'
 import { WorkspaceHome, WorkspaceNav } from './components/WorkspaceHome'
+import { Note } from './components/ui'
 import { parsePairingLink } from './link'
 import { getWindowNativePort } from './native'
 import { useApp } from './store'
@@ -40,6 +41,7 @@ export function App() {
   const pageRef = useRef<HTMLDivElement>(null)
   const [pairLink, setPairLink] = useState<string | null>(null)
   const eventsConnected = useApp((s) => s.eventsConnected)
+  const connectionWarning = useApp((s) => s.activeId && !s.needsRepair[s.activeId] ? s.eventsError : null)
 
   useEffect(() => {
     const stopObserving = startWorkspaceObserver()
@@ -97,6 +99,11 @@ export function App() {
   return (
     <div className="qn-app">
       {(page === 'connections' || (workspace && tab === 'connections')) && <div className="qn-glow" data-state={glow} aria-hidden />}
+      {connectionWarning && page !== 'form' && (
+        <div className="shrink-0 border-b border-qn-border bg-qn-panel px-3 pt-2" role="status">
+          <Note message={connectionWarning} tone="warn" />
+        </div>
+      )}
       <div key={pageKey} ref={pageRef} className="qn-page" data-motion={nav.key === pageKey ? nav.motion : 'none'}>
         {page === 'connections' && <ConnectionsPage />}
         {workspace && (tab === 'connections' ? <ConnectionsPage /> : <WorkspaceHome />)}

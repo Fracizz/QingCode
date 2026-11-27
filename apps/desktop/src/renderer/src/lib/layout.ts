@@ -6,6 +6,18 @@ export const SIDEBAR_MIN_WIDTH = 220
 export const SIDEBAR_MAX_WIDTH = 460
 /** 主对话区至少保留的宽度，侧栏再宽也不能把对话挤没。 */
 export const MAIN_MIN_WIDTH = 480
+export const SIDE_CHAT_DEFAULT_WIDTH = 420
+const SIDE_CHAT_MIN_WIDTH = 320
+const SIDE_CHAT_MAX_WIDTH = 720
+
+export function sideChatLayout(preferredWidth: number, availableWidth: number) {
+  const docked = availableWidth >= MAIN_MIN_WIDTH + SIDE_CHAT_MIN_WIDTH
+  const remaining = availableWidth - (docked ? MAIN_MIN_WIDTH : 48)
+  const max = Math.max(0, Math.min(SIDE_CHAT_MAX_WIDTH, remaining))
+  const min = Math.min(SIDE_CHAT_MIN_WIDTH, max)
+  const width = Math.min(max, Math.max(min, preferredWidth))
+  return { docked, min, max, width }
+}
 
 export type ChatWidth = 'default' | 'wide'
 

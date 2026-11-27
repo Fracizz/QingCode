@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DRAFT_THREAD_ID } from '@qn/codex-client'
+import { defaultAppSettings } from '../features/settings/settingsModel'
+import { useSettings } from '../features/settings/settingsStore'
 import { sessionKey } from '../lib/agents'
-import { composerDraftKey, pendingSendKey, useCodex } from './codex'
+import { applyThreadPrefs } from '../lib/threadPrefs'
+import { composerDraftKey, currentChatKey, currentSideApprovals, currentThreadApprovals, currentThreads, pendingSendKey, threadListFor, useCodex } from './codex'
 import { useModels } from './models'
+import { useTargets } from './targets'
+import { useThreadPrefs } from './threadPrefs'
 
 const { callMock, listeners } = vi.hoisted(() => ({
   callMock: vi.fn(),
@@ -23,11 +28,16 @@ vi.mock('../lib/backend', async (importOriginal) => {
   }
 })
 
-type CallParams = { method?: string; agent?: string; msg?: { id?: number; method?: string; params?: { cursor?: string | null } } }
+type CallParams = {
+  method?: string
+  agent?: string
+  targetId?: string
+  msg?: { id?: number; method?: string; params?: { cursor?: string | null; cwd?: string; archived?: boolean; threadId?: string } }
+}
 
-const emitRecv = (msg: unknown, agent = 'codex'): void => {
+const emitRecv = (msg: unknown, agent = 'codex', targetId = 'local'): void => {
   for (const cb of [...(listeners.get('codex.recv') ?? [])]) {
-    cb({ targetId: 'local', agent, seq: null, msg })
+    cb({ targetId, agent, seq: null, msg })
   }
 }
 
@@ -62,6 +72,7 @@ beforeEach(() => {
   listeners.clear()
   callMock.mockReset()
   callMock.mockImplementation(fakeCall)
+  useThreadPrefs.setState({ byTarget: {} })
   useCodex.setState({
     sessions: {},
     sideChats: {},
@@ -71,10 +82,237 @@ beforeEach(() => {
     currentCwd: null,
     currentThreadId: null,
     currentAgent: 'codex',
-    threads: [],
+    openingThread: null,
+    threadLists: {},
     sending: false,
     error: null,
     notice: null,
+  })
+})
+
+describe('归档会话', () => {
+  type HistoryThread = {
+    id: string
+    cwd: string
+    updatedAt: number
+    status?: { type: 'active' | 'idle' }
+  }
+
+  const oldThread = (id: string): HistoryThread => ({ id, cwd: '/work', updatedAt: Date.now() / 1000 - 2 * 86400 })
+
+  function mockHistory(codex: HistoryThread[], claude: HistoryThread[], archived: HistoryThread[] = []) {
+    callMock.mockImplementation(async (method: string, params?: CallParams) => {
+      const msg = params?.msg
+      const agent = params?.agent ?? 'codex'
+      let result: unknown
+      if (msg?.method === 'thread/list') {
+        result = { data: agent === 'codex' ? (msg.params?.archived ? archived : codex) : agent === 'claude' ? claude : [] }
+      } else if (msg?.method === 'thread/unarchive' || msg?.method === 'thread/archive') {
+        const [from, to] = msg.method === 'thread/unarchive' ? [archived, codex] : [codex, archived]
+        const index = from.findIndex(({ id }) => id === msg.params?.threadId)
+        if (index >= 0) to.push(...from.splice(index, 1))
+        result = {}
+      } else {
+        return fakeCall(method, params)
+      }
+      queueMicrotask(() => emitRecv({ id: msg.id, result }, agent, params?.targetId))
+      return {}
+    })
+  }
+
+  it('同一列表可恢复 Codex 原生归档与 Claude 本地归档', async () => {
+    const store = useCodex.getState
+    mockHistory([], [oldThread('claude-old'), oldThread('claude-active')], [oldThread('codex-old')])
+    useCodex.setState({ currentThreadId: 'claude-old', currentAgent: 'claude' })
+    await expect(store().archiveThread('claude-old', 'claude')).resolves.toBe(true)
+    expect(store().currentThreadId).toBeNull()
+
+    const { threads, error } = await store().listArchivedThreads('local')
+    expect(error).toBeNull()
+    expect(threads.map(({ id }) => id).sort()).toEqual(['claude-old', 'codex-old'])
+    for (const thread of threads) await store().restoreThread('local', thread)
+
+    expect((await store().listArchivedThreads('local')).threads).toEqual([])
+    expect(callMock.mock.calls.filter(([, params]) => params?.msg?.method === 'thread/unarchive')
+      .map(([, { agent, msg }]) => [agent, msg.params.threadId])).toEqual([['codex', 'codex-old']])
+    const prefs = useThreadPrefs.getState().byTarget.local
+    expect(prefs?.restoredAt).toMatchObject({ 'codex:codex-old': expect.any(Number), 'claude:claude-old': expect.any(Number) })
+    expect(applyThreadPrefs(threads, prefs)).toHaveLength(2)
+  })
+
+  it('自动归档在设置保存后检查本机，跳过当前、置顶和仍在运行的会话', async () => {
+    const settingsBefore = useSettings.getState()
+    const targetsBefore = useTargets.getState()
+    useThreadPrefs.getState().setPinned('local', 'codex:pinned', true)
+    mockHistory([
+      oldThread('old'), oldThread('open'), oldThread('pinned'),
+      { ...oldThread('running'), status: { type: 'active' } },
+    ], [oldThread('claude-old')])
+    useCodex.setState({ currentThreadId: 'open' })
+    useSettings.setState({ loaded: true, saving: false, settings: defaultAppSettings() })
+    useTargets.setState({ states: { local: { id: 'local', state: 'ready' }, remote: { id: 'remote', state: 'ready' } } })
+    const stop = useCodex.getState().init()
+    try {
+      const settings = defaultAppSettings()
+      settings.general.autoArchiveDays = 1
+      useSettings.setState({ settings, saving: true })
+      expect(callMock).not.toHaveBeenCalled()
+      useSettings.setState({ saving: false })
+      await vi.waitFor(() => {
+        expect(useThreadPrefs.getState().byTarget.local?.hidden['claude:claude-old']).toBe(true)
+        const calls = callMock.mock.calls.filter(([, params]) => params?.msg?.method === 'thread/archive')
+        expect(calls.map(([, { targetId, msg }]) => [targetId, msg.params.threadId])).toEqual([['local', 'old']])
+      })
+      expect(useCodex.getState().currentThreadId).toBe('open')
+    } finally {
+      stop()
+      useSettings.setState(settingsBefore)
+      useTargets.setState(targetsBefore)
+    }
+  })
+})
+
+it('恢复的项目在当前连接就绪后加载会话', () => {
+  const stop = useCodex.getState().init()
+  const refresh = vi.spyOn(useCodex.getState(), 'refreshThreads').mockResolvedValue()
+  try {
+    useCodex.getState().setContext('local', '/restored')
+    for (const cb of listeners.get('target.state') ?? []) cb({ id: 'remote', state: 'ready' })
+    expect(refresh).not.toHaveBeenCalled()
+    for (const cb of listeners.get('target.state') ?? []) cb({ id: 'local', state: 'ready' })
+    expect(refresh).toHaveBeenCalledTimes(1)
+  } finally {
+    refresh.mockRestore()
+    stop()
+  }
+})
+
+it('同一目标的多个目录和不同目标的同名目录各自加载，迟到回包不会覆盖较新的列表', async () => {
+  const replies: { targetId: string; cwd?: string; respond: (threadId: string) => void }[] = []
+  callMock.mockImplementation((method: string, params?: CallParams) => {
+    const msg = params?.msg
+    if (method === 'codex.send' && msg?.method === 'thread/list') {
+      const targetId = params?.targetId ?? 'local'
+      const agent = params?.agent ?? 'codex'
+      const cwd = msg.params?.cwd
+      const respond = (threadId: string) => emitRecv({
+        id: msg.id, result: { data: threadId ? [{ id: threadId, cwd }] : [] },
+      }, agent, targetId)
+      if (agent === 'codex') replies.push({ targetId, cwd, respond })
+      else queueMicrotask(() => respond(''))
+      return Promise.resolve({})
+    }
+    return fakeCall(method, params)
+  })
+
+  const store = useCodex.getState
+  store().setContext('local', '/a')
+  const oldA = store().refreshThreads()
+  await vi.waitFor(() => expect(replies).toHaveLength(1))
+
+  store().setContext('local', '/b')
+  const b = store().refreshThreads()
+  const remoteB = store().refreshThreads({ targetId: 'remote', cwd: '/b' })
+  const newA = store().refreshThreads({ targetId: 'local', cwd: '/a' })
+  await vi.waitFor(() => expect(replies).toHaveLength(4))
+
+  replies.findLast((reply) => reply.cwd === '/a')?.respond('new-a')
+  replies.find((reply) => reply.targetId === 'remote')?.respond('remote-b')
+  replies.find((reply) => reply.targetId === 'local' && reply.cwd === '/b')?.respond('local-b')
+  await Promise.all([b, remoteB, newA])
+  replies[0]?.respond('old-a')
+  await oldA
+
+  expect(threadListFor(store(), 'local', '/a')?.threads.map(({ id }) => id)).toEqual(['new-a'])
+  expect(threadListFor(store(), 'remote', '/b')?.threads.map(({ id }) => id)).toEqual(['remote-b'])
+  expect(currentThreads(store()).map(({ id }) => id)).toEqual(['local-b'])
+})
+
+describe('审批会话隔离', () => {
+  const approval = (id: string, threadId: string) => ({
+    id, method: 'item/commandExecution/requestApproval', params: { threadId, command: 'echo test' },
+  })
+
+  it('草稿、缺少缓存的会话和切换过程不显示其他会话的审批', async () => {
+    const store = useCodex.getState
+    await store().ensureOpen('local', 'codex')
+    emitRecv(approval('a-request', 'a'))
+
+    expect(currentThreadApprovals(store())).toEqual([])
+    useCodex.setState({ currentThreadId: 'unloaded' })
+    expect(currentThreadApprovals(store())).toEqual([])
+    useCodex.setState({ currentThreadId: 'a' })
+    expect(currentThreadApprovals(store())).toMatchObject([{ requestId: 'a-request', threadId: 'a' }])
+
+    const before = callMock.mock.calls.length
+    const address = { targetId: 'local', agent: 'codex', threadId: 'a' } as const
+    useCodex.setState({ openingThread: { ...address, threadId: 'b' } })
+    expect(currentThreadApprovals(store())).toEqual([])
+    store().respondApproval(address, 'a-request', 'decline')
+    useCodex.setState({ currentThreadId: 'b', openingThread: null })
+    store().respondApproval(address, 'a-request', 'decline')
+    expect(callMock.mock.calls).toHaveLength(before)
+    expect(store().error).toBeNull()
+
+    useCodex.setState({ currentThreadId: 'a' })
+    expect(currentThreadApprovals(store())).toMatchObject([{ requestId: 'a-request' }])
+    store().respondApproval(address, 'a-request', 'decline')
+    expect(callMock).toHaveBeenLastCalledWith('codex.send', {
+      targetId: 'local', agent: 'codex', msg: { id: 'a-request', result: { decision: 'decline' } },
+    })
+    expect(currentThreadApprovals(store())).toEqual([])
+  })
+
+  it('相同会话和审批 ID 在不同目标或 Agent 间独立', async () => {
+    const store = useCodex.getState
+    for (const [target, agent] of [['local', 'codex'], ['remote', 'codex'], ['local', 'claude']] as const) {
+      await store().ensureOpen(target, agent)
+      emitRecv(approval('same-request', 'same-thread'), agent, target)
+    }
+    useCodex.setState({ currentThreadId: 'same-thread', currentTargetId: 'remote' })
+    const local = { targetId: 'local', agent: 'codex', threadId: 'same-thread' } as const
+    const remote = { ...local, targetId: 'remote' }
+    const before = callMock.mock.calls.length
+    store().respondApproval(local, 'same-request', 'decline')
+    expect(callMock.mock.calls).toHaveLength(before)
+    store().respondApproval(remote, 'same-request', 'decline')
+    expect(callMock).toHaveBeenLastCalledWith('codex.send', {
+      targetId: 'remote', agent: 'codex', msg: { id: 'same-request', result: { decision: 'decline' } },
+    })
+    expect(currentThreadApprovals(store())).toEqual([])
+    useCodex.setState({ currentTargetId: 'local' })
+    expect(currentThreadApprovals(store())).toMatchObject([{ requestId: 'same-request' }])
+    useCodex.setState({ currentAgent: 'claude' })
+    expect(currentThreadApprovals(store())).toMatchObject([{ requestId: 'same-request' }])
+  })
+
+  it('侧聊只显示自己的审批，收起后保留待处理请求', async () => {
+    const store = useCodex.getState
+    useCodex.setState({ currentThreadId: 'parent' })
+    await store().ensureOpen('local', 'codex')
+    store().openSideChat()
+    const key = currentChatKey(store())
+    useCodex.setState({ sideChats: { [key]: { ...store().sideChats[key]!, threadId: 'side' } } })
+    emitRecv(approval('main-request', 'parent'))
+    emitRecv(approval('side-request', 'side'))
+
+    expect(currentThreadApprovals(store())).toMatchObject([{ requestId: 'main-request' }])
+    expect(currentSideApprovals(store())).toMatchObject([{ requestId: 'side-request' }])
+    const side = { targetId: 'local', agent: 'codex', threadId: 'side' } as const
+    store().closeSideChat()
+    const before = callMock.mock.calls.length
+    store().respondApproval(side, 'side-request', 'decline')
+    expect(callMock.mock.calls).toHaveLength(before)
+    expect(currentSideApprovals(store())).toEqual([])
+
+    store().openSideChat()
+    expect(currentSideApprovals(store())).toMatchObject([{ requestId: 'side-request' }])
+    store().respondApproval(side, 'side-request', 'decline')
+    expect(callMock).toHaveBeenLastCalledWith('codex.send', {
+      targetId: 'local', agent: 'codex', msg: { id: 'side-request', result: { decision: 'decline' } },
+    })
+    expect(currentSideApprovals(store())).toEqual([])
+    expect(currentThreadApprovals(store())).toMatchObject([{ requestId: 'main-request' }])
   })
 })
 
@@ -255,9 +493,10 @@ describe.each(['codex', 'claude', 'pi'] as const)('%s 侧边对话', (agent) => 
     store().openSideChat('一段引用')
     const owner = JSON.stringify(['local', '/project', agent, 'parent'])
     expect(callMock).not.toHaveBeenCalled()
-    await store().sendSide(store().sideChats[owner]!.draft, 'queue')
+    expect(store().sideChats[owner]).toMatchObject({ draft: '', annotations: [{ quote: '一段引用' }] })
+    await store().sendSide('', 'queue')
     expect(store().currentThreadId).toBe('parent')
-    expect(store().sideChats[owner]).toMatchObject({ threadId: 't1', draft: '' })
+    expect(store().sideChats[owner]).toMatchObject({ threadId: 't1', draft: '', annotations: [] })
     expect(callMock.mock.calls.map(([, params]) => params)).toContainEqual(expect.objectContaining({
       agent, msg: expect.objectContaining({ method: 'thread/start', params: { cwd: '/project', ephemeral: true } }),
     }))
@@ -281,13 +520,15 @@ describe.each(['codex', 'claude', 'pi'] as const)('%s 侧边对话', (agent) => 
   })
 })
 
-it('旧 Pi 服务缺少无工具能力时保留草稿并显示升级提示', async () => {
+it('旧 Pi 服务缺少无工具能力时保留草稿和引用并显示升级提示', async () => {
   useCodex.setState({ currentThreadId: 'parent', currentAgent: 'pi' })
   const store = useCodex.getState
   store().openSideChat('片段')
-  const draft = Object.values(store().sideChats)[0]!.draft
-  await store().sendSide(draft, 'queue')
-  expect(Object.values(store().sideChats)[0]).toMatchObject({ draft, threadId: null, error: expect.stringContaining('升级') })
+  store().setSideDraft('追问')
+  await store().sendSide('追问', 'queue')
+  expect(Object.values(store().sideChats)[0]).toMatchObject({
+    draft: '追问', annotations: [{ quote: '片段' }], threadId: null, error: expect.stringContaining('升级'),
+  })
   expect(callMock.mock.calls.some(([, params]) => params?.msg?.method === 'thread/start')).toBe(false)
 })
 
@@ -295,13 +536,43 @@ it('服务端关闭临时会话后保留摘录，重新开始时继续使用同�
   const store = useCodex.getState
   useCodex.setState({ currentThreadId: 'parent' })
   store().openSideChat('一段摘录')
-  const draft = Object.values(store().sideChats)[0]!.draft
-  await store().sendSide(draft, 'queue')
+  await store().sendSide('', 'queue')
   emitRecv({ method: 'thread/closed', params: { threadId: 't1' } })
   expect(Object.values(store().sideChats)[0]?.expired).toBe(true)
   await store().restartSideChat()
-  expect(Object.values(store().sideChats)[0]).toMatchObject({ threadId: null, expired: false, draft })
+  expect(Object.values(store().sideChats)[0]).toMatchObject({ threadId: null, expired: false, draft: '> 一段摘录' })
   expect(store().currentThreadId).toBe('parent')
+})
+
+it('侧聊发送时拼入编辑后的引用，保留提交期间新加的引用', async () => {
+  useCodex.setState({ currentThreadId: 'parent' })
+  const store = useCodex.getState
+  const side = () => store().sideChats[currentChatKey(store())]!
+  let turnRequestId: number | undefined
+  callMock.mockImplementation((method: string, params?: CallParams) => {
+    if (method === 'codex.send' && params?.msg?.method === 'turn/start') {
+      turnRequestId = params.msg.id
+      return Promise.resolve({})
+    }
+    return fakeCall(method, params)
+  })
+  store().openSideChat('原引用')
+  store().addSideAnnotation('移除这条', '')
+  const [original, removed] = side().annotations
+  store().editSideAnnotation(original!.id, '修改后\n第二行')
+  store().removeSideAnnotation(removed!.id)
+  store().setSideDraft('追问')
+
+  const sending = store().sendSide('追问', 'queue')
+  await vi.waitFor(() => expect(turnRequestId).toBeDefined())
+  const request = callMock.mock.calls.find(([, params]) => params?.msg?.id === turnRequestId && params.msg.method === 'turn/start')
+  expect(request?.[1].msg.params.input).toEqual([
+    expect.objectContaining({ type: 'text', text: '> 修改后\n> 第二行\n\n追问' }),
+  ])
+  store().openSideChat('下次发送的引用')
+  emitRecv({ id: turnRequestId, result: { turn: { id: 'turn1', status: 'inProgress', items: [] } } })
+  await sending
+  expect(side()).toMatchObject({ draft: '', annotations: [{ quote: '下次发送的引用' }] })
 })
 
 it('重开临时侧聊后按原顺序保留队列，用户确认后才发送', async () => {
@@ -360,11 +631,19 @@ it('运行中的侧聊保护主会话，结束后先释放侧聊再删除主会�
   expect(store().currentThreadId).toBeNull()
 })
 
-it('从全部会话打开侧聊时沿用主会话的工作目录', () => {
+it('从全部会话打开侧聊时沿用主会话的工作目录', async () => {
+  callMock.mockImplementation((method: string, params?: CallParams) => {
+    const msg = params?.msg
+    if (method === 'codex.send' && msg?.method === 'thread/list' && params?.agent === 'codex') {
+      queueMicrotask(() => emitRecv({ id: msg.id, result: { data: [{ id: 'parent', cwd: '/work/project' }] } }))
+      return Promise.resolve({})
+    }
+    return fakeCall(method, params)
+  })
   useCodex.setState({
     currentThreadId: 'parent', currentCwd: null,
-    threads: [{ id: 'parent', agent: 'codex', cwd: '/work/project', title: '会话', preview: '', updatedAt: 0 }],
   })
+  await useCodex.getState().refreshThreads()
   useCodex.getState().openSideChat('摘录')
   expect(Object.values(useCodex.getState().sideChats)[0]?.cwd).toBe('/work/project')
 })

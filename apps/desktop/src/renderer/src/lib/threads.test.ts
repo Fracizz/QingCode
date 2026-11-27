@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeThreadSummaries, threadKey, threadPreviewText, toThreadSummaries, toTimestamp } from './threads'
+import { mergeThreadSummaries, refreshThreadOrder, threadKey, threadPreviewText, toThreadSummaries, toTimestamp } from './threads'
 
 describe('会话列表归一化', () => {
   it('兼容秒/毫秒时间戳', () => {
@@ -38,6 +38,18 @@ describe('会话列表归一化', () => {
       { id: 'failed', status: { type: 'systemError' } },
     ])
     expect(threads.map((thread) => thread.activity)).toEqual(['pending', 'input', 'failed'])
+  })
+
+  it('完成后更新时间和状态但保留原位，新增会话排前，归档会话移除', () => {
+    const [first, removed] = toThreadSummaries([{ id: 'same' }, { id: 'removed' }])
+    const [running] = toThreadSummaries([{ id: 'same', status: { type: 'active', activeFlags: [] } }], 'claude')
+    const [finished, added] = toThreadSummaries([
+      { id: 'same', updatedAt: 500, status: { type: 'idle' } },
+      { id: 'new', updatedAt: 400 },
+    ], 'claude')
+    const incoming = [finished!, added!, first!]
+    expect(refreshThreadOrder([], incoming)).toEqual(incoming)
+    expect(refreshThreadOrder([first!, running!, removed!], incoming)).toEqual([added, first, finished])
   })
 
   it('给会话标上 agent 并合并两个来源', () => {

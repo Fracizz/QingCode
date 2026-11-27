@@ -17,7 +17,7 @@ import { useMobile } from '../store/mobile'
 import { FeedbackRow } from './FeedbackRow'
 import { FormField } from './FormField'
 import { Select, TabsContent, TabsList, TabsRoot, TabsTrigger } from './primitives'
-import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Modal, Spinner } from './ui'
+import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Spinner } from './ui'
 
 function Section({ title, action, children }: { title: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
@@ -31,11 +31,7 @@ function Section({ title, action, children }: { title: ReactNode; action?: React
   )
 }
 
-/**
- * 手机连接设置。内容较多，按"连接设置 / 连接地址 / 已配对设备 / 安全"分页，
- * 对话框高度固定在可视范围内，不再出现整页长滚动。
- */
-export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
+export function MobileSettings() {
   const settings = useMobile((s) => s.settings)
   const devices = useMobile((s) => s.devices)
   const busy = useMobile((s) => s.busy)
@@ -68,7 +64,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
 
   useEffect(() => setPairQr(null), [settings?.fingerprint])
 
-  // 手动复制的明文含配对密码，关闭面板后不再留在内存里。
+  // 离开设置分类时清理含配对密码的连接信息。
   useEffect(() => () => useMobile.getState().clearManualCopy(), [])
 
   // 只在首次拿到设置时初始化草稿，刷新状态不覆盖尚未保存的编辑。
@@ -148,32 +144,12 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal
-      title="手机连接"
-      width="max-w-2xl"
-      onClose={onClose}
-      bodyClassName="pt-1"
-      footer={
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-[12px] text-qn-dim">
-            {dirty ? '有未保存的修改' : '电脑需保持运行，手机才能连接。'}
-          </span>
-          <div className="flex shrink-0 gap-2">
-            <button className="qn-button-subtle" type="button" onClick={onClose}>
-              关闭
-            </button>
-            <button className="qn-button" type="submit" form="mobile-settings-form" disabled={!draft || busy !== null}>
-              保存设置
-            </button>
-          </div>
-        </div>
-      }
-    >
-      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-white/[0.03] px-3 py-2">
+    <div>
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-qn-border bg-qn-panel px-3 py-2">
         <Smartphone size={16} className="shrink-0 text-qn-accent" />
         <span className="text-[13px]">手机网关</span>
         <Badge tone={status.tone}>{status.label}</Badge>
-        <span className="font-mono text-[12px] text-qn-dim">0.0.0.0:{settings?.port ?? 38500}</span>
+        <span className="font-mono text-[12px] text-qn-muted">0.0.0.0:{settings?.port ?? 38500}</span>
         <span className="min-w-0 flex-1" />
         {busy && <Spinner label={busy} />}
         <IconButton label="刷新状态" className="h-7 w-7" disabled={busy !== null} onClick={() => void load()}>
@@ -192,16 +168,16 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
         />
       </div>
 
-      <form id="mobile-settings-form" onSubmit={(event) => void submit(event)}>
+      <form onSubmit={(event) => void submit(event)}>
         <TabsRoot value={tab} onValueChange={setTab}>
-          <TabsList className="mb-4 mt-2 border-b border-qn-border pb-2">
+          <TabsList aria-label="手机连接设置" className="mb-4 mt-2 border-b border-qn-border pb-2">
             <TabsTrigger value="settings">连接设置</TabsTrigger>
             <TabsTrigger value="addresses">连接地址</TabsTrigger>
             <TabsTrigger value="devices">已配对设备（{devices.length}）</TabsTrigger>
             <TabsTrigger value="security">安全</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="settings" className="min-h-[260px] space-y-4">
+          <TabsContent value="settings" className="space-y-4">
             <Checkbox checked={draft?.enabled ?? false} onChange={(value) => patch({ enabled: value })}>
               启用手机连接（关闭后手机无法连接这台电脑）
             </Checkbox>
@@ -305,7 +281,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
             </Section>
           </TabsContent>
 
-          <TabsContent value="addresses" className="min-h-[260px] space-y-5">
+          <TabsContent value="addresses" className="space-y-5">
             <Section
               title={
                 <>
@@ -342,6 +318,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               <div className="flex gap-2">
                 <input
                   className="qn-input min-w-0 flex-1"
+                  aria-label="对外地址"
                   placeholder="frp.example.com:7001"
                   value={addressInput}
                   onChange={(event) => {
@@ -363,7 +340,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
             </Section>
           </TabsContent>
 
-          <TabsContent value="devices" className="min-h-[260px]">
+          <TabsContent value="devices">
             <Section
               title={`已配对设备（${devices.length}）`}
               action={
@@ -401,7 +378,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
             </Section>
           </TabsContent>
 
-          <TabsContent value="security" className="min-h-[260px]">
+          <TabsContent value="security">
             <Section
               title={
                 <>
@@ -447,7 +424,15 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
             </Section>
           </TabsContent>
         </TabsRoot>
+        <div className="mt-4 flex items-center justify-between gap-3 border-t border-qn-border pt-4">
+          <span className="text-[12px] text-qn-muted" role="status">
+            {dirty ? '有未保存的修改' : '电脑需保持运行，手机才能连接。'}
+          </span>
+          <button className="qn-button shrink-0" type="submit" disabled={!draft || busy !== null}>
+            保存设置
+          </button>
+        </div>
       </form>
-    </Modal>
+    </div>
   )
 }

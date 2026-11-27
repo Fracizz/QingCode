@@ -1,4 +1,5 @@
 // 浏览器开发模式：无 window.QnNative 时用内存假数据把全部页面点通（多 Agent、只读文件/差异；不触网、不打印凭据）。
+import { resolveAccessMode, turnAccessOverride, type GlobalAccessMode } from '@qn/codex-client'
 import type { TermInfo, TermOutputChunk } from '@qn/protocol'
 import { buildConnectionInfo, normalizeFingerprint } from './link'
 import type { NativeCallbacks, NativePort } from './native'
@@ -317,7 +318,14 @@ export class MockNativePort implements NativePort {
   private counter = 0
   private nextStream = 1
 
+  private globalAccessMode?: GlobalAccessMode
+
   constructor(private readonly hub: NativeCallbacks) {}
+
+  setGlobalAccessMode(mode: GlobalAccessMode): void {
+    this.globalAccessMode = mode
+    this.emit({ name: 'settings.access', payload: { globalAccessMode: mode } })
+  }
 
   request(json: string): string {
     let parsed: unknown = null
@@ -404,7 +412,7 @@ export class MockNativePort implements NativePort {
         this.emit({ name: 'target.state', payload: { id: str(params.id), state: 'idle' } })
         return null
       case 'mobile.agents':
-        return MOCK_AGENT_SETTINGS
+        return { ...MOCK_AGENT_SETTINGS, globalAccessMode: this.globalAccessMode }
       case 'mobile.files.list':
       case 'mobile.files.search':
       case 'mobile.files.read': {
@@ -435,9 +443,24 @@ export class MockNativePort implements NativePort {
       }
       case 'server.req':
         return this.serverReq(params)
-      case 'codex.send':
+      case 'codex.send': {
+        const agent = agentOf(params.agent ?? request.agent)
+        const msg = isRecord(params.msg) ? params.msg : {}
+        const access = turnAccessOverride(agent, resolveAccessMode(agent, this.globalAccessMode))
+        const scoped = msg.method === 'turn/start' && isRecord(msg.params) && access
+          ? { ...params, msg: { ...msg, params: { ...msg.params, ...access } } } : params
+        this.codexSend(scoped, agent)
+        return null
+      }
       case 'mobile.turn.start': {
-        this.codexSend(params, agentOf(params.agent ?? request.agent))
+        const agent = agentOf(params.agent ?? request.agent)
+        if (params.inheritAccess === true &&
+            (this.globalAccessMode === undefined || resolveAccessMode(agent, this.globalAccessMode) !== params.accessMode)) {
+          throw new MockError('access_mode_changed', '权限总控已更新，请检查当前访问模式后重试')
+        }
+        const msg = isRecord(params.msg) ? params.msg : {}
+        const inner = isRecord(msg.params) ? msg.params : {}
+        this.codexSend({ ...params, msg: { ...msg, params: { ...inner, ...turnAccessOverride(agent, params.accessMode) } } }, agent)
         return null
       }
       default:
@@ -607,6 +630,18 @@ export class MockNativePort implements NativePort {
           this.writeStorage(archiveKey(threadId), archived ? '1' : null)
           recv({ id, result: {} })
           recv({ method: archived ? 'thread/archived' : 'thread/unarchived', params: { threadId } })
+        }
+        return
+      }
+      case 'thread/name/set': {
+        const thread = threads.find((item) => item.id === threadId)
+        const name = str(inner.name).trim()
+        if (agent !== 'codex' || !thread || !name) {
+          recv({ id, error: { code: -32602, message: '无法重命名会话' } })
+        } else {
+          thread.name = name
+          recv({ id, result: {} })
+          recv({ method: 'thread/name/updated', params: { threadId, threadName: name } })
         }
         return
       }

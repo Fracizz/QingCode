@@ -1,4 +1,4 @@
-import { accessOptions, type AccessMode } from '@qn/codex-client'
+import { accessOptions, resolveAccessMode, type AccessSelection } from '@qn/codex-client'
 import { GitBranch, ListOrdered, MessageSquarePlus, Pencil, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { UNCONFIRMED_QUEUED_SEND } from '../queuedSends'
@@ -13,6 +13,7 @@ const newChatActions = [
 export function QueuedMessages({ running, canSteer }: { running: boolean; canSteer: boolean }) {
   const queue = useApp(selectedQueuedSends)
   const accessPreference = useApp(selectedAccessPreference)
+  const globalAccessMode = useApp((state) => state.agentSettings?.globalAccessMode)
   const connected = useApp((state) => state.eventsConnected)
   const remove = useApp((state) => state.removeQueuedSend)
   const retry = useApp((state) => state.retryQueuedSend)
@@ -90,7 +91,10 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
   const continuing = destination?.mode === 'continue'
   const destinationTitle = continuing ? '新会话继续' : '新会话开始'
   const destinationError = moveError ?? (movingMessage?.error === UNCONFIRMED_QUEUED_SEND ? movingMessage.error : null)
-  const accessLabel = (mode?: AccessMode) => mode !== 'default' ? accessOptions[agent].find((option) => option.mode === mode)?.label : undefined
+  const accessLabel = (selection?: AccessSelection) => {
+    const mode = resolveAccessMode(agent, globalAccessMode, selection)
+    return mode !== 'default' ? accessOptions[agent].find((option) => option.mode === mode)?.label : undefined
+  }
   return (
     <section className="shrink-0 border-t border-qn-border bg-qn-panel px-3" aria-label="发送队列">
       <details className="qn-details" open>
@@ -170,8 +174,8 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
               {movingMessage.text.trim() || '附件或引用'}
             </p>
           ) : <Note message="这条消息已离开队列。" />}
-          {movingMessage && accessLabel(accessPreference ?? movingMessage.accessMode) && (
-            <Note message="将在新会话中使用 Agent 的默认权限。" tone="warn" />
+          {movingMessage && accessLabel(accessPreference ?? movingMessage.accessMode) !== accessLabel('inherit') && (
+            <Note message="新会话将继承权限总控。" tone="warn" />
           )}
           {destinationError && <Note message={destinationError} tone="error" />}
           {!connected && <Note message="连接电脑后可发送。" tone="warn" />}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyMention, formatMention, mentionToken, rankMentionCandidates, serverQuery } from './mentions'
+import { appendProjectMention, applyMention, formatMention, mentionToken, rankMentionCandidates, serverQuery } from './mentions'
 
 describe('mentionToken', () => {
   it('行首或空白后的 @ 触发，返回查询与范围', () => {
@@ -26,6 +26,18 @@ describe('serverQuery', () => {
     expect(serverQuery('src\\a.ts')).toBe('a.ts')
     expect(serverQuery('src/')).toBe('')
     expect(serverQuery('app')).toBe('app')
+  })
+})
+
+describe('appendProjectMention', () => {
+  it('空草稿可连续添加文件或目录，并保留输入位置', () => {
+    const draft = appendProjectMention('', 'AGENTS.md')
+    expect(appendProjectMention(draft, 'src')).toBe('@AGENTS.md @src ')
+  })
+
+  it('保留已有正文和换行，带空格的 Windows 路径沿用引用格式', () => {
+    expect(appendProjectMention('请检查', 'docs\\my notes.md')).toBe('请检查 @"docs/my notes.md" ')
+    expect(appendProjectMention('请检查\n', 'src')).toBe('请检查\n@src ')
   })
 })
 

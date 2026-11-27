@@ -85,7 +85,12 @@ export class MobileCodexTransport implements CodexTransport {
     const request = isRecord(msg) && typeof msg.method === 'string' && typeof msg.id === 'string'
       ? { ...msg, id: this.requestPrefix + msg.id }
       : msg
-    void this.sendMessage(request).catch((err: unknown) => this.handleSendError(msg, err))
+    void this.sendMessage(request).then((value) => {
+      if (isRecord(request) && typeof request.id === 'string' && isRecord(value) &&
+        isRecord(value.reply) && value.reply.id === request.id && ('result' in value.reply || 'error' in value.reply)) {
+        this.handleRecv({ targetId: this.targetId, agent: this.agent, seq: null, msg: value.reply })
+      }
+    }).catch((err: unknown) => this.handleSendError(msg, err))
   }
 
   async respond(id: string | number, result: unknown): Promise<void> {
@@ -170,11 +175,13 @@ export type EventStreamGateway = Pick<Gateway, 'openEvents' | 'closeEvents' | 'o
 export type EventStreamHandlers = {
   onEvent: (event: GatewayEvent) => void
   onOpen: (reconnected: boolean) => void
-  onClose: (error: string | null) => void
+  onClose: () => void
+  onUnavailable?: () => void
   onRepair?: (reason: RepairReason, message: string) => void
 }
 
 type TimerHandle = ReturnType<typeof setTimeout>
+const OFFLINE_GRACE_MS = 15_000
 
 export class EventStreamController {
   private stream: string | null = null
@@ -185,6 +192,9 @@ export class EventStreamController {
   private stopped = true
   private lastMessageAt = 0
   private opening = false
+  private foreground = true
+  private firstFailureAt: number | null = null
+  private reportedUnavailable = false
 
   constructor(
     private readonly gateway: EventStreamGateway,
@@ -194,11 +204,9 @@ export class EventStreamController {
     private readonly cancel: (handle: TimerHandle) => void = (handle) => clearTimeout(handle),
   ) {}
 
-  start(reconnected = this.attempts > 0): void {
+  start(reconnected = false): void {
     this.stop()
     this.stopped = false
-    this.generation += 1
-    this.clearTimer()
     void this.open(this.generation, reconnected)
   }
 
@@ -206,20 +214,34 @@ export class EventStreamController {
     this.stopped = true
     this.generation += 1
     this.clearTimer()
-    this.off?.()
-    this.off = null
     this.opening = false
-    const stream = this.stream
-    this.stream = null
-    if (stream) void this.gateway.closeEvents(stream).catch(() => undefined)
+    this.attempts = 0
+    this.firstFailureAt = null
+    this.reportedUnavailable = false
+    this.closeStream()
+  }
+
+  setForeground(foreground: boolean): void {
+    if (foreground === this.foreground) return
+    this.foreground = foreground
+    // 锁屏期间的失败不计入提示，回到前台后重新确认。
+    this.firstFailureAt = null
+    if (foreground) {
+      this.attempts = 0
+      this.wake()
+    }
   }
 
   wake(force = false): void {
     if (this.stopped || this.opening) return
     // 网关 20 秒一次心跳，休眠后原有 socket 可能还没报告断开。
     if (force || !this.stream || Date.now() - this.lastMessageAt > 45_000) {
-      if (this.stream) this.handlers.onClose(null)
-      this.start(true)
+      if (this.stream) {
+        this.closeStream()
+        this.handlers.onClose()
+      }
+      this.clearTimer()
+      void this.open(this.generation, true)
     }
   }
 
@@ -238,6 +260,8 @@ export class EventStreamController {
       this.off?.()
       this.off = this.gateway.onStream((msg) => this.handleStream(stream, msg))
       this.attempts = 0
+      this.firstFailureAt = null
+      this.reportedUnavailable = false
       this.handlers.onOpen(reconnected)
     } catch (err) {
       if (this.stopped || generation !== this.generation) return
@@ -248,7 +272,14 @@ export class EventStreamController {
         this.handlers.onRepair(reason, message)
         return
       }
-      this.handlers.onClose(message || null)
+      if (this.foreground && !this.reportedUnavailable) {
+        const now = Date.now()
+        if (this.firstFailureAt === null) this.firstFailureAt = now
+        else if (now - this.firstFailureAt >= OFFLINE_GRACE_MS) {
+          this.reportedUnavailable = true
+          this.handlers.onUnavailable?.()
+        }
+      }
       this.scheduleRetry()
     } finally {
       if (generation === this.generation) this.opening = false
@@ -271,8 +302,16 @@ export class EventStreamController {
     this.stream = null
     this.off?.()
     this.off = null
-    this.handlers.onClose(msg.error)
+    this.handlers.onClose()
     this.scheduleRetry()
+  }
+
+  private closeStream(): void {
+    this.off?.()
+    this.off = null
+    const stream = this.stream
+    this.stream = null
+    if (stream) void this.gateway.closeEvents(stream).catch(() => undefined)
   }
 
   private scheduleRetry(): void {

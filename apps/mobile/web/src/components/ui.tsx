@@ -156,7 +156,7 @@ export function Dialog({
   title: string
   children: ReactNode
   onClose: () => void
-  placement?: 'bottom' | 'side' | 'full'
+  placement?: 'bottom' | 'left' | 'full'
   /** 全屏弹层默认把关闭按钮放在底部拇指区；底部已有输入区的（如终端）传 top；内容自己摆放关闭按钮时传 none。 */
   closeAt?: 'top' | 'bottom' | 'none'
 }) {

@@ -14,6 +14,7 @@ interface FakeState {
   closed: boolean
   cancelSwitch: boolean
   cancelNew: boolean
+  rejectThinking?: boolean
   messages: RpcRecord[]
 }
 
@@ -42,6 +43,8 @@ function fakeRpc(state: FakeState): FakeRpc {
           return { type: 'response', success: true, data: { cancelled: state.cancelSwitch } }
         case 'get_messages':
           return { type: 'response', success: true, data: { messages: state.messages } }
+        case 'set_thinking_level':
+          return { type: 'response', success: !state.rejectThinking }
         case 'prompt':
           return { type: 'response', success: true, data: { disposition: 'started' } }
         default:
@@ -210,6 +213,31 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
     await flush()
     expect((responseFor(sent, 9)?.error as { code?: number })?.code).toBe(-32601)
     expect(broadcasts.some((entry) => String(entry.msg.method).includes('requestApproval'))).toBe(false)
+  })
+
+  it('思考档切换失败不发送 prompt，重试保留已切换的模型', async () => {
+    const { host, sent, broadcasts, state } = harness()
+    await host.open({})
+    host.handleClientMessage(1, { id: 1, method: 'thread/start', params: { cwd: '/work' } })
+    await flush()
+    const thread = (responseFor(sent, 1)?.result as { thread: { id: string } }).thread
+    const params = { threadId: thread.id, model: 'provider/model', effort: 'high', input: [{ type: 'text', text: '你好' }] }
+    state.rejectThinking = true
+    host.handleClientMessage(1, { id: 2, method: 'turn/start', params })
+    await flush()
+    expect(responseFor(sent, 2)?.error).toMatchObject({ message: expect.stringContaining('消息未发送') })
+    expect(state.commands).not.toContain('prompt')
+    expect(broadcasts.some(({ msg }) => msg.method === 'turn/started')).toBe(false)
+    expect(host.activeTurns).toBe(0)
+
+    state.rejectThinking = false
+    host.handleClientMessage(1, { id: 3, method: 'turn/start', params })
+    await flush()
+    expect(responseFor(sent, 3)).toHaveProperty('result.turn.status', 'inProgress')
+    expect(state.commands.filter((name) => name === 'set_model')).toHaveLength(1)
+    expect(state.commands.filter((name) => name === 'set_thinking_level')).toHaveLength(2)
+    expect(state.commands.filter((name) => name === 'prompt')).toHaveLength(1)
+    host.shutdown()
   })
 
   it('thread/list 与 thread/read 走只读会话解析 / switch_session + get_messages', async () => {

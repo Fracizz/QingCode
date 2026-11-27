@@ -1,19 +1,24 @@
 import { sessionStatusLabels, type SessionStatus } from '@qn/codex-client'
-import { Check, ChevronDown, ChevronRight, Ellipsis, Folder, MessageCircleMore, Monitor, RotateCw, Search, X } from 'lucide-react'
+import { Archive, Check, ChevronDown, ChevronRight, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { sessionKey } from '../agents'
 import { useApp } from '../store'
 import type { Project, Target } from '../types'
 import {
   filterProjects,
+  changeThreadPreference,
   groupWorkspaceThreads,
   isWorkspaceTabDoubleTap,
   openWorkspaceThread,
+  orderWorkspaceProjects,
+  renameCachedThread,
   recentThreadStatus,
   threadPreviewLine,
   displayPath,
   showWorkspaceProject,
+  threadPreferenceKey,
   useWorkspace,
+  useWorkspacePreferences,
   visibleWorkspaceThreads,
   workspaceThreadKey,
   type WorkspaceTab,
@@ -21,7 +26,7 @@ import {
 } from '../workspace'
 import { formatTime, friendlyError } from '../state'
 import { ARCHIVE_ACTION_WIDTH, threadSwipeAxis, threadSwipeOffset } from '../threadSwipe'
-import { AgentTag, Badge, Button, Dialog, Empty, Loading, LoadingIcon, Note } from './ui'
+import { AgentTag, Badge, Button, Dialog, Empty, Loading, LoadingIcon, Note, SheetAction } from './ui'
 import { NewSessionButton } from './NewSessionButton'
 import { ProjectTools } from './ProjectTools'
 import { PullToRefresh } from './PullToRefresh'
@@ -102,8 +107,8 @@ export function WorkspaceSearch({
 }
 
 export function ProjectOrigin({ target }: { target?: Target }) {
-  const name = target?.kind === 'ssh' ? `远端 · ${target.name}` : target?.name ?? '目标已移除'
-  return <span className="qn-origin" title={target?.kind === 'ssh' ? target.host : undefined}>{name}</span>
+  const name = target?.kind === 'ssh' ? `远端 · ${target.name}` : target?.kind === 'direct' ? `直连 · ${target.name}` : target?.name ?? '目标已移除'
+  return <span className="qn-origin" title={target?.kind === 'local' ? undefined : target?.host}>{name}</span>
 }
 
 export function WorkspaceThreadRow({
@@ -118,6 +123,8 @@ export function WorkspaceThreadRow({
   const opening = useApp(({ openingThread }) => openingThread?.desktopId === desktopId
     && openingThread.targetId === thread.targetId && openingThread.agent === thread.agent && openingThread.threadId === thread.id)
   const archiveConversation = useApp((s) => s.archiveConversation)
+  const renameConversation = useApp((s) => s.renameConversation)
+  const preference = useWorkspacePreferences()?.threads[threadPreferenceKey(thread.targetId, thread.agent, thread.id)]
   const unread = useWorkspace((s) => desktopId ? s.threads[desktopId]?.find((item) =>
     item.id === thread.id && item.agent === thread.agent && item.targetId === thread.targetId && item.projectId === thread.projectId,
   )?.unread : undefined)
@@ -133,6 +140,10 @@ export function WorkspaceThreadRow({
   const [dragOffset, setDragOffset] = useState<number | null>(null)
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
+  const [menu, setMenu] = useState<'actions' | 'rename' | null>(null)
+  const [name, setName] = useState(thread.title)
+  const [renaming, setRenaming] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
   const revealed = desktopId !== null && revealedDesktop === desktopId
   const offset = dragOffset ?? (revealed ? -ARCHIVE_ACTION_WIDTH : 0)
 
@@ -241,68 +252,117 @@ export function WorkspaceThreadRow({
     }
   }
 
+  async function rename() {
+    const title = name.trim()
+    if (!desktopId || !title || renaming) return
+    setRenaming(true)
+    setRenameError(null)
+    try {
+      if (thread.agent === 'codex') {
+        const connection = useApp.getState().connections.find((item) => item.id === desktopId)
+        await renameConversation(thread.targetId, thread.id, title)
+        if (connection && useApp.getState().connections.some((item) => item.id === desktopId && item.fp === connection.fp)) {
+          renameCachedThread(desktopId, thread, title)
+        }
+      } else {
+        changeThreadPreference(desktopId, thread, { title })
+      }
+      setMenu(null)
+    } catch (err) {
+      setRenameError(friendlyError(err, '重命名失败'))
+    } finally {
+      setRenaming(false)
+    }
+  }
+
   return (
     <div className="qn-thread-row" ref={row} onBlur={(event) => {
       // 触摸按钮时焦点可能暂时为空，点击行外由 pointerdown 处理。
       if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setRevealedDesktop(null)
     }}>
-      <div className="qn-thread-swipe">
-        <button type="button" className="qn-row qn-list-row qn-thread-content" aria-current={selected ? 'true' : undefined}
-          aria-busy={opening}
-          data-dragging={dragOffset !== null} style={{ transform: offset ? `translateX(${offset}px)` : undefined }}
-          onPointerDown={startSwipe} onPointerMove={moveSwipe} onPointerUp={finishSwipe}
-          onPointerCancel={(event) => finishSwipe(event, true)} onLostPointerCapture={(event) => {
-            if (event.target === event.currentTarget) finishSwipe(event, true)
-          }}
-          onClick={(event) => {
-            window.clearTimeout(touchTap.current)
-            if (event.detail !== 0 && suppressClick.current) {
-              suppressClick.current = false
-              return
-            }
-            activate()
-          }}>
-          <span className="qn-row-copy">
-            <span className="qn-list-primary">
-              <span className="truncate">{thread.title}</span>
+      <div className="flex items-center">
+        <div className="qn-thread-swipe min-w-0 flex-1">
+          <button type="button" className="qn-row qn-list-row qn-thread-content" aria-current={selected ? 'true' : undefined}
+            aria-busy={opening}
+            data-dragging={dragOffset !== null} style={{ transform: offset ? `translateX(${offset}px)` : undefined }}
+            onPointerDown={startSwipe} onPointerMove={moveSwipe} onPointerUp={finishSwipe}
+            onPointerCancel={(event) => finishSwipe(event, true)} onLostPointerCapture={(event) => {
+              if (event.target === event.currentTarget) finishSwipe(event, true)
+            }}
+            onClick={(event) => {
+              window.clearTimeout(touchTap.current)
+              if (event.detail !== 0 && suppressClick.current) {
+                suppressClick.current = false
+                return
+              }
+              activate()
+            }}>
+            <span className="qn-row-copy">
+              <span className="qn-list-primary">
+                <span className="truncate">{thread.title}</span>
+                {preference?.pinned && <Pin size={13} className="inline shrink-0 text-qn-muted" aria-label="已置顶" />}
+              </span>
+              {preview && <span className="qn-subtitle block">{preview}</span>}
+              <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="qn-subtitle">{formatTime(thread.updatedAt)}</span>
+                <AgentTag agent={thread.agent} />
+              </span>
             </span>
-            {preview && <span className="qn-subtitle block">{preview}</span>}
-            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="qn-subtitle">{formatTime(thread.updatedAt)}</span>
-              <AgentTag agent={thread.agent} />
-            </span>
-          </span>
-          {/* 空闲、已完成、已中断是常态，不再逐行挂徽标；只标出需要注意的状态。 */}
-          {opening ? (
-            <span className="qn-row-status text-qn-accent" role="status"><LoadingIcon />打开中…</span>
-          ) : status === 'running' ? (
-            <span className="qn-row-status text-qn-accent"><LoadingIcon role="img" aria-hidden />{sessionStatusLabels[status]}</span>
-          ) : status === 'unread' ? (
-            <span className="qn-unread-dot shrink-0" role="img" aria-label={sessionStatusLabels[status]} />
-          ) : QUIET_STATUS.has(status) ? null : <Badge tone={statusTone[status]}>{sessionStatusLabels[status]}</Badge>}
-        </button>
-        <button type="button" className="qn-thread-archive" style={{ width: ARCHIVE_ACTION_WIDTH }}
-          aria-label={`归档 ${thread.title}${thread.agent === 'codex' ? '' : '（仅此手机）'}`}
-          aria-disabled={archiving} aria-busy={archiving} onFocus={() => setRevealedDesktop(desktopId)}
-          onPointerDown={startArchiveTouch} onPointerMove={trackArchiveTouch} onPointerUp={finishArchiveTouch}
-          onPointerCancel={(event) => trackArchiveTouch(event, true)}
-          onLostPointerCapture={(event) => trackArchiveTouch(event, true)}
-          onClick={(event) => {
-            if (!archiveTouch.current || event.detail === 0) void archive()
-          }}>
-          {archiving ? '归档中…' : '归档'}
-          {thread.agent !== 'codex' && !archiving && <small>仅此手机</small>}
-        </button>
+            {/* 空闲、已完成、已中断是常态，不再逐行挂徽标；只标出需要注意的状态。 */}
+            {opening ? (
+              <span className="qn-row-status text-qn-accent" role="status"><LoadingIcon />打开中…</span>
+            ) : status === 'running' ? (
+              <span className="qn-row-status text-qn-accent"><LoadingIcon role="img" aria-hidden />{sessionStatusLabels[status]}</span>
+            ) : status === 'unread' ? (
+              <span className="qn-unread-dot shrink-0" role="img" aria-label={sessionStatusLabels[status]} />
+            ) : QUIET_STATUS.has(status) ? null : <Badge tone={statusTone[status]}>{sessionStatusLabels[status]}</Badge>}
+          </button>
+          <button type="button" className="qn-thread-archive" style={{ width: ARCHIVE_ACTION_WIDTH }}
+            aria-label={`归档 ${thread.title}${thread.agent === 'codex' ? '' : '（仅此手机）'}`}
+            aria-disabled={archiving} aria-busy={archiving} onFocus={() => setRevealedDesktop(desktopId)}
+            onPointerDown={startArchiveTouch} onPointerMove={trackArchiveTouch} onPointerUp={finishArchiveTouch}
+            onPointerCancel={(event) => trackArchiveTouch(event, true)}
+            onLostPointerCapture={(event) => trackArchiveTouch(event, true)}
+            onClick={(event) => {
+              if (!archiveTouch.current || event.detail === 0) void archive()
+            }}>
+            {archiving ? '归档中…' : '归档'}
+            {thread.agent !== 'codex' && !archiving && <small>仅此手机</small>}
+          </button>
+        </div>
+        {desktopId && <Button variant="ghost" className="qn-list-action" aria-label={`${thread.title} 的会话操作`}
+          aria-haspopup="dialog" onClick={() => { setRenameError(null); setMenu('actions') }}><Ellipsis size={18} aria-hidden /></Button>}
       </div>
       {archiveError && <p className="qn-thread-archive-error" role="alert">{archiveError}</p>}
+      {menu && desktopId && (
+        <Dialog title={menu === 'rename' ? '重命名会话' : thread.title} onClose={() => { if (!renaming) setMenu(null) }}>
+          {menu === 'actions' ? <>
+            <SheetAction icon={preference?.pinned ? PinOff : Pin} onClick={() => {
+              changeThreadPreference(desktopId, thread, { pinned: !preference?.pinned })
+              setMenu(null)
+            }}>{preference?.pinned ? '取消置顶' : '置顶'}（仅此手机）</SheetAction>
+            <SheetAction icon={Pencil} onClick={() => { setName(thread.title); setMenu('rename') }}>
+              重命名{thread.agent !== 'codex' && '（仅此手机）'}
+            </SheetAction>
+            <SheetAction icon={Archive} disabled={archiving} onClick={() => { setMenu(null); void archive() }}>
+              归档{thread.agent !== 'codex' && '（仅此手机）'}
+            </SheetAction>
+          </> : <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); void rename() }}>
+            <input className="qn-input" aria-label="会话名称" value={name} onChange={(event) => setName(event.target.value)} disabled={renaming} />
+            {renameError && <Note tone="error" message={renameError} />}
+            <Button variant="primary" type="submit" disabled={renaming || !name.trim()}>{renaming ? '保存中…' : '保存'}</Button>
+          </form>}
+        </Dialog>
+      )}
     </div>
   )
 }
 
-export function WorkspaceProjectRow({ project, target, onOpen }: {
+export function WorkspaceProjectRow({ project, target, onOpen, orderedProjects }: {
   project: Project
   target?: Target
   onOpen: () => void
+  orderedProjects?: Project[]
 }) {
   return (
     <div className="qn-row qn-list-row">
@@ -313,7 +373,7 @@ export function WorkspaceProjectRow({ project, target, onOpen }: {
         </span>
       </button>
       {target && <NewSessionButton project={project} iconOnly className="qn-list-action" />}
-      <ProjectTools project={project} compact />
+      <ProjectTools project={project} compact orderedProjects={orderedProjects} />
     </div>
   )
 }
@@ -351,27 +411,6 @@ function WorkspaceThreadList({ threads, projectName, searching, onOpen }: {
   )
 }
 
-/** 工作台顶部一行：当前电脑与连接状态（不只靠颜色），点按切到连接页。 */
-function WorkspaceContext() {
-  const connection = useApp((s) => s.connections.find((item) => item.id === s.activeId))
-  const connected = useApp((s) => s.eventsConnected)
-  const repair = useApp((s) => s.activeId ? s.needsRepair[s.activeId] : undefined)
-  const latency = useApp((s) => s.activeId ? s.connectionLatencyMs[s.activeId] : undefined)
-  const setTab = useWorkspace((s) => s.setTab)
-  if (!connection) return null
-  const state = repair ? '需重新配对' : connected ? latency != null ? `${latency} ms` : '在线' : '连接中…'
-  const tone = repair ? 'danger' : connected ? 'ok' : 'warn'
-  return (
-    <button type="button" className="qn-workspace-context-bar" onClick={() => setTab('connections')}
-      aria-label={`当前电脑 ${connection.name}，${state}，查看连接`}>
-      <span className="qn-dot" data-tone={tone} aria-hidden />
-      <span className="min-w-0 truncate">{connection.name}</span>
-      <span className="qn-workspace-context-state" data-tone={tone}>{state}</span>
-      <ChevronRight size={14} className="shrink-0 text-qn-dim" aria-hidden />
-    </button>
-  )
-}
-
 export function WorkspaceHome() {
   const tab = useWorkspace((s) => s.tab)
   const setTab = useWorkspace((s) => s.setTab)
@@ -391,22 +430,23 @@ export function WorkspaceHome() {
   const [query, setQuery] = useState('')
   const [projectTargetId, setProjectTargetId] = useState<string | null>(null)
   const [projectFilterOpen, setProjectFilterOpen] = useState(false)
+  const preferences = useWorkspacePreferences()
   const selectedProjectTarget = targets.find((target) => target.id === projectTargetId)
   const activeProjectTarget = selectedProjectTarget?.id ?? null
   const projects = projectList?.items ?? emptyProjects
   const projectGroups = useMemo(() => {
     const matched = filterProjects(projects, targets, query, activeProjectTarget)
-    return targets.map((target) => ({ target, rows: matched.filter((item) => item.targetId === target.id) }))
+    return targets.map((target) => ({ target, rows: orderWorkspaceProjects(matched.filter((item) => item.targetId === target.id), preferences?.projectOrders[target.id]) }))
       .filter(({ rows }) => rows.length > 0)
-  }, [projects, targets, query, activeProjectTarget])
-  const groups = useMemo(() => groupWorkspaceThreads(visibleWorkspaceThreads(threadList, desktopId, archived), projects, query),
-    [threadList, desktopId, archived, projects, query])
+  }, [projects, targets, query, activeProjectTarget, preferences])
+  const groups = useMemo(() => groupWorkspaceThreads(visibleWorkspaceThreads(threadList, desktopId, archived), projects, query, preferences),
+    [threadList, desktopId, archived, projects, query, preferences])
 
   const refresh = useCallback(async () => {
     if (desktopId) await Promise.all([loadTargets(), loadProjects(desktopId)])
   }, [desktopId, loadTargets, loadProjects])
 
-  useEffect(() => { void refresh() }, [connected, tab, refresh])
+  useEffect(() => { if (connected) void refresh() }, [connected, tab, refresh])
 
   const isSessions = tab === 'sessions'
   const searching = query.trim().length > 0
@@ -417,14 +457,13 @@ export function WorkspaceHome() {
   return (
     <PullToRefresh className="qn-body qn-scroll qn-workspace qn-workspace-home qn-rise"
       label={isSessions ? '会话' : '项目'} disabled={!desktopId || projectList?.loading} onRefresh={refresh}>
-      <WorkspaceContext />
       {repairReason && desktopId && (
         <Note message={repairReason === 'fingerprint' ? '电脑证书已变化，请核对后重新配对。' : '电脑已撤销此设备的授权。'}
           tone="error" actionLabel="重新配对" onAction={() => beginRepair(desktopId)} />
       )}
       {notice && <Note message={notice} tone="warn" />}
       {error && <Note message={error} tone="error" onClose={clearError} />}
-      {projectList?.error && !repairReason && (
+      {connected && projectList?.error && !repairReason && (
         <Note message="读取项目失败，请检查电脑和网络。" tone="error" actionLabel="重试" onAction={() => void refresh()} />
       )}
       {projectList?.loading && projects.length === 0 ? <Loading text="正在读取项目…" /> : (
@@ -490,7 +529,7 @@ export function WorkspaceHome() {
                 </div>
                 <div className="qn-list-group">
                   {rows.map((project) => <WorkspaceProjectRow key={project.id} project={project} target={target}
-                    onOpen={() => void showWorkspaceProject(project)} />)}
+                    orderedProjects={searching ? undefined : rows} onOpen={() => void showWorkspaceProject(project)} />)}
                 </div>
               </section>
             )) : (

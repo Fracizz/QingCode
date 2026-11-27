@@ -19,12 +19,20 @@ import {
 } from './settingsModel'
 
 describe('默认设置与白名单', () => {
+  it('设置可以按归档搜索，乐观更新使用相同的天数档位', () => {
+    expect(filterSettings('归档').itemIds).toContain('autoArchiveDays')
+    expect(mergeAppSettings(defaultAppSettings(), { general: { autoArchiveDays: 7 } }).general.autoArchiveDays).toBe(7)
+    expect(sanitizeSettingsPatch({ general: { autoArchiveDays: 99 } })).toEqual({})
+  })
+
   it('默认值完整且各次独立', () => {
     const first = defaultAppSettings()
     expect(first.general).toEqual({
       sendKey: 'enter',
       autoConnectLast: true,
+      autoArchiveDays: 0,
       defaultAgent: 'codex',
+      globalAccessMode: 'default',
       density: 'comfortable',
       ...DEFAULT_FONT_SIZES,
     })
@@ -48,7 +56,9 @@ describe('默认设置与白名单', () => {
     expect(result.general).toEqual({
       sendKey: 'enter',
       autoConnectLast: true,
+      autoArchiveDays: 0,
       defaultAgent: 'pi',
+      globalAccessMode: 'default',
       density: 'compact',
       ...DEFAULT_FONT_SIZES,
     })
@@ -63,6 +73,7 @@ describe('默认设置与白名单', () => {
   })
 
   it('补丁只保留已知字段，空字符串用于清空路径', () => {
+    expect(sanitizeSettingsPatch({ general: { globalAccessMode: 'fullAccess' } })).toEqual({})
     expect(sanitizeSettingsPatch({ general: { density: 'compact', theme: 'light' } })).toEqual({
       general: { density: 'compact' },
     })
@@ -148,6 +159,9 @@ describe('filterSettings', () => {
     expect(filterSettings('手机 证书').itemIds).toEqual(['mobile'])
     expect(filterSettings('codex_home').itemIds).toEqual(['agents'])
     expect(filterSettings('字体大小 终端').itemIds).toEqual(['terminalFontSize'])
+    expect(filterSettings('左侧 字号').itemIds).toEqual(['sidebarFontSize', 'projectFontSize', 'sessionFontSize'])
+    expect(filterSettings('项目 字号').itemIds).toEqual(['projectFontSize'])
+    expect(filterSettings('会话 字号').itemIds).toEqual(['sessionFontSize'])
     expect(filterSettings('agent codex').sections.map((s) => s.id)).toContain('agents')
   })
 

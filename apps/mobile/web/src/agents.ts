@@ -1,4 +1,5 @@
 // 多 Agent 纯逻辑：会话键、事件路由、启用状态、会话列表合并。思路移植自桌面 lib/agents.ts，不跨包 import。
+import { isGlobalAccessMode, type GlobalAccessMode } from '@qn/codex-client'
 import type { ThreadSummary } from './state'
 import type { AgentKind } from './types'
 
@@ -49,6 +50,8 @@ export function exitedAgent(payload: unknown): AgentKind | null {
 /** 网关 mobile.agents 的裁剪结果；只含启用状态，不含路径。 */
 export type MobileAgentSettings = {
   defaultAgent: AgentKind
+  fastHistoryOpen?: true
+  globalAccessMode?: GlobalAccessMode
   agents: Record<string, Partial<Record<AgentKind, { enabled: boolean }>>>
 }
 
@@ -67,6 +70,8 @@ export function parseMobileAgents(value: unknown): MobileAgentSettings | null {
   }
   return {
     defaultAgent: isAgentKind(value.defaultAgent) ? value.defaultAgent : DEFAULT_AGENT,
+    ...(value.fastHistoryOpen === true ? { fastHistoryOpen: true } : {}),
+    ...(isGlobalAccessMode(value.globalAccessMode) ? { globalAccessMode: value.globalAccessMode } : {}),
     agents,
   }
 }

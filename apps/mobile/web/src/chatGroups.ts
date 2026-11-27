@@ -1,4 +1,4 @@
-import type { ItemView, ThreadView } from '@qn/codex-client'
+import type { ItemView, ThreadView, TurnMeta } from '@qn/codex-client'
 
 /** 子代理单独显示，便于从消息流直接查看。 */
 export type ToolItem = Exclude<ItemView, { kind: 'user' | 'agent' | 'reasoning' | 'subagent' }>
@@ -75,6 +75,38 @@ export function isChatVisible(item: ItemView): boolean {
   if (item.kind === 'reasoning' || item.kind === 'command') return false
   if (item.kind === 'other') return item.type === 'contextCompaction'
   return true
+}
+
+export function interruptedTurnPositions(items: readonly ItemView[], shown: readonly ItemView[], turns?: readonly TurnMeta[]) {
+  const stops = new Map<number, string[]>()
+  if (!turns?.some((turn) => turn.outcome === 'interrupted')) return stops
+
+  const visible = new Set(shown.map((item) => item.id))
+  const positions = new Map<string, { before: number; after: number }>()
+  let count = 0
+  for (const item of items) {
+    const before = count
+    if (visible.has(item.id)) count += 1
+    positions.set(item.id, { before, after: count })
+  }
+
+  let nextStart = count
+  for (const turn of [...turns].reverse()) {
+    let first = Infinity
+    let last = -1
+    for (const id of turn.itemIds) {
+      const position = positions.get(id)
+      if (!position) continue
+      first = Math.min(first, position.before)
+      last = Math.max(last, position.after)
+    }
+    if (turn.outcome === 'interrupted' && (last >= 0 || turn.itemIds.length === 0)) {
+      const anchor = last >= 0 ? last : nextStart
+      stops.set(anchor, [turn.id, ...(stops.get(anchor) ?? [])])
+    }
+    if (last >= 0) nextStart = first
+  }
+  return stops
 }
 
 /** 根据本轮最新一步推断回复阶段，命令被隐藏后仍让用户知道在忙什么。 */

@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   Check,
   ChevronDown,
+  Download,
   KeyRound,
   Monitor,
   MoreHorizontal,
@@ -19,7 +20,7 @@ import { useTargets } from '../../store/targets'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, PopoverContent, PopoverRoot, PopoverTrigger } from '../primitives'
 import { SearchField } from '../SearchField'
 import { StatusDot } from '../StatusDot'
-import { EmptyState, ErrorNote, IconButton } from '../ui'
+import { EmptyState, ErrorNote, IconButton, Modal } from '../ui'
 
 export type TargetActions = {
   onAdd: () => void
@@ -65,9 +66,13 @@ export function TargetSwitcher(actions: TargetActions) {
   const loaded = useTargets((s) => s.loaded)
   const loadError = useTargets((s) => s.error)
   const remove = useTargets((s) => s.remove)
+  const forceUpdate = useTargets((s) => s.forceUpdate)
 
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [updateTarget, setUpdateTarget] = useState<Target | null>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const updateDialogOpen = useRef(false)
 
   const stateOf = (id: string): TargetState => states[id]?.state ?? 'idle'
   const current = targets.find((item) => item.id === selectedId) ?? targets[0]
@@ -82,6 +87,11 @@ export function TargetSwitcher(actions: TargetActions) {
     action()
   }
 
+  const closeUpdateDialog = () => {
+    updateDialogOpen.current = false
+    setUpdateTarget(null)
+  }
+
   return (
     <div className="px-2 pt-2">
       <PopoverRoot
@@ -93,18 +103,19 @@ export function TargetSwitcher(actions: TargetActions) {
       >
         <PopoverTrigger asChild>
           <button
+            ref={trigger}
             type="button"
             className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover"
           >
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5">
                 <StatusDot className={`size-2 ${targetDotClass[currentState]}`} />
-                <span className="truncate text-[16px] font-semibold text-qn-text">
+                <span className="truncate text-[length:var(--qn-sidebar-title-font-size)] leading-tight font-semibold text-qn-text">
                   {current?.name ?? (loaded ? '无目标' : '加载中…')}
                 </span>
                 <ChevronDown size={15} className="shrink-0 text-qn-muted" />
               </span>
-              <span className="mt-0.5 block truncate pl-3.5 text-[12px] leading-4 text-qn-muted">
+              <span className="mt-0.5 block truncate pl-3.5 text-[length:var(--qn-sidebar-detail-font-size)] leading-[1.35] text-qn-muted">
                 <span className={currentState === 'error' ? 'text-qn-danger' : ''}>{targetStateLabel[currentState]}</span>
                 {currentDetail && currentState !== 'error' && <> · {currentDetail}</>}
               </span>
@@ -112,13 +123,15 @@ export function TargetSwitcher(actions: TargetActions) {
           </button>
         </PopoverTrigger>
         <PopoverContent
-          className="flex max-h-[min(70vh,540px)] w-[var(--radix-popover-trigger-width)] min-w-72 flex-col overflow-hidden p-0"
+          className="flex max-h-[min(70vh,540px)] w-[var(--radix-popover-trigger-width)] min-w-72 flex-col overflow-hidden p-0 text-[length:var(--qn-sidebar-list-font-size)] leading-tight"
           aria-label="切换目标"
+          onCloseAutoFocus={(event: Event) => { if (updateDialogOpen.current) event.preventDefault() }}
         >
           <SearchField
             autoFocus
             label="搜索目标"
             className="border-b border-qn-border px-3 py-2.5"
+            inputClassName="text-[length:inherit]"
             placeholder={`搜索 ${targets.length} 个目标（名称 / 主机 / 用户）`}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -129,10 +142,11 @@ export function TargetSwitcher(actions: TargetActions) {
           />
 
           <div className="qn-scroll min-h-0 flex-1 space-y-1 overflow-y-auto p-1.5" role="listbox">
-            {visible.length === 0 && <EmptyState className="py-4 leading-5">没有匹配的目标</EmptyState>}
+            {visible.length === 0 && <EmptyState className="py-4 text-[length:inherit] leading-tight">没有匹配的目标</EmptyState>}
             {visible.map((target) => {
               const state = stateOf(target.id)
               const selected = target.id === current?.id
+              const canUpdate = target.kind !== 'direct' && (state === 'ready' || state === 'error')
               return (
                 <div
                   key={target.id}
@@ -149,15 +163,15 @@ export function TargetSwitcher(actions: TargetActions) {
                   >
                     <TargetGlyph target={target} state={state} size={26} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] text-qn-text">{target.name}</span>
-                      <span className="block truncate font-mono text-[11px] leading-4 text-qn-dim">{subtitle(target)}</span>
+                      <span className="block truncate text-qn-text">{target.name}</span>
+                      <span className="block truncate font-mono text-[length:var(--qn-sidebar-list-detail-font-size)] leading-[1.45] text-qn-muted">{subtitle(target)}</span>
                     </span>
-                    <span className={`shrink-0 text-[11px] ${state === 'error' ? 'text-qn-danger' : 'text-qn-dim'} group-hover:hidden`}>
+                    <span className={`shrink-0 text-[length:var(--qn-sidebar-list-detail-font-size)] ${state === 'error' ? 'text-qn-danger' : 'text-qn-muted'} group-hover:hidden`}>
                       {targetStateLabel[state]}
                     </span>
                     {selected && <Check size={14} className="shrink-0 text-qn-brand group-hover:hidden" />}
                   </button>
-                  <div className="hidden shrink-0 items-center group-hover:flex group-has-[[data-state=open]]:flex">
+                  <div className="hidden shrink-0 items-center group-hover:flex group-focus-within:flex group-has-[[data-state=open]]:flex">
                     {isTargetActive(state) ? (
                       target.kind !== 'local' && (
                         <IconButton label="断开" className="h-7 w-7" onClick={() => run(() => actions.onDisconnect(target.id))}>
@@ -169,7 +183,7 @@ export function TargetSwitcher(actions: TargetActions) {
                         <Wifi size={14} />
                       </IconButton>
                     )}
-                    {target.kind !== 'local' && (
+                    {(target.kind !== 'local' || canUpdate) && (
                       <Menu>
                         <MenuTrigger asChild>
                           <IconButton label="更多操作" className="h-7 w-7">
@@ -177,16 +191,29 @@ export function TargetSwitcher(actions: TargetActions) {
                           </IconButton>
                         </MenuTrigger>
                         <MenuContent align="end">
-                          <MenuItem icon={<Pencil size={14} />} onSelect={() => run(() => actions.onEdit(target))}>
-                            编辑连接
-                          </MenuItem>
-                          <MenuItem icon={<KeyRound size={14} />} onSelect={() => run(() => actions.onForgetSecret(target.id))}>
-                            忘记已保存的密码
-                          </MenuItem>
-                          <MenuSeparator />
-                          <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => run(() => void remove(target.id))}>
-                            删除连接
-                          </MenuItem>
+                          {canUpdate && (
+                            <MenuItem danger icon={<Download size={14} />} onSelect={() => run(() => {
+                              updateDialogOpen.current = true
+                              setUpdateTarget(target)
+                            })}>
+                              强制更新 Server
+                            </MenuItem>
+                          )}
+                          {canUpdate && target.kind !== 'local' && <MenuSeparator />}
+                          {target.kind !== 'local' && (
+                            <>
+                              <MenuItem icon={<Pencil size={14} />} onSelect={() => run(() => actions.onEdit(target))}>
+                                编辑连接
+                              </MenuItem>
+                              <MenuItem icon={<KeyRound size={14} />} onSelect={() => run(() => actions.onForgetSecret(target.id))}>
+                                忘记已保存的密码
+                              </MenuItem>
+                              <MenuSeparator />
+                              <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => run(() => void remove(target.id))}>
+                                删除连接
+                              </MenuItem>
+                            </>
+                          )}
                         </MenuContent>
                       </Menu>
                     )}
@@ -199,7 +226,7 @@ export function TargetSwitcher(actions: TargetActions) {
           <div className="border-t border-qn-border p-1.5">
             <button
               type="button"
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-qn-text outline-none hover:bg-qn-hover focus-visible:bg-qn-hover"
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-qn-text outline-none hover:bg-qn-hover focus-visible:bg-qn-hover"
               onClick={() => run(actions.onAdd)}
             >
               <Plus size={15} className="text-qn-muted" /> 添加 SSH 连接
@@ -207,6 +234,37 @@ export function TargetSwitcher(actions: TargetActions) {
           </div>
         </PopoverContent>
       </PopoverRoot>
+
+      {updateTarget && (
+        <Modal
+          title="强制更新 Server？"
+          description={`如果「${updateTarget.name}」仍在运行旧版 Server，更新会重启 Server、中断正在进行的任务并关闭该目标的终端。`}
+          onClose={closeUpdateDialog}
+          onCloseAutoFocus={(event: Event) => {
+            event.preventDefault()
+            trigger.current?.focus()
+          }}
+          width="max-w-md"
+          bodyClassName="hidden"
+          footer={(
+            <div className="flex justify-end gap-2">
+              <button type="button" className="qn-button-subtle" onClick={closeUpdateDialog}>取消</button>
+              <button
+                type="button"
+                className="qn-button bg-qn-danger hover:bg-qn-danger"
+                onClick={() => {
+                  closeUpdateDialog()
+                  void forceUpdate(updateTarget.id)
+                }}
+              >
+                强制更新
+              </button>
+            </div>
+          )}
+        >
+          {null}
+        </Modal>
+      )}
 
       {current && currentError && (
         <ErrorNote

@@ -1,42 +1,48 @@
-import { accessOptions, type AccessMode } from '@qn/codex-client'
-import { Check, ChevronDown, Shield, ShieldAlert } from 'lucide-react'
+import { accessOptions, inheritedAccessOption, type AccessMode, type AccessSelection } from '@qn/codex-client'
+import { Check, Shield, ShieldAlert } from 'lucide-react'
 import { useState } from 'react'
 import type { AgentKind } from '../types'
 import { Button, Dialog } from './ui'
 
-export function AccessModePicker({ agent, mode, supported, disabled, onChange }: {
+export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, supported, disabled, onChange }: {
   agent: AgentKind
-  mode: AccessMode
+  mode: AccessSelection
+  effectiveMode: AccessMode
+  inheritedMode?: AccessMode
   supported: boolean
   disabled: boolean
-  onChange: (mode: AccessMode) => void
+  onChange: (mode: AccessSelection) => void
 }) {
   const [open, setOpen] = useState(false)
   const [confirm, setConfirm] = useState<AccessMode | null>(null)
-  const options = accessOptions[agent]
-  const current = options.find((option) => option.mode === mode)
-  const pending = options.find((option) => option.mode === confirm)
+  const available = accessOptions[agent]
+  const current = available.find((option) => option.mode === effectiveMode)
+  const pending = available.find((option) => option.mode === confirm)
   if (!current) return null
+  const inherited = inheritedMode
+    ? inheritedAccessOption(agent, inheritedMode)
+    : { mode: 'inherit' as const, label: '继承总控', hint: '使用电脑当前的权限设置' }
+  const options = [inherited, ...available]
   const Icon = current.warning ? ShieldAlert : Shield
+  const label = mode === 'inherit' ? (effectiveMode === 'default' ? '继承总控' : `继承总控 · ${current.label}`) : current.label
   const close = () => {
     setOpen(false)
     setConfirm(null)
   }
-  const select = (next: AccessMode) => {
+  const select = (next: AccessSelection) => {
     onChange(next)
     close()
   }
 
   return (
     <>
-      <button type="button" className="qn-chip qn-access-chip"
-        data-tone={current.warning ? 'danger' : mode !== 'default' ? 'warn' : undefined}
-        aria-label={`访问模式：${current.label}`} aria-haspopup="dialog" aria-expanded={open}
-        disabled={disabled} onClick={() => setOpen(true)}>
-        <Icon size={14} className="shrink-0" aria-hidden />
-        {current.label}
-        <ChevronDown size={13} className="shrink-0" aria-hidden />
-      </button>
+      <Button variant="ghost" className="qn-access-chip"
+        data-tone={current.warning ? 'danger' : effectiveMode !== 'default' ? 'warn' : undefined}
+        aria-label={`访问模式：${label}`} aria-haspopup="dialog" aria-expanded={open}
+        title={label} disabled={disabled} onClick={() => setOpen(true)}>
+        <Icon size={18} strokeWidth={1.75} className="shrink-0" aria-hidden />
+        {effectiveMode !== 'default' && <span>{current.label}</span>}
+      </Button>
       {open && (
         <Dialog title={pending ? `启用${pending.label}？` : '访问模式'} onClose={close}>
           {pending ? (
@@ -49,13 +55,14 @@ export function AccessModePicker({ agent, mode, supported, disabled, onChange }:
             </>
           ) : (
             <div className="space-y-2">
-              {!supported && <p className="text-xs text-qn-muted">当前电脑或目标服务版本只支持默认权限。</p>}
+              {!supported && <p className="text-xs text-qn-muted">当前电脑或目标服务版本暂不支持会话权限覆盖。</p>}
               {options.map((option) => (
                 <button key={option.mode} type="button" aria-pressed={option.mode === mode}
                   className="qn-row rounded-xl border border-qn-border px-3 py-2 disabled:opacity-50"
-                  disabled={disabled || (!supported && option.mode !== 'default')}
+                  disabled={disabled || (!supported && option.mode !== 'default' &&
+                    (option.mode !== 'inherit' || (inheritedMode !== undefined && inheritedMode !== 'default')))}
                   onClick={() => {
-                    if (option.mode !== mode && option.warning) setConfirm(option.mode)
+                    if (option.mode !== 'inherit' && option.mode !== mode && option.warning) setConfirm(option.mode)
                     else select(option.mode)
                   }}>
                   <span className="min-w-0 flex-1">

@@ -3,6 +3,9 @@ export const DEFAULT_FONT_SIZES = {
   composerFontSize: 14,
   editorFontSize: 12.5,
   terminalFontSize: 13,
+  sidebarFontSize: 14,
+  projectFontSize: 14,
+  sessionFontSize: 13,
 } as const
 
 export type FontSizeKey = keyof typeof DEFAULT_FONT_SIZES

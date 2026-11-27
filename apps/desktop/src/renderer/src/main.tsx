@@ -1,14 +1,38 @@
-import { StrictMode } from 'react'
+import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { RenderBoundary } from './components/RenderBoundary'
 import { call } from './lib/backend'
+import { dismissSplash } from './lib/splash'
 import './styles.css'
+
+function RenderFailure() {
+  useEffect(() => {
+    void dismissSplash()
+  }, [])
+
+  return (
+    <main className="grid h-screen place-items-center bg-qn-bg px-6 text-qn-text">
+      <div className="space-y-3 text-center">
+        <p role="alert" className="text-sm">桌面界面显示异常</p>
+        <button type="button" className="qn-button-subtle" onClick={() => window.location.reload()}>重新加载界面</button>
+      </div>
+    </main>
+  )
+}
 
 const container = document.getElementById('root')
 if (container) {
-  createRoot(container).render(
+  createRoot(container, {
+    onCaughtError: (_, { componentStack }) => {
+      // 只记录组件栈，异常文本可能包含对话或凭据。
+      console.error('[renderer] 界面渲染异常', componentStack)
+    },
+  }).render(
     <StrictMode>
-      <App />
+      <RenderBoundary fallback={<RenderFailure />}>
+        <App />
+      </RenderBoundary>
     </StrictMode>
   )
 }

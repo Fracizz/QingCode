@@ -38,6 +38,7 @@ type TargetsState = {
   disableDirect: (id: string, credentials?: { password?: string; passphrase?: string }) => Promise<SshTarget>
   remove: (id: string) => Promise<void>
   connect: (id: string, credentials?: ConnectCredentials, startup?: boolean) => Promise<void>
+  forceUpdate: (id: string) => Promise<void>
   disconnect: (id: string) => Promise<void>
   forgetSecret: (id: string) => Promise<void>
   respondHostKey: (promptId: string, accept: boolean) => Promise<void>
@@ -168,6 +169,14 @@ export const useTargets = create<TargetsState>((set, get) => ({
       }))
     } finally {
       if (connecting.get(id) === attempt) connecting.delete(id)
+    }
+  },
+
+  forceUpdate: async (id) => {
+    try {
+      await call('target.forceUpdate', { id })
+    } catch (err) {
+      set({ notice: friendlyError(err, '强制更新 Server 失败') })
     }
   },
 

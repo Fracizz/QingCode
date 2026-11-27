@@ -80,6 +80,7 @@ function AgentPicker({ project, onClose, onBack, onCreated }: {
   const settings = useApp((s) => s.agentSettings)
   const sessions = useApp((s) => s.sessions)
   const connected = useApp((s) => s.eventsConnected)
+  const connectionWarning = useApp((s) => s.eventsError)
   const target = useApp((s) => s.targets.find((item) => item.id === targetId))
   const targetState = useApp((s) => s.targetStates[targetId]?.state)
   const targetError = useApp((s) => s.targetErrors[targetId])
@@ -113,7 +114,8 @@ function AgentPicker({ project, onClose, onBack, onCreated }: {
         <p className="min-w-0 break-words text-sm text-qn-muted">{[target?.name, project.name].filter(Boolean).join(' · ')}</p>
         {onBack && <Button variant="ghost" className="shrink-0" disabled={creating} onClick={onBack}>更换项目</Button>}
       </div>
-      {!connected ? <Note message="电脑连接已中断。" tone="warn" /> : connecting ? <Loading text="正在连接项目目标…" /> : null}
+      {!connected && connectionWarning && <Note message={connectionWarning} tone="warn" />}
+      {connected && connecting && <Loading text="正在连接项目目标…" />}
       {targetError && needsTarget && <Note message={targetError} tone="error" />}
       {error && <Note message={error} tone="error" />}
       {connected && target && !connecting && (needsTarget || (error && targetState !== 'ready')) && (

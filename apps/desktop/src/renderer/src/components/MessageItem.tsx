@@ -1,17 +1,18 @@
 import { Children, isValidElement, memo, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Square, Terminal, Wand2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Terminal, Wand2 } from 'lucide-react'
 import { formatReplyTime, localReplyDay, subscribeToReplyDay, type ItemView, type ThreadActivity, type UserInput } from '@qn/codex-client'
 import { basename, editUserText, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
 import { cn } from '../lib/cn'
 import { diffRows, lineCount, tailLines } from '../lib/diff'
 import { langFromClassName } from '../lib/highlight'
-import { formatDuration, isEmptyReasoning, isGroupRunning, summarizeTools, type FlowEntry } from '../lib/turnGroups'
+import { formatDuration, formatStoppedDuration, isEmptyReasoning, isGroupRunning, summarizeTools, type FlowEntry } from '../lib/turnGroups'
 import { createMarkdownLink, FileChangeActions, PathText, qnUrlTransform, type LinkContext } from '../features/files'
 import { useCodex } from '../store/codex'
 import { CodeBlock } from './CodeBlock'
+import { RenderBoundary } from './RenderBoundary'
 import { FeedbackRow } from './FeedbackRow'
 import { LoadingIcon } from './LoadingIcon'
 import { MessageActions } from './MessageActions'
@@ -298,9 +299,15 @@ function AgentMessage({ id, text, streaming, completedAtMs, showStreamingDots, o
     <div className="group/msg">
       {!streaming && completedAtMs !== undefined && <ReplyTime completedAtMs={completedAtMs} className="mb-1 block text-xs tabular-nums text-qn-muted" />}
       <div className={cn('qn-markdown break-words text-[length:var(--qn-chat-font-size,14px)] leading-[1.7] text-qn-prose', streaming && showStreamingDots && 'qn-streaming')}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={qnUrlTransform}>
-          {text}
-        </ReactMarkdown>
+        {/* 流式解析失败后继续显示原文，最后一帧再尝试格式化。 */}
+        <RenderBoundary
+          key={streaming ? 'streaming' : 'complete'}
+          fallback={<div className="whitespace-pre-wrap wrap-anywhere">{text}</div>}
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={qnUrlTransform}>
+            {text}
+          </ReactMarkdown>
+        </RenderBoundary>
       </div>
       {!streaming && <MessageActions markdown={text} onFork={onFork ? () => onFork(id, text) : undefined} />}
     </div>
@@ -308,16 +315,19 @@ function AgentMessage({ id, text, streaming, completedAtMs, showStreamingDots, o
 }
 
 export function TurnProgress({ activity }: { activity?: ThreadActivity }) {
-  const interrupted = activity === 'interrupted'
-  const message = interrupted ? '本轮已中断'
-    : activity === 'input' ? '等待输入…' : activity === 'pending' ? '等待审批…' : '正在处理…'
+  const message = activity === 'input' ? '等待输入…' : activity === 'pending' ? '等待审批…' : '正在处理…'
   return (
     <FeedbackRow
       message={message}
-      icon={interrupted ? <Square size={13} /> : <LoadingIcon />}
+      icon={<LoadingIcon />}
       className="qn-message-activity text-[13px] leading-6 text-qn-muted"
     />
   )
+}
+
+export function TurnStopped({ durationMs }: { durationMs: number | null }) {
+  const message = durationMs === null ? '你已停止' : `你已停止，已用时 ${formatStoppedDuration(durationMs)}`
+  return <FeedbackRow message={message} className="qn-message-activity text-[13px] leading-6 text-qn-muted" />
 }
 
 type MessageItemProps = {
@@ -427,16 +437,18 @@ function UserMessage({ item, onEdit }: {
   const images = item.images ?? []
   const visible = images.filter((src) => src.startsWith('data:image/'))
   const named = images.filter((src) => !src.startsWith('data:image/'))
-  const canSave = edit !== null && edit !== parsed.text && Boolean(edit.trim() || item.inputExtras?.length || parsed.files.length)
-  const timestamp = item.sentAt ? new Date(item.sentAt) : null
+  const revisedText = edit === null || edit === parsed.text ? item.text : editUserText(item.text, edit)
+  const hasText = Boolean(revisedText.trim())
+  const canSave = Boolean(onEdit) && edit !== null && (hasText || Boolean(item.inputExtras?.length))
+  const sentAt = item.sentAt ? new Date(item.sentAt) : null
+  const timestamp = sentAt && Number.isFinite(sentAt.getTime()) ? sentAt : null
 
   const resend = async () => {
     if (!onEdit || edit === null || !canSave || saving) return
     setSaving(true)
     setEditFailed(false)
-    const text = editUserText(item.text, edit)
     const input: UserInput[] = [...(item.inputExtras ?? [])]
-    if (text.trim()) input.unshift({ type: 'text', text, text_elements: [] })
+    if (hasText) input.unshift({ type: 'text', text: revisedText, text_elements: [] })
     try {
       if (await onEdit(edit, input)) setEdit(null)
       else setEditFailed(true)
@@ -475,19 +487,23 @@ function UserMessage({ item, onEdit }: {
       )}
       {edit !== null ? (
         <form
-          className="w-full max-w-[80%] rounded-2xl border border-qn-border bg-qn-elevated px-3 py-2 focus-within:border-qn-border-strong"
+          className="w-full max-w-[80%] rounded-2xl border border-qn-outline bg-qn-elevated px-3 py-2 focus-within:border-qn-outline-hover"
           onSubmit={(event) => {
             event.preventDefault()
             void resend()
           }}
         >
           <textarea
-            ref={(area) => { area?.focus() }}
+            autoFocus
             aria-label="编辑已发送的消息"
             className="qn-scroll block min-h-20 w-full resize-y bg-transparent px-1 text-[length:var(--qn-composer-font-size,14px)] leading-[1.7] outline-none"
             value={edit}
             disabled={saving}
             onChange={(event) => setEdit(event.target.value)}
+            onMouseUp={(event) => {
+              // 消息划选层清除选区时也会重置编辑框的光标。
+              event.stopPropagation()
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Escape' && !event.nativeEvent.isComposing && !saving) setEdit(null)
             }}

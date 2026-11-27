@@ -91,6 +91,8 @@ export function Modal({
   onClose,
   width = 'max-w-lg',
   bodyClassName,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
 }: {
   title: string
   description?: ReactNode
@@ -99,11 +101,13 @@ export function Modal({
   onClose?: () => void
   width?: string
   bodyClassName?: string
-}) {
+} & Pick<ComponentProps<typeof DialogFrame>, 'onOpenAutoFocus' | 'onCloseAutoFocus'>) {
   return (
     <DialogFrame
       described={Boolean(description)}
       onClose={onClose}
+      onOpenAutoFocus={onOpenAutoFocus}
+      onCloseAutoFocus={onCloseAutoFocus}
       overlayClassName="qn-overlay grid place-items-center p-6"
       className={cn('qn-dialog max-h-[min(680px,calc(100vh-80px))] w-full', width)}
     >

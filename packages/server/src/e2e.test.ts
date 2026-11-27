@@ -245,19 +245,15 @@ describe('server 端到端（daemon + connect --stdio + codex 中继）', () => 
     expect((await bridge.req('fs.home')).path).toBeTypeOf('string')
     bridge.close()
 
-    // 版本相同的 --replace 不应重启 daemon。
-    const same = spawnSync(
-      process.execPath,
-      [bundle, 'ensure', '--state-dir', stateDir, '--replace'],
-      { encoding: 'utf8', timeout: 15_000, windowsHide: true },
-    )
-    expect(same.status).toBe(0)
-    expect(JSON.parse(same.stdout.trim())).toMatchObject({
-      started: false,
-      pid: daemonPid,
-      token,
-      version: VERSION,
-    })
+    for (const flag of ['--replace', '--force-replace']) {
+      const same = spawnSync(
+        process.execPath,
+        [bundle, 'ensure', '--state-dir', stateDir, flag],
+        { encoding: 'utf8', timeout: 15_000, windowsHide: true },
+      )
+      expect(same.status).toBe(0)
+      expect(JSON.parse(same.stdout.trim())).toMatchObject({ started: false, pid: daemonPid, token, version: VERSION })
+    }
   }, 30_000)
 
   it('codex.open → 请求 id 还原 / 通知广播 / 审批首响应 / 重连 attach', async () => {
@@ -349,9 +345,10 @@ describe('server 端到端（daemon + connect --stdio + codex 中继）', () => 
   const hasPythonPty = process.platform !== 'win32' &&
     spawnSync('python3', ['-I', '-c', 'import pty, termios'], { timeout: 5000 }).status === 0
   it.each([
-    { terminal: false, label: '空闲时重启' },
-    { terminal: true, label: '保留活跃终端，关闭终端后重启' },
-  ].filter(({ terminal }) => !terminal || hasPythonPty))('ensure --replace 版本不同时 $label', async ({ terminal }) => {
+    { terminal: false, force: false, label: '空闲时重启' },
+    { terminal: true, force: false, label: '保留活跃终端，关闭终端后重启' },
+    { terminal: true, force: true, label: '强制更新时中断活跃终端并重启' },
+  ].filter(({ terminal }) => !terminal || hasPythonPty))('ensure 版本不同时 $label', async ({ terminal, force }) => {
     const oldRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'qn-server-replace-'))
     const oldBundle = path.join(oldRoot, 'qn-server-old.cjs')
     const replaceState = path.join(oldRoot, 'state')
@@ -409,9 +406,10 @@ describe('server 端到端（daemon + connect --stdio + codex 中继）', () => 
             started: false,
             version: oldInfo.version,
             pid: oldInfo.pid,
+            stale: true,
           })
           expect(await bridge.req('term.attach', { termId, sinceSeq: 0 })).toMatchObject({ alive: true })
-          await bridge.req('term.close', { termId })
+          if (!force) await bridge.req('term.close', { termId })
         } finally {
           bridge.close()
         }
@@ -419,7 +417,7 @@ describe('server 端到端（daemon + connect --stdio + codex 中继）', () => 
 
       const replaced = spawnSync(
         process.execPath,
-        [bundle, 'ensure', '--state-dir', replaceState, '--replace'],
+        [bundle, 'ensure', '--state-dir', replaceState, force ? '--force-replace' : '--replace'],
         { encoding: 'utf8', timeout: 30_000, windowsHide: true },
       )
       expect(replaced.status).toBe(0)
@@ -437,6 +435,10 @@ describe('server 端到端（daemon + connect --stdio + codex 中继）', () => 
 
       const bridge = new Bridge(bundle, replaceState)
       expect((await bridge.hello(info.token)).t).toBe('welcome')
+      if (force) {
+        expect(await bridge.req('term.list')).toMatchObject({ terminals: [] })
+        await until(() => !alive(oldInfo.pid), 5_000)
+      }
       expect(await bridge.req('server.shutdown')).toEqual({})
       bridge.close()
       await until(() => !alive(info.pid), 5_000)

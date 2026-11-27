@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { emptyThreadPrefs, parseThreadPrefs, toggleKey, type ThreadPrefs } from '../lib/threadPrefs'
+import { threadKey } from '../lib/threads'
+import type { AgentKind } from '../../../shared/backendApi'
 
 const PREFS_KEY = 'qn-thread-prefs'
 
@@ -8,7 +10,7 @@ type ThreadPrefsState = {
   setPinned: (targetId: string, key: string, pinned: boolean) => void
   setUnread: (targetId: string, key: string, unread: boolean) => void
   setLocalName: (targetId: string, key: string, name: string | null) => void
-  setHidden: (targetId: string, key: string, hidden: boolean) => void
+  setArchived: (targetId: string, agent: AgentKind, threadId: string, archived: boolean) => void
   /** 会话被永久删除后清掉它的所有本地偏好。 */
   forget: (targetId: string, key: string) => void
 }
@@ -51,14 +53,22 @@ export const useThreadPrefs = create<ThreadPrefsState>((set, get) => {
         ...prefs,
         names: toggleKey(prefs.names, key, name?.trim() ? name.trim() : undefined),
       })),
-    setHidden: (targetId, key, hidden) =>
-      patch(targetId, (prefs) => ({ ...prefs, hidden: toggleKey(prefs.hidden, key, hidden ? true : undefined) })),
+    setArchived: (targetId, agent, threadId, archived) => {
+      const key = threadKey(agent, threadId)
+      patch(targetId, (prefs) => ({
+        ...prefs,
+        hidden: toggleKey(prefs.hidden, key, archived && agent !== 'codex' ? true : undefined),
+        pinned: archived ? toggleKey(prefs.pinned, key, undefined) : prefs.pinned,
+        restoredAt: toggleKey(prefs.restoredAt, key, archived ? undefined : Date.now()),
+      }))
+    },
     forget: (targetId, key) =>
       patch(targetId, (prefs) => ({
         pinned: toggleKey(prefs.pinned, key, undefined),
         unread: toggleKey(prefs.unread, key, undefined),
         names: toggleKey(prefs.names, key, undefined),
         hidden: toggleKey(prefs.hidden, key, undefined),
+        restoredAt: toggleKey(prefs.restoredAt, key, undefined),
       })),
   }
 })

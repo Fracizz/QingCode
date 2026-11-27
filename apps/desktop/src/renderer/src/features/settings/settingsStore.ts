@@ -31,6 +31,9 @@ function applyAppearance(general: AppSettings['general']): void {
   style.setProperty('--qn-chat-font-size', `${general.chatFontSize}px`)
   style.setProperty('--qn-composer-font-size', `${general.composerFontSize}px`)
   style.setProperty('--qn-editor-font-size', `${general.editorFontSize}px`)
+  style.setProperty('--qn-sidebar-font-size', `${general.sidebarFontSize}px`)
+  style.setProperty('--qn-project-font-size', `${general.projectFontSize}px`)
+  style.setProperty('--qn-session-font-size', `${general.sessionFontSize}px`)
 }
 
 type SettingsState = {

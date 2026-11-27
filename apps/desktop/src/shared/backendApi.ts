@@ -1,3 +1,5 @@
+import type { GlobalAccessMode } from '@qn/codex-client'
+
 /** 目标上可用的对话 Agent（mvp §11、T22）；缺省为 codex。 */
 export type AgentKind = 'codex' | 'claude' | 'pi'
 
@@ -43,6 +45,8 @@ export type SshDirect = {
 
 export type EnableDirectParams = {
   id: string
+  /** 已有监听时沿用远端配置，只签发本机授权 */
+  reuseListener?: boolean
   /** 远端监听地址，host:port 或 port；缺省 47390 */
   listen?: string
   /** 写进连接配置的拨号地址；缺省为 SSH 主机 */
@@ -167,6 +171,13 @@ export type LegacyImportResult = {
 export type SettingsSendKey = 'enter' | 'ctrlEnter'
 export type SettingsDensity = 'comfortable' | 'compact'
 export type SettingsAgentKind = 'codex' | 'claude' | 'pi'
+export const AUTO_ARCHIVE_DAYS = [0, 1, 7, 14, 30, 60, 90, 180] as const
+export type AutoArchiveDays = (typeof AUTO_ARCHIVE_DAYS)[number]
+
+export function isAutoArchiveDays(value: unknown): value is AutoArchiveDays {
+  return AUTO_ARCHIVE_DAYS.some((days) => days === value)
+}
+
 export type AgentPrefs = {
   enabled: boolean
   /** 可执行文件绝对路径；留空表示由目标机自动解析 */
@@ -178,12 +189,17 @@ export type AppSettings = {
   general: {
     sendKey: SettingsSendKey
     autoConnectLast: boolean
+    autoArchiveDays: AutoArchiveDays
     defaultAgent: SettingsAgentKind
+    globalAccessMode: GlobalAccessMode
     density: SettingsDensity
     chatFontSize: number
     composerFontSize: number
     editorFontSize: number
     terminalFontSize: number
+    sidebarFontSize: number
+    projectFontSize: number
+    sessionFontSize: number
   }
   /** 按目标 id 分组，每个 agent 一份偏好 */
   agents: Record<string, Partial<Record<SettingsAgentKind, AgentPrefs>>>
@@ -202,6 +218,7 @@ export interface BackendMethods {
     params: { id: string; password?: string; passphrase?: string; remember?: boolean; startup?: boolean }
     result: void
   }
+  'target.forceUpdate': { params: { id: string }; result: void }
   /** 用表单里的当前值试连，不保存、不部署；带 id 时未填的密码/口令取已保存的。 */
   'target.test': {
     params: SshTargetInput & { password?: string; passphrase?: string }
@@ -250,6 +267,7 @@ export type BackendParams<M extends BackendMethod> = BackendMethods[M]['params']
 export type BackendResult<M extends BackendMethod> = BackendMethods[M]['result']
 
 export interface BackendEvents {
+  'settings.access': { globalAccessMode: AppSettings['general']['globalAccessMode'] }
   'target.state': TargetStateEvent
   'hostKey.prompt': HostKeyPrompt
   'codex.recv': { targetId: string; agent?: AgentKind; seq: number | null; msg: unknown }

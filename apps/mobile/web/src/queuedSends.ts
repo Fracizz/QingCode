@@ -3,6 +3,8 @@ import { archivedThreadKey, isAgentKind } from './agents'
 import { buildMobileTurnInput, formatQuotedMessage, parseStoredRecord, type ChatDraft } from './state'
 import type { AgentKind, Connection } from './types'
 
+export type MobileTurnAccess = { accessMode: AccessMode; inheritAccess?: boolean }
+
 export type QueuedSend = ChatDraft & {
   id: string
   attachments: UserInput[]
@@ -27,13 +29,13 @@ export function queuedInput(agent: AgentKind, item: Pick<QueuedSend, 'text' | 'a
 }
 
 export function mobileTurnFits(targetId: string, agent: AgentKind, threadId: string | null,
-  input: UserInput[], overrides: TurnOverrides, expectedTurnId?: string, accessMode: AccessMode = 'default'): boolean {
+  input: UserInput[], overrides: TurnOverrides, expectedTurnId?: string, access?: MobileTurnAccess): boolean {
   const params = expectedTurnId ? { threadId, expectedTurnId, input } : { threadId: threadId ?? 'x'.repeat(256), input, ...overrides }
   const msg = { id: 'x'.repeat(80), method: expectedTurnId ? 'turn/steer' : 'turn/start', params }
-  const managed = !expectedTurnId && accessMode !== 'default'
+  const managed = !expectedTurnId && access && (access.inheritAccess !== undefined || access.accessMode !== 'default')
   const body = {
     method: managed ? 'mobile.turn.start' : 'codex.send',
-    params: { targetId, agent, msg, ...(managed ? { accessMode } : {}) },
+    params: { targetId, agent, msg, ...(managed ? access : {}), ...(expectedTurnId ? {} : { replyViaHttp: true }) },
     agent,
   }
   return new TextEncoder().encode(JSON.stringify(body)).length <= 1_048_576

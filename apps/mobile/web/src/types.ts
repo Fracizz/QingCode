@@ -20,7 +20,8 @@ export type SshTarget = {
 }
 
 export type LocalTarget = { id: 'local'; kind: 'local'; name: string }
-export type Target = LocalTarget | SshTarget
+export type DirectTarget = { id: string; kind: 'direct'; name: string; host: string; port: number }
+export type Target = LocalTarget | SshTarget | DirectTarget
 
 export type TargetState = 'idle' | 'connecting' | 'deploying' | 'ready' | 'error'
 export type TargetStateEvent = { id: string; state: TargetState; detail?: string }
@@ -57,6 +58,7 @@ export type RpcMethod =
   | 'target.disconnect'
   /** 网关自有：返回各目标的 Agent 启用状态（不含路径）。 */
   | 'mobile.agents'
+  | 'mobile.history.open'
   | 'mobile.files.list'
   | 'mobile.files.search'
   | 'mobile.files.read'

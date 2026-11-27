@@ -5,6 +5,15 @@ describe('会话访问模式', () => {
   const session = { targetId: 'remote', agent: 'codex', threadId: 'first' } as const
   const draft = { ...session, threadId: null }
 
+  it('会话默认继承总控，显式选择可覆盖并恢复继承', () => {
+    expect(getAccessMode(emptyAccessMemory, draft, 'restricted')).toBe('readOnly')
+    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'claude' }, 'restricted')).toBe('plan')
+    expect(getAccessMode(emptyAccessMemory, { ...session, agent: 'pi' }, 'restricted')).toBe('default')
+    const override = rememberAccessMode(emptyAccessMemory, session, 'default')
+    expect(getAccessMode(override, session, 'restricted')).toBe('default')
+    expect(getAccessMode(rememberAccessMode(override, session, 'inherit'), session, 'restricted')).toBe('readOnly')
+  })
+
   it('在草稿转会话后保留选择，新草稿、其他目标和其他会话使用默认权限', () => {
     const withDraft = rememberAccessMode(emptyAccessMemory, draft, 'fullAccess')
     const mode = getAccessMode(withDraft, draft)

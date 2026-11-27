@@ -31,12 +31,13 @@ export type ThreadView = {
   tokenUsage?: unknown
   subagent?: SubagentThreadMetadata
   historyCursor?: ThreadHistoryCursor | null
-  /** 每轮的计时与所含条目，用于"工作了 4m 56s"折叠头。 */
+  /** 每轮的结果、计时与所含条目，用于显示工作过程和停止提示。 */
   turns?: TurnMeta[]
 }
 
 export type TurnMeta = {
   id: string
+  outcome?: ThreadOutcome
   startedAtMs: number | null
   durationMs: number | null
   itemIds: string[]
@@ -621,39 +622,42 @@ function positive(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
 }
 
-/** 记录一轮的计时。部分适配器的 startedAt 在完成时才填（等于 completedAt），所以优先沿用 turn/started 时记下的起点。 */
+/** 部分适配器在结束时才填 startedAt，优先沿用 turn/started 时记下的起点。 */
 function turnMeta(
   existing: TurnMeta | undefined,
   turnId: string,
   patch: { record?: JsonRecord | null; phase?: TurnPhase; itemIds?: string[] },
 ): TurnMeta {
   const record = patch.record ?? null
+  const outcome = isThreadOutcome(record?.status) ? record.status : existing?.outcome
   const startedSec = positive(record?.startedAt)
   const completedSec = positive(record?.completedAt)
   const startedAtMs =
     existing?.startedAtMs ?? (startedSec ? startedSec * 1000 : patch.phase === 'started' ? Date.now() : null)
 
   let durationMs = existing?.durationMs ?? null
-  const explicit = positive(record?.durationMs)
-  if (explicit) durationMs = explicit
-  else if (patch.phase === 'completed' && startedAtMs) {
-    const computed = (completedSec ? completedSec * 1000 : Date.now()) - startedAtMs
-    if (computed > 0) durationMs = computed
-  } else if (patch.phase === 'loaded' && startedSec && completedSec && completedSec > startedSec) {
-    durationMs = durationMs ?? (completedSec - startedSec) * 1000
+  const explicit = record?.durationMs
+  if (typeof explicit === 'number' && Number.isFinite(explicit) && explicit >= 0) durationMs = explicit
+  else if (durationMs === null && startedAtMs !== null) {
+    const completedAtMs = completedSec === null ? null : completedSec * 1000
+    if (completedAtMs !== null && completedAtMs >= startedAtMs) durationMs = completedAtMs - startedAtMs
+    else if (patch.phase === 'completed' && existing?.startedAtMs != null) {
+      durationMs = Math.max(0, Date.now() - startedAtMs)
+    }
   }
 
   const itemIds = new Set(existing?.itemIds)
   for (const id of patch.itemIds ?? []) if (id) itemIds.add(id)
   if (
     existing &&
+    existing.outcome === outcome &&
     existing.startedAtMs === startedAtMs &&
     existing.durationMs === durationMs &&
     existing.itemIds.length === itemIds.size
   ) {
     return existing
   }
-  return { id: turnId, startedAtMs, durationMs, itemIds: [...itemIds] }
+  return { id: turnId, ...(outcome ? { outcome } : {}), startedAtMs, durationMs, itemIds: [...itemIds] }
 }
 
 function upsertTurnMeta(
@@ -869,6 +873,7 @@ export function prependThreadHistory(s: ConversationState, id: string, page: Thr
     const previous = turns.get(turn.id)
     turns.set(turn.id, previous ? {
       ...turn,
+      outcome: turn.outcome ?? previous.outcome,
       startedAtMs: turn.startedAtMs ?? previous.startedAtMs,
       durationMs: turn.durationMs ?? previous.durationMs,
       itemIds: [...new Set([...previous.itemIds, ...turn.itemIds])],

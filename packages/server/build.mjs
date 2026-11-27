@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
+import { prepareNodeRuntime } from '../../apps/desktop/build/prepare-node-runtime.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(await readFile(path.join(here, 'package.json'), 'utf8'))
@@ -49,6 +50,8 @@ await writeFile(
   'utf8',
 )
 console.log(`built ${outFile} v${pkg.version}+${buildId} (${bytes.byteLength} bytes, sha256 ${sha256.slice(0, 12)})`)
+
+await prepareNodeRuntime(path.join(outDir, 'node-runtime'))
 
 if (process.platform === 'win32') {
   const destination = path.join(outDir, 'conpty')

@@ -6,6 +6,7 @@ import {
   imageSendBlock,
   imageSupportFor,
   MAX_IMAGES,
+  turnInputSizeProblem,
   modalityTable,
   parseImageDataUrl,
   screenFiles,
@@ -92,6 +93,20 @@ describe('imageSendBlock', () => {
     expect(imageSendBlock(Array(MAX_IMAGES).fill(ok), true)).toBeNull()
     expect(imageSendBlock(Array(MAX_IMAGES + 1).fill(ok), true)).toMatch(/最多 8 张/)
     expect(imageSendBlock([ok, 'data:image/tiff;base64,QUJD'], true)).toMatch(/请移除后再发送/)
+  })
+
+  it('按编码后合计体积拦截多张大图，单张仍可发送', () => {
+    const image = `data:image/png;base64,${'QUJD'.repeat(2_400_000)}`
+    expect(imageSendBlock([image], true)).toBeNull()
+    expect(imageSendBlock([image, image], true)).toContain('超过传输上限')
+  })
+
+  it('正文与附件按同一帧计算，包含多字节字符', () => {
+    const image = { type: 'image' as const, url: `data:image/png;base64,${'QUJD'.repeat(3_000_000)}` }
+    const text = { type: 'text' as const, text: '字'.repeat(1_600_000), text_elements: [] }
+    expect(turnInputSizeProblem([image])).toBeNull()
+    expect(turnInputSizeProblem([text])).toBeNull()
+    expect(turnInputSizeProblem([image, text])).toContain('超过传输上限')
   })
 })
 

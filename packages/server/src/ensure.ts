@@ -14,6 +14,7 @@ import { needsJobBreakaway, spawnOutsideJob } from './windowsDetach'
 export interface EnsureOptions {
   stateDir?: string
   replace?: boolean
+  forceReplace?: boolean
   timeoutMs?: number
   /** 测试可覆盖：默认取当前进程运行的脚本路径。 */
   scriptPath?: string
@@ -48,11 +49,19 @@ export async function ensure(options: EnsureOptions = {}): Promise<EnsureResult>
 
   let probe = await probeDaemon(paths)
   if (probe) {
-    if (options.replace && probe.serverVersion !== VERSION) {
-      if (!(await requestIdleShutdown(probe.client))) return finish(probe, paths, false, undefined, true)
-      probe.client.close()
+    if ((options.replace || options.forceReplace) && probe.serverVersion !== VERSION) {
+      if (options.forceReplace) {
+        try {
+          await probe.client.request('server.shutdown', undefined, PROBE_TIMEOUT_MS)
+        } finally {
+          probe.client.close()
+        }
+      } else {
+        if (!(await requestIdleShutdown(probe.client))) return finish(probe, paths, false, undefined, true)
+        probe.client.close()
+      }
       probe = await waitForExit(paths)
-      if (probe) return finish(probe, paths, false, undefined, probe.serverVersion !== VERSION)
+      if (probe) return finishReplacement(probe, paths, false, options.forceReplace)
       // Windows 命名管道实例释放会略晚于进程退出。
       await sleep(RETRY_INTERVAL_MS)
     } else {
@@ -66,12 +75,26 @@ export async function ensure(options: EnsureOptions = {}): Promise<EnsureResult>
     const ready = await probeDaemon(paths)
     if (ready) {
       const token = readToken(paths)
-      if (token) return finish(ready, paths, true, token)
+      if (token) {
+        if (options.forceReplace) return finishReplacement(ready, paths, true, true, token)
+        return finish(ready, paths, true, token)
+      }
       ready.client.close()
     }
     await sleep(RETRY_INTERVAL_MS)
   }
   throw new Error('daemon 启动超时')
+}
+
+function finishReplacement(
+  probe: Probe, paths: ServerPaths, started: boolean, forceReplace?: boolean, token?: string,
+): EnsureResult {
+  const stale = probe.serverVersion !== VERSION
+  if (stale && forceReplace) {
+    probe.client.close()
+    throw new Error('旧版 Server 仍在运行，强制更新未完成')
+  }
+  return finish(probe, paths, started, token, stale)
 }
 
 function finish(

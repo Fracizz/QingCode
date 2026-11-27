@@ -1,10 +1,10 @@
-import { accessOptions, type AccessMode } from '@qn/codex-client'
+import { accessOptions, type AccessSelection } from '@qn/codex-client'
 import { archivedThreadKey, isAgentKind } from './agents'
 import { parseStoredRecord } from './state'
 import type { AgentKind, Connection } from './types'
 
 export type AccessAddress = { desktopId: string; targetId: string; agent: AgentKind; threadId: string }
-export type AccessPrefs = Record<string, AccessMode>
+export type AccessPrefs = Record<string, AccessSelection>
 export const ACCESS_PREFS_STORAGE_KEY = 'threadAccessModes'
 
 export function accessPreferenceKey({ desktopId, targetId, agent, threadId }: AccessAddress, fp: string): string {
@@ -22,7 +22,7 @@ export function restoreAccessPrefs(raw: string | null, connections: readonly Con
     if (typeof desktopId !== 'string' || typeof fp !== 'string' || fingerprints.get(desktopId) !== fp ||
         typeof targetId !== 'string' || !isAgentKind(agent) || typeof threadId !== 'string' ||
         archived[archivedThreadKey(desktopId, targetId, { agent, id: threadId })]) continue
-    const mode = accessOptions[agent].find((option) => option.mode === value)?.mode
+    const mode = agent !== 'pi' && value === 'inherit' ? value : accessOptions[agent].find((option) => option.mode === value)?.mode
     if (mode) prefs[key] = mode
   }
   return prefs

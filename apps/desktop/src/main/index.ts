@@ -206,33 +206,52 @@ function registerIpc(): void {
     })
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
-  ipcMain.handle('file:download', async (event, targetId: string, root: string, path: string) => {
+  const downloading = new Set<string>()
+  ipcMain.handle('file:download', async (event, targetId: string, root: string, path: string, openAfterDownload: unknown = false) => {
     if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame ||
-      typeof targetId !== 'string' || typeof root !== 'string' || typeof path !== 'string') throw new Error('下载请求无效')
+      typeof targetId !== 'string' || typeof root !== 'string' || typeof path !== 'string' ||
+      typeof openAfterDownload !== 'boolean') throw new Error('下载请求无效')
     const parts = path.split('/')
     if (parts.some((part) => !part || part === '.' || part === '..' || /[:\\\x00-\x1f]/.test(part))) throw new Error('项目文件路径无效')
     const name = parts[parts.length - 1]!
-    const result = await dialog.showSaveDialog(win, { title: '下载到本机', defaultPath: join(app.getPath('downloads'), name) })
-    if (result.canceled || !result.filePath) return false
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: openAfterDownload ? '下载并打开' : '下载到本机',
+      defaultPath: join(app.getPath('downloads'), name),
+    })
+    if (canceled || !filePath) return false
     const backend = child
     if (!backend || !childSpawned) throw new Error('后台服务未连接')
-    const { port1, port2 } = new MessageChannelMain()
-    return new Promise<boolean>((resolve, reject) => {
-      port1.once('close', () => reject(new Error('下载连接已中断')))
-      port1.once('message', ({ data }) => {
-        if (data?.ok === true) resolve(true)
-        else reject(new Error(data?.message || '下载失败'))
-        port1.close()
+    const destinationKey = process.platform === 'win32' ? filePath.toLowerCase() : filePath
+    if (downloading.has(destinationKey)) throw new Error('已有下载正在使用此保存路径')
+    downloading.add(destinationKey)
+    try {
+      const { port1, port2 } = new MessageChannelMain()
+      await new Promise<void>((resolve, reject) => {
+        port1.once('close', () => reject(new Error('下载连接已中断')))
+        port1.once('message', ({ data }) => {
+          if (data?.ok === true) resolve()
+          else reject(new Error(data?.message || '下载失败'))
+          port1.close()
+        })
+        port1.start()
+        try {
+          backend.postMessage({ type: 'download', targetId, root, path, destination: filePath }, [port2])
+        } catch (error) {
+          reject(error)
+          port1.close()
+          port2.close()
+        }
       })
-      port1.start()
-      try {
-        backend.postMessage({ type: 'download', targetId, root, path, destination: result.filePath }, [port2])
-      } catch (error) {
-        port1.close()
-        port2.close()
-        reject(error)
+      if (openAfterDownload) {
+        const error = await shell.openPath(filePath).catch((cause: unknown) =>
+          cause instanceof Error ? cause.message : '系统打开文件失败',
+        )
+        if (error) throw new Error(`文件已下载，但无法打开：${error}`)
       }
-    })
+      return true
+    } finally {
+      downloading.delete(destinationKey)
+    }
   })
   ipcMain.handle('app:version', () => app.getVersion())
   ipcMain.on('app:smokeDone', () => {

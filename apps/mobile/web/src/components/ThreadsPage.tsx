@@ -5,7 +5,7 @@ import { Button, Empty, Header, Loading, Note } from './ui'
 import { ProjectTools } from './ProjectTools'
 import { NewSessionButton } from './NewSessionButton'
 import { WorkspaceIcon, WorkspaceSearch, WorkspaceThreadRow } from './WorkspaceHome'
-import { groupWorkspaceThreads } from '../workspace'
+import { groupWorkspaceThreads, useWorkspacePreferences } from '../workspace'
 
 export function ThreadsPage() {
   const projects = useApp((s) => s.projects)
@@ -24,6 +24,7 @@ export function ThreadsPage() {
   const goBack = useApp((s) => s.goBack)
   const refreshThreads = useApp((s) => s.refreshThreads)
   const openThread = useApp((s) => s.openThread)
+  const preferences = useWorkspacePreferences()
   const [query, setQuery] = useState('')
   // 从对话页返回时用最近会话占位，避免等待完整列表期间显示空状态。
   const [settled, setSettled] = useState(threads.length > 0)
@@ -39,7 +40,7 @@ export function ThreadsPage() {
 
   const project = projects.find((item) => item.id === selectedProjectId)
   const agents = targetAgents({ agentSettings }, selectedTargetId)
-  const shown = project ? groupWorkspaceThreads(threads.map((thread) => ({ ...thread, targetId: project.targetId, projectId: project.id })), [project], query)[0]?.threads ?? [] : []
+  const shown = project ? groupWorkspaceThreads(threads.map((thread) => ({ ...thread, targetId: project.targetId, projectId: project.id })), [project], query, preferences)[0]?.threads ?? [] : []
 
   return (
     <>

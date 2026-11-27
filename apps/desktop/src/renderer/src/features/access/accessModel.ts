@@ -1,7 +1,7 @@
-import { accessOptions, type AccessMode } from '@qn/codex-client'
+import { accessOptions, resolveAccessMode, type AccessMode, type AccessSelection, type GlobalAccessMode } from '@qn/codex-client'
 import type { AgentKind } from '../../../../shared/backendApi'
 
-export { accessOptions, turnAccessOverride, type AccessMode } from '@qn/codex-client'
+export { accessOptions, turnAccessOverride, type AccessSelection } from '@qn/codex-client'
 
 export type AccessAddress = { targetId: string; agent: AgentKind; threadId: string | null }
 
@@ -16,18 +16,22 @@ export const emptyAccessMemory: AccessMemory = { draftRevision: 0, draft: null, 
 export const accessKey = ({ targetId, agent, threadId }: AccessAddress) =>
   JSON.stringify([targetId, agent, threadId])
 
-export function getAccessMode(memory: AccessMemory, address: AccessAddress): AccessMode {
+export function getAccessSelection(memory: AccessMemory, address: AccessAddress): AccessSelection {
   const key = accessKey(address)
-  if (address.threadId === null) return memory.draft?.key === key ? memory.draft.mode : 'default'
-  return memory.modes[key] ?? 'default'
+  if (address.threadId === null) return memory.draft?.key === key ? memory.draft.mode : 'inherit'
+  return memory.modes[key] ?? 'inherit'
 }
 
-export function rememberAccessMode(memory: AccessMemory, address: AccessAddress, mode: AccessMode): AccessMemory {
-  if (mode !== 'default' && !accessOptions[address.agent].some((option) => option.mode === mode)) return memory
+export function getAccessMode(memory: AccessMemory, address: AccessAddress, globalMode?: GlobalAccessMode): AccessMode {
+  return resolveAccessMode(address.agent, globalMode, getAccessSelection(memory, address))
+}
+
+export function rememberAccessMode(memory: AccessMemory, address: AccessAddress, mode: AccessSelection): AccessMemory {
+  if (mode !== 'inherit' && !accessOptions[address.agent].some((option) => option.mode === mode)) return memory
   const key = accessKey(address)
-  if (address.threadId === null) return { ...memory, draft: mode === 'default' ? null : { key, mode } }
+  if (address.threadId === null) return { ...memory, draft: mode === 'inherit' ? null : { key, mode } }
   const modes = { ...memory.modes }
-  if (mode === 'default') delete modes[key]
+  if (mode === 'inherit') delete modes[key]
   else modes[key] = mode
   return { ...memory, modes }
 }

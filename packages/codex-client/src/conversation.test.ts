@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { RequestId, ServerNotification, ServerRequest, Thread, Turn, UserInput } from './codex-types'
 import {
   DRAFT_THREAD_ID,
@@ -145,6 +145,7 @@ describe('跨端会话状态', () => {
     expect(view).toMatchObject({ status: 'running', activeTurnId: 'current' })
     expect(view.error).toBeUndefined()
     expect(view.pendingApprovals).toHaveLength(1)
+    expect(view.turns?.[0]).toMatchObject({ id: 'old', outcome: 'interrupted', itemIds: ['i-user'] })
     expect(itemOf(updated, 'reply')).toMatchObject({ streaming: true })
     expect(itemOf(updated, 'i-user')).toMatchObject({ kind: 'user' })
 
@@ -153,6 +154,38 @@ describe('跨端会话状态', () => {
     }))
     expect(threadOf(finished)).toMatchObject({ activity: 'interrupted', activeTurnId: null, pendingApprovals: [] })
     expect(itemOf(finished, 'reply')).toMatchObject({ streaming: false })
+  })
+
+  it('保留停止轮次的零毫秒用时和历史记录', () => {
+    const stopped = { id: 'stopped', status: 'interrupted', items: [userItem], durationMs: 0 }
+    const state = reduce(emptyState(), [
+      note('turn/started', { threadId: 't1', turn: { ...stopped, status: 'inProgress', durationMs: null } }),
+      note('turn/completed', { threadId: 't1', turn: stopped }),
+      note('turn/started', { threadId: 't1', turn: { id: 'next', status: 'inProgress', items: [] } }),
+    ])
+    const expected = { id: 'stopped', outcome: 'interrupted', durationMs: 0, itemIds: ['i-user'] }
+    expect(threadOf(state).turns?.[0]).toMatchObject(expected)
+    const snapshot = { id: 't1', turns: [stopped, { id: 'next', status: 'completed', items: [] }] } as unknown as LoadableThread
+    expect(threadOf(loadThread(emptyState(), snapshot)).turns?.[0]).toMatchObject(expected)
+    const older = { ...stopped, id: 'older', durationMs: null, startedAt: 100, completedAt: 100 } as unknown as Turn
+    const paged = prependThreadHistory(state, 't1', { turns: [older], earlier: null })
+    expect(threadOf(paged).turns?.[0]).toMatchObject({ ...expected, id: 'older' })
+  })
+
+  it('缺少服务端用时则记录本地经过时间，重放结束事件时保留用时', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_796_000_000_050)
+      const started = applyNotification(emptyState(), note('turn/started', { threadId: 't1', turn: { id: 't', status: 'inProgress', items: [] } }))
+      const stopped = note('turn/completed', { threadId: 't1', turn: { id: 't', status: 'interrupted', items: [] } })
+      vi.setSystemTime(1_796_000_000_450)
+      const done = applyNotification(started, stopped)
+      vi.setSystemTime(1_796_000_010_000)
+      expect(threadOf(applyNotification(done, stopped)).turns?.[0]).toMatchObject({ outcome: 'interrupted', durationMs: 400 })
+      expect(threadOf(applyNotification(emptyState(), stopped)).turns?.[0]).toMatchObject({ outcome: 'interrupted', durationMs: null })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

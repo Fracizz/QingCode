@@ -49,7 +49,7 @@ function emptyTarget(): TargetRateLimits {
   }
 }
 
-const REFRESH_INTERVAL_MS = 60_000
+export const RATE_LIMIT_REFRESH_MINUTES = 5
 let subscribed = false
 
 export const useRateLimits = create<RateLimitsState>((set, get) => {
@@ -177,7 +177,7 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
       }
       const timer = setInterval(() => {
         if (isVisible()) refreshVisible()
-      }, REFRESH_INTERVAL_MS)
+      }, RATE_LIMIT_REFRESH_MINUTES * 60_000)
 
       const offTargetState = on('target.state', (payload) => {
         if (payload.state === 'ready' && get().activeTargetId === payload.id) {

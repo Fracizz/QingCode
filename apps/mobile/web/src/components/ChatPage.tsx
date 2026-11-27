@@ -1,20 +1,20 @@
-import { ChevronDown, MessageCircleMore, PanelLeft, Square } from 'lucide-react'
-import { collectSubagents, sessionStatus, sessionStatusLabels, supportsSubagentRequests, type ItemView, type UserInput } from '@qn/codex-client'
+import { ChevronDown, MessageCircleMore, Square } from 'lucide-react'
+import { collectSubagents, resolveAccessMode, sessionStatus, sessionStatusLabels, type ItemView, type UserInput } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { bindChatPinch } from '../chatFont'
 import { nearBottom } from '../composerLogic'
 import { EMPTY_PREFS, resolveSelection } from '../models'
-import { currentCwd, displayedAccessMode, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
-import { groupChatItems, hiddenToolTrails, isChatVisible, replyPhase, streamingReplyId } from '../chatGroups'
+import { currentCwd, displayedAccessMode, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
+import { groupChatItems, hiddenToolTrails, interruptedTurnPositions, isChatVisible, replyPhase, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
+import { threadPreferenceKey, useWorkspacePreferences } from '../workspace'
 import { ApprovalCard } from './ApprovalCard'
 import { AccessModePicker } from './AccessModePicker'
 import { Composer } from './Composer'
 import { ContextUsage } from './ContextUsage'
 import { FileActionsContext, MessageItem, ToolGroup, type FileActions } from './MessageItem'
 import { ModelPicker } from './ModelSheet'
-import { NewSessionButton } from './NewSessionButton'
 import { QueuedMessages } from './QueuedMessages'
 import { SessionSwitcher } from './SessionSwitcher'
 import { SubagentLauncher } from './SubagentDetails'
@@ -36,10 +36,14 @@ export function ChatPage() {
   const key = selectedTargetId ? sessionKey(selectedTargetId, selectedAgent) : ''
   const session = useApp((s) => s.sessions[key])
   const accessMode = useApp(displayedAccessMode)
+  const accessSelection = useApp(selectedAccessPreference) ?? 'inherit'
+  const inheritedAccessMode = useApp((s) => s.agentSettings || s.legacyAgentSettings
+    ? resolveAccessMode(s.selectedAgent, s.agentSettings?.globalAccessMode) : undefined)
   const setAccessMode = useApp((s) => s.setAccessMode)
   const models = useApp((s) => s.models[key]?.models)
   const modelPrefs = useApp((s) => s.modelPrefs[key] ?? EMPTY_PREFS)
   const threads = useApp((s) => s.threads)
+  const preferences = useWorkspacePreferences()
   const sending = useApp((s) => s.sending)
   const error = useApp((s) => s.error)
   const notice = useApp((s) => s.notice)
@@ -49,7 +53,6 @@ export function ChatPage() {
   const eventsConnected = useApp((s) => s.eventsConnected)
   const needsRepair = useApp((s) => (activeId ? s.needsRepair[activeId] : undefined))
   const beginRepair = useApp((s) => s.beginRepair)
-  const goBack = useApp((s) => s.goBack)
   const send = useApp((s) => s.send)
   const interrupt = useApp((s) => s.interrupt)
   const compactConversation = useApp((s) => s.compactConversation)
@@ -119,6 +122,9 @@ export function ChatPage() {
   const echoFree = useMemo(() => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'subagent'), [items, view?.error, running])
   // 手机屏幕有限：推理摘要、命令和其它工具步骤都不进消息流，进度只在底部回复状态里体现。
   const shownItems = useMemo(() => echoFree.filter(isChatVisible), [echoFree])
+  const stopPositions = useMemo(() => interruptedTurnPositions(items, shownItems, view?.turns), [items, shownItems, view?.turns])
+  const latestStop = interrupted && view?.turns?.at(-1)?.outcome === 'interrupted' ? view.turns.at(-1)?.id : undefined
+  const renderStops = (position: number) => stopPositions.get(position)?.map((id) => <TurnInterrupted key={id} announce={id === latestStop} />)
   // 隐藏的命令每轮收成一行可展开的摘要，出错时还能查到跑了什么。
   const trails = useMemo(() => hiddenToolTrails(echoFree, activeItemIds), [echoFree, activeItemIds])
   // 每轮只有最后一条回复常驻操作入口：从后往前，遇到用户消息重置。
@@ -170,13 +176,13 @@ export function ChatPage() {
     titleFetched.current = chatKey
     void useApp.getState().refreshThreads({ skipFailed: true })
   }, [chatKey, eventsConnected, selectedThreadId, thread])
-  const threadTitle = thread?.title
+  const threadTitle = (selectedTargetId && selectedThreadId
+    ? preferences?.threads[threadPreferenceKey(selectedTargetId, selectedAgent, selectedThreadId)]?.title : undefined) || thread?.title
     || (firstUser?.kind === 'user' ? firstUser.text.replace(/\s+/g, ' ').trim().slice(0, 60) : '')
   const statusLabel = selectedThreadId ? sessionStatusLabels[sessionStatus(view, thread?.activity)] : null
   const cwd = currentCwd({ projects, selectedProjectId })
-  const imageUnavailable = selectedAgent === 'pi'
-    ? '当前 Agent 暂不支持图片'
-    : resolveSelection(models ?? [], modelPrefs).model?.imageInput === false ? '当前模型不支持图片' : undefined
+  const imageUnavailable = resolveSelection(models ?? [], modelPrefs).model?.imageInput === false
+    ? '当前模型不支持图片' : undefined
   const fileActions = useMemo<FileActions>(() => ({
     cwd,
     openFile: (location) => void openFile(location),
@@ -190,7 +196,7 @@ export function ChatPage() {
     }
     const node = scrollRef.current
     if (node && following.current) node.scrollTop = node.scrollHeight
-  }, [chatKey, items, approvals.length, progress, interrupted, turnError])
+  }, [chatKey, items, approvals.length, progress, interrupted, stopPositions, turnError])
 
   useLayoutEffect(() => {
     const previous = historyScroll.current
@@ -266,40 +272,33 @@ export function ChatPage() {
 
   return (
     <>
-      <Header
-        title={threadTitle || project?.name || '对话'}
-        icon={<MessageCircleMore size={16} strokeWidth={1.75} className="shrink-0 text-qn-muted" aria-hidden />}
-        subtitle={
-          // 项目名可能很长：只让项目名截断，状态与 Agent 始终可见。
-          <span className="flex min-w-0 items-center gap-1">
-            {statusLabel && <span className="shrink-0">{statusLabel} ·</span>}
-            {project?.name && <span className="min-w-0 truncate">{project.name}</span>}
-            <span className="shrink-0">{project?.name ? '· ' : ''}{agentLabel(selectedAgent)}</span>
-          </span>
-        }
-        onBack={goBack}
-        right={
-          <>
-            {project && <NewSessionButton project={project} iconOnly className="qn-header-icon" />}
-            {selectedThreadId && (subagents.length > 0 || supportsSubagentRequests(selectedAgent)) && (
-              <FileActionsContext.Provider value={fileActions}>
-                <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={eventsConnected && session?.opened ? session.rpc : null}
-                  renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
-              </FileActionsContext.Provider>
-            )}
-            <Button variant="ghost" className="qn-header-icon" onClick={() => setSwitching(true)} aria-label="切换会话">
-              <PanelLeft size={20} strokeWidth={1.75} aria-hidden />
-            </Button>
-          </>
-        }
-      />
-      {!eventsConnected && (
+      {subagents.length > 0 && (
+        <Header
+          title={threadTitle || project?.name || '对话'}
+          icon={<MessageCircleMore size={16} strokeWidth={1.75} className="shrink-0 text-qn-muted" aria-hidden />}
+          subtitle={
+            // 项目名可能很长：只让项目名截断，状态与 Agent 始终可见。
+            <span className="flex min-w-0 items-center gap-1">
+              {statusLabel && <span className="shrink-0">{statusLabel} ·</span>}
+              {project?.name && <span className="min-w-0 truncate">{project.name}</span>}
+              <span className="shrink-0">{project?.name ? '· ' : ''}{agentLabel(selectedAgent)}</span>
+            </span>
+          }
+          right={
+            <FileActionsContext.Provider value={fileActions}>
+              <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={eventsConnected && session?.opened ? session.rpc : null}
+                renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
+            </FileActionsContext.Provider>
+          }
+        />
+      )}
+      {needsRepair && activeId && (
         <div className="border-b border-qn-border bg-qn-panel px-3 pt-2">
           <Note
             tone="warn"
-            message={needsRepair ? '电脑连接需要重新配对' : '与电脑的连接中断，正在尝试恢复…'}
-            actionLabel={needsRepair ? '重新配对' : undefined}
-            onAction={needsRepair && activeId ? () => beginRepair(activeId) : undefined}
+            message="电脑连接需要重新配对"
+            actionLabel="重新配对"
+            onAction={() => beginRepair(activeId)}
           />
         </div>
       )}
@@ -317,7 +316,7 @@ export function ChatPage() {
               <Note message={session.openError} tone="error" actionLabel="重试"
                 onAction={() => { if (selectedTargetId) void ensureOpen(selectedTargetId, selectedAgent) }} />
             )}
-            {!running && items.length === 0 && approvals.length === 0 && !view?.historyCursor && <Empty>发送消息开始对话。</Empty>}
+            {!running && items.length === 0 && approvals.length === 0 && !view?.historyCursor && !stopPositions.size && !interrupted && <Empty>发送消息开始对话。</Empty>}
             <div className="space-y-4">
               {(firstVisible > 0 || view?.historyCursor) && (
                 <Button variant="ghost" className="mx-auto flex" disabled={historyLoading} onClick={() => void showEarlier()}>
@@ -326,6 +325,7 @@ export function ChatPage() {
               )}
               {historyError && <Note message={historyError} tone="error" />}
               <FileActionsContext.Provider key={chatKey} value={fileActions}>
+                {firstVisible === 0 && renderStops(0)}
                 {blocks.slice(firstVisible).map(({ block, index }) => (
                   <div key={block.kind === 'item' ? block.item.id : block.id}
                     className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
@@ -337,13 +337,14 @@ export function ChatPage() {
                         onResend={selectedThreadId ? resend : undefined} />
                       : <ToolGroup items={block.items} onQuote={(text) => setQuote({ key: chatKey, text })} />}
                     {trailOf(block) && <ToolGroup trail items={trailOf(block)!} onQuote={(text) => setQuote({ key: chatKey, text })} />}
+                    {renderStops(index + (block.kind === 'item' ? 1 : block.items.length))}
                   </div>
                 ))}
               </FileActionsContext.Provider>
               {progress && (
                 <div className="qn-thinking qn-replying" role="status"><LoadingIcon aria-hidden />{progress}</div>
               )}
-              {interrupted && <div className="qn-turn-interrupted" role="status"><Square size={13} aria-hidden />本轮已中断</div>}
+              {interrupted && (!latestStop || ![...stopPositions.values()].some((ids) => ids.includes(latestStop))) && <TurnInterrupted announce />}
               {turnError && <TurnErrorCard message={turnError} />}
               {approvals.length > 0 && (
                 <div ref={approvalsRef} className="space-y-3">
@@ -384,6 +385,7 @@ export function ChatPage() {
             return sent
           }}
           onInterrupt={() => void stopTurn()}
+          onSwitchSession={() => setSwitching(true)}
           interrupting={stopping}
           running={running}
           sending={sending}
@@ -403,7 +405,8 @@ export function ChatPage() {
             <>
               {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">无审批：工具直接执行</span>}
               {selectedTargetId && selectedThreadId && selectedAgent !== 'pi' && (
-                <AccessModePicker agent={selectedAgent} mode={accessMode}
+                <AccessModePicker key={chatKey} agent={selectedAgent} mode={accessSelection} effectiveMode={accessMode}
+                  inheritedMode={inheritedAccessMode}
                   supported={session?.accessSupported === true}
                   disabled={!eventsConnected || !session?.opened || running || sending || compacting}
                   onChange={setAccessMode} />
@@ -421,6 +424,10 @@ export function ChatPage() {
       {switching && <SessionSwitcher onClose={() => setSwitching(false)} />}
     </>
   )
+}
+
+function TurnInterrupted({ announce }: { announce: boolean }) {
+  return <div className="qn-turn-interrupted" role={announce ? 'status' : undefined}><Square size={13} aria-hidden />本轮已中断</div>
 }
 
 /** Claude 会把失败原因同时作为一条普通回复发出；交给错误卡片统一显示，不重复两遍。 */

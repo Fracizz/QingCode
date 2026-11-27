@@ -5,10 +5,11 @@ import { runDaemon } from './daemon'
 import { ensure } from './ensure'
 import { runDirect, runServe } from './serve'
 import { VERSION } from './version'
+import { runClaudeHistoryWorker } from './claude/sessionReader'
 
 const USAGE = [
   '用法: qn-server.cjs version',
-  '  | ensure [--state-dir D] [--replace]',
+  '  | ensure [--state-dir D] [--replace | --force-replace]',
   '  | daemon [--state-dir D]',
   '  | connect --stdio [--state-dir D]',
   '  | direct enable --listen [host:]port [--allow-public] | direct disable',
@@ -21,13 +22,14 @@ function print(value: unknown): void {
 }
 
 async function main(): Promise<void> {
+  if (await runClaudeHistoryWorker()) return
   const args = parseArgs(process.argv.slice(2))
   switch (args.command) {
     case 'version':
       print({ version: VERSION, protocol: PROTOCOL_VERSION })
       return
     case 'ensure':
-      print(await ensure({ stateDir: args.stateDir, replace: args.replace }))
+      print(await ensure({ stateDir: args.stateDir, replace: args.replace, forceReplace: args.forceReplace }))
       return
     case 'daemon':
       await runDaemon({ stateDir: args.stateDir, version: VERSION })
