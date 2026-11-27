@@ -202,12 +202,15 @@ function CommandItem({
 }
 
 /** 连续工具步骤折叠后的摘要行，展开后逐条显示。 */
-export function ToolGroup({ items, onQuote }: { items: ToolItem[]; onQuote: (text: string) => void }) {
+export function ToolGroup({ items, onQuote, trail = false }: { items: ToolItem[]; onQuote: (text: string) => void; trail?: boolean }) {
   const running = items.some((item) => toolStatus(item) === 'running')
+  const failed = items.some((item) => toolStatus(item) === 'failed')
   return (
-    <details className="qn-tool-group">
+    <details className={`qn-tool-group${trail ? ' qn-tool-trail' : ''}${failed ? ' qn-tool-failed' : ''}`}>
       <summary className="qn-tool-row">
-        {running ? <LoadingIcon className="text-qn-accent" /> : <ListChecks size={14} className="shrink-0 text-qn-muted" aria-hidden />}
+        {running ? <LoadingIcon className="text-qn-accent" />
+          : failed ? <CircleX size={14} className="shrink-0 text-qn-danger" aria-hidden />
+            : <ListChecks size={14} className="shrink-0 text-qn-muted" aria-hidden />}
         <span className="min-w-0 flex-1 truncate">{toolSummary(items)}</span>
         <ChevronRight size={14} className="qn-tool-chevron shrink-0 text-qn-dim" aria-hidden />
       </summary>

@@ -5,7 +5,7 @@ import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { nearBottom } from '../composerLogic'
 import { EMPTY_PREFS, resolveSelection } from '../models'
 import { currentCwd, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
-import { groupChatItems, isChatVisible, replyPhase } from '../chatGroups'
+import { groupChatItems, hiddenToolTrails, isChatVisible, replyPhase } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
@@ -91,11 +91,11 @@ export function ChatPage() {
     : null
   const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
     item.type === 'contextCompaction' && item.status === 'inProgress' && activeItemIds?.includes(item.id))
-  const shownItems = useMemo(
-    // 手机屏幕有限：推理摘要、命令和其它工具步骤都不进消息流，进度只在底部回复状态里体现。
-    () => withoutErrorEcho(items, view?.error, running).filter(isChatVisible),
-    [items, view?.error, running],
-  )
+  const echoFree = useMemo(() => withoutErrorEcho(items, view?.error, running), [items, view?.error, running])
+  // 手机屏幕有限：推理摘要、命令和其它工具步骤都不进消息流，进度只在底部回复状态里体现。
+  const shownItems = useMemo(() => echoFree.filter(isChatVisible), [echoFree])
+  // 隐藏的命令每轮收成一行可展开的摘要，出错时还能查到跑了什么。
+  const trails = useMemo(() => hiddenToolTrails(echoFree, activeItemIds), [echoFree, activeItemIds])
   // 每轮只有最后一条回复常驻操作入口：从后往前，遇到用户消息重置。
   const finalReplies = useMemo(() => {
     const ids = new Set<string>()
@@ -119,6 +119,8 @@ export function ChatPage() {
       return entry
     })
   }, [shownItems])
+  const trailOf = (block: (typeof blocks)[number]['block']) =>
+    trails.get(block.kind === 'item' ? block.item.id : block.items.at(-1)!.id)
   const defaultStart = Math.max(0, blocks.length - HISTORY_BATCH_SIZE)
   const firstVisible = historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart
   // 打开会话时已有的历史直接显示，之后新到的消息才播放入场动画。
@@ -278,6 +280,7 @@ export function ChatPage() {
                         active={activeItemIds?.includes(block.item.id)} showActions={finalReplies.has(block.item.id)}
                         onResend={selectedThreadId ? resend : undefined} />
                       : <ToolGroup items={block.items} onQuote={(text) => setQuote({ key: chatKey, text })} />}
+                    {trailOf(block) && <ToolGroup trail items={trailOf(block)!} onQuote={(text) => setQuote({ key: chatKey, text })} />}
                   </div>
                 ))}
               </FileActionsContext.Provider>

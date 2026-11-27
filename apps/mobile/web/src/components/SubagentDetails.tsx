@@ -1,6 +1,7 @@
 import { readSubagentThread, type CodexRpcLike, type ItemView } from '@qn/codex-client'
 import { ChevronRight, GitFork } from 'lucide-react'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { isChatVisible } from '../chatGroups'
 import { friendlyError } from '../state'
 import { Badge, Button, Dialog, Loading, Note } from './ui'
 
@@ -39,7 +40,7 @@ function History({ rpc, threadId, renderItem }: { rpc: CodexRpcLike; threadId: s
       {error && <Note tone="error" message={error} />}
       {history && !history.view?.items.length && <p className="py-3 text-sm text-qn-muted">暂无子会话记录。</p>}
       {history?.view?.error && <Note tone="error" message={history.view.error} />}
-      <div className="space-y-3">{history?.view?.items.map(renderItem)}</div>
+      <div className="space-y-3">{history?.view?.items.filter(isChatVisible).map(renderItem)}</div>
     </>
   )
 }

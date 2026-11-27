@@ -1,6 +1,6 @@
 import type { ItemView } from '@qn/codex-client'
 import { describe, expect, it } from 'vitest'
-import { groupChatItems, isChatVisible, replyPhase, toolSummary, type ToolItem } from './chatGroups'
+import { groupChatItems, hiddenToolTrails, isChatVisible, replyPhase, toolSummary, type ToolItem } from './chatGroups'
 
 const command = (id: string, status = 'completed', exitCode: number | null = 0): ItemView =>
   ({ kind: 'command', id, command: 'ls', output: '', exitCode, status })
@@ -44,5 +44,16 @@ describe('手机消息流精简', () => {
     expect(replyPhase([agent('a'), command('c', 'inProgress', null)], ['a', 'c'])).toBe('正在执行命令')
     expect(replyPhase([command('c'), streaming], ['c', 's'])).toBe('正在回复')
     expect(replyPhase([agent('old'), change('f', ['x'])], ['f'])).toBe('正在修改文件')
+  })
+})
+
+describe('hiddenToolTrails', () => {
+  const user = (id: string): ItemView => ({ kind: 'user', id, text: 'hi' } as ItemView)
+  it('每轮隐藏的命令挂到该轮最后一条可见消息', () => {
+    const trails = hiddenToolTrails([user('u1'), command('c1'), agent('a1'), command('c2'), agent('a2'), user('u2'), command('c3', 'failed', 1)])
+    expect([...trails].map(([id, list]) => [id, list.map((item) => item.id)])).toEqual([['a2', ['c1', 'c2']], ['u2', ['c3']]])
+  })
+  it('进行中的一轮先不显示', () => {
+    expect(hiddenToolTrails([user('u'), command('c'), agent('a')], ['c', 'a']).size).toBe(0)
   })
 })

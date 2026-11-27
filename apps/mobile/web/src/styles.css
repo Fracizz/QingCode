@@ -1695,6 +1695,10 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 .qn-tool-chevron { transition: transform var(--qn-motion-medium) var(--qn-ease-emphasized); }
 .qn-tool[open] > .qn-tool-row .qn-tool-chevron,
 .qn-tool-group[open] > .qn-tool-row .qn-tool-chevron { transform: rotate(90deg); }
+/* 每轮末尾的命令摘要：比正文更轻，只占一行；有失败时标红提醒。 */
+.qn-tool-trail { margin-top: 4px; }
+.qn-tool-trail > .qn-tool-row { min-height: 40px; font-size: 11.5px; }
+.qn-tool-failed > .qn-tool-row { color: var(--color-qn-danger); }
 .qn-tool-group-body {
   max-height: min(18rem, 36dvh);
   overflow-y: auto;

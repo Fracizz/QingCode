@@ -807,7 +807,11 @@ export class MockNativePort implements NativePort {
       recv({ method: 'item/started', params: { threadId, turnId, itemId: commandId, item: command } })
       setTimeout(() => {
         if (turn.status !== 'inProgress') return
-        Object.assign(command, { status: 'completed', exitCode: 0, aggregatedOutput: 'ok' })
+        // 消息再含"失败"时让命令以非零退出，用来看失败摘要的样式。
+        const failed = /失败|fail/i.test(userText)
+        Object.assign(command, failed
+          ? { status: 'failed', exitCode: 1, aggregatedOutput: 'FAIL store.test.ts\n  expected 1 to be 2' }
+          : { status: 'completed', exitCode: 0, aggregatedOutput: 'ok' })
         recv({ method: 'item/completed', params: { threadId, turnId, itemId: commandId, item: command } })
         startReply()
       }, 2500)

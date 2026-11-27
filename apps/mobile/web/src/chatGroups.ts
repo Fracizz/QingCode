@@ -83,3 +83,30 @@ export function replyPhase(items: readonly ItemView[], activeIds: readonly strin
   }
   return '正在思考'
 }
+
+/**
+ * 被隐藏的命令等工具步骤按轮次收拢，挂在该轮最后一条可见消息后面，
+ * 平时只占一行摘要，排查问题时再点开看。activeIds 内的步骤属于进行中的一轮，先不显示。
+ */
+export function hiddenToolTrails(items: readonly ItemView[], activeIds?: readonly string[]): Map<string, ToolItem[]> {
+  const trails = new Map<string, ToolItem[]>()
+  const active = new Set(activeIds ?? [])
+  let anchor: string | undefined
+  let hidden: ToolItem[] = []
+  const flush = () => {
+    if (anchor && hidden.length) trails.set(anchor, hidden)
+    hidden = []
+  }
+  for (const item of items) {
+    if (item.kind === 'user') {
+      flush()
+      anchor = item.id
+    } else if (isChatVisible(item)) {
+      anchor = item.id
+    } else if (isTool(item) && !active.has(item.id)) {
+      hidden.push(item)
+    }
+  }
+  flush()
+  return trails
+}
