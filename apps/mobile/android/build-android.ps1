@@ -12,7 +12,8 @@ param(
   [string]$Jdk = $env:JAVA_HOME,
   [string]$SdkPlatform,
   [string]$BuildTools,
-  [string]$OutputApk
+  [string]$OutputApk,
+  [string]$VersionName
 )
 
 $ErrorActionPreference = 'Stop'
@@ -102,10 +103,12 @@ function Add-WebAssets([string]$ApkPath, [string]$AssetsRoot) {
 }
 
 $packageJson = Join-Path $mobileRoot 'package.json'
-$package = Get-Content -LiteralPath $packageJson -Raw | ConvertFrom-Json
-$versionName = [string]$package.version
+if (-not $versionName) {
+  $package = Get-Content -LiteralPath $packageJson -Raw | ConvertFrom-Json
+  $versionName = [string]$package.version
+}
 $versionMatch = [regex]::Match($versionName, '^(\d+)\.(\d+)\.(\d+)')
-if (-not $versionMatch.Success) { throw "Invalid version in $packageJson : $versionName" }
+if (-not $versionMatch.Success) { throw "Invalid Android version: $versionName" }
 # versionCode 从语义化版本前三位推导，保证同一 versionName 的覆盖安装不会降级。
 $versionCode = [int]$versionMatch.Groups[1].Value * 10000 +
   [int]$versionMatch.Groups[2].Value * 100 +
@@ -129,6 +132,7 @@ if (-not (Test-Path -LiteralPath $keystore -PathType Leaf)) {
 $buildRoot = Join-Path $android 'build'
 $stage = Join-Path $buildRoot ('stage-' + [Guid]::NewGuid().ToString('N'))
 $classes = Join-Path $stage 'classes'
+$generatedJava = Join-Path $stage 'generated-java'
 $dexDir = Join-Path $stage 'dex'
 $apkAssets = Join-Path $stage 'apk-assets'
 $resStage = Join-Path $stage 'res'
@@ -137,7 +141,7 @@ $unsigned = Join-Path $stage 'unsigned.apk'
 $aligned = Join-Path $stage 'aligned.apk'
 $signed = Join-Path $stage 'signed.apk'
 $manifest = Join-Path $android 'AndroidManifest.xml'
-New-Item -ItemType Directory -Force -Path $classes, $dexDir, $apkAssets, $resStage,
+New-Item -ItemType Directory -Force -Path $classes, $generatedJava, $dexDir, $apkAssets, $resStage,
   (Split-Path -Parent $OutputApk) | Out-Null
 
 try {
@@ -162,7 +166,10 @@ try {
   Invoke-Tool $aapt2 @('compile', '--dir', $resStage, '-o', $compiled)
   Invoke-Tool $aapt2 @('link', '-I', $androidJar, '--manifest', $manifest,
     '--version-code', [string]$versionCode, '--version-name', $versionName,
-    '--replace-version', '-o', $unsigned, $compiled)
+    '--replace-version', '--java', $generatedJava, '-o', $unsigned, $compiled)
+  # 资源 ID 由 aapt2 分配，javac 同时编译生成的 R.java 和应用源码。
+  $javaSources += @(Get-ChildItem -LiteralPath $generatedJava -Filter '*.java' -Recurse -File |
+    ForEach-Object { $_.FullName })
   Invoke-Tool $javac (@('--release', '17', '-encoding', 'UTF-8', '-Xlint:-options',
     '-cp', $androidJar, '-d', $classes) + $javaSources)
   $classFiles = @(Get-ChildItem -LiteralPath $classes -Filter '*.class' -Recurse -File |
