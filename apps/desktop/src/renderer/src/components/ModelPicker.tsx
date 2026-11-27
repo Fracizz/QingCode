@@ -18,6 +18,7 @@ import { useCodex } from '../store/codex'
 import { useModels } from '../store/models'
 import { ListOption } from './ListOption'
 import { LoadingIcon } from './LoadingIcon'
+import { ProgressRing } from './ProgressRing'
 import { PopoverContent, PopoverRoot, PopoverTrigger, Tip } from './primitives'
 import { SearchField } from './SearchField'
 import { EmptyState, ErrorNote, Spinner } from './ui'
@@ -205,26 +206,11 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
 export function ContextRing({ tokenUsage }: { tokenUsage: unknown }) {
   const usage = contextUsage(tokenUsage)
   if (!usage) return null
-  const radius = 7
-  const circumference = 2 * Math.PI * radius
   const tone = usage.percent >= 90 ? '#ff6b63' : usage.percent >= 75 ? '#e2b55d' : '#a1a1aa'
   return (
     <Tip label={`上下文已用 ${usage.percent}% · ${formatTokens(usage.used)} / ${formatTokens(usage.window)} tokens`}>
       <span className="inline-flex h-8 w-8 items-center justify-center" role="img" aria-label={`上下文已用 ${usage.percent}%`}>
-        <svg width="18" height="18" viewBox="0 0 18 18" className="-rotate-90">
-          <circle cx="9" cy="9" r={radius} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="2" />
-          <circle
-            cx="9"
-            cy="9"
-            r={radius}
-            fill="none"
-            stroke={tone}
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={circumference * (1 - usage.percent / 100)}
-          />
-        </svg>
+        <ProgressRing percent={usage.percent} size={14} color={tone} />
       </span>
     </Tip>
   )

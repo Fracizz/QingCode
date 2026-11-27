@@ -4,6 +4,7 @@ import {
   annotationLabel,
   buildAnnotatedMessage,
   quoteBlock,
+  sideChatExcerpt,
   type Annotation,
 } from './annotations'
 
@@ -46,4 +47,14 @@ describe('引用与注释拼接', () => {
     expect(annotationExcerpt(quote('a\n  b'), 10)).toBe('a b')
     expect(annotationExcerpt(quote('abcdef'), 3)).toBe('abc…')
   })
+})
+
+it('侧聊只摘录所选消息所属轮次；直接打开时摘录最近一轮', () => {
+  const first = { kind: 'user', id: 'u1', text: '第一问' } as const
+  const answer = { kind: 'agent', id: 'a1', text: '第一轮回答', streaming: false } as const
+  const next = { kind: 'user', id: 'u2', text: '第二问' } as const
+  expect(sideChatExcerpt([first, answer], { text: '回答', itemId: 'a1' })).toBe('本轮问题：第一问\n\n所选片段：\n回答')
+  expect(sideChatExcerpt([first, answer], { text: '未知来源' })).toBe('未知来源')
+  expect(sideChatExcerpt([first, answer])).toBe('本轮问题：第一问\n\n回复摘录：\n第一轮回答')
+  expect(sideChatExcerpt([first, answer, next])).toBe('本轮问题：第二问')
 })

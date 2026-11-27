@@ -1,0 +1,139 @@
+// @vitest-environment jsdom
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { expect, it, vi } from 'vitest'
+import { FileActionsContext, MessageItem, ToolGroup } from './MessageItem'
+
+const toggle = (summary: HTMLElement) => act(async () => {
+  summary.click()
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+})
+
+it('在回复上方显示完成时间，跨午夜后补上本地日期', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date(2026, 10, 26, 23, 59, 59))
+  const completed = new Date(2026, 10, 26, 23, 58)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const reply = { kind: 'agent' as const, id: 'reply', text: '内容', completedAtMs: completed.getTime() }
+  try {
+    await act(() => root.render(<MessageItem item={{ ...reply, streaming: true }} />))
+    expect(host.querySelector('time')).toBeNull()
+    await act(() => root.render(<MessageItem item={{ ...reply, streaming: false }} />))
+    const time = host.querySelector('time')!
+    expect(time.textContent).toBe('23:58')
+    expect(time.dateTime).toBe(completed.toISOString())
+    expect(time.nextElementSibling?.classList.contains('qn-markdown')).toBe(true)
+    await act(() => vi.advanceTimersByTime(1000))
+    expect(host.querySelector('time')?.textContent).toBe('2026-11-26 23:58')
+  } finally {
+    await act(() => root.unmount())
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('消息图标可直接引用、复制纯文本或 Markdown，自己的消息另有编辑入口', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const onQuote = vi.fn()
+  const text = '**原文**'
+  const buttons = () => [...host.querySelectorAll('button')]
+  const labels = () => buttons().map(button => button.ariaLabel)
+  try {
+    await act(() => root.render(<MessageItem item={{ kind: 'agent', id: 'reply', text, streaming: false }} onQuote={onQuote} />))
+    expect(labels()).toEqual(['复制纯文本', '引用到对话', '复制 Markdown'])
+    Object.defineProperty(host.querySelector('.qn-markdown')!, 'innerText', { value: '原文' })
+    await act(async () => buttons()[0]!.click())
+    expect(writeText).toHaveBeenLastCalledWith('原文')
+    await act(() => buttons()[1]!.click())
+    expect(onQuote).toHaveBeenCalledWith(text)
+    await act(async () => buttons()[2]!.click())
+    expect(writeText).toHaveBeenLastCalledWith(text)
+    expect(host.querySelector('[role="status"]')?.textContent).toBe('已复制')
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'own', text }} onQuote={onQuote} onResend={vi.fn()} />))
+    expect(labels()).toEqual(['编辑并重发', '引用到对话', '复制文本'])
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
+
+it('折叠时不读取命令输出，展开工具组只挂载当前一批', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const readOutput = vi.fn(() => '命令详情')
+  const items = Array.from({ length: 61 }, (_, index) => ({
+    kind: 'command' as const, id: `cmd-${index}`, command: `测试命令 ${index}`, status: 'completed',
+    get output() { return readOutput() },
+  }))
+  const button = (text: string) => [...host.querySelectorAll('button')].find((item) => item.textContent === text)!
+  try {
+    await act(() => root.render(<ToolGroup items={items} onQuote={vi.fn()} />))
+    const groupSummary = host.querySelector('summary')!
+    expect(host.querySelectorAll('details')).toHaveLength(1)
+    expect(readOutput).not.toHaveBeenCalled()
+
+    await toggle(groupSummary)
+    expect(host.querySelectorAll('details.qn-tool')).toHaveLength(30)
+    expect(readOutput).not.toHaveBeenCalled()
+
+    await toggle(host.querySelector('details.qn-tool summary')!)
+    expect(host.querySelector('pre')?.textContent).toBe('命令详情')
+    expect(readOutput).toHaveBeenCalledOnce()
+    expect(button('上一批').disabled).toBe(true)
+
+    await act(() => button('下一批').click())
+    expect(host.querySelectorAll('details.qn-tool')).toHaveLength(30)
+    expect(host.querySelector('details.qn-tool summary')?.textContent).toContain('测试命令 30')
+    expect(host.querySelector('pre')).toBeNull()
+
+    await act(() => button('下一批').click())
+    expect(host.querySelectorAll('details.qn-tool')).toHaveLength(1)
+    expect(button('下一批').disabled).toBe(true)
+    await act(() => button('上一批').click())
+    expect(host.querySelectorAll('details.qn-tool')).toHaveLength(30)
+
+    await toggle(groupSummary)
+    expect(host.querySelectorAll('details')).toHaveLength(1)
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
+
+it('展开文件改动后可预览并打开完整差异', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const openDiff = vi.fn()
+  const diff = '@@ -1 +1 @@\n-旧内容\n+新内容'
+  const readDiff = vi.fn(() => diff)
+  try {
+    await act(() => root.render(
+      <FileActionsContext.Provider value={{ cwd: '/project', openFile: vi.fn(), openDiff }}>
+        <MessageItem item={{ kind: 'fileChange', id: 'change', status: 'completed', changes: [
+          { path: 'test.txt', kind: 'update', get diff() { return readDiff() } },
+        ] }} />
+      </FileActionsContext.Provider>,
+    ))
+    const summary = host.querySelector('summary')!
+    expect(readDiff).not.toHaveBeenCalled()
+    expect(host.querySelector('pre')).toBeNull()
+    await toggle(summary)
+    expect(host.querySelector('pre')?.textContent).toContain('+新内容')
+    const button = [...host.querySelectorAll('button')].find((item) => item.textContent === '查看差异')!
+    await act(() => button.click())
+    expect(openDiff).toHaveBeenCalledWith('/project/test.txt', diff)
+    await toggle(summary)
+    expect(host.querySelector('pre')).toBeNull()
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})

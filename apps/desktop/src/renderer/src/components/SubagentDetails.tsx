@@ -1,46 +1,230 @@
-import { readSubagentThread, type CodexRpcLike, type ItemView } from '@qn/codex-client'
-import { ChevronRight, GitFork } from 'lucide-react'
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import {
+  collectSubagents, mergeSubagentHistory, prependThreadHistory, readSubagentThread, readThreadHistoryPage,
+  subagentRecordStatus, subagentStatusTone,
+  type CodexRpcLike, type ItemView, type SubagentEntry, type ThreadView,
+} from '@qn/codex-client'
+import { Bot, ChevronRight, X } from 'lucide-react'
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { friendlyError } from '../lib/errors'
-import { Badge, ErrorNote, Modal, Spinner } from './ui'
+import { streamingReplyId } from '../lib/turnGroups'
+import { RefreshIcon } from './LoadingIcon'
+import { PopoverClose, PopoverContent, PopoverRoot, PopoverTrigger } from './primitives'
+import { StatusDot } from './StatusDot'
+import { Badge, EmptyState, ErrorNote, IconButton, Modal, Spinner } from './ui'
 
 export const SubagentRpcContext = createContext<CodexRpcLike | null>(null)
 
-type RenderItem = (item: ItemView) => ReactNode
+type RenderItem = (item: ItemView, showStreamingDots: boolean) => ReactNode
+type History = Awaited<ReturnType<typeof readSubagentThread>>
+const NO_ITEMS: readonly ItemView[] = []
+const HISTORY_BATCH = 40
 
-function History({ rpc, threadId, renderItem }: { rpc: CodexRpcLike; threadId: string; renderItem: RenderItem }) {
-  const [version, setVersion] = useState(0)
-  const [history, setHistory] = useState<Awaited<ReturnType<typeof readSubagentThread>>>()
+function AgentBadge({ status }: { status: string }) {
+  const tone = subagentStatusTone(status)
+  return <Badge tone={tone === 'active' ? 'accent' : tone}>{status || '状态未知'}</Badge>
+}
+
+function AgentAvatar({ size = 17 }: { size?: number }) {
+  return <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-400/12 text-violet-300">
+    <Bot size={size} strokeWidth={1.8} aria-hidden />
+  </span>
+}
+
+function AgentRecord({ entry, live, rpc, renderItem }: {
+  entry: SubagentEntry
+  live?: ThreadView
+  rpc: CodexRpcLike | null
+  renderItem: RenderItem
+}) {
+  const [request, setRequest] = useState(0)
+  const [history, setHistory] = useState<{ data: History; beforeRead: readonly ItemView[] }>()
   const [error, setError] = useState<string>()
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(Boolean(entry.threadId && rpc))
+  const reading = Boolean(rpc && loading)
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
+  const earlierRequest = useRef<symbol | undefined>(undefined)
+  const [limit, setLimit] = useState(HISTORY_BATCH)
+  const latestItems = useRef(live?.items ?? NO_ITEMS)
+  latestItems.current = live?.items ?? NO_ITEMS
+  const threadId = entry.threadId
+
   useEffect(() => {
-    let active = true
-    void readSubagentThread(rpc, threadId).then((result) => {
-      if (active) setHistory(result)
+    setLimit(HISTORY_BATCH)
+    setLoadingEarlier(false)
+    if (!rpc || !threadId) return
+    let current = true
+    const beforeRead = latestItems.current
+    setError(undefined)
+    setLoading(true)
+    void readSubagentThread(rpc, threadId, () => current).then((data) => {
+      if (current) setHistory({ data, beforeRead })
     }, (err: unknown) => {
-      if (active) setError(friendlyError(err, '无法读取子代理记录'))
+      if (current) setError(friendlyError(err, '无法读取子代理记录'))
     }).finally(() => {
-      if (active) setLoading(false)
+      if (current) setLoading(false)
     })
-    return () => { active = false }
-  }, [rpc, threadId, version])
+    return () => {
+      current = false
+      earlierRequest.current = undefined
+    }
+  }, [rpc, threadId, request])
+
+  const view = history?.data.view
+  const items = useMemo(() => mergeSubagentHistory(
+    history?.data.view?.items ?? NO_ITEMS, live?.items ?? NO_ITEMS, history?.beforeRead ?? NO_ITEMS,
+  ), [history, live?.items])
+  const streamingId = streamingReplyId(live ?? history?.data.view ?? undefined)
+  const name = history?.data.name || entry.name
+  const role = history?.data.role || entry.role
+  const model = history?.data.model || entry.model
+  const metadata = [role !== name && role, model].filter(Boolean).join(' · ')
+  const task = entry.task || history?.data.task
+  const liveHasOutcome = live?.activity === 'completed' || live?.activity === 'interrupted'
+  const turnError = live && (live.status !== 'idle' || liveHasOutcome) ? live.error : history?.data.view?.error
+
+  function refreshHistory() {
+    earlierRequest.current = undefined
+    setRequest((value) => value + 1)
+  }
+
+  async function showEarlier() {
+    if (items.length > limit) {
+      setLimit((value) => value + HISTORY_BATCH)
+      return
+    }
+    if (!rpc || !threadId || !view?.historyCursor || earlierRequest.current) return
+    const token = Symbol()
+    earlierRequest.current = token
+    const isCurrent = () => earlierRequest.current === token
+    setLoadingEarlier(true)
+    setError(undefined)
+    try {
+      const page = await readThreadHistoryPage(rpc, threadId, view.historyCursor, isCurrent)
+      if (!isCurrent()) return
+      const next = prependThreadHistory({ threads: { [threadId]: view } }, threadId, page).threads[threadId]
+      setHistory((value) => value?.data.view === view ? { ...value, data: { ...value.data, view: next } } : value)
+      setLimit(items.length + HISTORY_BATCH)
+    } catch (err) {
+      if (isCurrent()) setError(friendlyError(err, '无法读取更早的子代理记录'))
+    } finally {
+      if (isCurrent()) {
+        earlierRequest.current = undefined
+        setLoadingEarlier(false)
+      }
+    }
+  }
 
   return (
-    <>
-      <div className="flex items-center justify-between gap-2">
-        <p className="min-w-0 break-words text-sm text-qn-muted">{history?.name || '子会话记录'}</p>
-        <button type="button" className="qn-button shrink-0" disabled={loading} onClick={() => {
-          setLoading(true)
-          setError(undefined)
-          setVersion((current) => current + 1)
-        }}>刷新记录</button>
+    <section className="space-y-4" aria-label="子代理详情">
+      <div className="flex items-start gap-2.5">
+        <AgentAvatar size={19} />
+        <div className="min-w-0 flex-1">
+          <h3 className="break-words text-sm font-semibold">{name}</h3>
+          {metadata && <p className="mt-0.5 break-words text-xs text-qn-muted">{metadata}</p>}
+        </div>
+        <AgentBadge status={subagentRecordStatus(entry.status, history?.data.view)} />
       </div>
-      {loading && <Spinner label="正在读取子代理记录…" />}
-      {error && <ErrorNote message={error} />}
-      {history && !history.view?.items.length && <p className="py-3 text-sm text-qn-muted">暂无子会话记录。</p>}
-      {history?.view?.error && <ErrorNote message={history.view.error} />}
-      <div className="space-y-3">{history?.view?.items.map(renderItem)}</div>
-    </>
+      {task && <section className="space-y-1">
+        <h4 className="text-xs font-medium text-qn-muted">委派任务</h4>
+        <p className="whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-bg/60 px-3 py-2 text-[13px]">{task}</p>
+      </section>}
+      {entry.result && <section className="space-y-1">
+        <h4 className="text-xs font-medium text-qn-muted">返回结果</h4>
+        <div className="whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-bg/60 px-3 py-2 text-[13px]">{entry.result}</div>
+      </section>}
+      {entry.activity.length > 0 && (
+        <details className="rounded-lg border border-qn-border px-3 py-2 text-[13px]">
+          <summary className="cursor-pointer select-none font-medium text-qn-muted">活动记录 · {entry.activity.length}</summary>
+          <ol className="mt-2 divide-y divide-qn-border">
+            {entry.activity.map((event) => (
+              <li key={event.id} className="py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span>{event.title}</span>
+                  {event.status && <AgentBadge status={event.status} />}
+                </div>
+                {event.detail && event.detail !== task && <p className="mt-1 whitespace-pre-wrap break-words text-qn-muted">{event.detail}</p>}
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+      {threadId && <section className="space-y-2 border-t border-qn-border pt-3" aria-label="子会话记录">
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-xs font-medium text-qn-muted">子会话记录{items.length ? ` · ${items.length} 条` : ''}</h4>
+          <IconButton label="刷新记录" size="sm" disabled={!rpc || reading} onClick={refreshHistory}>
+            <RefreshIcon loading={reading} />
+          </IconButton>
+        </div>
+        {reading && <Spinner label="正在读取子代理记录…" />}
+        {error && <ErrorNote message={error} />}
+        {turnError && <ErrorNote message={turnError} />}
+        {!rpc && <p className="text-xs text-qn-muted">会话连接暂不可用。</p>}
+        {!items.length && !reading && !error && rpc && <p className="text-xs text-qn-muted">暂无子会话记录。</p>}
+        {(items.length > limit || rpc && view?.historyCursor) && (
+          <button type="button" className="qn-button" disabled={reading || loadingEarlier} onClick={() => void showEarlier()}>
+            {loadingEarlier ? '正在加载更早记录…' : '查看更早记录'}
+          </button>
+        )}
+        <div className="space-y-3">{items.slice(-limit).map((item) => renderItem(item, item.id === streamingId))}</div>
+      </section>}
+    </section>
+  )
+}
+
+export function SubagentLauncher({ entries, threads, rpc, renderItem }: {
+  entries: readonly SubagentEntry[]
+  threads?: Readonly<Record<string, ThreadView>>
+  rpc: CodexRpcLike | null
+  renderItem: RenderItem
+}) {
+  const titleId = useId()
+  const [selected, setSelected] = useState('')
+  const entry = entries.find((item) => item.key === selected) ?? entries[0]
+  const active = entries.filter(({ status }) => ['active', 'warn'].includes(subagentStatusTone(status))).length
+  return (
+    <PopoverRoot>
+      <PopoverTrigger asChild>
+        <IconButton label="子代理" tooltipSide="bottom"
+          className={entries.length ? 'w-auto gap-1.5 px-2 text-violet-300' : undefined}>
+          <Bot size={17} strokeWidth={1.8} aria-hidden />
+          {entries.length > 0 && <span className="text-xs tabular-nums" aria-hidden>{entries.length}</span>}
+          {active > 0 && <StatusDot className="bg-qn-accent" />}
+        </IconButton>
+      </PopoverTrigger>
+      <PopoverContent align="end" aria-labelledby={titleId}
+        className="flex max-h-[min(72vh,var(--radix-popover-content-available-height))] w-[min(700px,calc(100vw-24px))] flex-col overflow-hidden">
+        <div className="flex shrink-0 items-center gap-2.5 border-b border-qn-border px-3 py-2.5">
+          <AgentAvatar />
+          <div className="min-w-0 flex-1">
+            <h2 id={titleId} className="text-sm font-semibold">子代理</h2>
+            <p className="text-xs text-qn-muted">{entries.length} 个子代理{active > 0 ? ` · ${active} 个活动中` : ''}</p>
+          </div>
+          <PopoverClose asChild><IconButton label="关闭" tooltip={false}><X size={16} /></IconButton></PopoverClose>
+        </div>
+        {entry ? (
+          <div className="grid min-h-0 grid-cols-[minmax(160px,32%)_minmax(0,1fr)]">
+            <div className="qn-scroll space-y-1 overflow-y-auto overscroll-contain border-r border-qn-border p-2" aria-label="子代理列表">
+              {entries.map((item) => (
+                <button type="button" key={item.key} aria-pressed={item === entry} onClick={() => setSelected(item.key)}
+                  className="flex w-full items-center gap-2 rounded-lg p-2 text-left hover:bg-qn-hover focus-visible:outline-qn-accent aria-pressed:bg-qn-active">
+                  <AgentAvatar size={15} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium" title={item.name}>{item.name}</span>
+                    <span className="mt-0.5 block truncate text-xs text-qn-muted">{item.status || '状态未知'}</span>
+                  </span>
+                  <ChevronRight size={13} className="shrink-0 text-qn-dim" aria-hidden />
+                </button>
+              ))}
+            </div>
+            <div className="qn-scroll min-h-0 overflow-y-auto overscroll-contain p-4" key={entry.key}>
+              <SubagentRpcContext.Provider value={rpc}>
+                <AgentRecord entry={entry} live={entry.threadId ? threads?.[entry.threadId] : undefined} rpc={rpc} renderItem={renderItem} />
+              </SubagentRpcContext.Provider>
+            </div>
+          </div>
+        ) : <EmptyState>当前会话暂无子代理。</EmptyState>}
+      </PopoverContent>
+    </PopoverRoot>
   )
 }
 
@@ -50,37 +234,28 @@ export function SubagentDetails({ item, renderItem }: {
 }) {
   const rpc = useContext(SubagentRpcContext)
   const [selected, setSelected] = useState<string | null>(null)
-  const agents = item.agents ?? []
-  const agent = agents.find((candidate) => candidate.threadId === selected) ?? agents[0]
-  const result = agent?.result || item.result
+  const entries = collectSubagents([item])
+  const entry = entries.find((candidate) => candidate.key === selected) ?? entries[0]
   return (
     <div>
-      <button type="button" className="flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-lg text-left text-[13px] text-qn-muted hover:bg-qn-hover hover:text-qn-text" aria-haspopup="dialog"
-        onClick={() => setSelected(agents[0]?.threadId ?? '')}>
-        <GitFork size={15} className="shrink-0 text-qn-muted" aria-hidden />
-        <span className="min-w-0 flex-1 truncate">{item.title}{agents.length > 1 ? ` · ${agents.length}` : ''}</span>
-        {item.status && <Badge>{item.status}</Badge>}
+      <button type="button" className="qn-message-activity flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-lg text-left text-[13px] text-qn-muted hover:bg-qn-hover hover:text-qn-text" aria-haspopup="dialog"
+        onClick={() => setSelected(entries[0]?.key ?? '')}>
+        <Bot size={16} strokeWidth={1.8} className="shrink-0 text-violet-300" aria-hidden />
+        <span className="min-w-0 flex-1 truncate">{item.title}{entries.length > 1 ? ` · ${entries.length}` : ''}</span>
+        {item.status && <AgentBadge status={item.status} />}
         <ChevronRight size={15} className="shrink-0 text-qn-dim" aria-hidden />
       </button>
       {selected !== null && (
         <Modal title={item.title} width="max-w-3xl" onClose={() => setSelected(null)}>
-          {item.detail && <p className="mb-3 whitespace-pre-wrap break-words text-sm text-qn-muted">{item.detail}</p>}
-          {agents.length > 1 && <div className="mb-3 flex flex-wrap gap-2" aria-label="子代理">
-            {agents.map((candidate, index) => <button type="button" key={candidate.threadId} aria-pressed={agent === candidate}
-              className={`qn-button ${agent === candidate ? 'text-qn-accent' : ''}`} onClick={() => setSelected(candidate.threadId)}>
-              {candidate.label || `子代理 ${index + 1}`}
+          {entries.length > 1 && <div className="mb-3 flex flex-wrap gap-2" aria-label="子代理列表">
+            {entries.map((candidate) => <button type="button" key={candidate.key} aria-pressed={candidate === entry}
+              className={`qn-button ${candidate === entry ? 'text-qn-accent' : ''}`} onClick={() => setSelected(candidate.key)}>
+              {candidate.name}
             </button>)}
           </div>}
-          {agent && <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-qn-muted">
-            <span className="break-all">{agent.label || agent.threadId}</span>{agent.status && <Badge>{agent.status}</Badge>}
-          </div>}
-          {result && <section className="mb-4 space-y-1">
-            <h3 className="text-sm font-medium">子代理返回结果</h3>
-            <div className="whitespace-pre-wrap break-words text-sm">{result}</div>
-          </section>}
-          {agent && rpc && <History key={agent.threadId} threadId={agent.threadId} rpc={rpc} renderItem={renderItem} />}
-          {agent && !rpc && <p className="text-sm text-qn-muted">会话连接暂不可用。</p>}
-          {!agent && !item.detail && !result && <p className="text-sm text-qn-muted">暂无子代理详情。</p>}
+          {entry
+            ? <AgentRecord key={entry.key} entry={entry} rpc={rpc} renderItem={renderItem} />
+            : <p className="whitespace-pre-wrap break-words text-sm text-qn-muted">{item.detail || '暂无子代理详情。'}</p>}
         </Modal>
       )}
     </div>

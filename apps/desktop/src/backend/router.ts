@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { isJsonRpcRequest, isJsonRpcResponse, type JsonRpcResponse } from '@qn/protocol'
 import type {
   BackendEvent,
   BackendEvents,
@@ -29,6 +31,20 @@ export interface WirePort {
 }
 
 type AnyHandler = (params: unknown) => Promise<unknown> | unknown
+type CodexRecv = BackendEvents['codex.recv']
+
+export type CodexReplyRoute = {
+  signal?: AbortSignal
+  receive(payload: CodexRecv): void
+}
+
+const CODEX_REPLY_TIMEOUT_MS = 30_000
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const agentOf = (value: unknown): NonNullable<CodexRecv['agent']> =>
+  value === 'claude' || value === 'pi' ? value : 'codex'
 
 export type MethodHandler<M extends BackendMethod> = (
   params: BackendParams<M>
@@ -43,6 +59,13 @@ export function toWireError(err: unknown): BackendError {
 export class BackendRouter {
   private readonly handlers = new Map<string, AnyHandler>()
   private readonly emitListeners = new Set<(name: string, payload: unknown) => void>()
+  private readonly codexReplyPrefix = `qn-mobile-rpc:${randomUUID()}:`
+  private codexReplySequence = 0
+  private readonly codexReplies = new Map<string, {
+    targetId: string
+    agent: NonNullable<CodexRecv['agent']>
+    deliver(payload: CodexRecv, msg: JsonRpcResponse): void
+  }>()
   private port: WirePort | null = null
 
   register<M extends BackendMethod>(method: M, handler: MethodHandler<M>): void {
@@ -60,10 +83,40 @@ export class BackendRouter {
   }
 
   // 手机网关通过同一组 handler 调用 backend 方法，不能绕开参数校验与 RouterError 映射。
-  async invoke(method: string, params: unknown): Promise<unknown> {
+  async invoke(method: string, params: unknown, route?: CodexReplyRoute): Promise<unknown> {
     const handler = this.handlers.get(method)
     if (!handler) throw new RouterError('unknown_method', `未知方法：${method}`)
-    return await handler(params)
+    if (method !== 'codex.send' || !route || !isRecord(params) || typeof params.targetId !== 'string' ||
+        !isJsonRpcRequest(params.msg)) return await handler(params)
+
+    // 手机和桌面共用 daemon 通道，原始请求 id 可以相同。
+    const id = `${this.codexReplyPrefix}${++this.codexReplySequence}`
+    const originalId = params.msg.id
+    const sendParams = { ...params, msg: { ...params.msg, id } }
+    if (route.signal?.aborted) return await handler(sendParams)
+
+    const cleanup = () => {
+      this.codexReplies.delete(id)
+      clearTimeout(timer)
+      route.signal?.removeEventListener('abort', cleanup)
+    }
+    const timer = setTimeout(cleanup, CODEX_REPLY_TIMEOUT_MS)
+    timer.unref()
+    route.signal?.addEventListener('abort', cleanup, { once: true })
+    this.codexReplies.set(id, {
+      targetId: params.targetId,
+      agent: agentOf(params.agent),
+      deliver: (payload, msg) => {
+        cleanup()
+        route.receive({ ...payload, msg: { ...msg, id: originalId } })
+      },
+    })
+    try {
+      return await handler(sendParams)
+    } catch (err) {
+      cleanup()
+      throw err
+    }
   }
 
   onEmit(listener: (name: string, payload: unknown) => void): () => void {
@@ -89,6 +142,7 @@ export class BackendRouter {
   }
 
   emit<N extends BackendEvent>(name: N, payload: BackendEvents[N]): void {
+    if (name === 'codex.recv' && this.deliverCodexReply(payload as CodexRecv)) return
     this.port?.postMessage({ t: 'evt', name, payload })
     // 旁路订阅者异常不能影响 renderer 主通道，也不能阻断其它订阅者。
     for (const listener of [...this.emitListeners]) {
@@ -98,6 +152,22 @@ export class BackendRouter {
         // 手机网关等旁路自行处理自己的错误。
       }
     }
+  }
+
+  private deliverCodexReply(payload: CodexRecv): boolean {
+    const { msg } = payload
+    if (payload.seq !== null || !isJsonRpcResponse(msg) || typeof msg.id !== 'string' ||
+        !msg.id.startsWith(this.codexReplyPrefix)) return false
+    const pending = this.codexReplies.get(msg.id)
+    if (pending && pending.targetId === payload.targetId && pending.agent === agentOf(payload.agent)) {
+      try {
+        pending.deliver(payload, msg)
+      } catch {
+        // 手机断开时的投递失败不能影响 daemon 通道。
+      }
+    }
+    // 已超时或断开的回复仍属于手机，不能掉回共享事件总线。
+    return true
   }
 
   async handleMessage(data: unknown, source?: WirePort): Promise<void> {

@@ -38,6 +38,9 @@ export function parseDockPrefs(raw: string | null | undefined): DockPrefs {
 }
 
 type DockState = DockPrefs & {
+  view: 'chat' | 'files'
+  fileTool: 'explorer' | 'search'
+  setView: (view: 'chat' | 'files') => void
   /** 再次点击当前工具即收起 */
   toggleTool: (tool: DockTool) => void
   showTool: (tool: DockTool) => void
@@ -70,7 +73,20 @@ export const useDock = create<DockState>((set, get) => {
   }
   return {
     ...read(),
-    toggleTool: (tool) => update({ tool: get().tool === tool ? null : tool }),
+    view: 'chat',
+    fileTool: 'explorer',
+    setView: (view) => set({ view }),
+    toggleTool: (tool) => {
+      if (get().view === 'files') {
+        if (tool === 'explorer' || tool === 'search') set({ fileTool: tool })
+        else {
+          set({ view: 'chat' })
+          update({ tool })
+        }
+        return
+      }
+      update({ tool: get().tool === tool ? null : tool })
+    },
     showTool: (tool) => update({ tool }),
     hideTool: () => update({ tool: null }),
     setFilesWidth: (width) => update({ filesWidth: clamp(width, FILES_MIN, FILES_MAX, DEFAULT_DOCK.filesWidth) }),

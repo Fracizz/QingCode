@@ -18,6 +18,7 @@ import { isTargetActive, matchTarget, targetDotClass, targetStateLabel } from '.
 import { useTargets } from '../../store/targets'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, PopoverContent, PopoverRoot, PopoverTrigger } from '../primitives'
 import { SearchField } from '../SearchField'
+import { StatusDot } from '../StatusDot'
 import { EmptyState, ErrorNote, IconButton } from '../ui'
 
 export type TargetActions = {
@@ -37,8 +38,8 @@ function TargetGlyph({ target, state, size = 28 }: { target: Target; state: Targ
       style={{ width: size, height: size }}
     >
       <Icon size={Math.round(size * 0.5)} strokeWidth={1.7} />
-      <span
-        className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-qn-elevated ${targetDotClass[state]}`}
+      <StatusDot
+        className={`absolute -bottom-0.5 -right-0.5 size-2.5 border-2 border-qn-elevated ${targetDotClass[state]}`}
       />
     </span>
   )
@@ -97,7 +98,7 @@ export function TargetSwitcher(actions: TargetActions) {
           >
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5">
-                <span className={`h-2 w-2 shrink-0 rounded-full ${targetDotClass[currentState]}`} />
+                <StatusDot className={`size-2 ${targetDotClass[currentState]}`} />
                 <span className="truncate text-[16px] font-semibold text-qn-text">
                   {current?.name ?? (loaded ? '无目标' : '加载中…')}
                 </span>

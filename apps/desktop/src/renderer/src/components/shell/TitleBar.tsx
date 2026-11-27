@@ -1,7 +1,8 @@
-import { PanelLeft } from 'lucide-react'
+import { FolderOpen, MessageSquare, PanelLeft } from 'lucide-react'
 import { windowControlsSide } from '../../lib/layout'
 import { useCodex } from '../../store/codex'
 import { useTargets } from '../../store/targets'
+import { useDock } from '../../store/dock'
 import { useUi } from '../../store/ui'
 import { RateLimitBadge } from '../RateLimitBadge'
 import { IconButton } from '../ui'
@@ -12,6 +13,7 @@ import { Logo } from './Logo'
  * 会话标题不放这里，放主区顶栏，这样侧栏收起/展开时标题位置不跳。
  */
 export function TitleBar() {
+  const view = useDock((s) => s.view)
   const collapsed = useUi((s) => s.sidebarCollapsed)
   const toggleSidebar = useUi((s) => s.toggleSidebar)
   const targets = useTargets((s) => s.targets)
@@ -42,6 +44,20 @@ export function TitleBar() {
         <span className="rounded-md border border-qn-brand/40 px-1 text-[11px] leading-4 text-qn-brand">Next</span>
       </div>
 
+      <nav aria-label="工作视图" className="ml-4 flex gap-0.5 rounded-md bg-qn-sidebar p-0.5" data-no-drag>
+        {(['chat', 'files'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            aria-pressed={view === mode}
+            className={`flex items-center gap-1.5 rounded px-2.5 py-0.5 hover:bg-qn-hover ${view === mode ? 'bg-qn-active text-qn-text' : 'text-qn-muted'}`}
+            onClick={() => useDock.getState().setView(mode)}
+          >
+            {mode === 'chat' ? <MessageSquare size={13} /> : <FolderOpen size={13} />}
+            {mode === 'chat' ? '对话' : '文件'}
+          </button>
+        ))}
+      </nav>
       <div className="flex-1" />
 
       <div className="flex shrink-0 items-center pr-2" data-no-drag>

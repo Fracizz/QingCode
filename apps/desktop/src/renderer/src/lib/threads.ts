@@ -2,6 +2,8 @@ import { threadActivityFromStatus, type ThreadActivity } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { DEFAULT_AGENT } from './agents'
 
+const PREVIEW_LENGTH = 160
+
 export type ThreadSummary = {
   id: string
   title: string
@@ -39,7 +41,7 @@ export function toThreadSummaries(
     summaries.push({
       id,
       title: text(entry.name) || preview.split('\n')[0]?.trim() || '未命名会话',
-      preview: preview.length > 160 ? `${preview.slice(0, 160)}…` : preview,
+      preview: preview.length > PREVIEW_LENGTH ? `${preview.slice(0, PREVIEW_LENGTH)}…` : preview,
       cwd: text(entry.cwd),
       updatedAt: toTimestamp(entry.updatedAt ?? entry.recencyAt ?? entry.createdAt),
       agent,
@@ -47,6 +49,18 @@ export function toThreadSummaries(
     })
   }
   return summaries.sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+export function threadPreviewText({ title, preview }: Pick<ThreadSummary, 'title' | 'preview'>): string {
+  const excerpt = preview.trim()
+  const [firstLine = '', ...remaining] = excerpt.split('\n')
+  const heading = title.trim()
+  // 未命名会话用摘要首行作标题，摘要也可能截在首行中间。
+  if (firstLine.trim() === heading) return remaining.join('\n').trim()
+  if (preview.length === PREVIEW_LENGTH + 1 && excerpt.endsWith('…') && heading.startsWith(excerpt.slice(0, -1))) {
+    return ''
+  }
+  return excerpt
 }
 
 /** 两个 agent 的 id 各自独立，列表 key 必须带上 agent，避免 UUID 碰撞时错行。 */

@@ -20,6 +20,7 @@ import {
   File as FileIcon,
   FileCode2,
   FileJson,
+  Download,
   FilePlus2,
   FileText,
   Folder,
@@ -35,6 +36,7 @@ import {
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '../../components/primitives'
 import { Checkbox, ErrorNote, IconButton, Modal } from '../../components/ui'
 import { cn } from '../../lib/cn'
+import { downloadProjectFile } from '../workspace/download'
 import { openFile } from '../workspace/openers'
 import { explorerScopeKey, useExplorer } from './explorerStore'
 import {
@@ -202,17 +204,6 @@ export function FileExplorer({
     setNotice(text)
     if (noticeTimer.current) clearTimeout(noticeTimer.current)
     noticeTimer.current = setTimeout(() => setNotice(null), 1600)
-  }
-
-  const currentDir = (): string => {
-    const row = rows[selectedIndex]
-    if (!row) return root
-    if (row.kind === 'draft') {
-      return row.draft.mode === 'create' ? row.draft.parent : parentPath(row.draft.path, style)
-    }
-    const node = row.node
-    if (node.kind === 'file') return parentPath(node.path, style)
-    return node.path
   }
 
   const beginCreate = (parent: string, kind: 'file' | 'dir'): void => {
@@ -465,12 +456,6 @@ export function FileExplorer({
   return (
     <div className={cn('flex min-h-0 flex-col bg-qn-sidebar text-qn-text', className)}>
       <div className="flex shrink-0 items-center gap-0.5 border-b border-qn-border px-2 py-1.5">
-        <IconButton label="新建文件" onClick={() => beginCreate(currentDir(), 'file')}>
-          <FilePlus2 size={14} />
-        </IconButton>
-        <IconButton label="新建文件夹" onClick={() => beginCreate(currentDir(), 'dir')}>
-          <FolderPlus size={14} />
-        </IconButton>
         <IconButton label="刷新" onClick={() => void actions.refresh(targetId, root)}>
           <RotateCw size={14} />
         </IconButton>
@@ -528,6 +513,11 @@ export function FileExplorer({
             新建文件夹
           </ContextMenuItem>
           <ContextMenuSeparator />
+          {targetId !== 'local' && menuPath && menuTarget.current.kind === 'file' && (
+            <ContextMenuItem icon={<Download size={14} />} onSelect={() => void downloadProjectFile(targetId, root, menuPath)}>
+              下载到本机
+            </ContextMenuItem>
+          )}
           <ContextMenuItem
             icon={<Pencil size={14} />}
             disabled={!menuPath}

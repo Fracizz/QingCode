@@ -11,6 +11,8 @@ const isSmoke = new URLSearchParams(window.location.search).get('smoke') === '1'
 contextBridge.exposeInMainWorld('qn', {
   openFile: (kind?: 'sshKey' | 'legacyDb'): Promise<string | null> =>
     ipcRenderer.invoke('dialog:openFile', kind ?? 'sshKey'),
+  downloadFile: (targetId: string, root: string, path: string): Promise<boolean> =>
+    ipcRenderer.invoke('file:download', targetId, root, path),
   version: (): Promise<string> => ipcRenderer.invoke('app:version'),
   smokeDone: (): void => ipcRenderer.send('app:smokeDone'),
   requestPort: (): void => ipcRenderer.send('backend-port-request'),

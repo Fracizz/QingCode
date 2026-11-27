@@ -11,6 +11,7 @@ export type Box = { top: number; left: number; width: number; height: number }
 
 export type SelectionSnapshot = {
   text: string
+  itemId?: string
   boxes: Box[]
   position: ToolbarPosition
 }
@@ -91,5 +92,8 @@ export function captureSelection(root: HTMLElement): SelectionSnapshot | null {
   }
   const first = boxes[0]
   if (!first) return null
-  return { text, boxes, position: toolbarPosition(first, root.clientWidth) }
+  const common = range.commonAncestorContainer
+  const element = common.nodeType === 1 ? common as Element : common.parentElement
+  const itemId = element?.closest<HTMLElement>('[data-chat-item]')?.dataset.chatItem
+  return { text, itemId, boxes, position: toolbarPosition(first, root.clientWidth) }
 }

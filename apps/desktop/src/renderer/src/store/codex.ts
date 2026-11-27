@@ -16,12 +16,14 @@ import {
   interruptTurn,
   isOversizeHistoryResponse,
   listThreads,
+  loadRecentThreadHistory,
   loadThread,
   moveOptimisticUsers,
-  readThread,
+  openThreadHistory,
+  prependThreadHistory,
+  readThreadHistoryPage,
   requestSubagents,
   resolveServerRequest,
-  resumeThread,
   sendInput,
   setThreadName,
   startThread,
@@ -34,7 +36,6 @@ import {
   type RequestId,
   type ServerNotification,
   type ServerRequest,
-  type Thread,
   type UserInput,
   type TurnOverrides,
 } from '@qn/codex-client'
@@ -73,6 +74,7 @@ import {
 } from '../features/access/accessModel'
 import { configuredAgentOpen } from '../features/access/openConfig'
 import { threadKey } from '../lib/threads'
+import { useDock } from './dock'
 import { useAgentPrefs } from './agentPrefs'
 import { overridesFor } from './models'
 import { useTargets } from './targets'
@@ -87,7 +89,7 @@ type TargetSession = {
   state: ConversationState
   threadsAwaitingResume: ReadonlySet<string>
   opened: boolean
-  openedConfig: { directory: string | undefined; accessModes: boolean } | null
+  openedConfig: { directory: string | undefined; accessModes: boolean; ephemeralNoTools?: boolean } | null
   opening: boolean
   openError: string | null
   openFailure: unknown
@@ -104,6 +106,8 @@ type SendOptions = {
   /** 完整输入（含图片/附件/技能）；不传则只发 text。 */
   input?: UserInput[]
   mode?: SendMode
+  onThreadCreated?: (threadId: string) => void
+  sideKey?: string
   delegate?: boolean
 }
 
@@ -123,6 +127,34 @@ export function pendingSendKey({ targetId, agent, threadId }: ChatAddress): stri
   return JSON.stringify([targetId, agent, threadId])
 }
 
+type SideChatState = {
+  targetId: string
+  agent: AgentKind
+  cwd: string | null
+  parentThreadId: string
+  threadId: string | null
+  draft: string
+  open: boolean
+  busy: boolean
+  firstMessage: string
+  expired: boolean
+  error: string | null
+}
+
+export function currentChatKey(state: CodexState): string {
+  return JSON.stringify([state.currentTargetId, state.currentCwd, state.currentAgent, state.currentThreadId])
+}
+
+export function composerDraftKey(state: CodexState): string {
+  return state.currentThreadId === null
+    ? `draft:${state.composerDraftRevision}:${JSON.stringify([state.currentTargetId, state.currentCwd])}`
+    : currentChatKey(state)
+}
+
+export function currentSideChat(state: CodexState) {
+  return state.sideChats[currentChatKey(state)]
+}
+
 type CodexState = {
   sessions: Record<string, TargetSession>
   agents: Record<string, Record<AgentKind, AgentAvailability>>
@@ -136,16 +168,11 @@ type CodexState = {
   sending: boolean
   sendingMessage: { key: string; preview?: PendingUser } | null
   access: AccessMemory
+  composerDraftRevision: number
   pendingSends: Record<string, PendingSend[]>
   error: string | null
   notice: string | null
-  sideOpen: boolean
-  sideTargetId: string | null
-  sideCwd: string | null
-  sideAgent: AgentKind | null
-  sideThreadId: string | null
-  sideDraft: string
-  sideError: string | null
+  sideChats: Record<string, SideChatState>
   init: () => () => void
   setContext: (targetId: string | null, cwd: string | null, refresh?: boolean) => void
   ensureOpen: (targetId: string, agent?: AgentKind) => Promise<boolean>
@@ -158,13 +185,16 @@ type CodexState = {
   setDraftAgent: (agent: AgentKind) => void
   setAccessMode: (address: AccessAddress, draftRevision: number, mode: AccessMode) => void
   openThread: (threadId: string, agent?: AgentKind) => Promise<void>
+  loadEarlierHistory: (beforeApply: () => void) => Promise<void>
   openingThread: ChatAddress | null
   /** 返回是否成功提交；失败时调用方要把输入框内容还回去。 */
   send: (text: string, options?: SendOptions) => Promise<boolean>
   sendSide: (text: string, mode: SendMode) => Promise<void>
   removePendingSend: (chat: ChatAddress, id: number) => void
   retryPendingSend: (chat: ChatAddress) => void
-  openSideChat: (quote: string) => Promise<void>
+  openSideChat: (quote?: string) => void
+  restartSideChat: () => Promise<void>
+  endSideChat: () => Promise<void>
   setSideDraft: (draft: string) => void
   clearSideError: () => void
   closeSideChat: () => void
@@ -186,9 +216,26 @@ let subscribed = false
 let offEvents: Array<() => void> = []
 
 export const useCodex = create<CodexState>((set, get) => {
+  function patchSide(key: string, patch: Partial<SideChatState>) {
+    set((state) => {
+      const side = state.sideChats[key]
+      return side ? { sideChats: { ...state.sideChats, [key]: { ...side, ...patch } } } : state
+    })
+  }
+
+  function expireSides(targetId: string, agent: AgentKind, threadId?: string) {
+    for (const [key, side] of Object.entries(get().sideChats)) {
+      if (side.threadId && side.targetId === targetId && side.agent === agent && (!threadId || side.threadId === threadId)) {
+        patchSide(key, { expired: true, error: '侧聊已结束，可重新开始。' })
+        pausePending({ targetId, agent, threadId: side.threadId }, '侧聊已结束，重开后可继续发送')
+      }
+    }
+  }
+
   const opening = new Map<string, Promise<boolean>>()
   const probing = new Map<string, Promise<void>>()
   const submitting = new Set<string>()
+  const changingParentThreads = new Set<string>()
   const replacing = new Set<string>()
   let nextPendingId = 0
   let refreshToken = 0
@@ -201,6 +248,25 @@ export const useCodex = create<CodexState>((set, get) => {
       const next = update(session)
       if (next === session) return state
       return { sessions: { ...state.sessions, [key]: next } }
+    })
+  }
+
+  const forgetSideTranscript = (side: SideChatState) => {
+    const { targetId, agent, threadId } = side
+    if (!threadId) return
+    patchSession(sessionKey(targetId, agent), (session) => {
+      const threads = { ...session.state.threads }
+      delete threads[threadId]
+      return { ...session, state: { ...session.state, threads } }
+    })
+  }
+
+  function dropSide(key: string, side: SideChatState): void {
+    forgetSideTranscript(side)
+    set((state) => {
+      const sideChats = { ...state.sideChats }
+      delete sideChats[key]
+      return { sideChats }
     })
   }
 
@@ -222,7 +288,11 @@ export const useCodex = create<CodexState>((set, get) => {
         if (next === session.state) continue
         sessions[key] = { ...session, state: next }
       }
-      return { sessions, access: resetDraftAccess(state.access) }
+      return {
+        sessions,
+        access: resetDraftAccess(state.access),
+        composerDraftRevision: state.composerDraftRevision + 1,
+      }
     })
   }
 
@@ -274,12 +344,13 @@ export const useCodex = create<CodexState>((set, get) => {
         ...current,
         state: applyNotification(current.state, notification),
       }))
+      if (notification.method === 'thread/closed') expireSides(targetId, agent, notification.params.threadId)
       if (notification.method === 'turn/completed' && notification.params?.threadId && notification.params.turn) {
         const chat = { targetId, agent, threadId: notification.params.threadId }
         const state = get()
         if (state.sessions[key]?.state.threads[chat.threadId]?.status !== 'running') {
           if (!(state.currentTargetId === targetId && state.currentAgent === agent && state.currentThreadId === chat.threadId)
-            && !(state.sideTargetId === targetId && state.sideAgent === agent && state.sideThreadId === chat.threadId)) {
+            && !Object.values(state.sideChats).some(side => side.targetId === targetId && side.agent === agent && side.threadId === chat.threadId)) {
             useThreadPrefs.getState().setUnread(targetId, threadKey(agent, chat.threadId), true)
           }
           if (notification.params.turn.status === 'completed') void flushPending(chat)
@@ -337,6 +408,7 @@ export const useCodex = create<CodexState>((set, get) => {
         }
         const replaced = agent === 'codex' && session.openedConfig !== null && session.openedConfig.directory !== directory
         if (replaced) {
+          expireSides(targetId, agent)
           const prefix = targetAgentKeyPrefix(targetId, agent)
           patchSession(key, (value) => ({ ...value, state: emptyState(), threadsAwaitingResume: new Set() }))
           set((state) => ({
@@ -349,7 +421,6 @@ export const useCodex = create<CodexState>((set, get) => {
                 notice: 'Codex 配置目录已切换，请重新选择会话',
               } : {}),
             } : {}),
-            ...(state.sideTargetId === targetId && state.sideAgent === agent ? { sideOpen: false, sideThreadId: null } : {}),
           }))
         }
         let lastSeq = maxSeq(openSeq(opened), session.transport.getLastSeq())
@@ -374,7 +445,7 @@ export const useCodex = create<CodexState>((set, get) => {
         patchSession(key, (value) => ({
           ...value,
           opened: true,
-          openedConfig: { directory, accessModes: capabilities?.accessModes === true },
+          openedConfig: { directory, accessModes: capabilities?.accessModes === true, ephemeralNoTools: capabilities?.ephemeralNoTools === true },
           opening: false,
           openError: null,
           openFailure: null,
@@ -531,6 +602,61 @@ export const useCodex = create<CodexState>((set, get) => {
     }
   }
 
+  const parentAddress = (side: SideChatState): ChatAddress =>
+    ({ targetId: side.targetId, agent: side.agent, threadId: side.parentThreadId })
+
+  function sideHasWork(side: SideChatState): boolean {
+    if (side.busy) return true
+    if (!side.threadId) return false
+    const key = pendingSendKey({ ...side, threadId: side.threadId })
+    const view = get().sessions[sessionKey(side.targetId, side.agent)]?.state.threads[side.threadId]
+    return submitting.has(key) || !!get().pendingSends[key]?.length ||
+      (!side.expired && (view?.status === 'running' || !!view?.pendingApprovals.length))
+  }
+
+  async function removeParentThread(threadId: string, agent: AgentKind, action: 'archive' | 'delete'): Promise<boolean> {
+    const targetId = get().currentTargetId
+    if (!targetId) {
+      set({ error: '请先选择目标' })
+      return false
+    }
+    const key = pendingSendKey({ targetId, agent, threadId })
+    if (changingParentThreads.has(key)) return false
+    const sides = Object.entries(get().sideChats).filter(([, side]) => pendingSendKey(parentAddress(side)) === key)
+    if (sides.some(([, side]) => sideHasWork(side))) {
+      set({ notice: '请先停止侧聊并处理审批或排队消息' })
+      return false
+    }
+    changingParentThreads.add(key)
+    try {
+      const fallback = action === 'archive' ? '归档失败' : '删除失败'
+      const native = action === 'delete' || agent === 'codex'
+      if (native || sides.some(([, side]) => side.threadId && !side.expired)) {
+        const ok = await withSession(agent, fallback, async (session) => {
+          for (const [sideKey] of sides) {
+            const side = get().sideChats[sideKey]
+            if (!side?.threadId || side.expired) continue
+            if (sideHasWork(side)) throw new Error('请先停止侧聊并处理审批或排队消息')
+            await session.rpc.request('thread/unsubscribe', { threadId: side.threadId })
+            patchSide(sideKey, { expired: true, error: '侧聊已结束，可重新开始。' })
+          }
+          if (native) await (action === 'archive' ? archiveThread : deleteThread)(session.rpc, threadId)
+          return true
+        })
+        if (!ok) return false
+      }
+      for (const [sideKey, side] of sides) dropSide(sideKey, side)
+      if (native && get().currentTargetId === targetId) {
+        leaveIfCurrent(threadId, agent)
+        set((state) => ({ threads: state.threads.filter((t) => !(t.id === threadId && t.agent === agent)) }))
+        void get().refreshThreads()
+      }
+      return true
+    } finally {
+      changingParentThreads.delete(key)
+    }
+  }
+
   const updatePending = (chat: ChatAddress, update: (list: PendingSend[]) => PendingSend[]) => {
     const key = pendingSendKey(chat)
     set((state) => {
@@ -564,11 +690,12 @@ export const useCodex = create<CodexState>((set, get) => {
     session: TargetSession, threadId: string, input: UserInput[], overrides: TurnOverrides, pendingUser: PendingUser,
   ) {
     if (get().sessions[session.key]?.threadsAwaitingResume.has(threadId)) {
-      const { thread } = await resumeThread(session.rpc, threadId)
+      const before = get().sessions[session.key]?.state.threads[threadId]
+      const { thread, earlier } = await openThreadHistory(session.rpc, threadId, 'resume')
       patchSession(session.key, (value) => {
         const threadsAwaitingResume = new Set(value.threadsAwaitingResume)
         threadsAwaitingResume.delete(threadId)
-        const state = loadThread(value.state, thread)
+        const state = loadRecentThreadHistory(value.state, thread, earlier, before)
         return {
           ...value,
           threadsAwaitingResume,
@@ -614,6 +741,8 @@ export const useCodex = create<CodexState>((set, get) => {
 
   async function flushPending(chat: ChatAddress, retry = false): Promise<void> {
     const key = pendingSendKey(chat)
+    if (Object.values(get().sideChats).some((side) => side.expired && side.targetId === chat.targetId &&
+      side.agent === chat.agent && side.threadId === chat.threadId)) return
     const session = get().sessions[sessionKey(chat.targetId, chat.agent)]
     const view = session?.state.threads[chat.threadId]
     const next = get().pendingSends[key]?.[0]
@@ -660,6 +789,16 @@ export const useCodex = create<CodexState>((set, get) => {
     }
   }
 
+  async function createSideThread(side: SideChatState): Promise<string> {
+    const key = sessionKey(side.targetId, side.agent)
+    if (!await ensureOpen(side.targetId, side.agent)) throw new Error(get().sessions[key]?.openError ?? '连接失败')
+    const session = get().sessions[key]!
+    if (side.agent === 'pi' && !session.openedConfig?.ephemeralNoTools) throw new Error('请升级目标服务以使用 Pi 无工具侧聊')
+    const { thread } = await startThread(session.rpc, { cwd: side.cwd, ephemeral: true })
+    patchSession(key, (value) => ({ ...value, state: loadThread(value.state, thread) }))
+    return thread.id
+  }
+
   return {
     sessions: {},
     agents: {},
@@ -673,16 +812,11 @@ export const useCodex = create<CodexState>((set, get) => {
     sending: false,
     sendingMessage: null,
     access: emptyAccessMemory,
+    composerDraftRevision: 0,
     pendingSends: {},
     error: null,
     notice: null,
-    sideOpen: false,
-    sideTargetId: null,
-    sideCwd: null,
-    sideAgent: null,
-    sideThreadId: null,
-    sideDraft: '',
-    sideError: null,
+    sideChats: {},
 
     openingThread: null,
 
@@ -704,6 +838,7 @@ export const useCodex = create<CodexState>((set, get) => {
             opened: false,
             openError: `${agentLabel(value.agent)} 进程已退出，下次操作将重新启动`,
           }))
+          expireSides(payload.targetId, exitedAgent)
           patchAgent(payload.targetId, exitedAgent, { state: 'unknown' })
           if (get().currentTargetId === payload.targetId && get().currentAgent === exitedAgent) {
             set({ notice: `${agentLabel(exitedAgent)} 进程已退出，请重试` })
@@ -744,10 +879,6 @@ export const useCodex = create<CodexState>((set, get) => {
         threadsLoading: false,
         threadsError: null,
         error: null,
-        sideOpen: false,
-        sideThreadId: null,
-        sideDraft: '',
-        sideError: null,
       })
       if (refresh && targetId) void get().refreshThreads()
     },
@@ -811,6 +942,7 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     startDraft: (agent) => {
+      useDock.getState().setView('chat')
       ++openThreadToken
       clearAllDrafts()
       const targetId = get().currentTargetId
@@ -826,7 +958,7 @@ export const useCodex = create<CodexState>((set, get) => {
 
     setDraftAgent: (agent) => {
       set((state) => {
-        if (state.currentThreadId || state.currentAgent === agent) return state
+        if (state.currentThreadId || state.sending || state.currentAgent === agent) return state
         return { currentAgent: agent, error: null, access: resetDraftAccess(state.access) }
       })
     },
@@ -846,6 +978,7 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     openThread: async (threadId, agent) => {
+      useDock.getState().setView('chat')
       const { currentTargetId: targetId, currentAgent, openingThread } = get()
       if (!targetId) {
         set({ error: '请先选择目标' })
@@ -867,17 +1000,18 @@ export const useCodex = create<CodexState>((set, get) => {
           set({ error: session?.openError ?? `${agentLabel(picked)} 未就绪` })
           return
         }
-        let result: { thread: Thread }
+        const before = session.state.threads[threadId]
+        let result: Awaited<ReturnType<typeof openThreadHistory>>
         let readOnly = false
         let writerConflict = false
         try {
-          result = await resumeThread(session.rpc, threadId, isCurrent)
+          result = await openThreadHistory(session.rpc, threadId, 'resume', isCurrent)
         } catch (err) {
           if (!isCurrent()) return
           if (picked !== 'codex' || isOversizeHistoryResponse(err)) throw err
           readOnly = true
           writerConflict = isActiveWriterError(err)
-          result = await readThread(session.rpc, threadId, isCurrent)
+          result = await openThreadHistory(session.rpc, threadId, 'read', isCurrent)
         }
         if (!isCurrent()) return
         if (result.thread?.id !== threadId) throw new Error('返回的会话与所选会话不一致，请重试')
@@ -885,7 +1019,10 @@ export const useCodex = create<CodexState>((set, get) => {
           const threadsAwaitingResume = new Set(value.threadsAwaitingResume)
           if (readOnly) threadsAwaitingResume.add(threadId)
           else threadsAwaitingResume.delete(threadId)
-          return { ...value, threadsAwaitingResume, state: loadThread(value.state, result.thread) }
+          return {
+            ...value, threadsAwaitingResume,
+            state: loadRecentThreadHistory(value.state, result.thread, result.earlier, before),
+          }
         })
         set({ currentThreadId: threadId, currentAgent: picked, error: null })
         useThreadPrefs.getState().setUnread(targetId, threadKey(picked, threadId), false)
@@ -903,11 +1040,37 @@ export const useCodex = create<CodexState>((set, get) => {
       }
     },
 
+    loadEarlierHistory: async (beforeApply) => {
+      const { currentTargetId, currentAgent, currentThreadId, sessions } = get()
+      if (!currentTargetId || !currentThreadId) return
+      const key = sessionKey(currentTargetId, currentAgent)
+      const session = sessions[key]
+      const cursor = session?.state.threads[currentThreadId]?.historyCursor
+      if (!session || !cursor) return
+      const token = openThreadToken
+      const isCurrent = () => {
+        const state = get()
+        const current = state.sessions[key]
+        return token === openThreadToken && state.currentThreadId === currentThreadId && current?.rpc === session.rpc &&
+          current.state.threads[currentThreadId]?.historyCursor === cursor
+      }
+      try {
+        const page = await readThreadHistoryPage(session.rpc, currentThreadId, cursor, isCurrent)
+        if (!isCurrent()) return
+        beforeApply()
+        patchSession(key, (value) => ({ ...value, state: prependThreadHistory(value.state, currentThreadId, page) }))
+      } catch (error) {
+        if (isCurrent()) throw error
+      }
+    },
+
     send: async (text, options) => {
       const trimmed = text.trim()
       const userInput: UserInput[] = options?.input ?? (trimmed ? [{ type: 'text', text: trimmed, text_elements: [] }] : [])
       const context = get()
       if (userInput.length === 0 || context.sending) return false
+      const side = options?.sideKey ? context.sideChats[options.sideKey] : undefined
+      if (options?.sideKey && (!side || side.expired || changingParentThreads.has(pendingSendKey(parentAddress(side))))) return false
       const targetId = options?.targetId ?? context.currentTargetId
       if (!targetId) {
         set({ error: '请先选择目标' })
@@ -922,8 +1085,8 @@ export const useCodex = create<CodexState>((set, get) => {
       let chatKey = chat ? pendingSendKey(chat) : null
       const mode = options?.mode ?? 'queue'
       const overrides = overridesFor(targetId, agent)
-      const errorField = options?.targetId ? 'sideError' : 'error'
-      set({ [errorField]: null })
+      const report = (error: string | null) => options?.sideKey ? patchSide(options.sideKey, { error }) : set({ error })
+      report(null)
 
       const enqueue = (address: ChatAddress) => {
         const item = { id: ++nextPendingId, text, input, overrides }
@@ -937,7 +1100,7 @@ export const useCodex = create<CodexState>((set, get) => {
         context.pendingSends[chatKey]?.length || submitting.has(chatKey)
       )) return enqueue(chat)
       if (chatKey && submitting.has(chatKey)) {
-        set({ [errorField]: '正在发送另一条消息，请稍后重试' })
+        report('正在发送另一条消息，请稍后重试')
         return false
       }
 
@@ -993,6 +1156,7 @@ export const useCodex = create<CodexState>((set, get) => {
               } } } : {}),
             }
           })
+          options?.onThreadCreated?.(createdThreadId)
           threadId = createdThreadId
           chat = { targetId, agent, threadId: createdThreadId }
           chatKey = pendingSendKey(chat)
@@ -1034,7 +1198,7 @@ export const useCodex = create<CodexState>((set, get) => {
         return true
       } catch (err) {
         rollback()
-        set({ [errorField]: friendlyError(err, '发送消息失败') })
+        report(friendlyError(err, '发送消息失败'))
         if (chat && mode === 'immediate') pausePending(chat, '立即发送未完成，队列已暂停')
         return false
       } finally {
@@ -1065,49 +1229,104 @@ export const useCodex = create<CodexState>((set, get) => {
       })
     },
 
+    openSideChat: (quote) => {
+      const state = get()
+      if (!state.currentTargetId || !state.currentThreadId) return
+      if (changingParentThreads.has(pendingSendKey({
+        targetId: state.currentTargetId, agent: state.currentAgent, threadId: state.currentThreadId,
+      }))) return
+      const key = currentChatKey(state)
+      const parent = state.threads.find((thread) => thread.id === state.currentThreadId && thread.agent === state.currentAgent)
+      const side = state.sideChats[key] ?? {
+        targetId: state.currentTargetId, cwd: parent?.cwd || state.currentCwd, agent: state.currentAgent,
+        parentThreadId: state.currentThreadId,
+        threadId: null, draft: '', firstMessage: '', error: null, expired: false, busy: false,
+      }
+      const draft = quote ? [side.draft.trimEnd(), quoteBlock(quote)].filter(Boolean).join('\n\n') + '\n\n' : side.draft
+      set({ sideChats: { ...state.sideChats, [key]: { ...side, open: true, draft } } })
+    },
+
     sendSide: async (text, mode) => {
-      const { sideTargetId, sideAgent, sideThreadId } = get()
-      if (!sideTargetId || !sideAgent || !sideThreadId) return
-      const value = text.trim()
-      if (!value) return
-      const sent = await get().send(value, {
-        targetId: sideTargetId,
-        agent: sideAgent,
-        threadId: sideThreadId,
-        mode,
-      })
-      if (sent && get().sideThreadId === sideThreadId && get().sideDraft === text) set({ sideDraft: '' })
+      const key = currentChatKey(get())
+      const side = get().sideChats[key]
+      if (!side || side.busy || side.expired || !text.trim() ||
+        changingParentThreads.has(pendingSendKey(parentAddress(side)))) return
+      patchSide(key, { busy: true, error: null })
+      const { targetId, agent } = side
+      try {
+        let threadId = side.threadId
+        if (!threadId) {
+          threadId = await createSideThread(side)
+          patchSide(key, { threadId, firstMessage: text })
+        }
+        if (get().sending) throw new Error('正在提交另一条消息，请稍后重试')
+        if (get().sideChats[key]?.expired) return
+        const sent = await get().send(text, { targetId, agent, threadId, sideKey: key, mode })
+        if (sent && get().sideChats[key]?.draft === text) patchSide(key, { draft: '' })
+      } catch (err) {
+        patchSide(key, { error: friendlyError(err, '侧聊发送失败') })
+      } finally {
+        patchSide(key, { busy: false })
+      }
     },
 
-    openSideChat: async (quote) => {
-      const targetId = get().currentTargetId
-      if (!targetId) {
-        set({ error: '请先选择目标' })
+    setSideDraft: (draft) => patchSide(currentChatKey(get()), { draft }),
+    clearSideError: () => patchSide(currentChatKey(get()), { error: null }),
+    closeSideChat: () => patchSide(currentChatKey(get()), { open: false }),
+    restartSideChat: async () => {
+      const state = get()
+      const side = currentSideChat(state)
+      if (!side?.expired || !side.threadId || side.busy ||
+        changingParentThreads.has(pendingSendKey(parentAddress(side)))) return
+      const key = currentChatKey(state)
+      const oldKey = pendingSendKey({ ...side, threadId: side.threadId })
+      if (submitting.has(oldKey)) return
+      if (!state.pendingSends[oldKey]?.length) {
+        forgetSideTranscript(side)
+        patchSide(key, { threadId: null, expired: false, error: null, draft: side.draft || side.firstMessage })
         return
       }
-      const agent = get().currentAgent
-      const cwd = get().currentCwd
-      const threadId = await startNewThread(targetId, agent, { cwd, ephemeral: true })
-      if (!threadId) {
-        set({ sideError: get().error ?? '创建临时会话失败' })
-        return
+      patchSide(key, { busy: true })
+      try {
+        // 保留提交顺序，并让用户决定何时在新的上下文里继续发送。
+        const threadId = await createSideThread(side)
+        const newKey = pendingSendKey({ ...side, threadId })
+        set((state) => {
+          const { [oldKey]: queue, ...pendingSends } = state.pendingSends
+          if (queue?.length) {
+            pendingSends[newKey] = queue.map((item, index) => index === 0
+              ? { ...item, error: '侧聊已重开，检查后可继续发送' }
+              : item)
+          }
+          return { pendingSends }
+        })
+        if (side.threadId !== threadId) forgetSideTranscript(side)
+        patchSide(key, { threadId, firstMessage: '', expired: false, busy: false, error: null })
+      } catch (err) {
+        patchSide(key, { busy: false, error: friendlyError(err, '重新开始侧聊失败') })
       }
-      set({
-        sideOpen: true,
-        sideTargetId: targetId,
-        sideCwd: cwd,
-        sideAgent: agent,
-        sideThreadId: threadId,
-        sideDraft: quoteBlock(quote),
-        sideError: null,
-      })
     },
-
-    setSideDraft: (draft) => set({ sideDraft: draft }),
-
-    clearSideError: () => set({ sideError: null }),
-
-    closeSideChat: () => set({ sideOpen: false }),
+    endSideChat: async () => {
+      const key = currentChatKey(get())
+      const side = get().sideChats[key]
+      if (!side || changingParentThreads.has(pendingSendKey(parentAddress(side)))) return
+      if (sideHasWork(side)) {
+        patchSide(key, { error: '请先停止当前轮次并处理审批或排队消息' })
+        return
+      }
+      const { targetId, agent, threadId } = side
+      patchSide(key, { busy: true })
+      try {
+        if (threadId && !side.expired) {
+          const session = get().sessions[sessionKey(targetId, agent)]
+          if (!session) throw new Error('侧聊连接已断开')
+          await session.rpc.request('thread/unsubscribe', { threadId })
+        }
+        dropSide(key, side)
+      } catch (err) {
+        patchSide(key, { busy: false, error: friendlyError(err, '结束侧聊失败') })
+      }
+    },
 
     interrupt: async () => {
       const { currentTargetId, currentThreadId, currentAgent } = get()
@@ -1119,20 +1338,14 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     interruptSide: async () => {
-      const { sideTargetId, sideAgent, sideThreadId } = get()
-      if (!sideTargetId || !sideAgent) {
-        set({ notice: '当前没有运行中的 turn' })
-        return
-      }
-      await interruptFor(sideTargetId, sideAgent, sideThreadId)
+      const side = currentSideChat(get())
+      if (side?.threadId) await interruptFor(side.targetId, side.agent, side.threadId)
     },
 
     respondApproval: (requestId, decision) => {
-      const targets = [...new Set([get().currentTargetId, get().sideTargetId].filter(
-        (value): value is string => typeof value === 'string',
-      ))]
-      for (const [key, session] of Object.entries(get().sessions)) {
-        if (!targets.includes(session.targetId)) continue
+      const state = get()
+      for (const [key, session] of Object.entries(state.sessions)) {
+        if (session.targetId !== state.currentTargetId || session.agent !== state.currentAgent) continue
         const approval = Object.values(session.state.threads)
           .flatMap((thread) => thread.pendingApprovals)
           .find((item) => item.requestId === requestId)
@@ -1160,23 +1373,9 @@ export const useCodex = create<CodexState>((set, get) => {
       return true
     },
 
-    archiveThread: async (threadId, agent) => {
-      const ok = await withSession(agent, '归档失败', (session) => archiveThread(session.rpc, threadId).then(() => true))
-      if (ok === null) return false
-      leaveIfCurrent(threadId, agent)
-      set((state) => ({ threads: state.threads.filter((t) => !(t.id === threadId && t.agent === agent)) }))
-      void get().refreshThreads()
-      return true
-    },
+    archiveThread: (threadId, agent) => removeParentThread(threadId, agent, 'archive'),
 
-    deleteThread: async (threadId, agent) => {
-      const ok = await withSession(agent, '删除失败', (session) => deleteThread(session.rpc, threadId).then(() => true))
-      if (ok === null) return false
-      leaveIfCurrent(threadId, agent)
-      set((state) => ({ threads: state.threads.filter((t) => !(t.id === threadId && t.agent === agent)) }))
-      void get().refreshThreads()
-      return true
-    },
+    deleteThread: (threadId, agent) => removeParentThread(threadId, agent, 'delete'),
 
     forkThread: async (threadId, agent, lastTurnId) => {
       const targetId = get().currentTargetId

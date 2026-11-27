@@ -1,4 +1,4 @@
-import type { ItemView } from '@qn/codex-client'
+import type { ItemView, ThreadView } from '@qn/codex-client'
 
 /** 子代理单独显示，便于从消息流直接查看。 */
 export type ToolItem = Exclude<ItemView, { kind: 'user' | 'agent' | 'reasoning' | 'subagent' }>
@@ -8,6 +8,15 @@ export type ChatBlock =
   | { kind: 'tools'; id: string; items: ToolItem[] }
 
 export type ToolStatus = 'running' | 'failed' | 'done'
+
+export function streamingReplyId(thread: ThreadView | undefined): string | undefined {
+  if (thread?.status !== 'running') return
+  const itemIds = thread.turns?.findLast((turn) => turn.id === thread.activeTurnId)?.itemIds
+  if (itemIds?.length === 0) return
+  // 命令或新回复接管后，不能让还没收到完成事件的旧回复重新出现指示。
+  const last = itemIds ? thread.items.findLast((item) => itemIds.includes(item.id)) : thread.items.at(-1)
+  if (last?.kind === 'agent' && last.streaming && last.text.trim()) return last.id
+}
 
 const isTool = (item: ItemView): item is ToolItem =>
   item.kind === 'command' || item.kind === 'fileChange' || (item.kind === 'other' && item.type !== 'contextCompaction')

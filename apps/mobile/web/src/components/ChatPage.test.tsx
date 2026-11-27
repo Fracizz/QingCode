@@ -34,6 +34,7 @@ it('长会话先显示最新消息，可以逐批查看完整历史', async () =
       root.render(<ChatPage />)
     })
     expect(host.textContent).toContain('记录[124]')
+    expect(host.querySelector('button[aria-label="访问模式：默认权限"]')).not.toBeNull()
     expect(host.textContent).toContain('记录[65]')
     expect(host.textContent).not.toContain('记录[64]')
     await act(() => earlier()?.click())
@@ -117,6 +118,146 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
     await act(() => root.unmount())
     useApp.setState(initial)
     rpc.dispose()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('从聊天顶栏查看去重的子代理列表、只读记录和实时结果', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const methods = {
+    showModal(this: HTMLDialogElement) { this.open = true },
+    close(this: HTMLDialogElement) { this.open = false },
+  }
+  const original = Object.entries(methods).map(([name, method]) => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, name)
+    Object.defineProperty(HTMLDialogElement.prototype, name, { value: method, configurable: true })
+    return { name, descriptor }
+  })
+  const initial = useApp.getState()
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const transport = new MobileCodexTransport('local', async () => undefined)
+  const rpc = new CodexRpc(transport)
+  const historyTurn = (id: string, status: string, messages: string[]) => ({
+    id, status, items: messages.map((text, index) => ({ id: `${id}-${index}`, type: 'agentMessage', text })),
+  })
+  const latest = historyTurn('check', 'inProgress', [
+    '本地窗口中的较早条目', ...Array.from({ length: 39 }, (_, index) => `检查记录[${index}]`), '已开始检查',
+  ])
+  let attempt = 0
+  let finishEarlier!: (value: object) => void
+  const request = vi.fn(async (method: string, params: { cursor?: string | null }) => {
+    if (method === 'thread/read') return { thread: {
+      id: 'child', agentNickname: 'Review', agentRole: 'reviewer', model: 'test-model',
+      status: { type: 'active' }, turns: [],
+    } }
+    if (method !== 'thread/turns/list') return { data: [], nextCursor: null }
+    if (params.cursor === 'before-check') {
+      if (++attempt === 1) throw new Error('测试网络错误')
+      return { data: [historyTurn('earlier', 'completed', ['服务器中的更早记录'])], nextCursor: 'before-earlier' }
+    }
+    if (params.cursor === 'before-earlier') {
+      return new Promise<object>((resolve) => { finishEarlier = resolve })
+    }
+    return { data: [latest], nextCursor: 'before-check' }
+  })
+  const spy = vi.spyOn(rpc, 'request').mockImplementation(request as typeof rpc.request)
+  const historyReads = () => spy.mock.calls.filter(([method]) => method === 'thread/read')
+  const historyPages = () => spy.mock.calls.filter(([method]) => method === 'thread/turns/list')
+
+  const parent: ThreadView = {
+    id: 'parent', status: 'running', activeTurnId: 'main', pendingApprovals: [],
+    items: [
+      { kind: 'subagent', id: 'spawn', title: '启动子代理', detail: '检查模块边界', status: '调用已返回',
+        agents: [{ threadId: 'child', label: '', status: '运行中', result: '' }] },
+      { kind: 'subagent', id: 'event', title: '与子代理交互', detail: '', status: '已交互',
+        agents: [{ threadId: 'child', label: '', status: '已交互', result: '' }] },
+    ],
+  }
+  const child: ThreadView = {
+    id: 'child', status: 'running', activeTurnId: 'check', pendingApprovals: [], items: [],
+    subagent: { parentThreadId: 'parent', name: 'Review', role: 'reviewer', model: 'test-model', task: '' },
+  }
+  const session: AgentSession = {
+    key: 'codex:local', agent: 'codex', targetId: 'local', rpc, transport,
+    opened: true, opening: false, openError: null, lastSeq: null,
+    resumedCodexThreads: new Set(), loadedThreads: new Set(), state: { threads: { parent, child } },
+  }
+
+  const dialog = () => host.querySelector('dialog[open]')
+  const clickButton = async (label: string) => {
+    const button = [...host.querySelectorAll('button')].find((node) =>
+      node.getAttribute('aria-label') === label || node.textContent?.trim().startsWith(label))
+    expect(button, label).toBeDefined()
+    await act(() => button?.click())
+  }
+
+  try {
+    await act(() => {
+      useApp.setState({
+        selectedTargetId: 'local', selectedThreadId: 'parent', eventsConnected: true,
+        sessions: { [session.key]: session },
+      })
+      root.render(<ChatPage />)
+    })
+    expect(host.querySelector('header button[aria-label="子代理"] svg.lucide-bot')).toBeTruthy()
+    expect(host.querySelector('.qn-body')?.textContent).not.toContain('启动子代理')
+    expect(historyReads()).toHaveLength(0)
+    await clickButton('子代理')
+    expect(dialog()?.textContent).toContain('1 个子代理')
+    expect(dialog()?.textContent).toContain('运行中')
+    expect(historyReads()).toHaveLength(0)
+    await clickButton('Review')
+    expect(historyReads()).toEqual([['thread/read', { threadId: 'child', includeTurns: false }]])
+    expect(historyPages()).toEqual([['thread/turns/list', {
+      threadId: 'child', cursor: null, limit: 8, sortDirection: 'desc', itemsView: 'full',
+    }]])
+    expect(dialog()?.textContent).toContain('检查模块边界')
+    expect(dialog()?.textContent).toContain('reviewer · test-model')
+    expect(dialog()?.textContent).toContain('活动记录 · 2')
+    expect(dialog()?.textContent).toContain('已开始检查')
+    expect(dialog()?.textContent).not.toContain('本地窗口中的较早条目')
+
+    await clickButton('查看更早记录')
+    expect(dialog()?.textContent).toContain('本地窗口中的较早条目')
+    expect(historyPages()).toHaveLength(1)
+    await clickButton('查看更早记录')
+    expect(dialog()?.textContent).toContain('测试网络错误')
+    await clickButton('查看更早记录')
+    expect(historyPages().at(-1)?.[1]).toMatchObject({ threadId: 'child', cursor: 'before-check' })
+    expect(dialog()?.textContent).not.toContain('测试网络错误')
+    expect(dialog()?.textContent).toContain('服务器中的更早记录')
+    expect(dialog()?.textContent?.indexOf('服务器中的更早记录')).toBeLessThan(dialog()?.textContent?.indexOf('已开始检查') ?? -1)
+
+    await clickButton('查看更早记录')
+    expect(dialog()?.textContent).toContain('正在加载更早记录…')
+    await clickButton('刷新记录')
+    expect(historyPages().at(-1)?.[1]).toMatchObject({ threadId: 'child', cursor: null })
+    await act(() => finishEarlier({ data: [historyTurn('stale', 'completed', ['刷新前的过期记录'])], nextCursor: null }))
+    expect(dialog()?.textContent).not.toContain('刷新前的过期记录')
+    expect(dialog()?.textContent).not.toContain('服务器中的更早记录')
+
+    await act(() => useApp.setState({ sessions: { [session.key]: { ...session, state: { threads: {
+      parent,
+      child: { ...child, status: 'idle', activity: 'completed',
+        items: [{ id: 'live', kind: 'agent', text: '实时检查完成', streaming: false }] },
+    } } } } }))
+    expect(dialog()?.textContent).toContain('实时检查完成')
+    expect(dialog()?.textContent).toContain('已开始检查')
+    await clickButton('返回子代理列表')
+    expect(dialog()?.textContent).toContain('已完成')
+    await act(() => useApp.setState({ selectedThreadId: 'other' }))
+    expect(dialog()).toBeNull()
+  } finally {
+    await act(() => root.unmount())
+    useApp.setState(initial)
+    rpc.dispose()
+    for (const { name, descriptor } of original) {
+      if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, name, descriptor)
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, name)
+    }
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   }
 })

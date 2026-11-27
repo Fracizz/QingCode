@@ -31,7 +31,7 @@ export function SelectionLayer({
 }: {
   children: ReactNode
   onAdd: (quote: string, comment: string, boxes: Box[]) => void
-  onSide?: (quote: string) => void
+  onSide?: (quote: string, itemId?: string) => void
   highlights?: Box[]
   onScroll?: (event: UIEvent<HTMLDivElement>) => void
   className?: string
@@ -94,7 +94,7 @@ export function SelectionLayer({
 
   const openSide = () => {
     if (!snapshot) return
-    onSide?.(snapshot.text)
+    onSide?.(snapshot.text, snapshot.itemId)
     dismiss()
   }
 

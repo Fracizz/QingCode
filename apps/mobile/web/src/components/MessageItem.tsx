@@ -1,6 +1,6 @@
-import { Check, ChevronRight, CircleX, Ellipsis, FilePen, Image, ListChecks, Terminal } from 'lucide-react'
-import { editUserText, splitUserText, type ItemView, type UserInput } from '@qn/codex-client'
-import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Check, ChevronRight, CircleX, ClipboardType, Copy, FilePen, Image, ListChecks, Pencil, Quote, Terminal } from 'lucide-react'
+import { editUserText, formatReplyTime, localReplyDay, splitUserText, subscribeToReplyDay, type ItemView, type UserInput } from '@qn/codex-client'
+import { createContext, useContext, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { toolStatus, toolSummary, type ToolItem, type ToolStatus } from '../chatGroups'
@@ -20,10 +20,52 @@ export type FileActions = {
 
 export const FileActionsContext = createContext<FileActions | null>(null)
 
+function ReplyTime({ completedAtMs }: { completedAtMs: number }) {
+  const day = useSyncExternalStore(subscribeToReplyDay, localReplyDay, localReplyDay)
+  const time = formatReplyTime(completedAtMs, day)
+  return time && <time className="mb-1 block text-xs tabular-nums text-qn-muted" dateTime={time.dateTime} title={time.full}>{time.label}</time>
+}
+
 const LinkedImageContext = createContext(false)
 const RASTER_IMAGE_URL = /^data:image\/(?:jpeg|png|gif|webp);base64,/i
 const WEB_IMAGE_URL = /^(?:https?:)?\/\//i
 const MESSAGE_IMAGE_CLASS = 'max-h-36 max-w-full rounded-lg object-contain'
+const TOOL_PAGE_SIZE = 30
+
+function LazyDetails({ className, summary, children }: { className: string; summary: ReactNode; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <details className={className} onToggle={(event) => {
+      if (event.target === event.currentTarget) setExpanded(event.currentTarget.open)
+    }}>
+      {summary}
+      {expanded && children}
+    </details>
+  )
+}
+
+function ToolPages<T>({ items, renderItem, className }: {
+  items: readonly T[]
+  renderItem: (item: T, index: number) => ReactNode
+  className: string
+}) {
+  const [page, setPage] = useState(0)
+  const lastPage = Math.max(0, Math.ceil(items.length / TOOL_PAGE_SIZE) - 1)
+  const currentPage = Math.min(page, lastPage)
+  const start = currentPage * TOOL_PAGE_SIZE
+  return (
+    <>
+      {lastPage > 0 && <div className="flex items-center justify-between gap-1 px-2 text-qn-muted">
+        <Button variant="ghost" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>上一批</Button>
+        <span aria-live="polite">{start + 1}–{Math.min(start + TOOL_PAGE_SIZE, items.length)} / {items.length}</span>
+        <Button variant="ghost" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}>下一批</Button>
+      </div>}
+      <div key={currentPage} className={className}>
+        {items.slice(start, start + TOOL_PAGE_SIZE).map((item, index) => renderItem(item, start + index))}
+      </div>
+    </>
+  )
+}
 
 const urlTransform = (value: string, key: string): string =>
   key === 'src' && RASTER_IMAGE_URL.test(value) ? value : allowLocalUrl(value, defaultUrlTransform(value))
@@ -155,7 +197,6 @@ function DiffBlock({ text }: { text: string }) {
 function MessageActions({ text, onQuote, getPlainText, onEdit }: {
   text: string; onQuote?: (text: string) => void; getPlainText?: () => string; onEdit?: () => void
 }) {
-  const [open, setOpen] = useState(false)
   const [status, setStatus] = useState('')
   const hasText = Boolean(text.trim())
   if (!hasText && !onEdit) return null
@@ -164,28 +205,41 @@ function MessageActions({ text, onQuote, getPlainText, onEdit }: {
     try {
       if (getWindowNativePort()) await callDevice('clipboard.write', { text: value })
       else await navigator.clipboard.writeText(value)
-      setOpen(false)
       setStatus('已复制')
     } catch {
       setStatus('复制失败，可长按选中文字后复制')
     }
   }
 
+  const copyLabel = getPlainText ? '复制 Markdown' : '复制文本'
   return (
-    <div className="mt-1 flex items-center justify-end gap-1">
-      {status && <span className="text-xs text-qn-muted" role="status">{status}</span>}
-      <Button variant="ghost" className="qn-icon-button qn-message-more" aria-label="消息操作" onClick={() => { setStatus(''); setOpen(true) }}><Ellipsis size={18} /></Button>
-      {open && (
-        <Dialog title="消息操作" onClose={() => setOpen(false)}>
-          <div className="grid gap-1">
-            {onEdit && <Button variant="ghost" onClick={() => { setOpen(false); onEdit() }}>编辑并重发</Button>}
-            {hasText && onQuote && <Button variant="ghost" onClick={() => { onQuote(text.slice(0, 4000)); setOpen(false) }}>引用到对话</Button>}
-            {hasText && <Button variant="ghost" onClick={() => void copy(text)}>{getPlainText ? '复制 Markdown' : '复制文本'}</Button>}
-            {hasText && getPlainText && <Button variant="ghost" onClick={() => void copy(getPlainText())}>复制纯文本</Button>}
-            {status && <p className="text-xs text-qn-warn" role="alert">{status}</p>}
-          </div>
-        </Dialog>
-      )}
+    <div className="mt-1 w-full">
+      <div className="flex items-center justify-end gap-1">
+        {onEdit && (
+          <Button variant="ghost" className="qn-icon-button" aria-label="编辑并重发" title="编辑并重发" onClick={onEdit}>
+            <Pencil size={18} aria-hidden />
+          </Button>
+        )}
+        {hasText && getPlainText && (
+          <Button variant="ghost" className="qn-icon-button" aria-label="复制纯文本" title="复制纯文本"
+            onClick={() => void copy(getPlainText())}>
+            <ClipboardType size={18} aria-hidden />
+          </Button>
+        )}
+        {hasText && onQuote && (
+          <Button variant="ghost" className="qn-icon-button" aria-label="引用到对话" title="引用到对话"
+            onClick={() => onQuote(text.slice(0, 4000))}>
+            <Quote size={18} aria-hidden />
+          </Button>
+        )}
+        {hasText && (
+          <Button variant="ghost" className="qn-icon-button" aria-label={copyLabel} title={copyLabel}
+            onClick={() => void copy(text)}>
+            <Copy size={18} aria-hidden />
+          </Button>
+        )}
+      </div>
+      {status && <p className="text-right text-xs text-qn-muted" role="status">{status}</p>}
     </div>
   )
 }
@@ -203,11 +257,9 @@ function CommandItem({
   item: Extract<ItemView, { kind: 'command' }>
   onQuote?: (text: string) => void
 }) {
-  const all = item.output.split('\n')
-  const output = all.length > 200 ? all.slice(-200).join('\n') : item.output
   const status = toolStatus(item)
   return (
-    <details className="qn-tool">
+    <LazyDetails className="qn-tool" summary={
       <summary className="qn-tool-row">
         <Terminal size={14} className="shrink-0 text-qn-muted" aria-hidden />
         <span className="min-w-0 flex-1 truncate">{status === 'running' ? '正在运行 ' : '已运行 '}<code className="qn-mono">{item.command || '（命令）'}</code></span>
@@ -215,19 +267,33 @@ function CommandItem({
         <ToolStatusIcon status={status} />
         <ChevronRight size={14} className="qn-tool-chevron shrink-0 text-qn-dim" aria-hidden />
       </summary>
-      <div className="qn-tool-body">
-        <div className="qn-mono whitespace-pre-wrap break-all text-[12px]">$ {item.command || '（命令）'}</div>
-        {item.cwd && <div className="qn-mono mt-1 text-[10px] text-qn-muted">{item.cwd}</div>}
-        {output && (
-          <pre className="qn-pre qn-scroll qn-command-output mt-2 overflow-auto whitespace-pre text-[11px] leading-5">
-            {all.length > 200 && <span className="text-qn-muted">（只显示末尾 200 行）{'\n'}</span>}
-            {output}
-          </pre>
-        )}
-        {!output && <div className="mt-2 text-xs text-qn-muted">{status === 'running' ? '等待输出…' : '无输出'}</div>}
-        <MessageActions text={item.command || item.output} onQuote={onQuote} />
-      </div>
-    </details>
+    }>
+      <CommandDetails item={item} status={status} onQuote={onQuote} />
+    </LazyDetails>
+  )
+}
+
+function CommandDetails({ item, status, onQuote }: {
+  item: Extract<ItemView, { kind: 'command' }>
+  status: ToolStatus
+  onQuote?: (text: string) => void
+}) {
+  const text = item.output
+  const all = text.split('\n')
+  const output = all.length > 200 ? all.slice(-200).join('\n') : text
+  return (
+    <div className="qn-tool-body">
+      <div className="qn-mono whitespace-pre-wrap break-all text-[12px]">$ {item.command || '（命令）'}</div>
+      {item.cwd && <div className="qn-mono mt-1 text-[10px] text-qn-muted">{item.cwd}</div>}
+      {output && (
+        <pre className="qn-pre qn-scroll qn-command-output mt-2 overflow-auto whitespace-pre text-[11px] leading-5">
+          {all.length > 200 && <span className="text-qn-muted">（只显示末尾 200 行）{'\n'}</span>}
+          {output}
+        </pre>
+      )}
+      {!output && <div className="mt-2 text-xs text-qn-muted">{status === 'running' ? '等待输出…' : '无输出'}</div>}
+      <MessageActions text={item.command || text} onQuote={onQuote} />
+    </div>
   )
 }
 
@@ -235,16 +301,16 @@ function CommandItem({
 export function ToolGroup({ items, onQuote }: { items: ToolItem[]; onQuote: (text: string) => void }) {
   const running = items.some((item) => toolStatus(item) === 'running')
   return (
-    <details className="qn-tool-group">
+    <LazyDetails className="qn-tool-group" summary={
       <summary className="qn-tool-row">
         {running ? <LoadingIcon className="text-qn-accent" /> : <ListChecks size={14} className="shrink-0 text-qn-muted" aria-hidden />}
         <span className="min-w-0 flex-1 truncate">{toolSummary(items)}</span>
         <ChevronRight size={14} className="qn-tool-chevron shrink-0 text-qn-dim" aria-hidden />
       </summary>
-      <div className="qn-tool-group-body qn-scroll mt-1 space-y-1">
-        {items.map((item) => <MessageItem key={item.id} item={item} onQuote={onQuote} />)}
-      </div>
-    </details>
+    }>
+      <ToolPages items={items} className="qn-tool-group-body qn-scroll mt-1 space-y-1"
+        renderItem={(item) => <MessageItem key={item.id} item={item} onQuote={onQuote} />} />
+    </LazyDetails>
   )
 }
 
@@ -255,16 +321,29 @@ function FileChangeItem({
   item: Extract<ItemView, { kind: 'fileChange' }>
   onQuote?: (text: string) => void
 }) {
+  return (
+    <LazyDetails className="qn-tool" summary={
+      <summary className="qn-tool-row">
+        <FilePen size={14} className="shrink-0 text-qn-muted" aria-hidden />
+        <span className="min-w-0 flex-1 truncate">文件改动{item.changes.length > 0 && ` · ${item.changes.length} 个文件`}</span>
+        <Badge tone={statusTone(item.status)}>{item.status}</Badge>
+        <ChevronRight size={14} className="qn-tool-chevron shrink-0 text-qn-dim" aria-hidden />
+      </summary>
+    }>
+      <FileChangeDetails item={item} onQuote={onQuote} />
+    </LazyDetails>
+  )
+}
+
+function FileChangeDetails({ item, onQuote }: {
+  item: Extract<ItemView, { kind: 'fileChange' }>
+  onQuote?: (text: string) => void
+}) {
   const actions = useContext(FileActionsContext)
   return (
-    <div className="qn-tool qn-tool-open text-xs">
-      <div className="mb-1 flex flex-wrap items-center gap-2">
-        <FilePen size={14} className="text-qn-muted" aria-hidden />
-        <span>文件改动</span>
-        <Badge tone={statusTone(item.status)}>{item.status}</Badge>
-      </div>
+    <div className="qn-tool-body">
       {item.changes.length === 0 && <div className="text-qn-muted">等待改动内容…</div>}
-      {item.changes.map((change, index) => (
+      <ToolPages items={item.changes} className="space-y-2" renderItem={(change, index) => (
         <div key={`${change.path}-${change.kind}-${index}`} className="mb-2">
           <div className="flex items-center gap-2 py-1">
             {actions && change.path && change.kind !== 'output' ? (
@@ -295,7 +374,7 @@ function FileChangeItem({
           )}
           {typeof change.diff === 'string' && change.diff !== '' && <DiffBlock text={change.diff} />}
         </div>
-      ))}
+      )} />
       <MessageActions text={item.changes.map((change) => change.path).join('\n')} onQuote={onQuote} />
     </div>
   )
@@ -360,12 +439,14 @@ export function MessageItem({
   onQuote,
   agentName,
   active,
+  showStreamingDots,
   onResend,
 }: {
   item: ItemView
   onQuote?: (text: string) => void
   agentName?: string
   active?: boolean
+  showStreamingDots?: boolean
   onResend?: Resend
 }) {
   const markdownRef = useRef<HTMLDivElement>(null)
@@ -375,25 +456,26 @@ export function MessageItem({
     case 'agent':
       return (
         <div className="px-1 py-1" aria-label={agentName}>
-          <div ref={markdownRef} className="qn-markdown break-words text-sm">
+          {!item.streaming && item.completedAtMs !== undefined && item.text.trim() && <ReplyTime completedAtMs={item.completedAtMs} />}
+          <div ref={markdownRef} className={`qn-markdown break-words text-sm${item.streaming && showStreamingDots ? ' qn-streaming' : ''}`}>
             <Markdown text={item.text} streaming={item.streaming === true} />
-            {item.streaming && <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse bg-qn-accent align-middle" />}
           </div>
           <MessageActions text={item.text} onQuote={onQuote} getPlainText={() => markdownRef.current?.innerText ?? item.text} />
         </div>
       )
     case 'reasoning':
       return (
-        <details className="rounded-xl border border-qn-border bg-black/10 px-3 py-2 text-xs">
+        <LazyDetails className="rounded-xl border border-qn-border bg-black/10 px-3 py-2 text-xs" summary={
           <summary className="flex items-center gap-2 text-qn-muted">
             <span>◌ 推理摘要</span>
             {item.streaming && <Badge tone="accent">进行中</Badge>}
           </summary>
+        }>
           <div className="mt-2 whitespace-pre-wrap break-words leading-5 text-qn-text/90">
             {item.summary || '（暂无摘要）'}
           </div>
           <MessageActions text={item.summary} onQuote={onQuote} />
-        </details>
+        </LazyDetails>
       )
     case 'command':
       return <CommandItem item={item} onQuote={onQuote} />
@@ -401,8 +483,8 @@ export function MessageItem({
       return <FileChangeItem item={item} onQuote={onQuote} />
     case 'subagent':
       return (
-        <SubagentDetails item={item} renderItem={(child) => (
-          <FileActionsContext.Provider key={child.id} value={null}><MessageItem item={child} /></FileActionsContext.Provider>
+        <SubagentDetails item={item} renderItem={(child, showDots) => (
+          <FileActionsContext.Provider key={child.id} value={null}><MessageItem item={child} showStreamingDots={showDots} /></FileActionsContext.Provider>
         )} />
       )
     case 'other':

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeThreadSummaries, threadKey, toThreadSummaries, toTimestamp } from './threads'
+import { mergeThreadSummaries, threadKey, threadPreviewText, toThreadSummaries, toTimestamp } from './threads'
 
 describe('会话列表归一化', () => {
   it('兼容秒/毫秒时间戳', () => {
@@ -47,5 +47,22 @@ describe('会话列表归一化', () => {
     expect(claude[0]?.agent).toBe('claude')
     expect(mergeThreadSummaries([codex, claude]).map((entry) => entry.id)).toEqual(['l1', 'c1'])
     expect(threadKey('claude', 'l1')).toBe('claude:l1')
+  })
+})
+
+describe('会话悬浮摘要', () => {
+  it('只保留标题之外的内容，兼容已经截断的首行', () => {
+    expect(threadPreviewText({ title: '第一行', preview: '第一行\r\n第二行\n第三行' })).toBe('第二行\n第三行')
+    expect(threadPreviewText({ title: '第一行', preview: '第一行' })).toBe('')
+
+    const [thread] = toThreadSummaries([{ id: 'long', preview: '长标题'.repeat(60) }])
+    expect(thread!.preview).toMatch(/…$/)
+    expect(threadPreviewText(thread!)).toBe('')
+  })
+
+  it('保留自定义标题对应的独立摘要', () => {
+    expect(threadPreviewText({ title: '第一行', preview: ' 第一行后面还有内容 ' })).toBe('第一行后面还有内容')
+    expect(threadPreviewText({ title: '第一行', preview: '第一…' })).toBe('第一…')
+    expect(threadPreviewText({ title: '第一行', preview: '' })).toBe('')
   })
 })

@@ -1,7 +1,8 @@
+import { accessOptions, type AccessMode } from '@qn/codex-client'
 import { GitBranch, ListOrdered, MessageSquarePlus, Pencil, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { UNCONFIRMED_QUEUED_SEND } from '../queuedSends'
-import { selectedQueuedSends, useApp, type QueuedThreadMode } from '../store'
+import { selectedAccessPreference, selectedQueuedSends, useApp, type QueuedThreadMode } from '../store'
 import { Badge, Button, Dialog, Note } from './ui'
 
 const newChatActions = [
@@ -11,6 +12,7 @@ const newChatActions = [
 
 export function QueuedMessages({ running, canSteer }: { running: boolean; canSteer: boolean }) {
   const queue = useApp(selectedQueuedSends)
+  const accessPreference = useApp(selectedAccessPreference)
   const connected = useApp((state) => state.eventsConnected)
   const remove = useApp((state) => state.removeQueuedSend)
   const retry = useApp((state) => state.retryQueuedSend)
@@ -18,7 +20,8 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
   const saveEdit = useApp((state) => state.editQueuedSend)
   const steer = useApp((state) => state.steerQueuedSend)
   const sendInNewThread = useApp((state) => state.sendQueuedInNewThread)
-  const canContinue = useApp((state) => state.selectedAgent === 'codex')
+  const agent = useApp((state) => state.selectedAgent)
+  const canContinue = agent === 'codex'
   const [edit, setEdit] = useState<{ id: string; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState(false)
@@ -87,6 +90,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
   const continuing = destination?.mode === 'continue'
   const destinationTitle = continuing ? '新会话继续' : '新会话开始'
   const destinationError = moveError ?? (movingMessage?.error === UNCONFIRMED_QUEUED_SEND ? movingMessage.error : null)
+  const accessLabel = (mode?: AccessMode) => mode !== 'default' ? accessOptions[agent].find((option) => option.mode === mode)?.label : undefined
   return (
     <section className="shrink-0 border-t border-qn-border bg-qn-panel px-3" aria-label="发送队列">
       <details className="qn-details" open>
@@ -105,7 +109,12 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
         <ul className="qn-scroll mb-2 max-h-[min(26dvh,9rem)] overflow-y-auto" aria-label="待发送的消息">
           {queue.map((message, index) => (
             <li key={message.id} className="flex items-center gap-2 border-t border-qn-border text-sm">
-              <span className="min-w-0 flex-1 truncate">{message.text.trim() || '附件或引用'}</span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate">{message.text.trim() || '附件或引用'}</p>
+                {accessLabel(accessPreference ?? message.accessMode) && (
+                  <span className="text-xs text-qn-warn">{accessLabel(accessPreference ?? message.accessMode)}</span>
+                )}
+              </div>
               {message.sending || message.saving ? <Badge>{message.saving ? '保存中' : '发送中'}</Badge> : (
                 <div className="flex shrink-0 items-center">
                   {newChatActions.map(({ mode, label, Icon }) => (
@@ -161,6 +170,9 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
               {movingMessage.text.trim() || '附件或引用'}
             </p>
           ) : <Note message="这条消息已离开队列。" />}
+          {movingMessage && accessLabel(accessPreference ?? movingMessage.accessMode) && (
+            <Note message="将在新会话中使用 Agent 的默认权限。" tone="warn" />
+          )}
           {destinationError && <Note message={destinationError} tone="error" />}
           {!connected && <Note message="连接电脑后可发送。" tone="warn" />}
           <div className="mt-2 flex justify-end gap-2">

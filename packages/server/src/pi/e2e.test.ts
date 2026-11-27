@@ -172,7 +172,7 @@ describe('pi 桥端到端（daemon + 假 pi RPC）', () => {
     expect((await client.hello(token)).t).toBe('welcome')
     const opened = await client.req('codex.open', { agent: 'pi', piPath })
     expect(opened.initialize).toBeNull()
-    expect(opened.capabilities).toEqual({ approvals: false, rateLimits: false })
+    expect(opened.capabilities).toEqual({ approvals: false, rateLimits: false, ephemeralNoTools: true })
     expect(opened.agentVersion).toBe('test')
     expect(opened.lastSeq).toBe(0)
     expect(await client.req('codex.attach', { agent: 'pi', sinceSeq: 0 })).toMatchObject({

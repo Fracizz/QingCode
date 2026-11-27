@@ -209,7 +209,7 @@ describe('daemon 的 agent 分发与协议扩展', () => {
     expect(codex.codexVersion).toBe('0.172.0')
     expect(codex.agentVersion).toBe('0.172.0')
     expect(codex.initialize).toMatchObject({ userAgent: 'fake-codex/0.172.0' })
-    expect(await client.req('codex.attach', { sinceSeq: 0 })).toMatchObject({ truncated: false })
+    expect(await client.req('codex.attach', { sinceSeq: 0 })).toMatchObject({ truncated: false, accessModes: true })
 
     const claude = await client.req('codex.open', { agent: 'claude' })
     expect(claude.lastSeq).toBe(0)
@@ -219,6 +219,7 @@ describe('daemon 的 agent 分发与协议扩展', () => {
     expect(await client.req('codex.attach', { agent: 'claude', sinceSeq: 0 })).toMatchObject({
       lastSeq: 0,
       truncated: false,
+      accessModes: true,
     })
     expect(await client.req('codex.status', { agent: 'claude' })).toMatchObject({ running: true })
     expect(await client.req('codex.status')).toMatchObject({ running: true })

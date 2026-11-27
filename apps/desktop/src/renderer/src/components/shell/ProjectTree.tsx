@@ -5,7 +5,6 @@ import type { Project } from '../../../../shared/backendApi'
 import { sessionKey } from '../../lib/agents'
 import { applyThreadPrefs } from '../../lib/threadPrefs'
 import { threadKey } from '../../lib/threads'
-import { formatRelative } from '../../lib/time'
 import { useCodex } from '../../store/codex'
 import { useProjects } from '../../store/projects'
 import { useThreadPrefs } from '../../store/threadPrefs'
@@ -95,7 +94,6 @@ export function ProjectTree({ targetId }: { targetId: string }) {
                 project={project}
                 active={active}
                 expanded={expanded}
-                now={now}
                 onOpen={() => onProjectClick(project)}
                 onNewDraft={() => newDraftIn(project)}
               />
@@ -110,19 +108,16 @@ export function ProjectTree({ targetId }: { targetId: string }) {
   )
 }
 
-/** 项目行：悬停显示"新建会话"与"更多"菜单（置顶 / 重命名 / 复制路径 / 移除）。 */
 function ProjectRow({
   project,
   active,
   expanded,
-  now,
   onOpen,
   onNewDraft,
 }: {
   project: Project
   active: boolean
   expanded: boolean
-  now: number
   onOpen: () => void
   onNewDraft: () => void
 }) {
@@ -130,7 +125,6 @@ function ProjectRow({
   const togglePin = useProjects((s) => s.togglePin)
   const rename = useProjects((s) => s.rename)
   const remove = useProjects((s) => s.remove)
-  // 菜单打开时保持操作区可见，否则鼠标移进浮层后触发器隐藏、菜单会失去锚点。
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(project.name)
@@ -186,7 +180,7 @@ function ProjectRow({
 
   return (
     <div
-      className={`group flex h-8 items-center gap-1 rounded-lg pl-2 pr-1 text-[14px] ${
+      className={`flex h-8 items-center gap-1 rounded-lg pl-2 pr-1 text-[14px] ${
         active ? 'text-qn-text' : 'text-qn-text/85 hover:bg-qn-hover'
       } ${(active && !expanded) || menuOpen ? 'bg-qn-hover' : ''}`}
       title={project.path}
@@ -201,10 +195,7 @@ function ProjectRow({
         <span className="min-w-0 flex-1 truncate">{project.name}</span>
         {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
       </button>
-      <span className={`shrink-0 pr-1.5 text-[12px] text-qn-dim group-hover:hidden ${menuOpen ? 'hidden' : ''}`}>
-        {formatRelative(project.lastOpenedAt, now)}
-      </span>
-      <span className={`shrink-0 items-center group-hover:flex ${menuOpen ? 'flex' : 'hidden'}`}>
+      <span className="flex shrink-0 items-center">
         <Menu open={menuOpen} onOpenChange={setMenuOpen}>
           <MenuTrigger asChild>
             <button

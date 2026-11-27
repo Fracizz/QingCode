@@ -1,5 +1,5 @@
 import { sessionStatusLabels, type SessionStatus } from '@qn/codex-client'
-import { ChevronDown, ChevronRight, Ellipsis, Folder, MessageSquareText, Monitor, RotateCw, Search, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Ellipsis, Folder, MessageCircleMore, Monitor, RotateCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { sessionKey } from '../agents'
 import { useApp } from '../store'
@@ -41,7 +41,7 @@ const emptyThreads: WorkspaceThread[] = []
 const THREAD_PREVIEW_LIMIT = 5
 
 const workspaceIcons = {
-  sessions: MessageSquareText,
+  sessions: MessageCircleMore,
   projects: Folder,
   connections: Monitor,
   search: Search,

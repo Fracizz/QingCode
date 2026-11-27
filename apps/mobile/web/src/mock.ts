@@ -397,7 +397,8 @@ export class MockNativePort implements NativePort {
       }
       case 'server.req':
         return this.serverReq(params)
-      case 'codex.send': {
+      case 'codex.send':
+      case 'mobile.turn.start': {
         this.codexSend(params, agentOf(params.agent ?? request.agent))
         return null
       }
@@ -491,7 +492,7 @@ export class MockNativePort implements NativePort {
         if (agent === 'pi') throw new MockError('agent_unavailable', '未找到 pi（模拟）')
         return { initialize: { userAgent: `mock-${agent}` }, lastSeq: this.seq, agentVersion: '0.0.0-mock' }
       case 'codex.attach':
-        return { lastSeq: this.seq, truncated: false }
+        return { lastSeq: this.seq, truncated: false, mobileAccessModes: agent !== 'pi' }
       case 'codex.status':
         return { running: agent !== 'pi', pid: 4242, activeTurns: 0 }
       case 'fs.read':
@@ -625,6 +626,14 @@ export class MockNativePort implements NativePort {
           },
         })
         return
+      case 'thread/turns/list': {
+        const offset = Math.max(0, Number(inner.cursor) || 0)
+        const limit = Math.max(1, Number(inner.limit) || 8)
+        const ordered = inner.sortDirection === 'desc' ? [...history()].reverse() : history()
+        const data = ordered.slice(offset, offset + limit)
+        recv({ id, result: { data, nextCursor: offset + limit < ordered.length ? String(offset + limit) : null, backwardsCursor: null } })
+        return
+      }
       case 'thread/compact/start': {
         if (agent !== 'codex' || active) {
           recv({ id, error: { code: agent !== 'codex' ? -32601 : -32602, message: '当前无法压缩会话' } })

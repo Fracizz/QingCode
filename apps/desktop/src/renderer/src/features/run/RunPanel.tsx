@@ -9,7 +9,6 @@ import {
   Play,
   Plus,
   RotateCcw,
-  RotateCw,
   Search,
   Square,
   Trash2,
@@ -17,7 +16,9 @@ import {
 } from 'lucide-react'
 import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Modal, Spinner } from '../../components/ui'
 import { FeedbackRow } from '../../components/FeedbackRow'
+import { RefreshIcon } from '../../components/LoadingIcon'
 import { Tip } from '../../components/primitives'
+import { StatusDot } from '../../components/StatusDot'
 import { copyText } from '../../lib/clipboard'
 import { cn } from '../../lib/cn'
 import { openFile } from '../workspace/openers'
@@ -226,7 +227,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
               void loadConfigs(targetId, cwd)
             }}
           >
-            <RotateCw size={14} className={view.configLoading ? 'animate-spin' : ''} />
+            <RefreshIcon loading={view.configLoading} />
           </IconButton>
         </div>
       </div>
@@ -286,7 +287,7 @@ export function RunPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
                 onDoubleClick={() => canEdit && setEditing({ config, isNew: false })}
               >
                 <Tip label={statusLabel[status]}>
-                  <span className={cn('h-2 w-2 shrink-0 rounded-full', statusDot[status])} />
+                  <StatusDot className={cn('size-2', statusDot[status])} />
                 </Tip>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13px]">{config.name || '（未命名）'}</div>
@@ -587,9 +588,7 @@ function RunOutputArea({
                   if (event.key === 'Enter' || event.key === ' ') onSelect(run.runId)
                 }}
               >
-                <span
-                  className={cn('h-1.5 w-1.5 shrink-0 rounded-full', live ? 'bg-qn-ok' : failed ? 'bg-qn-danger' : 'bg-qn-dim')}
-                />
+                <StatusDot className={live ? 'bg-qn-ok' : failed ? 'bg-qn-danger' : 'bg-qn-dim'} />
                 <span className="truncate">{run.label}</span>
                 {!live && (
                   <IconButton

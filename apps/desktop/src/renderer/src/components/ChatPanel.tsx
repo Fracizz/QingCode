@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type UIEvent } from 'react'
 import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
 import type { ApprovalDecision, ApprovalView, ItemView, RequestId } from '@qn/codex-client'
-import { DRAFT_THREAD_ID } from '@qn/codex-client'
-import { buildAnnotatedMessage, quoteBlock, type Annotation } from '../lib/annotations'
+import { collectSubagents, DRAFT_THREAD_ID, supportsSubagentRequests } from '@qn/codex-client'
+import type { AgentKind } from '../../../shared/backendApi'
+import { buildAnnotatedMessage, quoteBlock, sideChatExcerpt, type Annotation } from '../lib/annotations'
 import { agentLabel, sessionKey } from '../lib/agents'
 import {
   attachmentsBlocking,
@@ -17,10 +18,11 @@ import {
 import { readImage, uploadToTarget } from '../lib/attachmentIo'
 import { screenFiles, useImageSupport } from '../features/composer'
 import { isAtBottom } from '../lib/diff'
+import { friendlyError } from '../lib/errors'
 import type { Box } from '../lib/selection'
 import { targetDotClass } from '../lib/targetStatus'
-import { groupTurns, hasPendingSubmission } from '../lib/turnGroups'
-import { pendingSendKey, useCodex, type SendMode } from '../store/codex'
+import { groupTurns, hasPendingSubmission, streamingReplyId } from '../lib/turnGroups'
+import { composerDraftKey, pendingSendKey, useCodex, type SendMode } from '../store/codex'
 import { useProjects } from '../store/projects'
 import { skillsKey, useSkills } from '../store/skills'
 import { useTargets } from '../store/targets'
@@ -34,14 +36,29 @@ import { MessageItem, ToolGroup, TurnProgress, WorkGroup } from './MessageItem'
 import { ContextRing, ModelPicker } from './ModelPicker'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
+import { StatusDot } from './StatusDot'
 import { MainHeader } from './shell/MainHeader'
 import { WelcomePane } from './shell/WelcomePane'
 import { SideChat } from './SideChat'
-import { SubagentRpcContext } from './SubagentDetails'
+import { SubagentLauncher } from './SubagentDetails'
 import { TurnErrorNote } from './TurnErrorNote'
 import { EmptyState, ErrorNote } from './ui'
 
 const HISTORY_BATCH_SIZE = 60
+
+type Draft = {
+  text: string
+  annotations: Annotation[]
+  attachments: Attachment[]
+  skills: Partial<Record<AgentKind, SkillRef[]>>
+}
+const emptyDraft: Draft = { text: '', annotations: [], attachments: [], skills: {} }
+const emptySkills: SkillRef[] = []
+
+function hasDraft(draft: Draft): boolean {
+  return !!(draft.text || draft.annotations.length || draft.attachments.length ||
+    Object.values(draft.skills).some((skills) => skills.length))
+}
 
 export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) => void; onAddTarget: () => void }) {
   const targets = useTargets((s) => s.targets)
@@ -73,13 +90,35 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const annotationCounter = useRef(0)
   const [pinned, setPinned] = useState(true)
   const [historyStart, setHistoryStart] = useState<{ key: string | null; index: number } | null>(null)
-  const [draft, setDraft] = useState('')
-  const [annotations, setAnnotations] = useState<Annotation[]>([])
+  const [historyLoad, setHistoryLoad] = useState<{ key: string | null; error?: string } | null>(null)
+  const loadEarlierHistory = useCodex((s) => s.loadEarlierHistory)
+  const draftKey = useCodex(composerDraftKey)
+  const sendingDraftKey = useRef<string | null>(null)
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({})
+  const { text: draft, annotations, attachments, skills: draftSkills } = drafts[draftKey] ?? emptyDraft
+  const skills = draftSkills[currentAgent] ?? emptySkills
+  const updateDraft = (change: (previous: Draft) => Draft, key = draftKey) => {
+    if (key.startsWith('draft:') && key !== composerDraftKey(useCodex.getState()) && key !== sendingDraftKey.current) {
+      return
+    }
+    setDrafts((previous) => {
+      const next = change(previous[key] ?? emptyDraft)
+      const drafts = { ...previous }
+      if (hasDraft(next)) drafts[key] = next
+      else delete drafts[key]
+      return drafts
+    })
+  }
+  const setDraft = (value: string) => updateDraft((item) => ({ ...item, text: value }))
+  const setAnnotations = (change: (items: Annotation[]) => Annotation[]) =>
+    updateDraft((item) => ({ ...item, annotations: change(item.annotations) }))
   const [highlights, setHighlights] = useState<Record<string, Box[]>>({})
-  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const setAttachments = (change: (items: Attachment[]) => Attachment[]) =>
+    updateDraft((item) => ({ ...item, attachments: change(item.attachments) }))
   const [readingImages, setReadingImages] = useState(0)
-  const attachmentReads = useRef({ pending: 0 })
-  const [skills, setSkills] = useState<SkillRef[]>([])
+  const attachmentReads = useRef(new Map<string, number>())
+  const setSkills = (skills: SkillRef[]) =>
+    updateDraft((item) => ({ ...item, skills: { ...item.skills, [currentAgent]: skills } }))
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
   const imageSupport = useImageSupport(currentTargetId, currentAgent, !!currentTargetId)
@@ -93,22 +132,32 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const view = session?.state.threads[visibleThreadId]
   const preview = sendingMessage?.preview
   const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? []), preview] : view?.items ?? [], [preview, view?.items])
+  const subagents = useMemo(() => collectSubagents(view?.items ?? [], currentThreadId ?? undefined, session?.state.threads),
+    [view?.items, currentThreadId, session?.state.threads])
+  const sideChats = useCodex((s) => s.sideChats)
   const approvals: ApprovalView[] = currentThreadId && view
     ? view.pendingApprovals
-    : Object.values(session?.state.threads ?? {}).flatMap((thread) => thread.pendingApprovals)
+    : Object.values(session?.state.threads ?? {})
+      .filter((thread) => !Object.values(sideChats).some((side) =>
+        side.threadId === thread.id && side.agent === currentAgent && side.targetId === currentTargetId))
+      .flatMap((thread) => thread.pendingApprovals)
   const running = view?.status === 'running'
+  const streamingId = streamingReplyId(view)
   const interrupted = !running && view?.activity === 'interrupted'
   const showProgress = approvals.length === 0 && !session?.openError
     && (running || hasPendingSubmission(items, !!sendingMessage || sendingQueued))
   const empty = items.length === 0 && approvals.length === 0 && !running && !showProgress && !interrupted
-  const flow = useMemo(() => groupTurns(items, view?.turns, running), [items, view?.turns, running])
+  const flow = useMemo(() => groupTurns(items.filter((item) => item.kind !== 'subagent'), view?.turns, running),
+    [items, view?.turns, running])
   const defaultStart = Math.max(0, flow.length - HISTORY_BATCH_SIZE)
   const firstVisible = historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart
+  const historyLoading = historyLoad?.key === chatKey && historyLoad.error === undefined
+  const historyError = historyLoad?.key === chatKey ? historyLoad.error : undefined
 
   // 宽度改变会让文字换行，旧的高亮坐标会指向别处。
   useLayoutEffect(() => {
     setHighlights({})
-  }, [chatWidth])
+  }, [chatWidth, draftKey])
 
   // 切换会话时回到底部，不沿用上一个会话的滚动位置。
   useLayoutEffect(() => {
@@ -136,13 +185,28 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     historyScroll.current = null
     const scroll = scrollRef.current
     if (scroll && previous?.key === chatKey) scroll.scrollTop = previous.top + scroll.scrollHeight - previous.height
-  }, [chatKey, firstVisible])
+  }, [chatKey, firstVisible, view?.historyCursor])
 
-  const showEarlier = () => {
-    const scroll = scrollRef.current
-    if (scroll) historyScroll.current = { key: chatKey, height: scroll.scrollHeight, top: scroll.scrollTop }
-    setPinned(false)
-    setHistoryStart({ key: chatKey, index: Math.max(0, firstVisible - HISTORY_BATCH_SIZE) })
+  const showEarlier = async () => {
+    if (historyLoading) return
+    const reveal = () => {
+      const scroll = scrollRef.current
+      if (scroll) historyScroll.current = { key: chatKey, height: scroll.scrollHeight, top: scroll.scrollTop }
+      setPinned(false)
+      setHistoryStart({ key: chatKey, index: Math.max(0, firstVisible - HISTORY_BATCH_SIZE) })
+    }
+    if (firstVisible > 0) {
+      reveal()
+      return
+    }
+    const load = { key: chatKey }
+    setHistoryLoad(load)
+    try {
+      await loadEarlierHistory(reveal)
+      setHistoryLoad((current) => current === load ? null : current)
+    } catch (error) {
+      setHistoryLoad((current) => current === load ? { ...load, error: friendlyError(error, '加载历史失败') } : current)
+    }
   }
 
   const onScroll = (event: UIEvent<HTMLDivElement>) => {
@@ -176,15 +240,55 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     })
   }
 
-  const submit = async (text: string, mode: SendMode, delegate: boolean): Promise<boolean> => {
+  const submit = async (text: string, mode: SendMode): Promise<boolean> => {
     const message = buildAnnotatedMessage(annotations, text)
     const input = buildUserInput(message, attachments, skills)
-    if (input.length === 0) return false
-    if (!(await sendAndFollow(message, { input, mode, delegate }))) return false
-    setDraft((current) => current === text ? '' : current)
-    for (const annotation of annotations) removeAnnotation(annotation.id)
-    setAttachments((current) => current.filter((item) => !attachments.some((sent) => sent.id === item.id)))
-    setSkills((current) => current.filter((item) => !skills.includes(item)))
+    const newDraft = currentThreadId === null
+    if (input.length === 0 || (newDraft && sendingDraftKey.current)) return false
+    let createdKey: string | null = null
+    let accepted: boolean
+    if (newDraft) sendingDraftKey.current = draftKey
+    try {
+      accepted = await sendAndFollow(message, { input, mode, onThreadCreated: (threadId) => {
+        createdKey = JSON.stringify([currentTargetId, currentCwd, currentAgent, threadId])
+      } })
+    } finally {
+      if (newDraft) sendingDraftKey.current = null
+    }
+    const restoreDraft = !newDraft || createdKey !== null || draftKey === composerDraftKey(useCodex.getState())
+    // 新草稿的第一轮可能在建会话后发送失败，重试内容要留在已创建的会话里。
+    setDrafts((previous) => {
+      const source = previous[draftKey]
+      if (!source) return previous
+      const next = { ...previous }
+      delete next[draftKey]
+      const unsent = accepted ? {
+        text: source.text === text ? '' : source.text,
+        annotations: source.annotations.filter((item) => !annotations.includes(item)),
+        attachments: source.attachments.filter((item) => !attachments.includes(item)),
+        skills: {
+          ...source.skills,
+          [currentAgent]: source.skills[currentAgent]?.filter((item) => !skills.includes(item)),
+        },
+      } : source
+      const remaining = createdKey ? { ...unsent, skills: { [currentAgent]: unsent.skills[currentAgent] } } : unsent
+      if (restoreDraft && hasDraft(remaining)) {
+        const key = createdKey ?? draftKey
+        const dest = next[key]
+        next[key] = dest ? {
+          text: [remaining.text, dest.text].filter(Boolean).join('\n\n'),
+          annotations: [...remaining.annotations, ...dest.annotations],
+          attachments: [...remaining.attachments, ...dest.attachments],
+          skills: {
+            [currentAgent]: [...new Set([...(remaining.skills[currentAgent] ?? []), ...(dest.skills[currentAgent] ?? [])])],
+          },
+        } : remaining
+      }
+      return next
+    })
+    if (!accepted) return false
+    setHighlights((previous) => Object.fromEntries(Object.entries(previous)
+      .filter(([id]) => !annotations.some((item) => item.id === id))))
     return true
   }
 
@@ -195,11 +299,11 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
 
   /** 图片读成 data URL 随消息发送；其他文件本机目标直接引用路径，远端目标先上传到目标机。 */
   const addFiles = (files: File[]) => {
-    if (!currentTargetId) return
+    if (!currentTargetId || sending) return
     const targetId = currentTargetId
-    const reads = attachmentReads.current
+    const reads = attachmentReads.current.get(draftKey) ?? 0
     const { accepted, rejected } = screenFiles(files, {
-      existingImages: attachments.filter((item) => item.kind === 'image').length + reads.pending,
+      existingImages: attachments.filter((item) => item.kind === 'image').length + reads,
       imagesAllowed: imageSupport.allowed,
       unsupportedReason: imageSupport.reason ?? undefined,
     })
@@ -208,7 +312,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       notify(`未添加 ${rejected.length} 张图片（${detail}）`)
     }
     if (accepted.length === 0) return
-    const room = MAX_ATTACHMENTS - attachments.length - reads.pending
+    const room = MAX_ATTACHMENTS - attachments.length - reads
     if (room <= 0) {
       notify('最多添加 ' + MAX_ATTACHMENTS + ' 个附件')
       return
@@ -219,22 +323,23 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     for (const file of accepted.slice(0, room)) {
       const id = 'att-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7)
       if (isImageFile(file)) {
-        reads.pending += 1
-        setReadingImages(reads.pending)
+        const updateReads = (delta: number) => {
+          const count = (attachmentReads.current.get(draftKey) ?? 0) + delta
+          if (count) attachmentReads.current.set(draftKey, count)
+          else attachmentReads.current.delete(draftKey)
+          if (draftKey === composerDraftKey(useCodex.getState())) setReadingImages(count)
+        }
+        updateReads(1)
         void readImage(file)
           .then(({ dataUrl, size }) => {
-            if (attachmentReads.current !== reads) return
             setAttachments((prev) => [...prev, { id, kind: 'image', name: file.name || '粘贴的图片', size, dataUrl }])
           })
           .catch((err: unknown) => {
-            if (attachmentReads.current === reads) {
+            if (draftKey === composerDraftKey(useCodex.getState())) {
               notify((file.name || '图片') + '：' + (err instanceof Error ? err.message : '读取失败'))
             }
           })
-          .finally(() => {
-            reads.pending -= 1
-            if (attachmentReads.current === reads) setReadingImages(reads.pending)
-          })
+          .finally(() => updateReads(-1))
         continue
       }
       if (file.size > MAX_FILE_BYTES) {
@@ -295,7 +400,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       return
     }
     startDraft(currentAgent)
-    setDraft(quoteBlock(markdown))
+    updateDraft((item) => ({ ...item, text: quoteBlock(markdown) }), composerDraftKey(useCodex.getState()))
   }
   // 进行中的轮次不能分叉（Codex 会拒绝），运行期间先不提供入口。
   const canFork = !(currentAgent === 'codex' && running)
@@ -333,13 +438,17 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     }
   }
 
-  // 切换目标或 Agent 后，旧目标上传的附件路径不再有效。
+  // 切换草稿后只跟踪当前输入框的读图进度。
   useLayoutEffect(() => {
-    attachmentReads.current = { pending: 0 }
-    setReadingImages(0)
-    setAttachments([])
-    setSkills([])
-  }, [currentTargetId, currentAgent])
+    setReadingImages(attachmentReads.current.get(draftKey) ?? 0)
+    // 已开始发送的新草稿保留到 RPC 完成，以便把失败的输入留给刚创建的会话。
+    const pendingKey = sendingDraftKey.current
+    setDrafts((previous) => {
+      const entries = Object.entries(previous)
+      const kept = entries.filter(([key]) => !key.startsWith('draft:') || key === draftKey || key === pendingKey)
+      return kept.length === entries.length ? previous : Object.fromEntries(kept)
+    })
+  }, [draftKey])
   const agentStatus = session?.opening
     ? `${agentLabel(currentAgent)} 启动中…`
     : session?.openError && !session.opened
@@ -357,7 +466,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <MainHeader />
+      <MainHeader subagents={currentThreadId && (subagents.length > 0 || supportsSubagentRequests(currentAgent)) && (
+        <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={session?.opened ? session.rpc : null}
+          renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
+      )} />
 
       {openingThread && (
         <div className="flex items-center gap-2 border-b border-qn-border px-6 py-2 text-sm text-qn-muted" role="status">
@@ -368,12 +480,13 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
       <div className="relative flex min-h-12 flex-1">
         <SelectionLayer
           containerRef={scrollRef}
-          layoutKey={chatWidth}
+          layoutKey={JSON.stringify([chatWidth, draftKey])}
           className={`qn-scroll min-w-0 flex-1 overflow-y-auto px-6 pb-6 pt-2 [scrollbar-gutter:stable_both-edges]${pinned ? ' [overflow-anchor:none]' : ''}`}
           onScroll={onScroll}
           highlights={Object.values(highlights).flat()}
           onAdd={addAnnotation}
-          onSide={(quote) => void openSideChat(quote)}
+          showSideAction={!!currentThreadId}
+          onSide={(text, itemId) => openSideChat(sideChatExcerpt(items, { text, itemId }))}
         >
           <div ref={contentRef} className={`mx-auto flex min-h-full flex-col ${contentWidthClassName}`}>
             {session?.openError && (
@@ -398,33 +511,36 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
               <div className="flex flex-1 flex-col">
                 <WelcomePane onConnect={onConnect} onAddTarget={onAddTarget} />
               </div>
-            ) : empty ? (
+            ) : empty && !view?.historyCursor ? (
               <div className="flex flex-1 items-center justify-center">
                 <EmptyState>会话暂无消息，发送一条开始对话。</EmptyState>
               </div>
             ) : (
               <div className="space-y-4 pt-4">
-                {firstVisible > 0 && (
-                  <button type="button" className="mx-auto block rounded-full px-3 py-1.5 text-sm text-qn-muted hover:bg-qn-hover" onClick={showEarlier}>
-                    查看更早消息
+                {(firstVisible > 0 || view?.historyCursor) && (
+                  <button type="button" className="mx-auto block rounded-full px-3 py-1.5 text-sm text-qn-muted hover:bg-qn-hover" disabled={historyLoading} onClick={() => void showEarlier()}>
+                    {historyLoading ? '正在加载更早消息…' : '查看更早消息'}
                   </button>
                 )}
-                <SubagentRpcContext.Provider key={chatKey ?? undefined} value={session?.rpc ?? null}>
-                  {flow.slice(firstVisible).map((entry) =>
-                    entry.kind === 'tools' ? (
-                      <ToolGroup key={entry.key} items={entry.items} />
-                    ) : entry.kind === 'work' ? (
-                      <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries} onFork={canFork ? forkFromMessage : undefined} />
-                    ) : (
-                      <MessageItem
-                        key={`${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`}
-                        item={entry.item}
-                        onFork={canFork ? forkFromMessage : undefined}
-                        onEdit={(text, input) => sendAndFollow(text, { input })}
-                      />
-                    ),
-                  )}
-                </SubagentRpcContext.Provider>
+                {historyError && <div role="alert" className="text-center text-sm text-qn-danger">{historyError}</div>}
+                {flow.slice(firstVisible).map((entry, index) => {
+                  const previous = index > 0 ? flow[firstVisible + index - 1] : undefined
+                  return entry.kind === 'tools' ? (
+                    <ToolGroup key={entry.key} items={entry.items} />
+                  ) : entry.kind === 'work' ? (
+                    <WorkGroup key={entry.key} durationMs={entry.durationMs} entries={entry.entries}
+                      replyCompletedAtMs={entry.reply?.completedAtMs} onFork={canFork ? forkFromMessage : undefined} />
+                  ) : (
+                    <MessageItem
+                      key={`${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`}
+                      item={entry.item}
+                      showStreamingDots={entry.item.id === streamingId}
+                      replyTimeInSummary={previous?.kind === 'work' && previous.reply?.id === entry.item.id}
+                      onFork={canFork ? forkFromMessage : undefined}
+                      onEdit={(text, input) => sendAndFollow(text, { input })}
+                    />
+                  )
+                })}
                 {showProgress ? <TurnProgress activity={running ? view.activity : undefined} />
                   : interrupted && <TurnProgress activity="interrupted" />}
                 {approvals.map((approval) => (
@@ -458,9 +574,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           running={running}
           contentWidthClassName={contentWidthClassName}
         />
-        <AnnotationBar annotations={annotations} onRemove={removeAnnotation} />
+        <AnnotationBar annotations={annotations} onRemove={removeAnnotation} contentWidthClassName={contentWidthClassName} />
       </div>
       <Composer
+        key={draftKey}
         contentWidthClassName={contentWidthClassName}
         onSend={submit}
         onInterrupt={() => void interrupt()}
@@ -487,7 +604,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           onSkillsChange: setSkills,
           onCommand: runCommand,
         }}
-        leading={<AgentPicker targetId={currentTargetId} agent={currentAgent} locked={!isDraft} />}
+        leading={<AgentPicker targetId={currentTargetId} agent={currentAgent} locked={!isDraft || sending} />}
         trailing={
           currentTargetId && (
             <>
@@ -499,7 +616,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         footer={
           <>
             <span className="flex min-w-0 items-center gap-1.5">
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${targetDotClass[targetState]}`} />
+              <StatusDot className={targetDotClass[targetState]} />
               <TargetIcon size={13} className="shrink-0" />
               <span className="truncate">{target?.name ?? '未选择目标'}</span>
             </span>

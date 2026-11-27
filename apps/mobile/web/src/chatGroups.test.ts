@@ -1,6 +1,6 @@
-import type { ItemView } from '@qn/codex-client'
+import type { ItemView, ThreadView } from '@qn/codex-client'
 import { describe, expect, it } from 'vitest'
-import { groupChatItems, toolSummary, type ToolItem } from './chatGroups'
+import { groupChatItems, streamingReplyId, toolSummary, type ToolItem } from './chatGroups'
 
 const command = (id: string, status = 'completed', exitCode: number | null = 0): ItemView =>
   ({ kind: 'command', id, command: 'ls', output: '', exitCode, status })
@@ -20,6 +20,19 @@ describe('groupChatItems', () => {
     const subagent: ItemView = { kind: 'subagent', id: 'child', status: '运行中', title: '启动子代理', detail: '' }
     expect(groupChatItems([command('c1'), command('c2'), subagent]).at(-1)).toEqual({ kind: 'item', item: subagent })
   })
+})
+
+it('同一轮有多条流式标记时，只在最后一条回复仍在输出时显示提示', () => {
+  const first: ItemView = { kind: 'agent', id: 'first', text: '检查中', streaming: true }
+  const latest: ItemView = { kind: 'agent', id: 'latest', text: '正在总结', streaming: true }
+  const thread: ThreadView = { id: 'thread', status: 'running', activeTurnId: 'turn', pendingApprovals: [], items: [first, latest] }
+  expect(streamingReplyId(thread)).toBe('latest')
+  expect(streamingReplyId({ ...thread, items: [latest, first], turns: [
+    { id: 'turn', startedAtMs: 1, durationMs: null, itemIds: ['latest'] },
+  ] })).toBe('latest')
+  expect(streamingReplyId({ ...thread, items: [...thread.items, command('next')] })).toBeUndefined()
+  expect(streamingReplyId({ ...thread, items: [first, { ...latest, streaming: false }] })).toBeUndefined()
+  expect(streamingReplyId({ ...thread, status: 'idle' })).toBeUndefined()
 })
 
 describe('toolSummary', () => {

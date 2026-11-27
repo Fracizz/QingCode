@@ -1,13 +1,15 @@
-import { ArrowDown, ChevronDown, PanelLeft, Square } from 'lucide-react'
-import { sessionStatus, sessionStatusLabels, type ItemView, type UserInput } from '@qn/codex-client'
+import { ArrowDown, ChevronDown, MessageCircleMore, PanelLeft, Square } from 'lucide-react'
+import { collectSubagents, sessionStatus, sessionStatusLabels, supportsSubagentRequests, type ItemView, type UserInput } from '@qn/codex-client'
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
+import { bindChatPinch } from '../chatFont'
 import { nearBottom } from '../composerLogic'
 import { EMPTY_PREFS, resolveSelection } from '../models'
-import { currentCwd, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
-import { groupChatItems } from '../chatGroups'
+import { currentCwd, displayedAccessMode, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
+import { groupChatItems, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { ApprovalCard } from './ApprovalCard'
+import { AccessModePicker } from './AccessModePicker'
 import { Composer } from './Composer'
 import { ContextUsage } from './ContextUsage'
 import { FileActionsContext, MessageItem, ToolGroup, type FileActions } from './MessageItem'
@@ -15,7 +17,7 @@ import { ModelPicker } from './ModelSheet'
 import { NewSessionButton } from './NewSessionButton'
 import { QueuedMessages } from './QueuedMessages'
 import { SessionSwitcher } from './SessionSwitcher'
-import { SubagentRpcContext } from './SubagentDetails'
+import { SubagentLauncher } from './SubagentDetails'
 import { Badge, Button, Empty, Header, LoadingIcon, Note } from './ui'
 
 const NO_ITEMS: ItemView[] = []
@@ -33,6 +35,8 @@ export function ChatPage() {
   const openDiff = useApp((s) => s.openDiff)
   const key = selectedTargetId ? sessionKey(selectedTargetId, selectedAgent) : ''
   const session = useApp((s) => s.sessions[key])
+  const accessMode = useApp(displayedAccessMode)
+  const setAccessMode = useApp((s) => s.setAccessMode)
   const models = useApp((s) => s.models[key]?.models)
   const modelPrefs = useApp((s) => s.modelPrefs[key] ?? EMPTY_PREFS)
   const threads = useApp((s) => s.threads)
@@ -68,6 +72,25 @@ export function ChatPage() {
   const [switching, setSwitching] = useState(false)
   const [atBottom, setAtBottom] = useState(true)
   const [historyStart, setHistoryStart] = useState<{ key: string; index: number } | null>(null)
+  const [historyLoad, setHistoryLoad] = useState<{ key: string; error?: string } | null>(null)
+  const loadEarlierHistory = useApp((s) => s.loadEarlierHistory)
+  const chatSurface = useRef<HTMLDivElement>(null)
+  const [selection, setSelection] = useState<{ key: string; text: string } | null>(null)
+  useLayoutEffect(() => {
+    const root = chatSurface.current
+    if (root) return bindChatPinch(root)
+  }, [])
+  useLayoutEffect(() => {
+    const capture = () => {
+      const range = window.getSelection()
+      const transcript = scrollRef.current
+      const text = range && transcript?.contains(range.anchorNode) && transcript.contains(range.focusNode)
+        ? range.toString().trim().slice(0, 4000) : ''
+      setSelection(text ? { key: chatKey, text } : null)
+    }
+    document.addEventListener('selectionchange', capture)
+    return () => document.removeEventListener('selectionchange', capture)
+  }, [chatKey])
   const scrollRef = useRef<HTMLDivElement>(null)
   const historyScroll = useRef<{ key: string; height: number; top: number } | null>(null)
   const approvalsRef = useRef<HTMLDivElement>(null)
@@ -76,8 +99,11 @@ export function ChatPage() {
 
   const view = selectedThreadId ? session?.state.threads[selectedThreadId] : undefined
   const items = view?.items ?? NO_ITEMS
+  const subagents = useMemo(() => collectSubagents(items, selectedThreadId ?? undefined, session?.state.threads),
+    [items, selectedThreadId, session?.state.threads])
   const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
+  const streamingId = streamingReplyId(view)
   const progress = running && approvals.length === 0
     ? view.activity === 'input' ? '等待输入…'
       : view.activity === 'pending' ? '等待审批…' : `${agentLabel(selectedAgent)} 正在处理…`
@@ -91,7 +117,7 @@ export function ChatPage() {
   const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
     item.type === 'contextCompaction' && item.status === 'inProgress' && activeItemIds?.includes(item.id))
   const shownItems = useMemo(
-    () => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'reasoning'),
+    () => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'reasoning' && item.kind !== 'subagent'),
     [items, view?.error, running],
   )
   // index 记的是块里第一条在 shownItems 中的位置，用来判断是不是打开后新到的。
@@ -105,9 +131,17 @@ export function ChatPage() {
   }, [shownItems])
   const defaultStart = Math.max(0, blocks.length - HISTORY_BATCH_SIZE)
   const firstVisible = historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart
+  const historyLoading = historyLoad?.key === chatKey && historyLoad.error === undefined
+  const historyError = historyLoad?.key === chatKey ? historyLoad.error : undefined
   // 打开会话时已有的历史直接显示，之后新到的消息才播放入场动画。
-  const baseline = useRef({ key: '', count: 0 })
-  if (baseline.current.key !== chatKey && shownItems.length > 0) baseline.current = { key: chatKey, count: shownItems.length }
+  const baseline = useRef({ key: '', count: 0, firstId: '' })
+  const firstId = shownItems[0]?.id
+  if (firstId && baseline.current.key !== chatKey) {
+    baseline.current = { key: chatKey, count: shownItems.length, firstId }
+  } else if (firstId && baseline.current.firstId !== firstId) {
+    const inserted = shownItems.findIndex((item) => item.id === baseline.current.firstId)
+    baseline.current = { key: chatKey, count: inserted < 0 ? shownItems.length : baseline.current.count + inserted, firstId }
+  }
   const project = projects.find((item) => item.id === selectedProjectId)
   // 冷启动恢复会话时列表可能还没加载，先用首条用户消息顶上，避免标题只剩项目名。
   const firstUser = items.find((item) => item.kind === 'user')
@@ -140,7 +174,7 @@ export function ChatPage() {
     historyScroll.current = null
     const scroll = scrollRef.current
     if (scroll && previous?.key === chatKey) scroll.scrollTop = previous.top + scroll.scrollHeight - previous.height
-  }, [chatKey, firstVisible])
+  }, [chatKey, firstVisible, view?.historyCursor])
 
   useLayoutEffect(() => {
     const node = scrollRef.current
@@ -159,12 +193,27 @@ export function ChatPage() {
     setAtBottom(following.current)
   }
 
-  function showEarlier() {
-    const node = scrollRef.current
-    if (node) historyScroll.current = { key: chatKey, height: node.scrollHeight, top: node.scrollTop }
-    following.current = false
-    setAtBottom(false)
-    setHistoryStart({ key: chatKey, index: Math.max(0, firstVisible - HISTORY_BATCH_SIZE) })
+  async function showEarlier() {
+    if (historyLoading) return
+    const reveal = () => {
+      const node = scrollRef.current
+      if (node) historyScroll.current = { key: chatKey, height: node.scrollHeight, top: node.scrollTop }
+      following.current = false
+      setAtBottom(false)
+      setHistoryStart({ key: chatKey, index: Math.max(0, firstVisible - HISTORY_BATCH_SIZE) })
+    }
+    if (firstVisible > 0) {
+      reveal()
+      return
+    }
+    const load = { key: chatKey }
+    setHistoryLoad(load)
+    try {
+      await loadEarlierHistory(reveal)
+      setHistoryLoad((current) => current === load ? null : current)
+    } catch (error) {
+      setHistoryLoad((current) => current === load ? { ...load, error: friendlyError(error, '加载历史失败') } : current)
+    }
   }
 
   function jumpToLatest() {
@@ -199,11 +248,18 @@ export function ChatPage() {
     <>
       <Header
         title={threadTitle || project?.name || '对话'}
+        icon={<MessageCircleMore size={16} strokeWidth={1.75} className="shrink-0 text-qn-muted" aria-hidden />}
         subtitle={[statusLabel, project?.name, agentLabel(selectedAgent)].filter(Boolean).join(' · ')}
         onBack={goBack}
         right={
           <>
             {project && <NewSessionButton project={project} iconOnly className="qn-header-icon" />}
+            {selectedThreadId && (subagents.length > 0 || supportsSubagentRequests(selectedAgent)) && (
+              <FileActionsContext.Provider value={fileActions}>
+                <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={eventsConnected && session?.opened ? session.rpc : null}
+                  renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
+              </FileActionsContext.Provider>
+            )}
             <Button variant="ghost" className="qn-header-icon" onClick={() => setSwitching(true)} aria-label="切换会话">
               <PanelLeft size={20} strokeWidth={1.75} aria-hidden />
             </Button>
@@ -227,98 +283,115 @@ export function ChatPage() {
           <span className="min-w-0 flex-1 truncate text-qn-muted">{approvals[0]?.title}</span><ChevronDown size={16} aria-hidden />
         </button>
       )}
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <div ref={scrollRef} className="qn-body qn-scroll" onScroll={updateScroll}>
-          {session?.openError && (
-            <Note message={session.openError} tone="error" actionLabel="重试"
-              onAction={() => { if (selectedTargetId) void ensureOpen(selectedTargetId, selectedAgent) }} />
-          )}
-          {!running && items.length === 0 && approvals.length === 0 && <Empty>发送消息开始对话。</Empty>}
-          <div className="space-y-4">
-            {firstVisible > 0 && (
-              <Button variant="ghost" className="mx-auto flex" onClick={showEarlier}>查看更早消息</Button>
+      <div ref={chatSurface} className="qn-chat-surface">
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div ref={scrollRef} className="qn-body qn-scroll" onScroll={updateScroll}>
+            {session?.openError && (
+              <Note message={session.openError} tone="error" actionLabel="重试"
+                onAction={() => { if (selectedTargetId) void ensureOpen(selectedTargetId, selectedAgent) }} />
             )}
-            <SubagentRpcContext.Provider key={chatKey} value={session?.rpc ?? null}>
-              <FileActionsContext.Provider value={fileActions}>
+            {!running && items.length === 0 && approvals.length === 0 && !view?.historyCursor && <Empty>发送消息开始对话。</Empty>}
+            <div className="space-y-4">
+              {(firstVisible > 0 || view?.historyCursor) && (
+                <Button variant="ghost" className="mx-auto flex" disabled={historyLoading} onClick={() => void showEarlier()}>
+                  {historyLoading ? '正在加载更早消息…' : '查看更早消息'}
+                </Button>
+              )}
+              {historyError && <Note message={historyError} tone="error" />}
+              <FileActionsContext.Provider key={chatKey} value={fileActions}>
                 {blocks.slice(firstVisible).map(({ block, index }) => (
                   <div key={block.kind === 'item' ? block.item.id : block.id}
                     className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
                     {block.kind === 'item'
                       ? <MessageItem item={block.item} onQuote={(text) => setQuote({ key: chatKey, text })} agentName={agentLabel(selectedAgent)}
                         active={activeItemIds?.includes(block.item.id)}
+                        showStreamingDots={block.item.id === streamingId}
                         onResend={selectedThreadId ? resend : undefined} />
                       : <ToolGroup items={block.items} onQuote={(text) => setQuote({ key: chatKey, text })} />}
                   </div>
                 ))}
               </FileActionsContext.Provider>
-            </SubagentRpcContext.Provider>
-            {progress && (
-              <div className="qn-thinking" role="status"><LoadingIcon aria-hidden />{progress}</div>
-            )}
-            {interrupted && <div className="qn-turn-interrupted" role="status"><Square size={13} aria-hidden />本轮已中断</div>}
-            {turnError && <TurnErrorCard message={turnError} />}
-            {approvals.length > 0 && (
-              <div ref={approvalsRef} className="space-y-3">
-                {approvals.map((approval) => (
-                  <ApprovalCard key={String(approval.requestId)} approval={approval}
-                    agent={selectedAgent} submitting={Boolean(approvalSubmitting[String(approval.requestId)])}
-                    offline={!eventsConnected}
-                    onDecide={(decision) => void respondApproval(approval.requestId, decision)} />
-                ))}
-              </div>
-            )}
+              {progress && (
+                <div className="qn-thinking" role="status"><LoadingIcon aria-hidden />{progress}</div>
+              )}
+              {interrupted && <div className="qn-turn-interrupted" role="status"><Square size={13} aria-hidden />本轮已中断</div>}
+              {turnError && <TurnErrorCard message={turnError} />}
+              {approvals.length > 0 && (
+                <div ref={approvalsRef} className="space-y-3">
+                  {approvals.map((approval) => (
+                    <ApprovalCard key={String(approval.requestId)} approval={approval}
+                      agent={selectedAgent} submitting={Boolean(approvalSubmitting[String(approval.requestId)])}
+                      offline={!eventsConnected}
+                      onDecide={(decision) => void respondApproval(approval.requestId, decision)} />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
+          {selection?.key === chatKey && (
+            <Button className="absolute bottom-3 left-3 bg-qn-panel shadow-lg"
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => { setQuote(selection); window.getSelection()?.removeAllRanges(); setSelection(null) }}>
+              引用选中文字
+            </Button>
+          )}
+          {!atBottom && (
+            <Button className="absolute right-3 bottom-3 bg-qn-panel shadow-lg" onClick={jumpToLatest}>回到最新 <ArrowDown size={15} aria-hidden /></Button>
+          )}
         </div>
-        {!atBottom && (
-          <Button className="absolute right-3 bottom-3 bg-qn-panel shadow-lg" onClick={jumpToLatest}>回到最新 <ArrowDown size={15} aria-hidden /></Button>
+        {(error || notice || stopError) && (
+          <div className="bg-qn-panel px-3 pt-1">
+            {error && <Note message={error} tone="error" onClose={clearError} />}
+            {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
+            {stopError && <div role="alert"><Note message={stopError} tone="error" onClose={() => setStopRequest(null)} /></div>}
+          </div>
         )}
+        <QueuedMessages key={`queue:${chatKey}`} running={running} canSteer={selectedAgent === 'codex' && !!view?.activeTurnId} />
+        <Composer
+          key={chatKey}
+          draftKey={chatKey}
+          text={draftText}
+          onChangeText={setDraftText}
+          onSend={async (text, images, mode) => {
+            const sent = await send(text, images, false, mode)
+            if (sent) jumpToLatest()
+            return sent
+          }}
+          onInterrupt={() => void stopTurn()}
+          interrupting={stopping}
+          running={running}
+          sending={sending}
+          compacting={compacting}
+          disabled={!selectedTargetId}
+          imageUnavailable={imageUnavailable}
+          project={project}
+          annotations={annotations}
+          onUpdateAnnotation={updateAnnotation}
+          onRemoveAnnotation={removeAnnotation}
+          quoteDraft={quote?.key === chatKey ? quote.text : null}
+          onConfirmQuote={(text, comment) => { addAnnotation(text, comment); setQuote(null) }}
+          onCancelQuote={() => setQuote(null)}
+          placeholder={agentPlaceholder(selectedAgent)}
+          canSteer={selectedAgent === 'codex' && !!view?.activeTurnId}
+          toolbar={
+            <>
+              {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">无审批：工具直接执行</span>}
+              {selectedTargetId && selectedThreadId && selectedAgent !== 'pi' && (
+                <AccessModePicker agent={selectedAgent} mode={accessMode}
+                  supported={session?.accessSupported === true}
+                  disabled={!eventsConnected || !session?.opened || running || sending || compacting}
+                  onChange={setAccessMode} />
+              )}
+              {selectedTargetId && <ModelPicker targetId={selectedTargetId} agent={selectedAgent} />}
+              <ContextUsage tokenUsage={view?.tokenUsage} estimatedCostUsd={claudeCost} compact={selectedAgent === 'codex' && selectedThreadId ? {
+                busy: compacting,
+                blockedReason: compactionBlockedReason,
+                onConfirm: () => void compactConversation(),
+              } : undefined} />
+            </>
+          }
+        />
       </div>
-      {(error || notice || stopError) && (
-        <div className="bg-qn-panel px-3 pt-1">
-          {error && <Note message={error} tone="error" onClose={clearError} />}
-          {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}
-          {stopError && <div role="alert"><Note message={stopError} tone="error" onClose={() => setStopRequest(null)} /></div>}
-        </div>
-      )}
-      <QueuedMessages key={`queue:${chatKey}`} running={running} canSteer={selectedAgent === 'codex' && !!view?.activeTurnId} />
-      <Composer
-        key={chatKey}
-        draftKey={chatKey}
-        text={draftText}
-        onChangeText={setDraftText}
-        onSend={async (text, images, mode) => {
-          const sent = await send(text, images, false, mode)
-          if (sent) jumpToLatest()
-          return sent
-        }}
-        onInterrupt={() => void stopTurn()}
-        interrupting={stopping}
-        running={running}
-        sending={sending}
-        compacting={compacting}
-        disabled={!selectedTargetId}
-        imageUnavailable={imageUnavailable}
-        project={project}
-        annotations={annotations}
-        onUpdateAnnotation={updateAnnotation}
-        onRemoveAnnotation={removeAnnotation}
-        quoteDraft={quote?.key === chatKey ? quote.text : null}
-        onConfirmQuote={(text, comment) => { addAnnotation(text, comment); setQuote(null) }}
-        onCancelQuote={() => setQuote(null)}
-        placeholder={agentPlaceholder(selectedAgent)}
-        canSteer={selectedAgent === 'codex' && !!view?.activeTurnId}
-        toolbar={
-          <>
-            {selectedAgent === 'pi' && <span className="text-[11px] text-qn-muted">工具直接执行</span>}
-            {selectedTargetId && <ModelPicker targetId={selectedTargetId} agent={selectedAgent} />}
-            <ContextUsage tokenUsage={view?.tokenUsage} estimatedCostUsd={claudeCost} compact={selectedAgent === 'codex' && selectedThreadId ? {
-              busy: compacting,
-              blockedReason: compactionBlockedReason,
-              onConfirm: () => void compactConversation(),
-            } : undefined} />
-          </>
-        }
-      />
       {switching && <SessionSwitcher onClose={() => setSwitching(false)} />}
     </>
   )

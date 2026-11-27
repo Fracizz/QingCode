@@ -1,3 +1,5 @@
+import type { ItemView } from '@qn/codex-client'
+
 export type Annotation = {
   id: string
   quote: string
@@ -41,4 +43,21 @@ export function annotationLabel(count: number): string {
 export function annotationExcerpt(annotation: Annotation, limit = 120): string {
   const text = annotation.quote.replace(/\s+/g, ' ').trim()
   return text.length > limit ? `${text.slice(0, limit)}…` : text
+}
+
+/** 预填的上下文限于同一轮，用户发送前可以删改。 */
+export function sideChatExcerpt(items: readonly ItemView[], selection?: { text: string; itemId?: string }): string {
+  const sourceIndex = selection ? items.findIndex((item) => item.id === selection.itemId) : items.length
+  if (selection && (sourceIndex < 0 || items[sourceIndex]?.kind === 'user')) return selection.text
+  const questionIndex = items.slice(0, sourceIndex).findLastIndex((item) => item.kind === 'user')
+  const question = items[questionIndex]
+  const blocks: string[] = []
+  if (question?.kind === 'user') blocks.push('本轮问题：' + question.text.slice(0, 600))
+  if (selection) {
+    blocks.push('所选片段：\n' + selection.text)
+  } else {
+    const answer = items.slice(questionIndex + 1).findLast((item) => item.kind === 'agent')
+    if (answer?.kind === 'agent') blocks.push('回复摘录：\n' + answer.text.slice(0, 800))
+  }
+  return blocks.join('\n\n')
 }

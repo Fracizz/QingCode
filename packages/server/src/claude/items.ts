@@ -36,6 +36,7 @@ export interface MapState {
   blockIds: Record<string, string>
   blockText: Record<string, string>
   blockKinds: Record<string, string>
+  historyBlockKeys?: Map<string, string[]>
   toolItems: Record<string, V2Item>
   items: Record<string, V2Item>
   order: string[]
@@ -205,8 +206,8 @@ function newItemId(ctx: MapContext, state: MapState, kind: string): string {
 function recordItem(state: MapState, item: V2Item): void {
   const id = scalarText(item.id)
   if (!id) return
+  if (!Object.hasOwn(state.items, id)) state.order.push(id)
   state.items[id] = item
-  if (!state.order.includes(id)) state.order.push(id)
 }
 
 /** 仍在 inProgress 的 item 在轮次结束时补 completed，避免界面一直显示运行中。 */
@@ -294,7 +295,8 @@ function emitFinalBlock(
   const unchanged = phase === 'done' && state.blockText[id] === text
   state.blockText[id] = text
   recordItem(state, item)
-  state.blockPhase = { ...(state.blockPhase ?? {}), [id]: 'done' }
+  const phases = state.blockPhase ??= {}
+  phases[id] = 'done'
   if (unchanged) return
   if (phase === undefined) out.push(itemStarted(ctx, item))
   out.push(itemCompleted(ctx, item))
@@ -316,14 +318,22 @@ function assistantBlockId(
   const direct = state.blockIds[key]
   if (direct && state.blockKinds[direct] === kind) return direct
   const prefix = `${messageId}:`
+  const historyKeys = state.historyBlockKeys?.get(messageId)
+  const keys = state.historyBlockKeys ? historyKeys ?? [] : Object.keys(state.blockIds)
   let fallback: string | undefined
-  for (const [k, id] of Object.entries(state.blockIds)) {
+  for (const k of keys) {
+    const id = state.blockIds[k]!
     if (!k.startsWith(prefix) || state.blockKinds[id] !== kind) continue
     if (state.blockText[id] === text) return id
     if (!fallback && state.blockPhase?.[id] !== 'done') fallback = id
   }
   if (fallback) return fallback
-  return ensureBlockItem(ctx, direct ? `${key}:${kind}` : key, kind, state)
+  const resolved = direct ? `${key}:${kind}` : key
+  if (state.historyBlockKeys) {
+    if (!historyKeys) state.historyBlockKeys.set(messageId, [resolved])
+    else if (!historyKeys.includes(resolved)) historyKeys.push(resolved)
+  }
+  return ensureBlockItem(ctx, resolved, kind, state)
 }
 
 function mapAssistant(message: Json, ctx: MapContext, state: MapState, out: V2Notification[]): void {
@@ -445,9 +455,25 @@ export function mapSdkMessage(
   options: MapOptions = {},
 ): MapResult {
   const state = cloneState(inputState)
+  return { notifications: mapMessage(message, ctx, state, options), state }
+}
+
+/** 历史读取独占状态，逐条复用，避免每条历史消息都复制已经解析的前缀。 */
+export function mapHistoryMessage(message: unknown, ctx: MapContext, state: MapState): void {
+  // 已持久化的完整消息没有实时分块索引，只需在相同消息 ID 的块间匹配。
+  state.historyBlockKeys ??= new Map()
+  mapMessage(message, ctx, state, { includeUserText: true })
+}
+
+function mapMessage(
+  message: unknown,
+  ctx: MapContext,
+  state: MapState,
+  options: MapOptions,
+): V2Notification[] {
   const out: V2Notification[] = []
   const msg = asRecord(message)
-  if (!msg) return { notifications: out, state }
+  if (!msg) return out
 
   switch (msg.type) {
     case 'stream_event':
@@ -484,5 +510,5 @@ export function mapSdkMessage(
     default:
       break
   }
-  return { notifications: out, state }
+  return out
 }

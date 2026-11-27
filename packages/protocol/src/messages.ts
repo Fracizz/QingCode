@@ -73,6 +73,7 @@ export interface ServerMethods extends WorkspaceMethods {
       capabilities?: {
         approvals: boolean
         rateLimits: boolean
+        ephemeralNoTools?: boolean
         accessModes?: boolean
         agentConfigDir?: boolean
       }
@@ -80,7 +81,7 @@ export interface ServerMethods extends WorkspaceMethods {
   }
   'codex.attach': {
     params: { sinceSeq: number; agent?: AgentKind }
-    result: { lastSeq: number; truncated: boolean }
+    result: { lastSeq: number; truncated: boolean; accessModes?: boolean }
   }
   'codex.status': {
     params: { agent?: AgentKind }

@@ -56,17 +56,23 @@ export function Sidebar({
         <LegacyBanner />
       </div>
 
-      <div className="flex items-center gap-0.5 border-t border-qn-border px-2 py-1.5">
-        <FooterButton label="手机连接" onClick={onMobile}>
-          <Smartphone size={15} />
-        </FooterButton>
-        <FooterButton label="导入旧版" onClick={onImport}>
-          <Upload size={15} />
-        </FooterButton>
-        <FooterButton label="设置" onClick={onSettings}>
-          <Settings size={15} />
-        </FooterButton>
-        {version && <span className="ml-auto shrink-0 pr-1.5 text-[11px] text-qn-dim">v{version}</span>}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-qn-border px-2 py-1.5">
+        <div className="flex max-w-full flex-wrap gap-0.5">
+          <FooterButton label="手机连接" onClick={onMobile}>
+            <Smartphone size={14} />
+          </FooterButton>
+          <FooterButton label="导入旧版" onClick={onImport}>
+            <Upload size={14} />
+          </FooterButton>
+          <FooterButton label="设置" onClick={onSettings}>
+            <Settings size={14} />
+          </FooterButton>
+        </div>
+        {version && (
+          <span className="ml-auto max-w-full truncate px-1 text-[11px] text-qn-dim" title={`v${version}`}>
+            v{version}
+          </span>
+        )}
       </div>
 
       <ResizeHandle
@@ -87,11 +93,11 @@ function FooterButton({ label, onClick, children }: { label: string; onClick: ()
   return (
     <button
       type="button"
-      className="flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
+      className="flex shrink-0 items-center gap-1 rounded-lg px-1 py-1.5 text-xs whitespace-nowrap text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent"
       onClick={onClick}
     >
       {children}
-      <span className="truncate">{label}</span>
+      <span>{label}</span>
     </button>
   )
 }

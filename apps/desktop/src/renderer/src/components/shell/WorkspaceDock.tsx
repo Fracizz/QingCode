@@ -43,6 +43,7 @@ function ToolBody({ tool }: { tool: DockTool }) {
 
 /** 右侧停靠栏：工具列（资源管理器 / 搜索 / Git）+ 文件查看面板，各自可拖动宽度。 */
 export function WorkspaceDock() {
+  const scope = useWorkspaceScope()
   const tool = useDock((s) => s.tool)
   const filesWidth = useDock((s) => s.filesWidth)
   const toolWidth = useDock((s) => s.toolWidth)
@@ -64,7 +65,7 @@ export function WorkspaceDock() {
             label="调整文件面板宽度"
             className="absolute inset-y-0 -left-1 z-10"
           />
-          <FilePane className="min-h-0 flex-1" />
+          <FilePane scope={'reason' in scope ? undefined : scope} className="min-h-0 flex-1" />
         </div>
       )}
       {tool && meta && (
@@ -87,7 +88,8 @@ export function WorkspaceDock() {
               <IconButton
                 key={item.id}
                 label={`${item.label}（${item.hint}）`}
-                onClick={() => useDock.getState().showTool(item.id)}
+                aria-pressed={item.id === tool}
+                onClick={() => useDock.getState().toggleTool(item.id)}
                 className={item.id === tool ? 'bg-qn-active text-qn-text' : undefined}
               >
                 {item.icon}
@@ -104,5 +106,29 @@ export function WorkspaceDock() {
         </div>
       )}
     </div>
+  )
+}
+
+export function ProjectFilesView({ onQuickOpen }: { onQuickOpen: () => void }) {
+  const scope = useWorkspaceScope()
+  const tool = useDock((s) => s.fileTool)
+  const width = useDock((s) => s.toolWidth)
+  if ('reason' in scope) return <div className="m-auto text-sm text-qn-muted">{scope.reason}</div>
+  return (
+    <main aria-label="项目文件" className="flex min-h-0 min-w-0 flex-1">
+      <aside className="relative flex min-h-0 max-w-[45%] flex-col border-r border-qn-border bg-qn-sidebar" style={{ width }}>
+        <div className="flex flex-wrap items-center gap-1 border-b border-qn-border p-1.5 text-xs">
+          <button type="button" className="qn-button-subtle aria-pressed:bg-qn-active" aria-pressed={tool === 'explorer'}
+            onClick={() => useDock.getState().toggleTool('explorer')}>目录</button>
+          <button type="button" className="qn-button-subtle" onClick={onQuickOpen} title="Ctrl+P">找文件</button>
+          <button type="button" className="qn-button-subtle aria-pressed:bg-qn-active" aria-pressed={tool === 'search'}
+            onClick={() => useDock.getState().toggleTool('search')}>搜内容</button>
+        </div>
+        <ToolBody tool={tool} />
+        <ResizeHandle orientation="vertical" value={width} min={TOOL_MIN} max={TOOL_MAX}
+          label="调整文件导航宽度" className="absolute inset-y-0 -right-1" onChange={useDock.getState().setToolWidth} />
+      </aside>
+      <FilePane primary scope={scope} className="min-w-0 flex-1" />
+    </main>
   )
 }

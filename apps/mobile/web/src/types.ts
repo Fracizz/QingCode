@@ -51,6 +51,7 @@ export type RpcMethod =
   | 'projects.save'
   | 'server.req'
   | 'codex.send'
+  | 'mobile.turn.start'
   | 'target.disconnect'
   /** 网关自有：返回各目标的 Agent 启用状态（不含路径）。 */
   | 'mobile.agents'
