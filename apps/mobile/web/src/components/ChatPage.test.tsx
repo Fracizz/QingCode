@@ -39,6 +39,7 @@ it('长会话先显示最新消息，可以逐批查看完整历史', async () =
     expect(host.textContent).not.toContain('记录[64]')
     await act(() => earlier()?.click())
     expect(host.textContent).toContain('记录[5]')
+    expect(host.querySelector('[aria-label="回到最新"]')).toBeNull()
     expect(host.textContent).not.toContain('记录[4]')
     await act(() => earlier()?.click())
     expect(host.textContent).toContain('记录[0]')

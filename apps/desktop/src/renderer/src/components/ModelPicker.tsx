@@ -23,12 +23,19 @@ import { PopoverContent, PopoverRoot, PopoverTrigger, Tip } from './primitives'
 import { SearchField } from './SearchField'
 import { EmptyState, ErrorNote, Spinner } from './ui'
 
+const triggerClass = 'inline-flex h-8 max-w-[16rem] items-center gap-1 rounded-lg px-2 text-[13px] text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover data-[state=open]:text-qn-text'
+
 /**
  * 输入框里的模型选择器（参考 Codex）：搜索模型 → 选模型 → 推理强度分段 → 速度（Fast）开关。
  * 选择按 agent 记在本机，发送时作为 turn/start 的 model / effort / serviceTier 覆盖项。
- * Codex / Claude / pi 都走 model/list；列表为空时不渲染。
+ * pi 需要先有运行中的会话才能读到模型，冷启动时由用户主动开启。
  */
-export function ModelPicker({ targetId, agent }: { targetId: string; agent: AgentKind }) {
+export function ModelPicker({ targetId, agent, threadId, piDraft }: {
+  targetId: string
+  agent: AgentKind
+  threadId: string | null
+  piDraft?: { start: () => void; starting: boolean; disabled: boolean }
+}) {
   const key = sessionKey(targetId, agent)
   const session = useCodex((s) => s.sessions[key])
   const list = useModels((s) => s.lists[key])
@@ -39,16 +46,30 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
 
-  const opened = session?.opened === true
+  const rpc = session?.opened ? session.rpc : undefined
   useEffect(() => {
-    if (opened && session) void load(targetId, agent, session.rpc)
-  }, [opened, session, load, targetId, agent])
+    if (rpc) void load(targetId, agent, rpc, agent === 'pi' && threadId !== null)
+  }, [rpc, threadId, load, targetId, agent])
 
   const models = list?.models ?? []
   const selection = useMemo(() => resolveSelection(models, prefs), [models, prefs])
   const visible = useMemo(() => filterModels(models, query), [models, query])
 
-  if (!opened || (models.length === 0 && !list?.loading && !list?.error)) return null
+  const empty = models.length === 0 && !list?.loading && !list?.error
+  if (piDraft && (piDraft.starting || empty)) {
+    return (
+      <button
+        type="button"
+        className={cn(triggerClass, 'disabled:text-qn-dim')}
+        title="启动 pi 会话后可选择模型"
+        disabled={piDraft.disabled}
+        onClick={piDraft.start}
+      >
+        {piDraft.starting ? <><LoadingIcon size={13} /> 正在启动 pi…</> : '启动 pi 以选择模型'}
+      </button>
+    )
+  }
+  if (!rpc || (empty && agent !== 'pi')) return null
 
   const pick = (model: string) => {
     const option = models.find((item) => item.model === model)
@@ -67,7 +88,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-8 max-w-[16rem] items-center gap-1 rounded-lg px-2 text-[13px] text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover data-[state=open]:text-qn-text"
+          className={triggerClass}
           aria-label="选择模型与推理强度"
         >
           {list?.loading && models.length === 0 ? (
@@ -109,13 +130,21 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
           <ErrorNote
             message={list?.error ?? null}
             variant="compact"
-            onRetry={() => session && void load(targetId, agent, session.rpc, true)}
+            onRetry={() => void load(targetId, agent, rpc, true)}
           />
           {list?.loading && models.length === 0 && (
             <div className="px-2.5 py-3"><Spinner label="正在加载模型…" /></div>
           )}
           {!list?.loading && visible.length === 0 && models.length > 0 && (
             <EmptyState className="px-2.5 py-3 leading-5">没有匹配的模型</EmptyState>
+          )}
+          {agent === 'pi' && empty && (
+            <EmptyState className="px-2.5 py-3 leading-5">
+              <p>暂无可用模型。请在目标机器的 pi 中配置模型后重试。</p>
+              <button type="button" className={triggerClass} onClick={() => void load(targetId, agent, rpc, true)}>
+                重新加载
+              </button>
+            </EmptyState>
           )}
           {visible.map((model) => {
             const selected = model.model === selection.model?.model

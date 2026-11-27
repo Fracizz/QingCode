@@ -1,18 +1,9 @@
-export type RectLike = {
-  top: number
-  left: number
-  right: number
-  bottom: number
-  width: number
-  height: number
-}
-
-export type Box = { top: number; left: number; width: number; height: number }
+type Box = { top: number; left: number; width: number; height: number }
 
 export type SelectionSnapshot = {
   text: string
   itemId?: string
-  boxes: Box[]
+  range: Range
   position: ToolbarPosition
 }
 
@@ -29,21 +20,18 @@ export function normalizeSelectionText(raw: string): string {
   return `${text.slice(0, MAX_SELECTION_LENGTH)}…`
 }
 
-/** 视口坐标转成滚动内容坐标，浮层随消息一起滚动。 */
-export function relativeBoxes(
-  rects: readonly RectLike[],
-  base: RectLike,
-  scrollTop: number,
-  scrollLeft: number,
-): Box[] {
-  return rects
-    .filter((rect) => rect.width > 0 && rect.height > 0)
-    .map((rect) => ({
-      top: rect.top - base.top + scrollTop,
-      left: rect.left - base.left + scrollLeft,
-      width: rect.width,
-      height: rect.height,
-    }))
+/** 选区可能延伸到视口之外，工具条应靠近仍可见的部分。 */
+export function visibleSelectionBox(rects: Iterable<Box>, viewport: Box): Box | null {
+  for (const rect of rects) {
+    const top = Math.max(rect.top, viewport.top)
+    const left = Math.max(rect.left, viewport.left)
+    const bottom = Math.min(rect.top + rect.height, viewport.top + viewport.height)
+    const right = Math.min(rect.left + rect.width, viewport.left + viewport.width)
+    if (bottom > top && right > left) {
+      return { top: top - viewport.top, left: left - viewport.left, height: bottom - top, width: right - left }
+    }
+  }
+  return null
 }
 
 /** 浮层默认在选区上方，空间不足时落到下方，水平方向不超出容器。 */
@@ -80,20 +68,19 @@ export function captureSelection(root: HTMLElement): SelectionSnapshot | null {
   if (!text) return null
 
   const base = root.getBoundingClientRect()
-  const rects = Array.from(range.getClientRects())
-  let boxes = relativeBoxes(rects, base, root.scrollTop, root.scrollLeft)
-  if (boxes.length === 0) {
-    boxes = relativeBoxes(
-      [range.getBoundingClientRect()],
-      base,
-      root.scrollTop,
-      root.scrollLeft,
-    )
-  }
-  const first = boxes[0]
+  const first = visibleSelectionBox(range.getClientRects(), {
+    top: base.top + root.clientTop,
+    left: base.left + root.clientLeft,
+    width: root.clientWidth,
+    height: root.clientHeight,
+  })
   if (!first) return null
+  const position = toolbarPosition(first, root.clientWidth)
+  position.top += root.scrollTop
+  position.left += root.scrollLeft
+
   const common = range.commonAncestorContainer
   const element = common.nodeType === 1 ? common as Element : common.parentElement
   const itemId = element?.closest<HTMLElement>('[data-chat-item]')?.dataset.chatItem
-  return { text, itemId, boxes, position: toolbarPosition(first, root.clientWidth) }
+  return { text, itemId, range: range.cloneRange(), position }
 }

@@ -8,7 +8,8 @@ const cmd = (id: string, exitCode: number | null = 0, status = 'completed') =>
   ({ kind: 'command', id, command: 'ls', output: '', status, exitCode, cwd: '' }) as unknown as ItemView
 const file = (id: string, n = 1) =>
   ({ kind: 'fileChange', id, status: 'completed', changes: Array.from({ length: n }, (_, i) => ({ path: `f${i}`, kind: 'update' })) }) as unknown as ItemView
-const think = (id: string, streaming = false) => ({ kind: 'reasoning', id, summary: '', streaming }) as unknown as ItemView
+const think = (id: string, streaming = false, summary = '分析问题'): ItemView =>
+  ({ kind: 'reasoning', id, summary, streaming })
 
 describe('hasPendingSubmission', () => {
   const pendingUser: ItemView = { kind: 'user', id: 'new-user', text: '新问题', pending: true }
@@ -64,6 +65,13 @@ describe('groupFlow', () => {
     expect(groupFlow([agent('a'), cmd('c1'), cmd('c2')]).at(-1)?.kind).toBe('tools')
     expect(groupFlow([])).toEqual([])
   })
+
+  it('已结束的空摘要不计入工具组，正在思考的条目仍显示', () => {
+    const command = cmd('c')
+    expect(groupFlow([think('r', false, '  \n'), command])).toEqual([{ kind: 'item', key: 'c', item: command }])
+    const streaming = think('r', true, '')
+    expect(groupFlow([streaming, command])).toEqual([{ kind: 'tools', key: 'tools-r', items: [streaming, command] }])
+  })
 })
 
 describe('summarizeTools', () => {
@@ -98,6 +106,12 @@ describe('groupTurns', () => {
 
   it('没有工具步骤时不折叠', () => {
     expect(kinds(groupTurns([user('u'), agent('a')], undefined, false))).toEqual(['u', 'a'])
+  })
+
+  it('完成的空摘要不生成可展开的工作过程', () => {
+    const items = [user('u'), think('r1', false, ''), think('r2', false, '\n'), agent('a')]
+    const turns = [{ id: 't', startedAtMs: 1, durationMs: 1000, itemIds: ['u', 'r1', 'r2', 'a'] }]
+    expect(kinds(groupTurns(items, turns, false))).toEqual(['u', 'a'])
   })
 
   it('工作摘要使用紧随其后的最终回复时间', () => {

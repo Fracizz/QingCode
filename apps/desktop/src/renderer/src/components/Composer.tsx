@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { ArrowUp, ChevronDown, CircleAlert, FileText, ImageOff, Paperclip, Slash, Square, Wand2, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, CircleAlert, FileText, ImageOff, Paperclip, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
 import {
@@ -277,13 +277,33 @@ export function Composer({
           />
         )}
 
-        {noApprovals && (
-          <div className="mb-1.5 px-3 text-[12px] text-qn-warn">{toolsDisabled ? '此侧聊已禁用工具' : '无审批：工具直接执行'}</div>
-        )}
-        {attach && !imageSupport.allowed && (
-          <div className="mb-1.5 flex items-center gap-1.5 px-3 text-[12px] text-qn-dim">
-            <ImageOff size={12} className="shrink-0" />
-            {imageSupport.reason}，图片附件已禁用
+        {(noApprovals || (attach && !imageSupport.allowed)) && (
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 text-[12px] leading-4">
+            {noApprovals && (
+              <span className={cn(
+                'inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-0.5',
+                toolsDisabled ? 'border-qn-border-strong bg-qn-panel text-qn-muted' : 'border-qn-warn/30 bg-qn-warn/10 text-qn-warn',
+              )}>
+                {toolsDisabled ? (
+                  <>
+                    <ShieldOff size={13} className="shrink-0" aria-hidden />
+                    <span>此侧聊已禁用工具</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldAlert size={13} className="shrink-0" aria-hidden />
+                    <span className="font-medium">无审批</span>
+                    <span className="text-qn-muted">· 工具直接执行</span>
+                  </>
+                )}
+              </span>
+            )}
+            {attach && !imageSupport.allowed && (
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-qn-muted">
+                <ImageOff size={12} className="shrink-0" aria-hidden />
+                {imageSupport.reason}，图片附件已禁用
+              </span>
+            )}
           </div>
         )}
         <div

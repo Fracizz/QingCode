@@ -156,6 +156,11 @@ button:disabled {
   background: transparent;
 }
 
+.qn-chat-selection ::selection,
+.qn-chat-selection ::highlight(qn-chat-annotation) {
+  background-color: #2f5187;
+  color: var(--color-qn-text);
+}
 
 /* ---------- 外壳 ---------- */
 

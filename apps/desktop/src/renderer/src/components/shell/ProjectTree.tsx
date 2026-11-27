@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, SquarePen, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent } from 'react'
+import { Copy, Ellipsis, FolderPlus, GripVertical, Pencil, Pin, PinOff, SquarePen, X } from 'lucide-react'
 import { copyText } from '../../lib/clipboard'
 import type { Project } from '../../../../shared/backendApi'
 import { sessionKey } from '../../lib/agents'
 import { applyThreadPrefs } from '../../lib/threadPrefs'
 import { threadKey } from '../../lib/threads'
 import { useCodex } from '../../store/codex'
-import { useProjects } from '../../store/projects'
+import { useProjects, type ProjectPlacement } from '../../store/projects'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { useUi } from '../../store/ui'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../primitives'
@@ -14,6 +14,10 @@ import { ErrorNote, IconButton, Spinner } from '../ui'
 import { ThreadRow } from './ThreadRow'
 
 const THREAD_PREVIEW_LIMIT = 8
+const PROJECT_DRAG_TYPE = 'application/x-qingcode-project'
+
+type ProjectDrop = { id: string; placement: ProjectPlacement }
+type SortProps = Pick<ComponentProps<'button'>, 'onDragStart' | 'onDragEnd' | 'onKeyDown'>
 
 /**
  * 项目 → 会话两级树（参考 Codex 侧栏）：会话直接缩进挂在项目下面，不再单独占一栏。
@@ -26,13 +30,19 @@ export function ProjectTree({ targetId }: { targetId: string }) {
   const projectError = useProjects((s) => s.error)
   const load = useProjects((s) => s.load)
   const select = useProjects((s) => s.select)
+  const move = useProjects((s) => s.move)
+  const pinned = useProjects((s) => s.pinned)
   const openPicker = useUi((s) => s.openDirectoryPicker)
 
   const [collapsed, setCollapsed] = useState(false)
+  const [draggedId, setDraggedId] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<ProjectDrop | null>(null)
   // 相对时间每分钟刷新一次即可。
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
+    setDraggedId(null)
+    setDropTarget(null)
     void load(targetId)
   }, [targetId, load])
 
@@ -55,6 +65,18 @@ export function ProjectTree({ targetId }: { targetId: string }) {
     if (project.id !== selectedId) void select(project)
     useCodex.getState().startDraft()
     setCollapsed(false)
+  }
+
+  const clearDrag = () => {
+    setDraggedId(null)
+    setDropTarget(null)
+  }
+
+  const locateDrop = (event: DragEvent<HTMLDivElement>, id: string): ProjectDrop | null => {
+    if (!draggedId || draggedId === id || !event.dataTransfer.types.includes(PROJECT_DRAG_TYPE)
+      || pinned.includes(draggedId) !== pinned.includes(id)) return null
+    const rect = event.currentTarget.getBoundingClientRect()
+    return { id, placement: event.clientY < rect.top + rect.height / 2 ? 'before' : 'after' }
   }
 
   return (
@@ -85,17 +107,68 @@ export function ProjectTree({ targetId }: { targetId: string }) {
           </div>
         )}
 
-        {projects.map((project) => {
+        {projects.map((project, index) => {
           const active = project.id === selectedId
           const expanded = active && !collapsed
+          const isPinned = pinned.includes(project.id)
+          const previous = projects[index - 1]
+          const next = projects[index + 1]
+          const canMoveUp = previous && pinned.includes(previous.id) === isPinned
+          const canMoveDown = next && pinned.includes(next.id) === isPinned
+          const sortProps: SortProps | undefined = canMoveUp || canMoveDown ? {
+            onDragStart: (event) => {
+              event.dataTransfer.effectAllowed = 'move'
+              event.dataTransfer.setData(PROJECT_DRAG_TYPE, project.id)
+              setDraggedId(project.id)
+            },
+            onDragEnd: clearDrag,
+            onKeyDown: (event) => {
+              if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+              if (event.key === 'ArrowUp' && canMoveUp) {
+                event.preventDefault()
+                move(project.id, previous.id, 'before')
+              } else if (event.key === 'ArrowDown' && canMoveDown) {
+                event.preventDefault()
+                move(project.id, next.id, 'after')
+              }
+            },
+          } : undefined
+          const indicator = dropTarget?.id === project.id ? dropTarget.placement : null
           return (
-            <div key={project.id} className="mb-0.5">
+            <div
+              key={project.id}
+              className={`relative mb-0.5${draggedId === project.id ? ' opacity-50' : ''}`}
+              onDragOver={(event) => {
+                const target = locateDrop(event, project.id)
+                if (target) {
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                }
+                setDropTarget((current) => current?.id === target?.id && current?.placement === target?.placement ? current : target)
+              }}
+              onDragLeave={(event) => {
+                if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+                setDropTarget((current) => current?.id === project.id ? null : current)
+              }}
+              onDrop={(event) => {
+                const target = locateDrop(event, project.id)
+                if (target && draggedId && event.dataTransfer.getData(PROJECT_DRAG_TYPE) === draggedId) {
+                  event.preventDefault()
+                  move(draggedId, target.id, target.placement)
+                  clearDrag()
+                }
+              }}
+            >
+              {indicator && (
+                <div aria-hidden className={`pointer-events-none absolute inset-x-0 z-10 h-0.5 rounded-full bg-qn-accent ${indicator === 'before' ? 'top-0' : 'bottom-0'}`} />
+              )}
               <ProjectRow
                 project={project}
                 active={active}
                 expanded={expanded}
                 onOpen={() => onProjectClick(project)}
                 onNewDraft={() => newDraftIn(project)}
+                sortProps={sortProps}
               />
               {expanded && <ThreadList now={now} />}
             </div>
@@ -114,12 +187,14 @@ function ProjectRow({
   expanded,
   onOpen,
   onNewDraft,
+  sortProps,
 }: {
   project: Project
   active: boolean
   expanded: boolean
   onOpen: () => void
   onNewDraft: () => void
+  sortProps?: SortProps
 }) {
   const pinned = useProjects((s) => s.pinned.includes(project.id))
   const togglePin = useProjects((s) => s.togglePin)
@@ -187,13 +262,21 @@ function ProjectRow({
     >
       <button
         type="button"
-        className="flex h-full min-w-0 flex-1 items-center gap-2 text-left outline-none"
+        className={`group flex h-full min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none focus-visible:ring-1 focus-visible:ring-qn-accent${sortProps ? ' cursor-grab active:cursor-grabbing' : ''}`}
         aria-expanded={expanded}
+        aria-keyshortcuts={sortProps ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
+        draggable={Boolean(sortProps)}
         onClick={onOpen}
+        {...sortProps}
       >
         <ProjectInitial name={project.name} />
         <span className="min-w-0 flex-1 truncate">{project.name}</span>
         {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
+        {sortProps && (
+          <span title="拖动排序，或按 Alt+↑ / Alt+↓ 移动" className="shrink-0 text-qn-dim opacity-0 group-focus-visible:opacity-100 group-hover:opacity-100">
+            <GripVertical size={13} aria-hidden />
+          </span>
+        )}
       </button>
       <span className="flex shrink-0 items-center">
         <Menu open={menuOpen} onOpenChange={setMenuOpen}>

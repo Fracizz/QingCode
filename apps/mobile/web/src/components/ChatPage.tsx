@@ -1,4 +1,4 @@
-import { ArrowDown, ChevronDown, MessageCircleMore, PanelLeft, Square } from 'lucide-react'
+import { ChevronDown, MessageCircleMore, PanelLeft, Square } from 'lucide-react'
 import { collectSubagents, sessionStatus, sessionStatusLabels, supportsSubagentRequests, type ItemView, type UserInput } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
@@ -70,7 +70,6 @@ export function ChatPage() {
   const [quote, setQuote] = useState<{ key: string; text: string } | null>(null)
   const [stopRequest, setStopRequest] = useState<{ chatKey: string; turnId: string; error: string | null } | null>(null)
   const [switching, setSwitching] = useState(false)
-  const [atBottom, setAtBottom] = useState(true)
   const [historyStart, setHistoryStart] = useState<{ key: string; index: number } | null>(null)
   const [historyLoad, setHistoryLoad] = useState<{ key: string; error?: string } | null>(null)
   const loadEarlierHistory = useApp((s) => s.loadEarlierHistory)
@@ -188,7 +187,6 @@ export function ChatPage() {
     if (previousChat.current !== chatKey) {
       previousChat.current = chatKey
       following.current = true
-      setAtBottom(true)
     }
     const node = scrollRef.current
     if (node && following.current) node.scrollTop = node.scrollHeight
@@ -215,7 +213,6 @@ export function ChatPage() {
     const node = scrollRef.current
     if (!node) return
     following.current = nearBottom(node)
-    setAtBottom(following.current)
   }
 
   async function showEarlier() {
@@ -224,7 +221,6 @@ export function ChatPage() {
       const node = scrollRef.current
       if (node) historyScroll.current = { key: chatKey, height: node.scrollHeight, top: node.scrollTop }
       following.current = false
-      setAtBottom(false)
       setHistoryStart({ key: chatKey, index: Math.max(0, firstVisible - HISTORY_BATCH_SIZE) })
     }
     if (firstVisible > 0) {
@@ -245,7 +241,6 @@ export function ChatPage() {
     const node = scrollRef.current
     if (!node) return
     following.current = true
-    setAtBottom(true)
     node.scrollTop = node.scrollHeight
   }
 
@@ -368,11 +363,6 @@ export function ChatPage() {
               onClick={() => { setQuote(selection); window.getSelection()?.removeAllRanges(); setSelection(null) }}>
               引用选中文字
             </Button>
-          )}
-          {!atBottom && (
-            <button type="button" className="qn-jump-latest" onClick={jumpToLatest} aria-label="回到最新">
-              <ArrowDown size={18} aria-hidden />{running && <span className="qn-jump-live" aria-hidden />}
-            </button>
           )}
         </div>
         {(error || notice || stopError) && (

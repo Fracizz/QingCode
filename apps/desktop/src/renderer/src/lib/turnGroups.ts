@@ -27,6 +27,10 @@ export function streamingReplyId(thread: ThreadView | undefined): string | undef
   if (last?.kind === 'agent' && last.streaming && last.text.trim()) return last.id
 }
 
+export function isEmptyReasoning(item: ItemView): boolean {
+  return item.kind === 'reasoning' && !item.streaming && !item.summary.trim()
+}
+
 /** 按用户消息切轮；进行中的那一轮保持展开，方便看实时进度。 */
 export function groupTurns(items: ItemView[], turns: TurnMeta[] | undefined, running: boolean): TurnEntry[] {
   // 多轮共用一个条目索引，避免长会话的每个折叠组都扫描整份历史。
@@ -59,7 +63,7 @@ export function groupTurns(items: ItemView[], turns: TurnMeta[] | undefined, run
       }
     }
     const process = finalIndex >= 0 ? rest.slice(0, finalIndex) : rest
-    if (live || process.length === 0 || !process.some(isTool)) {
+    if (live || !process.some((item) => isTool(item) && !isEmptyReasoning(item))) {
       out.push(...groupFlow(rest))
       return
     }
@@ -109,6 +113,7 @@ export function groupFlow(items: ItemView[]): FlowEntry[] {
     run = []
   }
   for (const item of items) {
+    if (isEmptyReasoning(item)) continue
     if (isTool(item)) {
       run.push(item)
     } else {

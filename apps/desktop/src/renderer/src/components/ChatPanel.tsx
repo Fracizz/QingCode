@@ -19,7 +19,6 @@ import { readImage, uploadToTarget } from '../lib/attachmentIo'
 import { screenFiles, useImageSupport } from '../features/composer'
 import { isAtBottom } from '../lib/diff'
 import { friendlyError } from '../lib/errors'
-import type { Box } from '../lib/selection'
 import { targetDotClass } from '../lib/targetStatus'
 import { groupTurns, hasPendingSubmission, streamingReplyId } from '../lib/turnGroups'
 import { composerDraftKey, pendingSendKey, useCodex, type SendMode } from '../store/codex'
@@ -94,6 +93,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const loadEarlierHistory = useCodex((s) => s.loadEarlierHistory)
   const draftKey = useCodex(composerDraftKey)
   const sendingDraftKey = useRef<string | null>(null)
+  const [startingPiDraft, setStartingPiDraft] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, Draft>>({})
   const { text: draft, annotations, attachments, skills: draftSkills } = drafts[draftKey] ?? emptyDraft
   const skills = draftSkills[currentAgent] ?? emptySkills
@@ -112,11 +112,15 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const setDraft = (value: string) => updateDraft((item) => ({ ...item, text: value }))
   const setAnnotations = (change: (items: Annotation[]) => Annotation[]) =>
     updateDraft((item) => ({ ...item, annotations: change(item.annotations) }))
-  const [highlights, setHighlights] = useState<Record<string, Box[]>>({})
+  const [highlights, setHighlights] = useState<Record<string, Range>>({})
+  const highlightRanges = useMemo(() => Object.values(highlights), [highlights])
   const setAttachments = (change: (items: Attachment[]) => Attachment[]) =>
     updateDraft((item) => ({ ...item, attachments: change(item.attachments) }))
   const [readingImages, setReadingImages] = useState(0)
   const attachmentReads = useRef(new Map<string, number>())
+  const attachmentsUploading = attachments.some((item) =>
+    item.kind === 'file' && (item.status === 'pending' || item.status === 'uploading'),
+  )
   const setSkills = (skills: SkillRef[]) =>
     updateDraft((item) => ({ ...item, skills: { ...item.skills, [currentAgent]: skills } }))
   const [dragging, setDragging] = useState(false)
@@ -154,10 +158,10 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const historyLoading = historyLoad?.key === chatKey && historyLoad.error === undefined
   const historyError = historyLoad?.key === chatKey ? historyLoad.error : undefined
 
-  // 宽度改变会让文字换行，旧的高亮坐标会指向别处。
+  // 换会话后原消息节点会卸载，引用文本仍由对应的草稿保存。
   useLayoutEffect(() => {
     setHighlights({})
-  }, [chatWidth, draftKey])
+  }, [draftKey])
 
   // 切换会话时回到底部，不沿用上一个会话的滚动位置。
   useLayoutEffect(() => {
@@ -224,11 +228,11 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
     return send(text, options)
   }
 
-  const addAnnotation = (quote: string, comment: string, boxes: Box[]) => {
+  const addAnnotation = (quote: string, comment: string, range: Range) => {
     annotationCounter.current += 1
     const id = `annotation-${annotationCounter.current}`
     setAnnotations((prev) => [...prev, { id, quote, comment }])
-    setHighlights((prev) => ({ ...prev, [id]: boxes }))
+    setHighlights((prev) => ({ ...prev, [id]: range }))
   }
 
   const removeAnnotation = (id: string) => {
@@ -294,12 +298,33 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
 
   const notify = (message: string) => useCodex.setState({ notice: message })
 
+  const preparePiDraft = async () => {
+    if (sendingDraftKey.current || attachmentReads.current.has(draftKey) || attachmentsUploading) return
+    sendingDraftKey.current = draftKey
+    setStartingPiDraft(draftKey)
+    try {
+      await useCodex.getState().newThread('pi', (threadId) => {
+        const threadKey = JSON.stringify([currentTargetId, currentCwd, 'pi', threadId])
+        setDrafts((previous) => {
+          const draft = previous[draftKey]
+          if (!draft) return previous
+          const next = { ...previous, [threadKey]: draft }
+          delete next[draftKey]
+          return next
+        })
+      })
+    } finally {
+      sendingDraftKey.current = null
+      setStartingPiDraft(null)
+    }
+  }
+
   const patchAttachment = (id: string, patch: Partial<Attachment>) =>
     setAttachments((prev) => prev.map((item) => (item.id === id ? ({ ...item, ...patch } as Attachment) : item)))
 
   /** 图片读成 data URL 随消息发送；其他文件本机目标直接引用路径，远端目标先上传到目标机。 */
   const addFiles = (files: File[]) => {
-    if (!currentTargetId || sending) return
+    if (!currentTargetId || sending || (!currentThreadId && sendingDraftKey.current)) return
     const targetId = currentTargetId
     const reads = attachmentReads.current.get(draftKey) ?? 0
     const { accepted, rejected } = screenFiles(files, {
@@ -409,6 +434,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
   const project = projects.find((item) => item.id === selectedProjectId)
   const TargetIcon = target && target.kind !== 'local' ? Server : Monitor
   const isDraft = !currentThreadId
+  const preparingPi = startingPiDraft === draftKey
 
   const skillList = useSkills((s) =>
     currentTargetId ? s.lists[skillsKey(currentTargetId, currentAgent, currentCwd)] : undefined,
@@ -483,7 +509,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           layoutKey={JSON.stringify([chatWidth, draftKey])}
           className={`qn-scroll min-w-0 flex-1 overflow-y-auto px-6 pb-6 pt-2 [scrollbar-gutter:stable_both-edges]${pinned ? ' [overflow-anchor:none]' : ''}`}
           onScroll={onScroll}
-          highlights={Object.values(highlights).flat()}
+          highlights={highlightRanges}
           onAdd={addAnnotation}
           showSideAction={!!currentThreadId}
           onSide={(text, itemId) => openSideChat(sideChatExcerpt(items, { text, itemId }))}
@@ -582,7 +608,7 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
         onSend={submit}
         onInterrupt={() => void interrupt()}
         running={running}
-        sending={sending}
+        sending={sending || preparingPi}
         disabled={!currentTargetId}
         error={error}
         onClearError={clearError}
@@ -604,12 +630,21 @@ export function ChatPanel({ onConnect, onAddTarget }: { onConnect: (id: string) 
           onSkillsChange: setSkills,
           onCommand: runCommand,
         }}
-        leading={<AgentPicker targetId={currentTargetId} agent={currentAgent} locked={!isDraft || sending} />}
+        leading={<AgentPicker targetId={currentTargetId} agent={currentAgent} locked={!isDraft || sending || preparingPi} />}
         trailing={
           currentTargetId && (
             <>
               <ContextRing tokenUsage={view?.tokenUsage} />
-              <ModelPicker targetId={currentTargetId} agent={currentAgent} />
+              <ModelPicker
+                targetId={currentTargetId}
+                agent={currentAgent}
+                threadId={currentThreadId}
+                piDraft={currentAgent === 'pi' && isDraft ? {
+                  start: () => void preparePiDraft(),
+                  starting: preparingPi,
+                  disabled: sending || preparingPi || readingImages > 0 || attachmentsUploading,
+                } : undefined}
+              />
             </>
           )
         }

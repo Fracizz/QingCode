@@ -13,16 +13,18 @@ import { Check, MessageSquarePlus, PanelRightOpen, X } from 'lucide-react'
 import {
   captureSelection,
   clearDomSelection,
-  type Box,
   type SelectionSnapshot,
 } from '../lib/selection'
 import { IconButton } from './ui'
+
+const emptyHighlights: readonly Range[] = []
+const annotationHighlightName = 'qn-chat-annotation'
 
 export function SelectionLayer({
   children,
   onAdd,
   onSide,
-  highlights = [],
+  highlights = emptyHighlights,
   onScroll,
   className = '',
   showSideAction = true,
@@ -30,9 +32,9 @@ export function SelectionLayer({
   layoutKey,
 }: {
   children: ReactNode
-  onAdd: (quote: string, comment: string, boxes: Box[]) => void
+  onAdd: (quote: string, comment: string, range: Range) => void
   onSide?: (quote: string, itemId?: string) => void
-  highlights?: Box[]
+  highlights?: readonly Range[]
   onScroll?: (event: UIEvent<HTMLDivElement>) => void
   className?: string
   showSideAction?: boolean
@@ -43,6 +45,22 @@ export function SelectionLayer({
   const [snapshot, setSnapshot] = useState<SelectionSnapshot | null>(null)
   const [commenting, setCommenting] = useState(false)
   const [comment, setComment] = useState('')
+  const commentRange = commenting ? snapshot?.range : undefined
+
+  useLayoutEffect(() => {
+    const ranges = commentRange ? [...highlights, commentRange] : highlights
+    const registry = globalThis.CSS?.highlights
+    if (!registry || ranges.length === 0) return
+
+    // 主对话和侧聊共用样式，关闭其中一处时只移除它自己的选区。
+    const highlight = registry.get(annotationHighlightName) ?? new Highlight()
+    for (const range of ranges) highlight.add(range)
+    registry.set(annotationHighlightName, highlight)
+    return () => {
+      for (const range of ranges) highlight.delete(range)
+      if (highlight.size === 0) registry.delete(annotationHighlightName)
+    }
+  }, [highlights, commentRange])
 
   // 消息重新换行后，浮层不能继续使用原来的选区坐标。
   useLayoutEffect(() => {
@@ -88,7 +106,7 @@ export function SelectionLayer({
 
   const confirm = () => {
     if (!snapshot) return
-    onAdd(snapshot.text, comment.trim(), snapshot.boxes)
+    onAdd(snapshot.text, comment.trim(), snapshot.range)
     dismiss()
   }
 
@@ -109,37 +127,21 @@ export function SelectionLayer({
     }
   }
 
-  const boxes = [...highlights, ...(snapshot?.boxes ?? [])]
-
   return (
     <div
       ref={(node) => {
         rootRef.current = node
         if (containerRef) containerRef.current = node
       }}
-      className={`relative ${className}`}
+      className={`qn-chat-selection relative ${className}`}
       onMouseDown={onMouseDown}
       onMouseUp={onMouseUp}
       onScroll={onScroll}
     >
-      <div className="pointer-events-none absolute inset-0 z-10">
-        {boxes.map((box, index) => (
-          <div
-            key={index}
-            className="absolute rounded-sm bg-qn-accent/25 ring-1 ring-qn-accent/40"
-            style={{
-              top: box.top,
-              left: box.left,
-              width: box.width,
-              height: box.height,
-            }}
-          />
-        ))}
-      </div>
       {snapshot && (
         <div
           data-qn-selection
-          className="absolute z-30"
+          className="absolute z-30 select-none"
           style={{
             top: snapshot.position.top,
             left: snapshot.position.left,
@@ -153,7 +155,10 @@ export function SelectionLayer({
                 type="button"
                 className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 hover:bg-qn-hover"
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => setCommenting(true)}
+                onClick={() => {
+                  setCommenting(true)
+                  clearDomSelection()
+                }}
               >
                 <MessageSquarePlus size={13} /> 添加到对话
               </button>
@@ -172,7 +177,7 @@ export function SelectionLayer({
             <>
               <input
                 autoFocus
-                className="qn-input h-7 w-52 px-2.5 py-0 text-[12px]"
+                className="qn-input h-7 w-52 select-text px-2.5 py-0 text-[12px]"
                 placeholder="添加可选评论…"
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}

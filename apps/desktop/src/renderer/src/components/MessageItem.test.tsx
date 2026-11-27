@@ -21,11 +21,36 @@ const toggle = (summary: HTMLElement) => act(async () => {
   await new Promise<void>((resolve) => setTimeout(resolve, 0))
 })
 
+it('没有摘要时只显示进行中的思考提示，收到摘要后可以展开', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const reasoning = { kind: 'reasoning', id: 'r', summary: ' \n', streaming: true } as const
+  try {
+    await act(() => root.render(<MessageItem item={reasoning} />))
+    expect(host.textContent).toBe('正在思考…')
+    expect(host.querySelector('details')).toBeNull()
+
+    await act(() => root.render(<MessageItem item={{ ...reasoning, streaming: false }} />))
+    expect(host.firstElementChild).toBeNull()
+
+    await act(() => root.render(<MessageItem item={{ ...reasoning, streaming: false, summary: '已确认修改位置' }} />))
+    const summary = host.querySelector('summary')!
+    expect(summary.textContent).toBe('思考过程')
+    expect(host.textContent).not.toContain('已确认修改位置')
+    await toggle(summary)
+    expect(host.textContent).toContain('已确认修改位置')
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
+
 it('工具组和处理提示共用加载圆环，完成或中断后换回状态图标', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.createElement('div')
   const root = createRoot(host)
-  const command: ItemView = { kind: 'command', id: 'cmd', command: '测试命令', status: 'inProgress' }
+  const command: ItemView = { kind: 'command', id: 'cmd', command: '测试命令', status: 'inProgress', output: '' }
   try {
     await act(() => root.render(<>
       <LoadingIcon />

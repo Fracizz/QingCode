@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DRAFT_THREAD_ID } from '@qn/codex-client'
 import { sessionKey } from '../lib/agents'
 import { composerDraftKey, pendingSendKey, useCodex } from './codex'
+import { useModels } from './models'
 
 const { callMock, listeners } = vi.hoisted(() => ({
   callMock: vi.fn(),
@@ -107,6 +108,52 @@ describe('输入框草稿标识', () => {
     useCodex.setState({ currentThreadId: 'first' })
     expect(key()).toBe(first)
   })
+})
+
+it('可在发送首条消息前启动 pi，首轮沿用该会话和所选模型', async () => {
+  const originalModels = useModels.getState()
+  const key = sessionKey('local', 'pi')
+  const model = { id: 'provider/model', model: 'provider/model', displayName: '测试模型' }
+  const listRequestIds: number[] = []
+  callMock.mockImplementation((method: string, params?: CallParams) => {
+    const msg = params?.msg
+    if (method === 'codex.send' && msg?.method === 'model/list' && msg.id !== undefined) {
+      listRequestIds.push(msg.id)
+      return Promise.resolve({})
+    }
+    return fakeCall(method, params)
+  })
+  const store = useCodex.getState
+  store().startDraft('pi')
+  const onCreated = vi.fn()
+  const requests = () => callMock.mock.calls.flatMap(([method, params]) => method === 'codex.send' ? [params.msg] : [])
+  try {
+    expect(await store().ensureOpen('local', 'pi')).toBe(true)
+    const rpc = store().sessions[key].rpc
+    const earlyList = useModels.getState().load('local', 'pi', rpc)
+
+    await store().newThread('pi', onCreated)
+    expect(onCreated).toHaveBeenCalledExactlyOnceWith('t1')
+    expect(store().currentThreadId).toBe('t1')
+    expect(requests().some((msg) => msg.method === 'turn/start')).toBe(false)
+
+    const currentList = useModels.getState().load('local', 'pi', rpc, true)
+    expect(listRequestIds).toHaveLength(2)
+    emitRecv({ id: listRequestIds[1], result: { data: [model] } }, 'pi')
+    await currentList
+    emitRecv({ id: listRequestIds[0], result: { data: [] } }, 'pi')
+    await earlyList
+
+    useModels.getState().setPrefs('pi', { model: model.model })
+    expect(await store().send('首条消息')).toBe(true)
+    expect(requests().filter((msg) => msg.method === 'thread/start')).toHaveLength(1)
+    expect(requests()).toContainEqual(expect.objectContaining({
+      method: 'turn/start',
+      params: expect.objectContaining({ threadId: 't1', model: model.model }),
+    }))
+  } finally {
+    useModels.setState(originalModels)
+  }
 })
 
 it('桌面打开只加载最近页，向前加载时保留当前选中的会话', async () => {

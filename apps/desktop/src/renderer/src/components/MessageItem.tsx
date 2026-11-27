@@ -8,7 +8,7 @@ import { copyText } from '../lib/clipboard'
 import { cn } from '../lib/cn'
 import { diffRows, lineCount, tailLines } from '../lib/diff'
 import { langFromClassName } from '../lib/highlight'
-import { formatDuration, isGroupRunning, summarizeTools, type FlowEntry } from '../lib/turnGroups'
+import { formatDuration, isEmptyReasoning, isGroupRunning, summarizeTools, type FlowEntry } from '../lib/turnGroups'
 import { createMarkdownLink, FileChangeActions, PathText, qnUrlTransform, type LinkContext } from '../features/files'
 import { useCodex } from '../store/codex'
 import { CodeBlock } from './CodeBlock'
@@ -329,6 +329,7 @@ type MessageItemProps = {
 }
 
 export const MessageItem = memo(function MessageItem(props: MessageItemProps) {
+  if (isEmptyReasoning(props.item)) return null
   return <div data-chat-item={props.item.id} className="contents"><MessageContent {...props} /></div>
 })
 
@@ -347,9 +348,11 @@ function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, o
           icon={item.streaming ? <LoadingIcon /> : <Lightbulb size={14} strokeWidth={1.75} />}
           summary={item.streaming ? '正在思考…' : '思考过程'}
         >
-          <div className="whitespace-pre-wrap break-words border-l border-qn-border pl-3 text-[length:calc(var(--qn-chat-font-size,14px)_-_1px)] leading-[1.8] text-qn-muted">
-            {item.summary || '（暂无摘要）'}
-          </div>
+          {item.summary.trim() && (
+            <div className="whitespace-pre-wrap break-words border-l border-qn-border pl-3 text-[length:calc(var(--qn-chat-font-size,14px)_-_1px)] leading-[1.8] text-qn-muted">
+              {item.summary}
+            </div>
+          )}
         </ToolRow>
       )
     case 'command':

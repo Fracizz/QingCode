@@ -178,7 +178,7 @@ type CodexState = {
   ensureOpen: (targetId: string, agent?: AgentKind) => Promise<boolean>
   probeAgents: (targetId: string) => Promise<void>
   refreshThreads: () => Promise<void>
-  newThread: (agent?: AgentKind) => Promise<void>
+  newThread: (agent?: AgentKind, onDraftCreated?: (threadId: string) => void) => Promise<void>
   /** 回到"新会话"草稿态（参考 Codex 的 New thread）：不立即建会话，发第一条消息时再创建，避免留下空会话。 */
   startDraft: (agent?: AgentKind) => void
   /** 草稿态下切换下一条消息使用的 Agent；已打开会话时 Agent 跟随会话，不可切换。 */
@@ -920,25 +920,35 @@ export const useCodex = create<CodexState>((set, get) => {
       set({ threads: mergeThreadSummaries(lists), threadsLoading: false })
     },
 
-    newThread: async (agent) => {
+    newThread: async (agent, onDraftCreated) => {
+      const initial = get()
+      const picked = agent ?? initial.currentAgent
+      if (onDraftCreated && (initial.currentThreadId || initial.sending || picked !== initial.currentAgent)) return
       const token = ++openThreadToken
       set({ openingThread: null })
-      const targetId = get().currentTargetId
+      const targetId = initial.currentTargetId
       if (!targetId) {
         set({ error: '请先选择目标' })
         return
       }
-      const picked = agent ?? get().currentAgent
       const reason = statusFor(targetId, picked)
       if (reason?.state === 'unavailable') {
         set({ error: `${agentLabel(picked)} 不可用：${reason.detail ?? '未安装'}` })
         return
       }
       const threadId = await startNewThread(targetId, picked, {
-        cwd: get().currentCwd,
+        cwd: initial.currentCwd,
         ephemeral: false,
       })
       if (!threadId || token !== openThreadToken) return
+      if (onDraftCreated) {
+        const current = get()
+        if (
+          current.currentThreadId || current.sending || current.currentAgent !== picked ||
+          current.access.draftRevision !== initial.access.draftRevision
+        ) return
+        onDraftCreated(threadId)
+      }
       clearAllDrafts()
       set({ currentThreadId: threadId, currentAgent: picked, error: null })
       void get().refreshThreads()

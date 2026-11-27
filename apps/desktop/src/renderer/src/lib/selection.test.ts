@@ -2,19 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   MAX_SELECTION_LENGTH,
   normalizeSelectionText,
-  relativeBoxes,
   toolbarPosition,
-  type RectLike,
+  visibleSelectionBox,
 } from './selection'
 
-const rect = (top: number, left: number, width: number, height: number): RectLike => ({
-  top,
-  left,
-  right: left + width,
-  bottom: top + height,
-  width,
-  height,
-})
+const rect = (top: number, left: number, width: number, height: number) => ({ top, left, width, height })
 
 describe('选区文本', () => {
   it('去掉首尾空白、统一换行、限制长度', () => {
@@ -27,15 +19,14 @@ describe('选区文本', () => {
 })
 
 describe('选区坐标与浮层位置', () => {
-  it('视口坐标换算成滚动内容坐标并丢弃零尺寸矩形', () => {
+  it('选用首个仍可见的片段，并裁掉超出视口的范围', () => {
     expect(
-      relativeBoxes(
-        [rect(120, 30, 80, 18), rect(140, 30, 0, 18)],
+      visibleSelectionBox(
+        [rect(70, 30, 80, 18), rect(100, 30, 0, 18), rect(95, 10, 900, 18), rect(115, 30, 50, 18)],
         rect(100, 20, 600, 400),
-        250,
-        5,
       ),
-    ).toEqual([{ top: 270, left: 15, width: 80, height: 18 }])
+    ).toEqual({ top: 0, left: 0, width: 600, height: 13 })
+    expect(visibleSelectionBox([rect(500, 40, 80, 18)], rect(100, 20, 600, 400))).toBeNull()
   })
 
   it('浮层在选区上方居中，且不越出容器左右边界', () => {
