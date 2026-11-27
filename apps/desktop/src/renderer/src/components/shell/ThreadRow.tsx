@@ -1,11 +1,9 @@
 import { isActiveThread, sessionStatus, sessionStatusLabels, type SessionStatus, type ThreadView } from '@qn/codex-client'
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentProps, type ComponentType } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ComponentProps, type ReactNode } from 'react'
 import { ContextMenu } from 'radix-ui'
 import {
   Archive,
-  Check,
   ChevronRight,
-  Circle,
   CircleAlert,
   CirclePause,
   Copy,
@@ -18,46 +16,64 @@ import {
   PinOff,
   ShieldAlert,
   Trash2,
-  type LucideProps,
 } from 'lucide-react'
-import { DEFAULT_AGENT } from '../../lib/agents'
+import { agentLabel, DEFAULT_AGENT } from '../../lib/agents'
 import { copyText } from '../../lib/clipboard'
 import { cn } from '../../lib/cn'
-import { threadKey, type ThreadSummary } from '../../lib/threads'
+import { formatTime, threadKey, threadPreviewText, type ThreadSummary } from '../../lib/threads'
 import { formatRelative } from '../../lib/time'
 import { useCodex } from '../../store/codex'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { AgentIcon } from '../AgentIcon'
 import { LoadingIcon } from '../LoadingIcon'
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator, floatSurface, menuItemClass, MenuItemContent, Tip } from '../primitives'
+import { StatusDot } from '../StatusDot'
 import { IconButton, Modal } from '../ui'
 
-const statusIcons: Record<SessionStatus, { Icon: ComponentType<LucideProps>; className: string; size?: number }> = {
-  idle: { Icon: Circle, className: 'text-qn-dim' },
-  running: { Icon: LoadingIcon, className: 'text-qn-brand [animation-duration:2s]' },
-  pending: { Icon: ShieldAlert, className: 'text-amber-300' },
-  input: { Icon: MessageSquare, className: 'text-amber-300' },
-  completed: { Icon: Check, className: 'text-qn-muted' },
-  failed: { Icon: CircleAlert, className: 'text-qn-danger' },
-  interrupted: { Icon: CirclePause, className: 'text-qn-muted' },
-  unread: { Icon: Circle, className: 'fill-current text-qn-brand', size: 6 },
+type ThreadRowStatus = SessionStatus | 'opening'
+
+const statusIcons: Record<ThreadRowStatus, ReactNode> = {
+  idle: <StatusDot className="size-2 bg-qn-muted/60" />,
+  running: <LoadingIcon />,
+  pending: <ShieldAlert size={13} className="text-amber-300" aria-hidden />,
+  input: <MessageSquare size={13} className="text-amber-300" aria-hidden />,
+  completed: <StatusDot className="size-2 bg-emerald-500" />,
+  failed: <CircleAlert size={13} className="text-qn-danger" aria-hidden />,
+  interrupted: <CirclePause size={13} className="text-qn-muted" aria-hidden />,
+  unread: <StatusDot className="size-2 bg-qn-brand" />,
+  opening: <LoadingIcon />,
 }
 
-function ThreadStatusIcon({ status }: { status: SessionStatus }) {
-  const label = sessionStatusLabels[status]
-  const { Icon, className, size = 13 } = statusIcons[status]
+function ThreadStatusIcon({ status, label }: { status: ThreadRowStatus; label: string }) {
   return (
     <Tip label={label}>
       <span
-        className="absolute left-[14px] top-1/2 flex size-3.5 -translate-y-1/2 items-center justify-center"
+        className="absolute left-[13px] top-1/2 mt-px flex size-[16px] -translate-y-1/2 items-center justify-center"
         role="img"
         aria-label={label}
-        // 避免悬停图标时同时出现会话预览的原生提示。
-        title=""
       >
-        <Icon size={size} strokeWidth={2.5} className={className} aria-hidden />
+        {statusIcons[status]}
       </span>
     </Tip>
+  )
+}
+
+function ThreadPreview({ thread, statusLabel }: { thread: ThreadSummary; statusLabel: string }) {
+  const preview = threadPreviewText(thread)
+
+  return (
+    <>
+      <span className="line-clamp-6 text-ui leading-5 font-medium wrap-anywhere">{thread.title}</span>
+      {preview && (
+        <span className="mt-1 line-clamp-4 wrap-anywhere whitespace-pre-line text-qn-muted">{preview}</span>
+      )}
+      <span className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-qn-border pt-2 text-qn-muted">
+        <span>{agentLabel(thread.agent)}</span>
+        <span aria-hidden="true">·</span>
+        <span>{statusLabel}</span>
+        {thread.updatedAt > 0 && <span className="ml-auto">更新于 {formatTime(thread.updatedAt)}</span>}
+      </span>
+    </>
   )
 }
 
@@ -107,7 +123,9 @@ export function ThreadRow({
   const pinned = prefs?.pinned[key] !== undefined
   const unread = prefs?.unread[key] === true && !current
   const status = sessionStatus(view, thread.activity, unread)
+  const statusLabel = opening ? '正在打开会话' : sessionStatusLabels[status]
   const running = isActiveThread(status)
+  const showActions = status !== 'pending' && status !== 'input'
   // Claude 侧没有会话管理 RPC：重命名/归档退化为本机记录，分支与永久删除不可用。
   const native = thread.agent === 'codex'
 
@@ -147,12 +165,9 @@ export function ThreadRow({
   }
 
   const archive = async (): Promise<void> => {
-    if (native) {
-      if (await archiveThread(thread.id, thread.agent)) setPinned(targetId, key, false)
-    } else {
-      setHidden(targetId, key, true)
-      setPinned(targetId, key, false)
-    }
+    if (!await archiveThread(thread.id, thread.agent)) return
+    if (!native) setHidden(targetId, key, true)
+    setPinned(targetId, key, false)
   }
 
   const remove = async (): Promise<void> => {
@@ -190,49 +205,57 @@ export function ThreadRow({
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <div
-            role="button"
-            tabIndex={0}
-            aria-busy={opening}
-            className={`group relative flex h-8 w-full cursor-default items-center gap-2 rounded-lg pl-[31px] pr-2 text-left text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover ${
+            className={`group relative h-8 w-full cursor-default rounded-lg text-ui data-[state=open]:bg-qn-hover ${
               current ? 'bg-qn-active text-qn-text' : 'text-qn-text/80 hover:bg-qn-hover hover:text-qn-text'
             }`}
-            title={thread.preview || thread.title}
-            onClick={open}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                open()
-              } else if (event.key === 'F2') {
-                beginRename()
-              }
+            onClick={(event) => {
+              if (event.currentTarget.contains(event.target as Node)) open()
             }}
           >
-            {opening ? (
-              <LoadingIcon size={13} className="absolute left-[14px] top-1/2 -translate-y-1/2 text-qn-brand" aria-hidden />
-            ) : <ThreadStatusIcon status={status} />}
-            {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
-            {thread.agent !== DEFAULT_AGENT && <AgentIcon agent={thread.agent} size={12} />}
-            <span className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold text-qn-text')}>{thread.title}</span>
-            {status !== 'pending' && status !== 'input' && (
-              <>
-                <span className="shrink-0 text-ui-sm text-qn-dim group-hover:hidden">
-                  {formatRelative(thread.updatedAt, now)}
-                </span>
-                <span className="-mr-1 hidden shrink-0 items-center group-hover:flex" onClick={(e) => e.stopPropagation()}>
-                  <IconButton
-                    label={pinned ? '取消置顶' : '置顶'}
-                    className="h-6 w-6"
-                    onClick={() => setPinned(targetId, key, !pinned)}
-                  >
-                    {pinned ? <PinOff size={13} /> : <Pin size={13} />}
+            <Tip
+              label={<ThreadPreview thread={thread} statusLabel={statusLabel} />}
+              side="right"
+              align="start"
+              className="w-80 max-w-[calc(100vw-16px)] rounded-xl px-3 py-2.5"
+            >
+              <button
+                type="button"
+                aria-busy={opening}
+                aria-current={current ? 'true' : undefined}
+                className={cn(
+                  'absolute inset-0 flex cursor-default items-center gap-2 rounded-lg pl-[31px] pr-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-accent',
+                  showActions && (running ? 'group-hover:pr-9' : 'group-hover:pr-15'),
+                )}
+                onKeyDown={(event) => {
+                  if (event.key === 'F2') beginRename()
+                }}
+              >
+                {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
+                {thread.agent !== DEFAULT_AGENT && <AgentIcon agent={thread.agent} size={12} className="pointer-events-none" />}
+                <span className={cn('min-w-0 flex-1 truncate', unread && 'text-qn-text')}>{thread.title}</span>
+                {showActions && (
+                  <span className="shrink-0 text-ui-sm text-qn-dim group-hover:hidden" aria-hidden="true">
+                    {formatRelative(thread.updatedAt, now)}
+                  </span>
+                )}
+              </button>
+            </Tip>
+            <ThreadStatusIcon status={opening ? 'opening' : status} label={statusLabel} />
+            {showActions && (
+              <span className="absolute inset-y-0 right-1 hidden items-center group-hover:flex" onClick={(e) => e.stopPropagation()}>
+                <IconButton
+                  label={pinned ? '取消置顶' : '置顶'}
+                  className="h-6 w-6"
+                  onClick={() => setPinned(targetId, key, !pinned)}
+                >
+                  {pinned ? <PinOff size={13} /> : <Pin size={13} />}
+                </IconButton>
+                {!running && (
+                  <IconButton label="归档" className="h-6 w-6" onClick={() => void archive()}>
+                    <Archive size={13} />
                   </IconButton>
-                  {!running && (
-                    <IconButton label="归档" className="h-6 w-6" onClick={() => void archive()}>
-                      <Archive size={13} />
-                    </IconButton>
-                  )}
-                </span>
-              </>
+                )}
+              </span>
             )}
           </div>
         </ContextMenu.Trigger>

@@ -4,6 +4,8 @@ import { call } from '../lib/backend'
 import { friendlyError } from '../lib/errors'
 import { useCodex } from './codex'
 
+export type ProjectPlacement = 'before' | 'after'
+
 /** 单个目标上的项目列表：侧栏同时铺开多个目标，所以按目标分别缓存。 */
 export type ProjectList = {
   projects: Project[]
@@ -13,6 +15,8 @@ export type ProjectList = {
 
 type ProjectsState = {
   byTarget: Record<string, ProjectList>
+  /** 各目标里普通项目的手动排序（含置顶项目原位置，取消置顶时据此恢复）。 */
+  orderByTarget: Map<string, string[]>
   /** 当前活动目标（与 useTargets.selectedId 同步），下面三个字段是它的列表镜像，供主区直接读取。 */
   targetId: string | null
   projects: Project[]
@@ -30,28 +34,58 @@ type ProjectsState = {
   rename: (project: Project, name: string) => Promise<void>
   pinned: string[]
   togglePin: (id: string) => void
+  move: (id: string, anchorId: string, placement: ProjectPlacement) => void
 }
 
-// 项目置顶只是本机显示偏好，不进后端。
+// 项目置顶与排序只是本机显示偏好，不进后端。
 const PIN_KEY = 'qn.projects.pinned'
+const orderKey = (targetId: string) => `qn.projects.order.${targetId}`
 const EMPTY: ProjectList = { projects: [], loading: false, error: null }
+// 每个目标各自计数，迟到的旧列表响应不能覆盖新结果。
+const loadRevisions = new Map<string, number>()
 
-function readPinned(): string[] {
+function readIds(key: string): string[] {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(PIN_KEY) ?? '[]')
+    const value: unknown = JSON.parse(localStorage.getItem(key) ?? '[]')
     return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []
   } catch {
     return []
   }
 }
 
-/** 置顶在前（按置顶先后），其余按最近打开。 */
-export function sortProjects(projects: Project[], pinned: string[]): Project[] {
-  const rank = (id: string) => {
-    const index = pinned.indexOf(id)
-    return index < 0 ? Number.POSITIVE_INFINITY : index
+function writeIds(key: string, ids: string[]): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(ids))
+  } catch {
+    // 存储不可用时保留本次运行的顺序。
   }
-  return [...projects].sort((a, b) => rank(a.id) - rank(b.id) || b.lastOpenedAt - a.lastOpenedAt)
+}
+
+// 首次加载沿用后端顺序，之后只把新增项目接在已保存的项目后面。
+function orderProjects(projects: Project[], order: string[]): Project[] {
+  const remaining = new Map(projects.map((project) => [project.id, project]))
+  const ordered: Project[] = []
+  for (const id of order) {
+    const project = remaining.get(id)
+    if (!project) continue
+    ordered.push(project)
+    remaining.delete(id)
+  }
+  return [...ordered, ...remaining.values()]
+}
+
+function rememberOrder(orders: Map<string, string[]>, targetId: string, order: string[]): Map<string, string[]> {
+  const previous = orders.get(targetId)
+  if (previous?.length === order.length && previous.every((id, index) => id === order[index])) return orders
+  writeIds(orderKey(targetId), order)
+  return new Map(orders).set(targetId, order)
+}
+
+function moveId(order: string[], id: string, anchorId: string, placement: ProjectPlacement): string[] {
+  if (id === anchorId || !order.includes(id) || !order.includes(anchorId)) return order
+  const next = order.filter((entry) => entry !== id)
+  next.splice(next.indexOf(anchorId) + (placement === 'after' ? 1 : 0), 0, id)
+  return next.every((entry, index) => entry === order[index]) ? order : next
 }
 
 /** 读某个目标的项目列表（未加载时返回同一个空列表，引用稳定）。 */
@@ -59,7 +93,7 @@ export function projectListOf(state: Pick<ProjectsState, 'byTarget'>, targetId: 
   return state.byTarget[targetId] ?? EMPTY
 }
 
-type Patch = Partial<Pick<ProjectsState, 'byTarget' | 'targetId' | 'selectedId' | 'pinned'>>
+type Patch = Partial<Pick<ProjectsState, 'byTarget' | 'orderByTarget' | 'targetId' | 'selectedId' | 'pinned'>>
 
 /** 写入 byTarget / 活动目标后，同步活动目标的镜像字段。 */
 function withMirror(state: ProjectsState, patch: Patch): Partial<ProjectsState> {
@@ -73,16 +107,18 @@ function updateList(state: ProjectsState, targetId: string, update: (list: Proje
   return { byTarget: { ...state.byTarget, [targetId]: update(state.byTarget[targetId] ?? EMPTY) } }
 }
 
+function targetOfProject(state: ProjectsState, id: string): string | undefined {
+  return Object.entries(state.byTarget).find(([, list]) => list.projects.some((item) => item.id === id))?.[0]
+}
+
 export const useProjects = create<ProjectsState>((set, get) => {
   const patch = (fn: (state: ProjectsState) => Patch) => set((state) => withMirror(state, fn(state)))
-  const replaceProject = (saved: Project) =>
+  // 保存只回写字段，不重新排序：打开项目不应打乱用户拖好的顺序。
+  const replaceProject = (saved: Project, fields: (saved: Project, item: Project) => Project) =>
     patch((state) =>
       updateList(state, saved.targetId, (list) => ({
         ...list,
-        projects: sortProjects(
-          list.projects.map((item) => (item.id === saved.id ? saved : item)),
-          state.pinned,
-        ),
+        projects: list.projects.map((item) => (item.id === saved.id ? fields(saved, item) : item)),
       })),
     )
   const setError = (targetId: string, error: string) =>
@@ -90,23 +126,31 @@ export const useProjects = create<ProjectsState>((set, get) => {
 
   return {
     byTarget: {},
+    orderByTarget: new Map(),
     targetId: null,
     projects: [],
     loading: false,
     error: null,
     selectedId: null,
-    pinned: readPinned(),
+    pinned: readIds(PIN_KEY),
 
     load: async (targetId) => {
+      const revision = (loadRevisions.get(targetId) ?? 0) + 1
+      loadRevisions.set(targetId, revision)
       patch((state) => updateList(state, targetId, (list) => ({ ...list, loading: true, error: null })))
       try {
         const projects = await call('projects.list', { targetId })
+        if (loadRevisions.get(targetId) !== revision) return
         patch((state) => {
-          const next = updateList(state, targetId, () => ({
-            projects: sortProjects(projects, state.pinned),
-            loading: false,
-            error: null,
-          }))
+          const ordered = orderProjects(projects, state.orderByTarget.get(targetId) ?? readIds(orderKey(targetId)))
+          const next: Patch = {
+            ...updateList(state, targetId, () => ({
+              projects: orderProjects(ordered, state.pinned),
+              loading: false,
+              error: null,
+            })),
+            orderByTarget: rememberOrder(state.orderByTarget, targetId, ordered.map(({ id }) => id)),
+          }
           // 当前项目被别处删掉时取消选中。
           const lost =
             state.targetId === targetId &&
@@ -115,6 +159,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
           return lost ? { ...next, selectedId: null } : next
         })
       } catch (err) {
+        if (loadRevisions.get(targetId) !== revision) return
         patch((state) =>
           updateList(state, targetId, () => ({
             projects: [],
@@ -155,7 +200,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
           name: project.name,
           path: project.path,
         })
-        replaceProject(saved)
+        replaceProject(saved, (value, item) => ({ ...item, lastOpenedAt: value.lastOpenedAt }))
       } catch (err) {
         setError(project.targetId, friendlyError(err, '刷新项目时间失败'))
       }
@@ -174,10 +219,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
     },
 
     remove: async (id) => {
-      const project = Object.values(get().byTarget)
-        .flatMap((list) => list.projects)
-        .find((item) => item.id === id)
-      const targetId = project?.targetId ?? get().targetId
+      const targetId = targetOfProject(get(), id) ?? get().targetId
       const wasSelected = get().selectedId === id
       try {
         await call('projects.remove', { id })
@@ -201,7 +243,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
           name: trimmed,
           path: project.path,
         })
-        replaceProject(saved)
+        replaceProject(saved, (value) => value)
       } catch (err) {
         setError(project.targetId, friendlyError(err, '重命名项目失败'))
       }
@@ -210,15 +252,43 @@ export const useProjects = create<ProjectsState>((set, get) => {
     togglePin: (id) => {
       patch((state) => {
         const pinned = state.pinned.includes(id) ? state.pinned.filter((item) => item !== id) : [...state.pinned, id]
-        try {
-          localStorage.setItem(PIN_KEY, JSON.stringify(pinned))
-        } catch {
-          // 存储不可用时只在本次运行内生效。
-        }
+        writeIds(PIN_KEY, pinned)
         const byTarget = Object.fromEntries(
-          Object.entries(state.byTarget).map(([key, list]) => [key, { ...list, projects: sortProjects(list.projects, pinned) }]),
+          Object.entries(state.byTarget).map(([key, list]) => [
+            key,
+            { ...list, projects: orderProjects(list.projects, [...pinned, ...(state.orderByTarget.get(key) ?? [])]) },
+          ]),
         )
         return { pinned, byTarget }
+      })
+    },
+
+    move: (id, anchorId, placement) => {
+      patch((state) => {
+        const targetId = targetOfProject(state, id)
+        if (!targetId || targetOfProject(state, anchorId) !== targetId) return {}
+        const { pinned, orderByTarget } = state
+        const projects = projectListOf(state, targetId).projects
+        const isPinned = pinned.includes(id)
+        if (isPinned !== pinned.includes(anchorId)) return {}
+        const order = orderByTarget.get(targetId) ?? projects.map((item) => item.id)
+        const setList = (next: Project[]) => updateList(state, targetId, (list) => ({ ...list, projects: next }))
+        if (isPinned) {
+          const nextPinned = moveId(pinned, id, anchorId, placement)
+          if (nextPinned === pinned) return {}
+          writeIds(PIN_KEY, nextPinned)
+          return { pinned: nextPinned, ...setList(orderProjects(projects, [...nextPinned, ...order])) }
+        }
+        const unpinned = order.filter((entry) => !pinned.includes(entry))
+        const moved = moveId(unpinned, id, anchorId, placement)
+        if (moved === unpinned) return {}
+        // 拖动普通项目时保留置顶项目在原顺序中的位置，供取消置顶时恢复。
+        let index = 0
+        const nextOrder = order.map((entry) => (pinned.includes(entry) ? entry : moved[index++]!))
+        return {
+          ...setList(orderProjects(projects, [...pinned, ...nextOrder])),
+          orderByTarget: rememberOrder(orderByTarget, targetId, nextOrder),
+        }
       })
     },
   }

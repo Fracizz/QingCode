@@ -11,7 +11,7 @@ import { TooltipProvider } from './components/primitives'
 import { Sidebar } from './components/shell/Sidebar'
 import { TitleBar } from './components/shell/TitleBar'
 import { TargetForm } from './components/TargetForm'
-import { useWorkspaceScope, WorkspaceDock } from './components/shell/WorkspaceDock'
+import { ProjectFilesView, useWorkspaceScope, WorkspaceDock } from './components/shell/WorkspaceDock'
 import { QuickOpen } from './features/explorer'
 import { CommandPalette, defaultCommands, registerCommands, storeCommandDeps, toggleCommandPalette } from './features/palette'
 import { closeSettings, openSettings, SettingsDialog, useSettings, useSettingsDialog } from './features/settings'
@@ -59,6 +59,7 @@ export default function App() {
   const [rememberPrefs, setRememberPrefs] = useState<Record<string, boolean>>({})
   const [mobileOpen, setMobileOpen] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
+  const filesView = useDock((s) => s.view === 'files')
   const workspace = useWorkspaceScope()
   const settingsDialog = useSettingsDialog()
   const autoConnectDone = useRef(false)
@@ -240,10 +241,13 @@ export default function App() {
           />
         )}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <ChatPanel onConnect={requestConnect} onAddTarget={openAddTarget} />
+          <div className={filesView ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
+            <ChatPanel onConnect={requestConnect} onAddTarget={openAddTarget} />
+          </div>
+          {filesView && <ProjectFilesView onQuickOpen={() => setQuickOpen(true)} />}
           <TerminalDock />
         </div>
-        <WorkspaceDock />
+        {!filesView && <WorkspaceDock />}
       </div>
 
       {targetForm.open && (

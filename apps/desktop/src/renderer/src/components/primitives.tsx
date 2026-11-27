@@ -140,10 +140,14 @@ export const TooltipProvider = Tooltip.Provider
 export function Tip({
   label,
   side = 'top',
+  align,
+  className,
   children,
 }: {
   label: ReactNode
   side?: 'top' | 'bottom' | 'left' | 'right'
+  align?: 'start' | 'center' | 'end'
+  className?: string
   children: ReactNode
 }) {
   return (
@@ -152,9 +156,10 @@ export function Tip({
       <Tooltip.Portal>
         <Tooltip.Content
           side={side}
+          align={align}
           sideOffset={6}
           collisionPadding={8}
-          className="qn-no-drag qn-float qn-surface-float z-[60] max-w-xs rounded-lg px-2.5 py-1.5 text-ui-sm leading-4"
+          className={cn('qn-no-drag qn-float qn-surface-float z-[60] max-w-xs rounded-lg px-2.5 py-1.5 text-ui-sm leading-4', className)}
         >
           {label}
         </Tooltip.Content>

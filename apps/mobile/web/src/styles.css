@@ -218,6 +218,7 @@ input[type="radio"] {
 .qn-input:focus,
 .qn-textarea:focus {
   border-color: var(--color-qn-accent);
+  outline: none;
 }
 
 .qn-input:disabled,
@@ -528,6 +529,35 @@ input[type="radio"] {
   margin-bottom: 0;
 }
 
+/* 用背景画圆点，复制消息或引用选区时不会混入指示文字。 */
+.qn-streaming > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+.qn-streaming > :is(ul, ol):last-child > li:last-child::after,
+.qn-streaming:not(:has(> :is(p, h1, h2, h3, h4, h5, h6, ul, ol):last-child))::after {
+  content: '';
+  display: inline-block;
+  width: 1.05em;
+  height: 0.35em;
+  margin-inline-start: 0.3em;
+  vertical-align: 0.12em;
+  color: var(--color-qn-accent);
+  background: radial-gradient(circle closest-side, currentColor 70%, transparent 100%) left center / calc(100% / 3) 100% repeat-x;
+  opacity: 0.65;
+
+  @media (prefers-reduced-motion: no-preference) {
+    animation: qn-streaming-pulse 2.6s ease-in-out infinite;
+  }
+}
+
+@keyframes qn-streaming-pulse {
+  0%, 100% {
+    opacity: 0.42;
+  }
+
+  50% {
+    opacity: 0.78;
+  }
+}
+
 .qn-markdown a {
   color: var(--color-qn-accent);
   text-decoration: underline;
@@ -828,18 +858,30 @@ input[type="radio"] {
   font-size: 20px;
 }
 
-.qn-project-filters {
-  display: flex;
-  gap: 6px;
+.qn-project-filter {
   margin-top: 8px;
-  padding: 2px;
-  overflow-x: auto;
+  padding: 0 10px;
+  border: 1px solid var(--color-qn-border-strong);
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-card);
+  font-size: 14px;
 }
 
-.qn-project-filters .qn-chip {
-  flex-shrink: 0;
-  max-width: min(16rem, 100%);
-  min-width: 44px;
+.qn-project-filter-option {
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--qn-radius) - 4px);
+}
+
+.qn-project-filter-option[aria-pressed="true"] {
+  border-color: var(--color-qn-accent);
+  background: var(--qn-accent-surface);
+  font-weight: 650;
+}
+
+.qn-project-filter:active,
+.qn-project-filter-option:active {
+  background: var(--qn-press);
 }
 
 .qn-workspace-group {
@@ -1197,6 +1239,26 @@ input[type="radio"] {
   border-color: transparent;
   background: transparent;
   font-size: 12.5px;
+}
+
+.qn-composer-tools > .qn-access-chip {
+  flex-shrink: 0;
+  min-height: 44px;
+  padding-inline: 6px;
+}
+
+.qn-composer-tools:has(> .qn-access-chip) {
+  flex-basis: 13rem;
+}
+
+.qn-access-chip[data-tone="warn"] {
+  border-color: var(--color-qn-warn);
+  color: var(--color-qn-warn);
+}
+
+.qn-access-chip[data-tone="danger"] {
+  border-color: var(--color-qn-danger);
+  color: var(--color-qn-danger);
 }
 
 .qn-composer-model > .qn-chip:active { background: var(--qn-press); }
@@ -1717,6 +1779,28 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   animation: qn-rise var(--qn-motion-medium) var(--qn-ease-emphasized) backwards;
 }
 
+.qn-chat-surface {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  touch-action: pan-x pan-y;
+}
+
+.qn-chat-surface .qn-markdown,
+.qn-chat-surface .qn-user-bubble,
+.qn-chat-surface .qn-composer .qn-textarea {
+  font-size: var(--chat-font, 14px);
+}
+
+.qn-chat-surface .qn-markdown :is(code, pre, table),
+.qn-chat-surface .qn-tool-row,
+.qn-chat-surface .qn-tool-body :is(pre, .qn-mono),
+.qn-chat-surface .qn-diff-preview {
+  font-size: max(8px, calc(var(--chat-font, 14px) - 2px));
+  line-height: 1.5;
+}
+
 /* ===== 首次配对引导 ===== */
 .qn-onboard {
   display: flex;
@@ -1787,36 +1871,6 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   font-size: 13.5px;
 }
 
-/* 回到最新：右下角小圆钮，运行中带一个呼吸点提示有新输出。 */
-.qn-jump-latest {
-  position: absolute;
-  right: 14px;
-  bottom: 12px;
-  z-index: 2;
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--color-qn-raised);
-  box-shadow: var(--qn-elev-1), inset 0 0 0 1px var(--qn-edge-top);
-  color: var(--color-qn-text);
-  animation: qn-fade var(--qn-motion-short) ease-out backwards;
-}
-
-.qn-jump-latest:active { transform: scale(0.94); }
-
-.qn-jump-live {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-qn-accent);
-  animation: qn-breathe 1.6s ease-in-out infinite;
-}
-
 /* 待审批卡片：琥珀色描边 + 淡底，在消息流里一眼可见。 */
 .qn-card.qn-approval {
   background: color-mix(in srgb, var(--color-qn-warn) 6%, var(--color-qn-card));
@@ -1827,4 +1881,5 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 .qn-queue-list li { min-height: 44px; }
 .qn-queue-list .qn-button { min-width: 34px; min-height: 34px; }
 .qn-queue-list .qn-icon-button { color: var(--color-qn-muted); }
+
 }

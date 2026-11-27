@@ -58,6 +58,16 @@ describe('标签工厂与去重', () => {
     expect(text.title).toContain('本轮改动')
   })
 
+  it('Markdown 默认预览，搜索行号进入源码，重复打开保留用户选的模式', () => {
+    const doc = { kind: 'file', targetId: 'ssh', path: '/repo/README.MD' } as const
+    const preview = createTab(doc, '1')
+    expect(preview.view).toBe('preview')
+    const source = createTab({ ...doc, line: 8 }, '2')
+    expect(source.view).toBe('source')
+    expect(upsertTab([preview], source).tabs[0]).toMatchObject({ view: 'source', line: 8 })
+    expect(upsertTab([source], preview).tabs[0]?.view).toBe('source')
+  })
+
   it('差异标签标题带模式/短 hash', () => {
     expect(diffModeLabel('worktree')).toBe('与 HEAD 对比')
     expect(diffModeLabel('staged')).toBe('暂存区对比')

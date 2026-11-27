@@ -16,11 +16,10 @@ import {
   History,
   Minus,
   Plus,
-  RotateCw,
   RotateCcw,
 } from 'lucide-react'
 import { ListOption } from '../../components/ListOption'
-import { LoadingIcon } from '../../components/LoadingIcon'
+import { LoadingIcon, RefreshIcon } from '../../components/LoadingIcon'
 import { SearchField } from '../../components/SearchField'
 import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Modal, Spinner } from '../../components/ui'
 import {
@@ -320,7 +319,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             <ArrowUp size={14} />
           </IconButton>
           <IconButton label="刷新" className="h-7 w-7" disabled={state.loading} onClick={() => void refresh(targetId, cwd)}>
-            <RotateCw size={14} className={state.loading ? 'animate-spin' : ''} />
+            <RefreshIcon loading={state.loading} />
           </IconButton>
         </div>
       </div>

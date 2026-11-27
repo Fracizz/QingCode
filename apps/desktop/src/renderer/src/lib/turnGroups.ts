@@ -1,4 +1,4 @@
-import type { ItemView, TurnMeta } from '@qn/codex-client'
+import type { ItemView, ThreadView, TurnMeta } from '@qn/codex-client'
 
 // 消息流分组（参考 Codex / Orca 的"已运行 3 条命令 · 1 个失败"）：
 // 连续的工具类条目（命令、文件改动、思考、其他）折叠成一行摘要，对话正文不被过程信息淹没。
@@ -10,12 +10,25 @@ export type FlowEntry =
 export type TurnEntry =
   | FlowEntry
   /** 已结束一轮的过程（思考、工具、中间说明）收成"工作了 4m 56s"，只露出最终回复。 */
-  | { kind: 'work'; key: string; durationMs: number | null; entries: FlowEntry[] }
+  | { kind: 'work'; key: string; durationMs: number | null; entries: FlowEntry[]; reply?: { id: string; completedAtMs: number } }
 
 export function hasPendingSubmission(items: ItemView[], submitting: boolean): boolean {
   if (!submitting) return false
   const item = items.findLast((entry) => entry.kind === 'user' || (entry.kind === 'agent' && entry.text.trim()))
   return item?.kind === 'user' && item.pending === true
+}
+
+export function streamingReplyId(thread: ThreadView | undefined): string | undefined {
+  if (thread?.status !== 'running') return
+  const itemIds = thread.turns?.findLast((turn) => turn.id === thread.activeTurnId)?.itemIds
+  if (itemIds?.length === 0) return
+  // 命令或新回复接管后，不能让还没收到完成事件的旧回复重新出现指示。
+  const last = itemIds ? thread.items.findLast((item) => itemIds.includes(item.id)) : thread.items.at(-1)
+  if (last?.kind === 'agent' && last.streaming && last.text.trim()) return last.id
+}
+
+export function isEmptyReasoning(item: ItemView): boolean {
+  return item.kind === 'reasoning' && !item.streaming && !item.summary.trim()
 }
 
 /** 按用户消息切轮；进行中的那一轮保持展开，方便看实时进度。 */
@@ -43,21 +56,25 @@ export function groupTurns(items: ItemView[], turns: TurnMeta[] | undefined, run
     const live = running && index === segments.length - 1
     let finalIndex = -1
     for (let i = rest.length - 1; i >= 0; i--) {
-      if (rest[i]!.kind === 'agent') {
+      const item = rest[i]!
+      if (item.kind === 'agent' && item.text.trim()) {
         finalIndex = i
         break
       }
     }
     const process = finalIndex >= 0 ? rest.slice(0, finalIndex) : rest
-    if (live || process.length === 0 || !process.some(isTool)) {
+    if (live || !process.some((item) => isTool(item) && !isEmptyReasoning(item))) {
       out.push(...groupFlow(rest))
       return
     }
+    const finalReply = rest[finalIndex]
     out.push({
       kind: 'work',
       key: `work-${process[0]!.id}`,
       durationMs: turnDuration(segment, turnsByItem),
       entries: groupFlow(process),
+      ...(finalReply?.kind === 'agent' && !finalReply.streaming && finalReply.completedAtMs
+        ? { reply: { id: finalReply.id, completedAtMs: finalReply.completedAtMs } } : {}),
     })
     if (finalIndex >= 0) out.push(...groupFlow(rest.slice(finalIndex)))
   })
@@ -96,6 +113,7 @@ export function groupFlow(items: ItemView[]): FlowEntry[] {
     run = []
   }
   for (const item of items) {
+    if (isEmptyReasoning(item)) continue
     if (isTool(item)) {
       run.push(item)
     } else {

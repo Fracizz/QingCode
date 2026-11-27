@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { WorkspaceMethods } from '@qn/protocol'
-import { RotateCw } from 'lucide-react'
 import type {
   AgentPrefs,
   SettingsAgentKind,
   Target,
 } from '../../../../shared/backendApi'
+import { RefreshIcon } from '../../components/LoadingIcon'
 import { Badge, Checkbox, ErrorNote, Spinner } from '../../components/ui'
 import { useTargets } from '../../store/targets'
 import { friendlyError } from '../../lib/errors'
@@ -109,7 +109,7 @@ function AgentRow({
           disabled={!connected || probe.busy}
           onClick={() => void detect()}
         >
-          <RotateCw size={13} className={probe.busy ? 'animate-spin' : undefined} />
+          <RefreshIcon size={13} loading={probe.busy} />
           检测
         </button>
         {probe.busy && <Spinner label="正在运行 --version…" />}

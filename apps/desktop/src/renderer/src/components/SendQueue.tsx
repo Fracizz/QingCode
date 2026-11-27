@@ -3,11 +3,12 @@ import type { AgentKind } from '../../../shared/backendApi'
 import { pendingSendKey, useCodex } from '../store/codex'
 import { IconButton } from './ui'
 
-export function SendQueue({ targetId, agent, threadId, running, compact, contentWidthClassName = 'max-w-3xl' }: {
+export function SendQueue({ targetId, agent, threadId, running, resumeDisabled, compact, contentWidthClassName = 'max-w-3xl' }: {
   targetId: string | null
   agent: AgentKind
   threadId: string | null
   running: boolean
+  resumeDisabled?: boolean
   compact?: boolean
   contentWidthClassName?: string
 }) {
@@ -34,7 +35,7 @@ export function SendQueue({ targetId, agent, threadId, running, compact, content
                 {item.error && (
                   <button
                     type="button"
-                    disabled={running || item.sending}
+                    disabled={running || resumeDisabled || item.sending}
                     className="shrink-0 rounded px-1 text-qn-accent hover:underline disabled:opacity-40"
                     onClick={() => retry(chat)}
                   >

@@ -1,4 +1,4 @@
-import type { ComponentPropsWithRef, ReactNode } from 'react'
+import type { ComponentProps, ComponentPropsWithRef, ReactNode } from 'react'
 import { Check, X } from 'lucide-react'
 import { Checkbox as RadixCheckbox, Dialog } from 'radix-ui'
 import { cn } from '../lib/cn'
@@ -13,6 +13,7 @@ export function IconButton({
   children,
   danger,
   tooltip = true,
+  tooltipSide,
   size = 'md',
   className,
   ref,
@@ -21,6 +22,7 @@ export function IconButton({
   label: string
   danger?: boolean
   tooltip?: boolean
+  tooltipSide?: ComponentProps<typeof Tip>['side']
   /** md：32px 方钮（工具栏、标题栏）；sm：24px（面板头、行内操作）。 */
   size?: 'sm' | 'md'
 }) {
@@ -40,7 +42,7 @@ export function IconButton({
       {children}
     </button>
   )
-  return tooltip ? <Tip label={label}>{button}</Tip> : button
+  return tooltip ? <Tip label={label} side={tooltipSide}>{button}</Tip> : button
 }
 
 export function Spinner({ label }: { label?: string }) {

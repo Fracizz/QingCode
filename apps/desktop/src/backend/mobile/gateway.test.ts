@@ -7,7 +7,7 @@ import type { PeerCertificate } from 'node:tls'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { AppSettings } from '../../shared/backendApi'
 import { DEFAULT_FONT_SIZES, FONT_SIZES_VERSION } from '../../shared/fontSizes'
-import { BackendRouter } from '../router'
+import { BackendRouter, type WirePort } from '../router'
 import type { SecretCipher } from '../secretStore'
 import { loadOrCreateCertificate, type MobileCertificate } from './cert'
 import {
@@ -214,6 +214,9 @@ beforeAll(async () => {
   router.register('server.req', (params) => {
     lastServerReq = params
     if (params.method === 'term.open') return params.params
+    if (params.method === 'codex.attach' && params.targetId === 'local') {
+      return { lastSeq: 4, truncated: false, accessModes: (params.params as { agent?: string })?.agent !== 'pi' }
+    }
     return { method: params.method }
   })
   router.register('codex.send', (params) => {
@@ -357,6 +360,8 @@ describe('手机网关纯逻辑', () => {
   it('只转发手机可见事件，主机指纹确认不泄漏 promptId', () => {
     expect(mobileEventFromRouter('codex.recv', { targetId: 'local', agent: 'claude' }))
       .toEqual({ name: 'codex.recv', payload: { targetId: 'local', agent: 'claude' } })
+    expect(mobileEventFromRouter('codex.recv', { targetId: 'local', seq: null, msg: { id: 'c1', result: {} } }))
+      .toBeNull()
     expect(mobileEventFromRouter('hostKey.prompt', {
       promptId: 'p1',
       host: '192.168.10.93',
@@ -475,8 +480,47 @@ describe('手机网关 HTTPS 集成', () => {
     }, token)
     expect(turn.status).toBe(200)
     expect(lastCodexSend).toEqual({ targetId: 'local', msg: {
-      id: 'c1', method: 'turn/start', params: { threadId: 'thread', input: [] },
+      id: expect.any(String), method: 'turn/start', params: { threadId: 'thread', input: [] },
     } })
+
+    for (const [targetId, agent, supported] of [
+      ['local', 'codex', true], ['local', 'claude', true], ['local', 'pi', false], ['ssh-93', 'codex', false],
+    ] as const) {
+      const attached = await requestJson('/rpc', 'POST', { method: 'server.req', params: {
+        targetId, method: 'codex.attach', params: { agent, sinceSeq: 4 },
+      } }, token)
+      expect(attached.status).toBe(200)
+      if (supported) expect(attached.json()).toHaveProperty('mobileAccessModes', true)
+      else expect(attached.json()).not.toHaveProperty('mobileAccessModes')
+    }
+
+    const turnRequest = (agent: string, accessMode: string) => ({
+      method: 'mobile.turn.start',
+      params: { targetId: 'local', agent, accessMode, msg: { id: 'c2', method: 'turn/start', params: {
+        threadId: 'thread', input: [], model: 'test-model', claudePermissionMode: 'bypassPermissions',
+        approvalPolicy: 'on-request', sandboxPolicy: { type: 'dangerFullAccess' },
+      } } },
+    })
+    const readOnly = await requestJson('/rpc', 'POST', turnRequest('codex', 'readOnly'), token)
+    expect(readOnly.status).toBe(200)
+    expect(lastCodexSend).toEqual({ targetId: 'local', agent: 'codex', msg: {
+      id: expect.any(String), method: 'turn/start', params: {
+        threadId: 'thread', input: [], model: 'test-model',
+        approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly', networkAccess: false }, qingcodeAccessOverride: true,
+      },
+    } })
+    const claudeTurn = await requestJson('/rpc', 'POST', turnRequest('claude', 'plan'), token)
+    expect(claudeTurn.status).toBe(200)
+    expect(lastCodexSend).toEqual({ targetId: 'local', agent: 'claude', msg: {
+      id: expect.any(String), method: 'turn/start',
+      params: { threadId: 'thread', input: [], model: 'test-model', claudePermissionMode: 'plan' },
+    } })
+    const forwardedTurn = lastCodexSend
+    for (const [agent, mode] of [['pi', 'fullAccess'], ['claude', 'readOnly'], ['codex', 'invalid']] as const) {
+      const rejected = await requestJson('/rpc', 'POST', turnRequest(agent, mode), token)
+      expect(rejected.status).toBe(400)
+      expect(lastCodexSend).toBe(forwardedTurn)
+    }
 
     const agents = await requestJson('/rpc', 'POST', { method: 'mobile.agents', params: {} }, token)
     expect(agents.status).toBe(200)
@@ -545,6 +589,87 @@ describe('手机网关 HTTPS 集成', () => {
     gateway?.disconnectDevice(deviceId)
     const revoked = await requestJson('/rpc', 'POST', { method: 'targets.list', params: {} }, token)
     expect(revoked.status).toBe(401)
+  }, 20_000)
+
+  it('长历史只到发起设备，同名请求、桌面请求与审批互不干扰', async () => {
+    const a = await deviceStore.add({ name: '本人手机', ip: '127.0.0.1', now })
+    const b = await deviceStore.add({ name: '备用手机', ip: '127.0.0.1', now })
+    const receivedA: GatewayEvent[] = []
+    const receivedB: GatewayEvent[] = []
+    const desktopEvents: unknown[] = []
+    const desktop: WirePort = {
+      postMessage: (message) => desktopEvents.push(message),
+      on: () => undefined,
+      start: () => undefined,
+      close: () => undefined,
+    }
+    router.attachPort(desktop)
+    const openPhone = (token: string, received: GatewayEvent[]) => openEventStream(token, (event) => {
+      if (event.name === 'codex.recv') received.push(event)
+      return event.name === 'target.state'
+    })
+    const first = openPhone(a.token, receivedA)
+    const second = openPhone(b.token, receivedB)
+    const request = async (token: string, method: 'codex.send' | 'mobile.turn.start') => {
+      const params = method === 'codex.send'
+        ? { targetId: 'local', msg: { id: 'c1', method: 'thread/read' } }
+        : { targetId: 'local', agent: 'codex', accessMode: 'readOnly', msg: {
+          id: 'c1', method: 'turn/start', params: { threadId: 'thread', input: [] },
+        } }
+      expect((await requestJson('/rpc', 'POST', { method, params }, token)).status).toBe(200)
+      return (lastCodexSend as { msg: { id: string } }).msg.id
+    }
+    const reply = (msg: unknown) => router.emit('codex.recv', { targetId: 'local', agent: 'codex', seq: null, msg })
+    const received = (msg: unknown, seq: number | null = null) => ({
+      name: 'codex.recv', payload: { targetId: 'local', agent: 'codex' as const, seq, msg },
+    })
+    try {
+      await Promise.all([first.ready, second.ready])
+      const mobileIdA = await request(a.token, 'codex.send')
+      const mobileIdB = await request(b.token, 'mobile.turn.start')
+      expect(new Set([mobileIdA, mobileIdB, 'c1']).size).toBe(3)
+      const desktopRequest = { targetId: 'local', msg: { id: 'c1', method: 'thread/read' } }
+      await router.invoke('codex.send', desktopRequest)
+      expect(lastCodexSend).toEqual(desktopRequest)
+
+      const desktopReply = { id: 'c1', result: { desktop: true } }
+      const error = { code: -32000, message: '模拟错误' }
+      const result = { history: 'x'.repeat(2 * MAX_REQUEST_BYTES) }
+      const approval = { id: 17, method: 'item/commandExecution/requestApproval', params: {} }
+      reply(desktopReply)
+      reply({ id: mobileIdB, error })
+      reply({ id: mobileIdA, result })
+      router.emit('codex.recv', received(approval, 8).payload)
+      router.emit('target.state', { id: 'local', state: 'ready' })
+      await Promise.all([first.event, second.event])
+
+      expect(receivedA).toEqual([received({ id: 'c1', result }), received(approval, 8)])
+      expect(receivedB).toEqual([received({ id: 'c1', error }), received(approval, 8)])
+      expect(desktopEvents).toEqual([
+        { t: 'evt', ...received(desktopReply) },
+        { t: 'evt', ...received(approval, 8) },
+        { t: 'evt', name: 'target.state', payload: { id: 'local', state: 'ready' } },
+      ])
+
+      const oldId = await request(a.token, 'codex.send')
+      gateway?.disconnectDevice(a.device.id)
+      const afterReconnect: GatewayEvent[] = []
+      const reconnected = openPhone(a.token, afterReconnect)
+      try {
+        await reconnected.ready
+        const newId = await request(a.token, 'codex.send')
+        reply({ id: oldId, result: { stale: true } })
+        reply({ id: newId, result: { fresh: true } })
+        router.emit('target.state', { id: 'local', state: 'ready' })
+        await reconnected.event
+        expect(afterReconnect).toEqual([received({ id: 'c1', result: { fresh: true } })])
+      } finally {
+        reconnected.close()
+      }
+    } finally {
+      first.close()
+      second.close()
+    }
   }, 20_000)
 
   it('手机只收到自己接回的终端事件，其他设备不能接回同一终端', async () => {

@@ -45,18 +45,21 @@ export const useModels = create<ModelsState>((set, get) => ({
     const current = get().lists[key]
     const staleEmpty =
       current !== undefined && current.models.length === 0 && Date.now() - (current.loadedAt ?? 0) > EMPTY_RETRY_MS
-    if (current?.loading || (current && !current.error && !force && !staleEmpty)) return
+    if (!force && (current?.loading || (current && !current.error && !staleEmpty))) return
+    const pending: ModelList = { models: current?.models ?? [], loading: true, error: null }
     set((state) => ({
-      lists: { ...state.lists, [key]: { models: current?.models ?? [], loading: true, error: null } },
+      lists: { ...state.lists, [key]: pending },
     }))
+    // 会话启动前发出的空列表请求，可能比启动后的刷新更晚返回。
+    const finish = (result: ModelList) => set((state) => state.lists[key] === pending
+      ? { lists: { ...state.lists, [key]: result } }
+      : state)
     try {
       const models = toModelOptions(await listModels(rpc))
-      set((state) => ({ lists: { ...state.lists, [key]: { models, loading: false, error: null, loadedAt: Date.now() } } }))
+      finish({ models, loading: false, error: null, loadedAt: Date.now() })
     } catch (err) {
       const error = err instanceof Error ? err.message : '加载模型列表失败'
-      set((state) => ({
-        lists: { ...state.lists, [key]: { models: current?.models ?? [], loading: false, error } },
-      }))
+      finish({ models: pending.models, loading: false, error })
     }
   },
 

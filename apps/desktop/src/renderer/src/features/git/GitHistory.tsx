@@ -6,9 +6,9 @@ import {
   ChevronRight,
   FileText,
   GitCommitHorizontal,
-  RotateCw,
 } from 'lucide-react'
 import { EmptyState, ErrorNote, IconButton, Spinner } from '../../components/ui'
+import { RefreshIcon } from '../../components/LoadingIcon'
 import { cn } from '../../lib/cn'
 import { openDiff } from '../workspace/openers'
 import {
@@ -89,7 +89,7 @@ export function GitHistory({ targetId, cwd }: { targetId: string; cwd: string })
       <div className="flex shrink-0 items-center justify-between border-b border-qn-border px-2 py-1.5">
         <span className="text-ui-sm text-qn-muted">提交历史</span>
         <IconButton label="刷新历史" className="h-7 w-7" onClick={() => void refresh(targetId, cwd)}>
-          <RotateCw size={13} className={state.loading ? 'animate-spin' : ''} />
+          <RefreshIcon size={13} loading={state.loading} />
         </IconButton>
       </div>
 

@@ -23,6 +23,7 @@ import {
   type SessionMeta,
   type V2Notification,
 } from '../claude/v2'
+import { HistoryPageCache, listHistoryItems, listHistoryTurns } from '../claude/historyPages'
 import { redact } from '../log'
 import { VERSION } from '../version'
 import { PiRpcError } from './errors'
@@ -44,9 +45,10 @@ import { resolvePiPrompt } from './turnInput'
 export interface PiCapabilities {
   approvals: false
   rateLimits: false
+  ephemeralNoTools: true
 }
 
-export const PI_CAPABILITIES: PiCapabilities = { approvals: false, rateLimits: false }
+export const PI_CAPABILITIES: PiCapabilities = { approvals: false, rateLimits: false, ephemeralNoTools: true }
 
 export interface PiHostOptions {
   resolve?: (piPath?: string) => PiExecutable
@@ -84,6 +86,7 @@ export class PiHost extends JsonRpcAgentHost {
   private pi: PiExecutable | null = null
   private readonly sessions = new Map<string, PiSession>()
   private readonly metas = new Map<string, PiSessionMeta>()
+  private readonly historyPages = new HistoryPageCache()
   private readonly idleTimeoutMs: number
   private counter = 0
   // 最近一次从运行中进程取到的模型列表，daemon 生命周期内复用
@@ -143,6 +146,7 @@ export class PiHost extends JsonRpcAgentHost {
 
   protected closeAgent(): void {
     this.opened = false
+    this.historyPages.clear()
     for (const session of this.sessions.values()) {
       if (session.idleTimer) clearTimeout(session.idleTimer)
       this.closeRpc(session)
@@ -171,13 +175,25 @@ export class PiHost extends JsonRpcAgentHost {
     switch (method) {
       case 'initialize':
         return { userAgent: `pi-rpc/${this.pi?.version ?? 'unknown'}` }
+      case 'thread/unsubscribe': {
+        const threadId = scalarText(params.threadId)
+        const session = this.sessions.get(threadId)
+        if (!session) return { status: 'notLoaded' }
+        if (!session.meta.ephemeral) throw new PiRpcError(-32602, '仅可结束临时会话')
+        if (session.turnId) throw new PiRpcError(-32602, '请先停止当前轮次')
+        this.closeRpc(session)
+        this.forgetTemporary(threadId)
+        return { status: 'unsubscribed' }
+      }
       case 'thread/list':
         return this.threadList(params)
       case 'thread/start':
         return this.threadStart(params)
       case 'thread/resume':
       case 'thread/read':
-        return this.threadRead(params)
+      case 'thread/turns/list':
+      case 'thread/items/list':
+        return this.threadRead(method, params)
       case 'turn/start':
         return this.turnStart(params)
       case 'turn/interrupt':
@@ -219,11 +235,22 @@ export class PiHost extends JsonRpcAgentHost {
     const ephemeral = params.ephemeral === true
     const pendingId = `qn-pi-pending-${++this.counter}`
     const session = this.sessionFor(pendingId, { id: pendingId, cwd, preview: '', ephemeral })
-    const rpc = await this.ensureRpc(session)
-    await rpc.command('new_session')
-    const state = await rpc.command('get_state')
-    const data = asRecord(state.data) ?? {}
-    const id = scalarText(data.sessionId) || pendingId
+    let data: Json
+    try {
+      const rpc = await this.ensureRpc(session)
+      const created = await rpc.command('new_session')
+      if (created.success !== true || asRecord(created.data)?.cancelled === true) {
+        throw new PiRpcError(-32603, 'pi 未创建会话')
+      }
+      const state = await rpc.command('get_state')
+      data = asRecord(state.data) ?? {}
+      if (state.success !== true || !scalarText(data.sessionId)) throw new PiRpcError(-32603, 'pi 未返回会话 ID')
+    } catch (err) {
+      this.closeRpc(session)
+      this.sessions.delete(pendingId)
+      throw err
+    }
+    const id = scalarText(data.sessionId)
     const sessionFile =
       typeof data.sessionFile === 'string' && data.sessionFile ? data.sessionFile : undefined
     if (id !== pendingId) this.sessions.delete(pendingId)
@@ -240,25 +267,38 @@ export class PiHost extends JsonRpcAgentHost {
     return threadStartResult(session.meta)
   }
 
-  private async threadRead(params: Json): Promise<Json> {
+  private async threadRead(method: string, params: Json): Promise<Json> {
     const threadId = scalarText(params.threadId)
     if (!threadId) throw new PiRpcError(-32602, 'threadId 不能为空')
     const meta = await this.metaFor(threadId, typeof params.cwd === 'string' ? params.cwd : undefined)
     const session = this.sessionFor(threadId, meta)
-    const rpc = await this.ensureRpc(session)
-    const response = await rpc.command('get_messages')
-    const messagesValue = asRecord(response.data)?.messages
-    if (response.success !== true || !Array.isArray(messagesValue)) {
-      throw new PiRpcError(-32603, '读取 pi 会话消息失败')
+    const metadataOnly = (method === 'thread/resume' && params.excludeTurns === true)
+      || (method === 'thread/read' && params.includeTurns === false)
+    const paged = method === 'thread/turns/list' || method === 'thread/items/list'
+    if (metadataOnly) {
+      const status = session.turnId ? { type: 'active', activeFlags: [] } : { type: 'idle' }
+      return { thread: { ...piThread(meta), status, historyMode: 'paginated' } }
     }
-    const history = messagesToThread(meta, messagesValue)
+    const load = async () => {
+      const rpc = await this.ensureRpc(session)
+      const response = await rpc.command('get_messages')
+      const messages = asRecord(response.data)?.messages
+      if (response.success !== true || !Array.isArray(messages)) {
+        throw new PiRpcError(-32603, '读取 pi 会话消息失败')
+      }
+      return messagesToThread(meta, messages).turns
+    }
+    const saved = await (paged
+      ? this.historyPages.read(threadId, params.cursor != null || method === 'thread/items/list', load)
+      : load())
     this.touch(session)
     const turnId = session.turnId
-    return { thread: turnId ? {
-      ...history.thread,
-      status: { type: 'active', activeFlags: [] },
-      turns: [...history.turns, buildTurn(turnId, [], 'inProgress')],
-    } : history.thread }
+    // 运行中条目同时经事件流推送，保留 active turn 的 ID 供中断和审批状态对齐。
+    const turns = turnId ? [...saved, buildTurn(turnId, [], 'inProgress')] : saved
+    if (method === 'thread/turns/list') return listHistoryTurns(threadId, turns, params)
+    if (method === 'thread/items/list') return listHistoryItems(threadId, turns, params)
+    const thread = piThread(meta, turns)
+    return { thread: turnId ? { ...thread, status: { type: 'active', activeFlags: [] } } : thread }
   }
 
   private async turnStart(params: Json): Promise<Json> {
@@ -300,7 +340,7 @@ export class PiHost extends JsonRpcAgentHost {
     // 只借用已运行的会话进程（R9：后台取列表不为此启动 pi）；没有时返回上次缓存，首次则为空列表。
     let rpc: PiRpcProcess | null = null
     for (const session of this.sessions.values()) {
-      if (session.rpc?.running) {
+      if (!session.meta.ephemeral && session.rpc?.running) {
         rpc = session.rpc
         break
       }
@@ -361,6 +401,7 @@ export class PiHost extends JsonRpcAgentHost {
     for (const note of mapped.notifications) this.notify(note)
     if (mapped.turnEnd) {
       session.turnId = null
+      this.historyPages.clear(session.meta.id)
       this.touch(session)
     }
   }
@@ -370,6 +411,7 @@ export class PiHost extends JsonRpcAgentHost {
     if (session.rpc !== rpc) return
     session.rpc = null
     if (session.turnId) this.finishTurn(session, 'failed', 'pi 进程提前退出')
+    if (session.meta.ephemeral) this.forgetTemporary(session.meta.id)
     this.hub.log(`pi 会话进程退出 (thread=${session.meta.id} code=${String(info.code)})`)
   }
 
@@ -379,6 +421,7 @@ export class PiHost extends JsonRpcAgentHost {
     const ctx = { threadId: session.meta.id, turnId, cwd: session.meta.cwd }
     for (const note of finishTurnNotifications(ctx, session.state, status, error)) this.notify(note)
     session.turnId = null
+    this.historyPages.clear(session.meta.id)
     this.touch(session)
   }
 
@@ -433,7 +476,7 @@ export class PiHost extends JsonRpcAgentHost {
     const rpcOptions: PiRpcOptions = {
       command: { command: pi.command, args: pi.args, shell: pi.shell },
       cwd: session.meta.cwd,
-      extraArgs: session.meta.ephemeral ? ['--no-session'] : [],
+      extraArgs: session.meta.ephemeral ? ['--no-session', '--no-tools', '--no-extensions'] : [],
       log: (message) => this.hub.log(message),
     }
     const rpc = this.options.createRpc
@@ -469,6 +512,13 @@ export class PiHost extends JsonRpcAgentHost {
     if (!rpc) return
     session.rpc = null
     rpc.close()
+  }
+
+  private forgetTemporary(threadId: string): void {
+    this.historyPages.clear(threadId)
+    this.sessions.delete(threadId)
+    this.metas.delete(threadId)
+    this.notify({ method: 'thread/closed', params: { threadId } })
   }
 
   private touch(session: PiSession): void {

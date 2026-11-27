@@ -21,6 +21,7 @@ import { sidebarTargets, useTargets } from '../../store/targets'
 import { useUi } from '../../store/ui'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, PopoverContent, PopoverRoot, PopoverTrigger } from '../primitives'
 import { SearchField } from '../SearchField'
+import { StatusDot } from '../StatusDot'
 import { EmptyState, ErrorNote, IconButton } from '../ui'
 
 export type TargetActions = {
@@ -41,8 +42,8 @@ export function TargetGlyph({ target, state, size = 28 }: { target: Target; stat
       style={{ width: size, height: size }}
     >
       <Icon size={Math.round(size * 0.5)} strokeWidth={1.7} />
-      <span
-        className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-qn-sidebar ${targetDotClass[state]}`}
+      <StatusDot
+        className={`absolute -bottom-0.5 -right-0.5 size-2.5 border-2 border-qn-sidebar ${targetDotClass[state]}`}
       />
     </span>
   )

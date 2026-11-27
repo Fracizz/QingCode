@@ -9,7 +9,15 @@ interface FakeRpc extends PiRpcProcess {
   emit(record: RpcRecord): void
 }
 
-function fakeRpc(state: { commands: string[]; closed: boolean; cancelSwitch: boolean }): FakeRpc {
+interface FakeState {
+  commands: string[]
+  closed: boolean
+  cancelSwitch: boolean
+  cancelNew: boolean
+  messages: RpcRecord[]
+}
+
+function fakeRpc(state: FakeState): FakeRpc {
   const listeners = new Set<(record: RpcRecord) => void>()
   const rpc = {
     running: true,
@@ -23,7 +31,7 @@ function fakeRpc(state: { commands: string[]; closed: boolean; cancelSwitch: boo
       state.commands.push(type)
       switch (type) {
         case 'new_session':
-          return { type: 'response', success: true, data: { cancelled: false } }
+          return { type: 'response', success: true, data: { cancelled: state.cancelNew } }
         case 'get_state':
           return {
             type: 'response',
@@ -33,7 +41,7 @@ function fakeRpc(state: { commands: string[]; closed: boolean; cancelSwitch: boo
         case 'switch_session':
           return { type: 'response', success: true, data: { cancelled: state.cancelSwitch } }
         case 'get_messages':
-          return { type: 'response', success: true, data: { messages: [] } }
+          return { type: 'response', success: true, data: { messages: state.messages } }
         case 'prompt':
           return { type: 'response', success: true, data: { disposition: 'started' } }
         default:
@@ -65,7 +73,7 @@ function harness(sessions: PiSessionInfo[] = []) {
     broadcastEvt: (name, payload) => evts.push({ name, payload }),
     log: (message) => logs.push(message),
   }
-  const state = { commands: [] as string[], closed: false, cancelSwitch: false }
+  const state: FakeState = { commands: [], closed: false, cancelSwitch: false, cancelNew: false, messages: [] }
   let rpc = fakeRpc(state)
   const rpcOptions: PiRpcOptions[] = []
   const host = createPiHost(hub, '0.0.1', {
@@ -94,6 +102,41 @@ async function flush(): Promise<void> {
 }
 
 describe('PiHost（v2 JSON-RPC 外观）', () => {
+  it('只读元数据不开进程，历史分页复用 get_messages 快照', async () => {
+    const threadId = 'fake-session'
+    const { host, sent, state, rpcOptions } = harness([
+      { meta: { id: threadId, cwd: '/work' }, sessionFile: '/tmp/fake-session.jsonl' },
+    ])
+    state.messages = [0, 1, 2].flatMap((index) => [
+      { role: 'user', content: `问题 ${index}` },
+      { role: 'assistant', content: [{ type: 'text', text: `回答 ${index}` }] },
+    ])
+    await host.open({})
+    host.handleClientMessage(1, { id: 1, method: 'thread/read', params: { threadId, includeTurns: false } })
+    await flush()
+    expect(responseFor(sent, 1)?.result).toMatchObject({
+      thread: { id: threadId, historyMode: 'paginated', turns: [] },
+    })
+    expect(rpcOptions).toHaveLength(0)
+
+    const params = { threadId, sortDirection: 'desc', itemsView: 'full', limit: 1 }
+    host.handleClientMessage(1, { id: 2, method: 'thread/turns/list', params })
+    await flush()
+    const latest = responseFor(sent, 2)?.result as RpcRecord
+    expect(latest).toMatchObject({
+      data: [{ id: 'turn-fake-session-4', items: [{ type: 'userMessage' }, { type: 'agentMessage', text: '回答 2' }] }],
+      nextCursor: expect.any(String),
+    })
+    host.handleClientMessage(1, { id: 3, method: 'thread/turns/list', params: { ...params, cursor: latest.nextCursor } })
+    await flush()
+    expect(responseFor(sent, 3)?.result).toMatchObject({
+      data: [{ id: 'turn-fake-session-2' }],
+      nextCursor: expect.any(String),
+    })
+    expect(state.commands).toEqual(['switch_session', 'get_state', 'get_messages'])
+    host.shutdown()
+  })
+
   it('codex.open 返回 initialize:null、agentVersion 与 capabilities', async () => {
     const { host, state } = harness()
     const opened = await host.open({})
@@ -103,6 +146,7 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
     expect((opened as { capabilities?: unknown }).capabilities).toEqual({
       approvals: false,
       rateLimits: false,
+      ephemeralNoTools: true,
     })
     // 打开阶段只做 --version 探测，不开会话、不发 prompt。
     expect(state.commands).toEqual([])
@@ -229,4 +273,32 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
     expect(state.closed).toBe(true)
     expect(host.status().running).toBe(false)
   })
+})
+
+it('临时侧聊禁用工具，结束后关闭对应 RPC 进程', async () => {
+  const { host, sent, broadcasts, state, rpcOptions } = harness()
+  await host.open({})
+  host.handleClientMessage(1, { id: 1, method: 'thread/start', params: { cwd: '/work', ephemeral: true } })
+  await flush()
+  expect(rpcOptions[0]?.extraArgs).toEqual(['--no-session', '--no-tools', '--no-extensions'])
+  host.handleClientMessage(1, { id: 2, method: 'thread/unsubscribe', params: { threadId: 'fake-session' } })
+  await flush()
+  expect(responseFor(sent, 2)?.result).toEqual({ status: 'unsubscribed' })
+  expect(state.closed).toBe(true)
+  expect(broadcasts.some(({ msg }) => msg.method === 'thread/closed')).toBe(true)
+})
+
+it('pi 取消创建临时会话时释放待建进程，允许重试', async () => {
+  const { host, state, sent } = harness()
+  await host.open({})
+  state.cancelNew = true
+  host.handleClientMessage(1, { id: 1, method: 'thread/start', params: { cwd: '/work', ephemeral: true } })
+  await flush()
+  expect(responseFor(sent, 1)).toHaveProperty('error')
+  expect(state.closed).toBe(true)
+  state.cancelNew = false
+  host.handleClientMessage(1, { id: 2, method: 'thread/start', params: { cwd: '/work', ephemeral: true } })
+  await flush()
+  expect(responseFor(sent, 2)?.result).toHaveProperty('thread.id', 'fake-session')
+  host.shutdown()
 })

@@ -1,11 +1,12 @@
 // 浏览器开发模式的端到端冒烟：粘贴导入 → 配对 → 目标/项目/多 Agent 会话 → 流式对话 → 模型覆盖 → 只读查看文件/差异。
 import { describe, expect, it, vi } from 'vitest'
+import { ACCESS_PREFS_STORAGE_KEY, accessPreferenceKey } from './accessPrefs'
 import { archivedThreadKey, sessionKey } from './agents'
 import { createGateway, setGateway } from './client'
 import { buildConnectionInfo } from './link'
 import { MOCK_FP, type MockNativePort } from './mock'
 import { draftKey, parseConnections, serializeConnections } from './state'
-import { selectedCompactionStarting, selectedQueuedSends, useApp } from './store'
+import { displayedAccessMode, selectedAccessMode, selectedCompactionStarting, selectedQueuedSends, useApp } from './store'
 import { EventStreamController } from './transport'
 import type { ProbeResult, Project } from './types'
 import { openWorkspaceThread, showWorkspaceProject, useWorkspace } from './workspace'
@@ -174,14 +175,38 @@ describe('模拟网关全链路', () => {
     expect(state().threadsError).toBeNull()
     expect(state().threads.map((item) => `${item.agent}:${item.id}`)).toEqual(['codex:t-demo', 'claude:c-demo'])
 
-    // 打开 Claude 会话走 Claude 通道；事件按 payload.agent 路由，不串到 Codex。
-    await state().openThread('c-demo', 'claude')
-    expect(state().selectedAgent).toBe('claude')
-    expect(state().sessions['claude:local']?.state.threads['c-demo']?.items.length).toBeGreaterThan(0)
-    expect(state().sessions['codex:local']?.state.threads['c-demo']).toBeUndefined()
+    const gatewayRpc = gateway.rpc.bind(gateway)
+    const cursors: (string | null)[] = []
+    const paged = vi.spyOn(gateway, 'rpc').mockImplementation((...args) => {
+      const [, method, params] = args
+      const request = params as { agent?: string; msg?: { id: string; method: string; params: { cursor: string | null } } }
+      if (method !== 'codex.send' || request.agent !== 'claude' || request.msg?.method !== 'thread/turns/list') return gatewayRpc(...args)
+      const { id, params: { cursor } } = request.msg
+      cursors.push(cursor)
+      const reply = cursor ? 'first' : 'recent'
+      state().handleGatewayEvent({ name: 'codex.recv', payload: { targetId: 'local', agent: 'claude', seq: null,
+        msg: { id, result: { data: [{ id: reply, status: 'completed', items: [{ id: reply, type: 'agentMessage', text: reply }] }],
+          nextCursor: cursor ? null : 'older' } },
+      } })
+      return Promise.resolve(undefined) as ReturnType<typeof gateway.rpc>
+    })
+    try {
+      await expect(state().openThread('c-demo', 'claude')).resolves.toBe(true)
+      const transcript = () => state().sessions['claude:local']?.state.threads['c-demo']?.items.map((item) => item.id)
+      expect(state().selectedAgent).toBe('claude')
+      expect(state().sessions['codex:local']?.state.threads['c-demo']).toBeUndefined()
+      expect(cursors).toEqual([null])
+      expect(transcript()).toEqual(['recent'])
+      const captureScroll = vi.fn()
+      await state().loadEarlierHistory(captureScroll)
+      expect(captureScroll).toHaveBeenCalledOnce()
+      expect(cursors).toEqual([null, 'older'])
+      expect(transcript()).toEqual(['first', 'recent'])
+    } finally {
+      paged.mockRestore()
+    }
     state().goBack()
 
-    const gatewayRpc = gateway.rpc.bind(gateway)
     let blockResume = true
     const historyRpc = vi.spyOn(gateway, 'rpc').mockImplementation((conn, method, params, agent, timeout) => {
       const request = params as { msg?: { method?: string } }
@@ -264,10 +289,26 @@ describe('模拟网关全链路', () => {
     })
     // turn 完成后的后台刷新不重试打不开的 pi，但保留它的提示。
     expect(state().agentErrors.pi).toContain('pi')
+    state().setAccessMode('readOnly')
+    expect(selectedAccessMode(state())).toBe('readOnly')
+    const accessRpc = vi.spyOn(gateway, 'rpc')
+    await expect(state().send('仅检查项目')).resolves.toBe(true)
+    expect(accessRpc).toHaveBeenCalledWith(edited, 'mobile.turn.start', {
+      targetId: 'local', agent: 'codex', accessMode: 'readOnly', msg: expect.objectContaining({
+        method: 'turn/start', params: {
+          threadId, model: 'gpt-5.5-mini', effort: 'minimal',
+          input: [{ type: 'text', text: '仅检查项目', text_elements: [] }],
+        },
+      }),
+    })
+    await vi.waitFor(() => expect(state().sessions['codex:local']?.state.threads[threadId!]?.status).toBe('idle'))
 
     // Claude 未显式选模型时不带覆盖项。
     await state().newThread('claude')
     expect(state().selectedAgent).toBe('claude')
+    expect(selectedAccessMode(state())).toBe('default')
+    state().setAccessMode('readOnly')
+    expect(selectedAccessMode(state())).toBe('default')
     await state().loadModels('local', 'claude')
     await state().send('审查一下', [], true)
     await wait(50)
@@ -281,6 +322,17 @@ describe('模拟网关全链路', () => {
     const claudeThread = state().selectedThreadId
     expect(state().claudeCosts[JSON.stringify(['local', claudeThread])]).toBeCloseTo(0.012)
     expect(state().claudeRateLimits.local?.primary?.usedPercent).toBe(81)
+
+    await state().openThread(threadId!, 'codex')
+    expect(selectedAccessMode(state())).toBe('readOnly')
+    state().setAccessMode('default')
+    await expect(state().send('按默认权限继续')).resolves.toBe(true)
+    expect(accessRpc.mock.calls.filter(([, method]) => method === 'mobile.turn.start')).toHaveLength(1)
+    expect(accessRpc).toHaveBeenCalledWith(edited, 'codex.send', expect.objectContaining({
+      msg: expect.objectContaining({ method: 'turn/start', params: expect.objectContaining({ threadId }) }),
+    }))
+    await state().openThread(claudeThread!, 'claude')
+    accessRpc.mockRestore()
 
     // 只读查看：文本分段续读、行号定位，差异优先 git.diff，失败回退到卡片 diff。
     await state().openFile({ path: 'D:\code\qingcode-next\README.md', line: 3 })
@@ -423,7 +475,9 @@ describe('模拟网关全链路', () => {
     storage.mockRestore()
     expect(state()).toMatchObject({ page: 'chat', selectedThreadId: claudeThread })
     await state().archiveConversation('local', claudeConversation)
-    expect(archiveRpc).not.toHaveBeenCalled()
+    expect(archiveRpc).not.toHaveBeenCalledWith(expect.anything(), 'codex.send', expect.objectContaining({
+      msg: expect.objectContaining({ method: 'thread/archive' }),
+    }))
     expect(state()).toMatchObject({ page: 'threads', selectedThreadId: null })
     await state().refreshThreads({ skipFailed: true })
     expect(state().threads.some((thread) => thread.id === codexThread.id || thread.id === claudeThread)).toBe(false)
@@ -759,6 +813,73 @@ describe('模拟网关全链路', () => {
       await state().removeConnection(conn.id)
     }
   }, 10_000)
+
+  it('切回电脑保留会话权限，排队消息按实际发送前的最后一次设置执行', async () => {
+    const gateway = createGateway()
+    setGateway(gateway)
+    const state = useApp.getState
+    const conn = {
+      id: 'queued-access', name: '电脑', host: '192.168.1.2', port: 38500,
+      fp: MOCK_FP, token: 'mock-token', desktopName: '电脑', createdAt: Date.now(),
+    }
+    const other = { ...conn, id: 'queued-access-other', name: '另一台电脑' }
+    useApp.setState({ connections: [...state().connections, conn, other] })
+    const controller = new EventStreamController(gateway,
+      () => state().connections.find((item) => item.id === state().activeId) ?? null,
+      {
+        onEvent: state().handleGatewayEvent,
+        onOpen: () => useApp.setState({ eventsConnected: true }),
+        onClose: () => useApp.setState({ eventsConnected: false }),
+      })
+    const openChat = async (desktopId = conn.id) => {
+      await state().activate(desktopId)
+      controller.start()
+      await vi.waitFor(() => expect(state().eventsConnected).toBe(true))
+      await state().selectTarget('local')
+      await state().selectProject('p-local')
+      await expect(state().openThread('t-demo', 'codex')).resolves.toBe(true)
+    }
+    try {
+      await openChat()
+      state().setAccessMode('readOnly')
+      expect(selectedAccessMode(state())).toBe('readOnly')
+      await expect(state().send('第一轮')).resolves.toBe(true)
+      await expect(state().send('等待发送的消息')).resolves.toBe(true)
+      expect(selectedQueuedSends(state())?.[0]?.accessMode).toBeUndefined()
+      controller.stop()
+      await openChat(other.id)
+      expect(selectedAccessMode(state())).toBe('default')
+      expect(selectedQueuedSends(state())).toBeUndefined()
+      controller.stop()
+      await openChat()
+      expect(selectedAccessMode(state())).toBe('readOnly')
+      expect(selectedQueuedSends(state())?.[0]?.error).toContain('队列已暂停')
+      await vi.waitFor(() => expect(state().sessions['codex:local']?.state.threads['t-demo']?.status).toBe('idle'))
+
+      const queueKey = JSON.stringify([conn.id, 'local', 'codex', 't-demo'])
+      useApp.setState(({ queuedSends }) => ({
+        queuedSends: { ...queuedSends, [queueKey]: queuedSends[queueKey]!.map((item) => ({ ...item, accessMode: 'readOnly' })) },
+      }))
+      state().setAccessMode('default')
+      const preference = accessPreferenceKey({ desktopId: conn.id, targetId: 'local', agent: 'codex', threadId: 't-demo' }, conn.fp)
+      await vi.waitFor(async () => {
+        expect(JSON.parse(await gateway.storageGet(ACCESS_PREFS_STORAGE_KEY) ?? '{}')[preference]).toBe('default')
+      })
+      const rpc = vi.spyOn(gateway, 'rpc')
+      await state().retryQueuedSend()
+      expect(rpc.mock.calls.filter(([, , params]) => JSON.stringify(params)?.includes('等待发送的消息')))
+        .toEqual([[conn, 'codex.send', expect.objectContaining({
+          msg: expect.objectContaining({ method: 'turn/start' }),
+        })]])
+      expect(selectedQueuedSends(state())).toBeUndefined()
+      expect(displayedAccessMode(state())).toBe('default')
+      expect(selectedAccessMode(state())).toBe('default')
+    } finally {
+      controller.stop()
+      await state().removeConnection(conn.id)
+      await state().removeConnection(other.id)
+    }
+  })
 
   it('从工作台进入后按来路返回，切换标签后丢弃迟到的跳转', async () => {
     const gateway = createGateway()

@@ -19,6 +19,7 @@ import { redact } from '../log'
 import { VERSION } from '../version'
 import { buildApprovalRequest, permissionResult } from './approval'
 import { sessionInfoToMeta, sessionMessagesToThread, threadListResponse } from './history'
+import { HistoryPageCache, listHistoryItems, listHistoryTurns } from './historyPages'
 import { BridgeRpcError } from './errors'
 import { emptyMapState, mapSdkMessage, type MapState } from './items'
 import {
@@ -166,6 +167,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private configDir: string | undefined
   private readonly sessions = new Map<string, BridgeSession>()
   private readonly metas = new Map<string, SessionMeta>()
+  private readonly historyPages = new HistoryPageCache()
   private readonly approvals = new Map<JsonRpcId, PendingApproval>()
   private readonly idleTimeoutMs: number
   private rateLimits: Json = emptyRateLimitsResponse()
@@ -223,6 +225,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 
   protected closeAgent(): void {
     this.opened = false
+    this.historyPages.clear()
     this.realModels = null
     this.modelListRequest = null
     for (const session of this.sessions.values()) {
@@ -268,6 +271,16 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         return { account: null }
       case 'account/rateLimits/read':
         return this.rateLimits
+      case 'thread/unsubscribe': {
+        const threadId = scalarText(params.threadId)
+        const session = this.sessions.get(threadId)
+        if (!session) return { status: 'notLoaded' }
+        if (!session.meta.ephemeral) throw new BridgeRpcError(-32602, '仅可结束临时会话')
+        if (session.turnId || session.preparingTurn) throw new BridgeRpcError(-32602, '请先停止当前轮次')
+        closeQuery(session)
+        this.forgetTemporary(threadId)
+        return { status: 'unsubscribed' }
+      }
       case 'thread/list': {
         const limit = typeof params.limit === 'number' && Number.isSafeInteger(params.limit) && params.limit > 0
           ? params.limit : undefined
@@ -300,18 +313,30 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         return threadStartResult(meta, settings, thread)
       }
       case 'thread/resume':
-      case 'thread/read': {
+      case 'thread/read':
+      case 'thread/turns/list':
+      case 'thread/items/list': {
         const threadId = scalarText(params.threadId)
         if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
         const session = await this.sessionFor(threadId, deps, typeof params.cwd === 'string' ? params.cwd : undefined)
-        const messages = await deps.getSessionMessages(threadId, { dir: session.meta.cwd })
-        const history = sessionMessagesToThread(session.meta, messages, threadModelConfig(session.settings))
-        const turnId = session.turnId
-        return { thread: turnId ? {
-          ...history.thread,
-          status: this.threadStatus(threadId),
-          turns: [...history.turns, buildTurn(turnId, [], 'inProgress')],
-        } : history.thread }
+        const metadataOnly = (method === 'thread/resume' && params.excludeTurns === true)
+          || (method === 'thread/read' && params.includeTurns === false)
+        const paged = method === 'thread/turns/list' || method === 'thread/items/list'
+        const config = threadModelConfig(session.settings)
+        if (metadataOnly) {
+          return { thread: { ...buildThread(session.meta, [], config), status: this.threadStatus(threadId), historyMode: 'paginated' } }
+        }
+        const load = async () => sessionMessagesToThread(session.meta,
+          await deps.getSessionMessages(threadId, { dir: session.meta.cwd }), config).turns
+        const saved = await (paged
+          ? this.historyPages.read(threadId, params.cursor != null || method === 'thread/items/list', load)
+          : load())
+        // 正在运行的条目由事件流补齐，避免和 SDK 已经写入历史的内容重复。
+        const active = session.turnId
+        const turns = active ? [...saved, buildTurn(active, [], 'inProgress')] : saved
+        if (method === 'thread/turns/list') return listHistoryTurns(threadId, turns, params)
+        if (method === 'thread/items/list') return listHistoryItems(threadId, turns, params)
+        return { thread: { ...buildThread(session.meta, turns, config), status: this.threadStatus(threadId) } }
       }
       case 'turn/start': {
         const threadId = scalarText(params.threadId)
@@ -549,6 +574,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         session.input = null
         // CLI 提前退出且没有 result 消息时兜底结束 turn，避免 activeTurns 永远不归零。
         if (session.turnId) this.finishTurn(session, 'failed', 'claude 进程提前结束')
+        if (session.meta.ephemeral) this.forgetTemporary(session.meta.id)
       }
     }
   }
@@ -574,6 +600,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     for (const note of mapped.notifications) this.notify(note)
     if (record?.type === 'result') {
       session.turnId = null
+      this.historyPages.clear(session.meta.id)
       this.touch(session)
     }
   }
@@ -583,6 +610,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const turnId = session.turnId
     if (!turnId) return
     session.turnId = null
+    this.historyPages.clear(session.meta.id)
     const items = session.state.order.map((id) => session.state.items[id]).filter(isRecord)
     this.notify({
       method: 'turn/completed',
@@ -676,6 +704,13 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const session = makeSession(meta, true)
     this.sessions.set(threadId, session)
     return session
+  }
+
+  private forgetTemporary(threadId: string): void {
+    this.historyPages.clear(threadId)
+    this.sessions.delete(threadId)
+    this.metas.delete(threadId)
+    this.notify({ method: 'thread/closed', params: { threadId } })
   }
 
   private touch(session: BridgeSession): void {

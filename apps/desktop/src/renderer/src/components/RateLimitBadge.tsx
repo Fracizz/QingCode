@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, Gauge, RotateCw } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import {
   compactText,
   formatReset,
   remainingQuotaPercent,
   severity,
   severityForPercent,
+  tightestPercent,
   windowLabel,
   type RateLimitWindow,
 } from '@qn/codex-client'
@@ -25,6 +26,8 @@ import {
 import { entryFor, type RateLimitEntry } from '../lib/rateLimitsEntry'
 import { agentLabel, DEFAULT_AGENT } from '../lib/agents'
 import { useRateLimits } from '../store/rateLimits'
+import { RefreshIcon } from './LoadingIcon'
+import { ProgressRing } from './ProgressRing'
 import { PopoverContent, PopoverRoot, PopoverTrigger } from './primitives'
 
 function percentClass(percent: number): string {
@@ -94,7 +97,7 @@ function Body({
             disabled={entry?.loading === true}
             onClick={() => void refresh(targetId, agent)}
           >
-            <RotateCw size={12} className={entry?.loading ? 'animate-spin' : ''} /> 刷新
+            <RefreshIcon size={12} loading={entry?.loading} /> 刷新
           </button>
         </div>
       </div>
@@ -210,6 +213,8 @@ export function RateLimitBadge({
   const level = severity(snapshot)
   const cost = sumCost(entry?.costByThread, threadId)
   const text = agent === 'claude' ? claudeCompactText(snapshot, cost) : compactText(snapshot, 'remaining')
+  const used = agent === 'codex' ? tightestPercent(snapshot) : null
+  const remaining = used === null ? null : Math.round(remainingQuotaPercent(used))
 
   return (
     <PopoverRoot
@@ -225,7 +230,7 @@ export function RateLimitBadge({
           className={`flex h-6 items-center gap-1.5 rounded-md border border-qn-border-strong bg-qn-fg/[0.03] px-2 text-ui-sm leading-4 hover:bg-qn-hover data-[state=open]:bg-qn-hover ${severityTextClass(level)}`}
           aria-label={`查看 ${agentLabel(agent)} 额度详情`}
         >
-          <Gauge size={13} />
+          {remaining !== null && <ProgressRing percent={remaining} size={13} />}
           {prefix && <span className="max-w-[8rem] truncate text-qn-text/85">{prefix}</span>}
           {prefix && <span className="text-qn-dim">·</span>}
           <span>{text}</span>

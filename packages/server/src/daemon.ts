@@ -215,7 +215,10 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
             return sendErr(session, id, 'params', 'codex.attach 需要 sinceSeq')
           }
           session.attached.add(agent)
-          return sendOk(session, id, hosts[agent].attach(session.id, p.sinceSeq))
+          return sendOk(session, id, {
+            ...hosts[agent].attach(session.id, p.sinceSeq),
+            accessModes: agent === 'codex' || agent === 'claude',
+          })
         }
         case 'codex.status':
           return sendOk(session, id, hosts[agent].status())

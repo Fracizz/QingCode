@@ -55,12 +55,14 @@ export function Button({
 
 export function Header({
   title,
+  icon,
   subtitle,
   onBack,
   right,
   className,
 }: {
   title: string
+  icon?: ReactNode
   subtitle?: ReactNode
   onBack?: () => void
   right?: ReactNode
@@ -73,6 +75,7 @@ export function Header({
           <ChevronLeft size={22} strokeWidth={1.9} />
         </Button>
       )}
+      {icon}
       <div className="min-w-0 flex-1">
         <div className="qn-title">{title}</div>
         {subtitle && <div className="qn-subtitle">{subtitle}</div>}

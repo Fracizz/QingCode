@@ -52,11 +52,12 @@ export function useImageSupport(targetId: string | null, agent: AgentKind, enabl
   const rpc = session?.rpc
   const stamp = list?.loadedAt ?? 0
   useEffect(() => {
-    if (!enabled || !key || !opened || !rpc) return
+    if (!enabled || agent === 'pi' || !key || !opened || !rpc) return
     if (entry && entry.stamp >= stamp) return
     void load(key, rpc, stamp)
-  }, [enabled, key, opened, rpc, entry, stamp, load])
+  }, [enabled, agent, key, opened, rpc, entry, stamp, load])
 
+  if (enabled && agent === 'pi') return { allowed: false, reason: 'Pi 不支持图片附件' }
   if (!enabled || !entry) return { allowed: true, reason: null }
   const model = resolveSelection(list?.models ?? [], prefs).model
   return imageSupportFor(entry.table, model?.model ?? null, model?.displayName)

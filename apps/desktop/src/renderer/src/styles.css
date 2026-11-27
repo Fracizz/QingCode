@@ -257,9 +257,7 @@ button:disabled {
     font-size: 14px;
     line-height: 20px;
     outline: none;
-    transition:
-      border-color 120ms ease,
-      box-shadow 120ms ease;
+    transition: border-color 120ms ease;
   }
 
   html[data-density="compact"] .qn-input {
@@ -272,7 +270,6 @@ button:disabled {
 
   .qn-input:focus {
     border-color: var(--color-qn-accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-qn-accent) 22%, transparent);
   }
 
   .qn-button {
@@ -300,6 +297,10 @@ button:disabled {
 
   .qn-button-subtle:hover:not(:disabled) {
     background: var(--color-qn-hover);
+  }
+
+  .qn-message-activity {
+    padding-inline: calc(var(--spacing) * 2);
   }
 
   /*
@@ -338,6 +339,11 @@ button:disabled {
   background: transparent;
 }
 
+.qn-chat-selection ::selection,
+.qn-chat-selection ::highlight(qn-chat-annotation) {
+  background-color: var(--qn-selection);
+  color: var(--color-qn-text);
+}
 
 /* ---------- 外壳 ---------- */
 
@@ -471,7 +477,6 @@ body.qn-resizing webview {
   display: flex;
   flex: none;
   gap: 4px;
-  border: 1px solid var(--color-qn-border-strong);
   border-radius: 999px;
   /* 托底遮住分隔线，避免细线从圆点之间穿过。 */
   background: var(--color-qn-elevated);
@@ -559,23 +564,32 @@ body.qn-resizing webview {
   margin-bottom: 0;
 }
 
-/* 流式光标挂在最后一个段落/列表项文字之后，而不是 Markdown 块之后另起一行。 */
-.qn-streaming > p:last-child::after,
-.qn-streaming > :is(ul, ol):last-child > li:last-child::after {
+/* 用背景画圆点，复制消息或引用选区时不会混入指示文字。 */
+.qn-streaming > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+.qn-streaming > :is(ul, ol):last-child > li:last-child::after,
+.qn-streaming:not(:has(> :is(p, h1, h2, h3, h4, h5, h6, ul, ol):last-child))::after {
   content: '';
   display: inline-block;
-  width: 0.375rem;
-  height: 0.875rem;
-  margin-left: 0.125rem;
-  border-radius: 2px;
-  vertical-align: middle;
-  background: var(--color-qn-brand);
-  animation: qn-caret-pulse 1.2s ease-in-out infinite;
+  width: 1.05em;
+  height: 0.35em;
+  margin-inline-start: 0.3em;
+  vertical-align: 0.12em;
+  color: var(--color-qn-brand);
+  background: radial-gradient(circle closest-side, currentColor 70%, transparent 100%) left center / calc(100% / 3) 100% repeat-x;
+  opacity: 0.65;
+
+  @media (prefers-reduced-motion: no-preference) {
+    animation: qn-streaming-pulse 2.6s ease-in-out infinite;
+  }
 }
 
-@keyframes qn-caret-pulse {
+@keyframes qn-streaming-pulse {
+  0%, 100% {
+    opacity: 0.42;
+  }
+
   50% {
-    opacity: 0.3;
+    opacity: 0.78;
   }
 }
 
@@ -624,6 +638,14 @@ body.qn-resizing webview {
 .qn-markdown hr {
   border-color: var(--color-qn-border);
   margin: 0.6rem 0;
+}
+
+.qn-message-table {
+  container-type: inline-size;
+}
+
+.qn-message-table :is(th, td):first-child {
+  min-width: min(10em, 35cqi);
 }
 
 .qn-markdown h1 {

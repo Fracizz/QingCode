@@ -1,5 +1,5 @@
 import { Fragment, useMemo, type ComponentPropsWithoutRef, type ReactNode } from 'react'
-import { defaultUrlTransform, type Components } from 'react-markdown'
+import { defaultUrlTransform } from 'react-markdown'
 import { FileText, GitCompareArrows } from 'lucide-react'
 import { openDiff, openFile } from '../workspace/openers'
 import { cn } from '../../lib/cn'
@@ -21,7 +21,7 @@ export function qnUrlTransform(value: string): string {
 type AnchorProps = ComponentPropsWithoutRef<'a'> & { node?: unknown }
 
 /** 传给 ReactMarkdown 的 components.a；本地链接在面板打开，外链保持新窗口。 */
-export function createMarkdownLink(getContext: () => LinkContext | null): NonNullable<Components['a']> {
+export function createMarkdownLink(getContext: () => LinkContext | null) {
   return function MarkdownFileLink({ href, children, className, onClick, node: _node, ...rest }: AnchorProps) {
     const context = getContext()
     const location = context ? parseFileHref(href ?? '', context.cwd) : null

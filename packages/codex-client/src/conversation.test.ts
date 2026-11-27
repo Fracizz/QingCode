@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { RequestId, ServerNotification, ServerRequest, UserInput } from './codex-types'
+import type { RequestId, ServerNotification, ServerRequest, Thread, Turn, UserInput } from './codex-types'
 import {
   DRAFT_THREAD_ID,
   addOptimisticUser,
@@ -10,8 +10,10 @@ import {
   dropOptimisticUsers,
   emptyState,
   failActiveThreads,
+  loadRecentThreadHistory,
   loadThread,
   moveOptimisticUsers,
+  prependThreadHistory,
   resolveServerRequest,
   userItemFromInput,
 } from './conversation'
@@ -37,6 +39,27 @@ function reduce(s: ConversationState, notifications: ServerNotification[]): Conv
   return s
 }
 
+describe('按需读取会话历史', () => {
+  it('最近页保留实时条目和审批，前插早期页时去重且保持当前轮次', () => {
+    const active = { id: 'active', status: 'inProgress', items: [] } as unknown as Turn
+    let state = reduce(emptyState(), [
+      note('turn/started', { threadId: 't1', turn: active }),
+      note('item/started', { threadId: 't1', turnId: 'active', item: item('agentMessage', 'live', { text: '实时回复' }) }),
+    ])
+    state = applyServerRequest(state, request('item/commandExecution/requestApproval', 'approval', { threadId: 't1', itemId: 'command' }))
+    const before = state.threads.t1
+    const thread = { id: 't1', status: { type: 'active' }, turns: [active] } as unknown as Thread
+    state = loadRecentThreadHistory(state, thread, { turns: 'previous' }, before)
+    const older = { id: 'old', status: 'completed', items: [item('agentMessage', 'old-reply', { text: '早期回复' })] } as unknown as Turn
+    state = prependThreadHistory(state, 't1', { turns: [older, { ...active, items: [item('agentMessage', 'live', { text: '旧快照' })] as unknown as Turn['items'] }], earlier: null })
+    expect(state.threads.t1).toMatchObject({
+      activeTurnId: 'active', status: 'running', pendingApprovals: [{ requestId: 'approval' }], historyCursor: null,
+      items: [{ id: 'old-reply', text: '早期回复' }, { id: 'live', text: '实时回复' }],
+      turns: [{ id: 'old' }, { id: 'active', itemIds: ['live'] }],
+    })
+  })
+})
+
 function threadOf(s: ConversationState, id = 't1') {
   const thread = s.threads[id]
   if (!thread) throw new Error(`missing thread ${id}`)
@@ -48,6 +71,23 @@ function itemOf(s: ConversationState, id: string): ItemView {
   if (!found) throw new Error(`missing item ${id}`)
   return found
 }
+
+it('记录实际回复完成时间，重读历史时保留同条回复已收到的时间', () => {
+  const raw = item('agentMessage', 'reply', { text: '已完成' })
+  const startedAtMs = 1_796_000_000_000
+  const completedAtMs = startedAtMs + 60_000
+  const started = applyNotification(emptyState(), note('item/started', { threadId: 't1', item: raw, startedAtMs }))
+  expect(itemOf(started, 'reply')).not.toHaveProperty('completedAtMs')
+  const done = applyNotification(started, note('item/completed', { threadId: 't1', item: raw, completedAtMs }))
+  expect(itemOf(done, 'reply')).toMatchObject({ completedAtMs, streaming: false })
+
+  const turn = { id: 't', status: 'completed', completedAt: completedAtMs / 1000, items: [raw, { ...raw, id: 'unknown' }] }
+  const reread = loadThread(done, { id: 't1', turns: [turn] } as unknown as LoadableThread)
+  expect(itemOf(reread, 'reply')).toMatchObject({ completedAtMs })
+  expect(itemOf(reread, 'unknown')).not.toHaveProperty('completedAtMs')
+  const recorded = loadThread(emptyState(), { id: 't1', turns: [{ ...turn, items: [{ ...raw, completedAtMs }] }] } as unknown as LoadableThread)
+  expect(itemOf(recorded, 'reply')).toMatchObject({ completedAtMs })
+})
 
 const userItem = item('userMessage', 'i-user', {
   clientId: null,
@@ -142,7 +182,7 @@ describe('子代理条目', () => {
     const state = loadThread(emptyState(), thread as unknown as LoadableThread)
     expect(threadOf(state).items).toEqual([
       { kind: 'subagent', id: 'activity', title: '子代理', status: '已完成', detail: '/root/review' },
-      { kind: 'subagent', id: 'delegate', title: '委派给子代理', status: '调用失败', detail: '核对文档' },
+      { kind: 'subagent', id: 'delegate', title: '委派给子代理', status: '调用失败', detail: '核对文档', name: '核对文档' },
     ])
   })
 

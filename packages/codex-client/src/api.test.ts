@@ -4,8 +4,10 @@ import {
   listModels,
   listSkills,
   listThreads,
+  openThreadHistory,
   readSubagentThread,
   readThread,
+  readThreadHistoryPage,
   resumeThread,
   sendText,
   startThread,
@@ -134,6 +136,66 @@ describe('codex api', () => {
     expect(calls.map((call) => call.method)).toEqual(['thread/read', 'thread/read', 'thread/turns/list'])
   })
 
+  it('先读取最近一页，只有用户继续查看才请求早期轮次', async () => {
+    const calls: Call[] = []
+    const rpc = {
+      request: async (method: string, params: { cursor?: string }) => {
+        calls.push({ method, params })
+        if (method === 'thread/resume') return { thread: { id: 'long', turns: [] }, turnsBackwardsCursor: 'latest' }
+        return params.cursor === 'latest'
+          ? { data: [{ id: 'newest' }, { id: 'recent' }], nextCursor: 'older' }
+          : { data: [{ id: 'older' }, { id: 'first' }], nextCursor: null }
+      },
+    } as unknown as CodexRpcLike
+    const result = await openThreadHistory(rpc, 'long', 'resume')
+    expect(result.thread.turns.map(({ id }) => id)).toEqual(['recent', 'newest'])
+    expect(calls).toEqual([
+      { method: 'thread/resume', params: { threadId: 'long', excludeTurns: true } },
+      { method: 'thread/turns/list', params: { threadId: 'long', cursor: 'latest', limit: 8, sortDirection: 'desc', itemsView: 'full' } },
+    ])
+    const earlier = await readThreadHistoryPage(rpc, 'long', result.earlier)
+    expect(earlier).toEqual({ turns: [{ id: 'first' }, { id: 'older' }], earlier: null })
+    expect(calls.at(-1)).toMatchObject({ params: { cursor: 'older' } })
+  })
+
+  it('单轮超出帧上限时按条目向前分页并继续早期轮次', async () => {
+    const calls: Call[] = []
+    const rpc = {
+      request: async (method: string, params: { cursor?: string; itemsView?: string }) => {
+        calls.push({ method, params })
+        if (method === 'thread/turns/list') {
+          if (params.cursor === 'previous-turn') return { data: [{ id: 'previous' }], nextCursor: null }
+          if (params.itemsView === 'full') throw new CodexRpcError('超限', -32000, 'response_too_large')
+          return { data: [{ id: 'huge', items: [], status: 'completed' }], nextCursor: 'previous-turn' }
+        }
+        return params.cursor
+          ? { data: [{ item: { id: 'first' } }], nextCursor: null }
+          : { data: [{ item: { id: 'last' }, completedAtMs: 1_796_000_000_000 }, { item: { id: 'middle' } }], nextCursor: 'more' }
+      },
+    } as unknown as CodexRpcLike
+    const page = await readThreadHistoryPage(rpc, 'long', null)
+    expect(page.turns).toMatchObject([{ id: 'huge', items: [{ id: 'middle' }, { id: 'last', completedAtMs: 1_796_000_000_000 }] }])
+    expect(calls.map(({ params }) => (params as { limit: number }).limit)).toEqual([8, 4, 2, 1, 1, 24])
+    const more = await readThreadHistoryPage(rpc, 'long', page.earlier)
+    expect(more).toMatchObject({ turns: [{ items: [{ id: 'first' }] }], earlier: { turns: 'previous-turn' } })
+    await expect(readThreadHistoryPage(rpc, 'long', more.earlier)).resolves.toEqual({ turns: [{ id: 'previous' }], earlier: null })
+  })
+
+  it('老服务缺少分页方法时使用只读全量兼容路径', async () => {
+    const calls: Call[] = []
+    const rpc = {
+      request: async (method: string, params: unknown) => {
+        calls.push({ method, params })
+        if (method === 'thread/turns/list') throw new CodexRpcError('未知方法', -32601)
+        return { thread: { id: 'legacy', turns: method === 'thread/read' ? [{ id: 'turn' }] : [] } }
+      },
+    } as unknown as CodexRpcLike
+    await expect(openThreadHistory(rpc, 'legacy', 'resume')).resolves.toEqual({
+      thread: { id: 'legacy', turns: [{ id: 'turn' }] }, earlier: null,
+    })
+    expect(calls.at(-1)).toEqual({ method: 'thread/read', params: { threadId: 'legacy', includeTurns: true } })
+  })
+
   it('用只读请求加载指定子代理的对话记录', async () => {
     const calls: Call[] = []
     const rpc = {
@@ -150,8 +212,8 @@ describe('codex api', () => {
     await expect(readSubagentThread(rpc, 'child')).resolves.toMatchObject({
       name: 'Review', view: { items: [{ kind: 'agent', text: '检查通过' }] },
     })
-    expect(calls).toEqual([{ method: 'thread/read', params: { threadId: 'child', includeTurns: true } }])
-    await expect(readSubagentThread(rpc, 'another')).rejects.toThrow('会话与请求不一致')
+    expect(calls).toEqual([{ method: 'thread/read', params: { threadId: 'child', includeTurns: false } }])
+    await expect(readSubagentThread(rpc, 'another')).rejects.toThrow('会话与所选会话不一致')
   })
 
   it('listModels 按游标翻页拼接', async () => {

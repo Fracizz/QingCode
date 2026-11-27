@@ -1,5 +1,5 @@
 import { sessionStatusLabels, type SessionStatus } from '@qn/codex-client'
-import { ChevronDown, ChevronRight, Ellipsis, Folder, MessageSquareText, Monitor, RotateCw, Search, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Ellipsis, Folder, MessageCircleMore, Monitor, RotateCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { sessionKey } from '../agents'
 import { useApp } from '../store'
@@ -21,7 +21,7 @@ import {
 } from '../workspace'
 import { formatTime, friendlyError } from '../state'
 import { ARCHIVE_ACTION_WIDTH, threadSwipeAxis, threadSwipeOffset } from '../threadSwipe'
-import { AgentTag, Badge, Button, Empty, Loading, LoadingIcon, Note } from './ui'
+import { AgentTag, Badge, Button, Dialog, Empty, Loading, LoadingIcon, Note } from './ui'
 import { NewSessionButton } from './NewSessionButton'
 import { ProjectTools } from './ProjectTools'
 import { PullToRefresh } from './PullToRefresh'
@@ -42,7 +42,7 @@ const emptyThreads: WorkspaceThread[] = []
 const THREAD_PREVIEW_LIMIT = 5
 
 const workspaceIcons = {
-  sessions: MessageSquareText,
+  sessions: MessageCircleMore,
   projects: Folder,
   connections: Monitor,
   search: Search,
@@ -390,7 +390,9 @@ export function WorkspaceHome() {
   const threadList = useWorkspace((s) => desktopId ? s.threads[desktopId] : undefined) ?? emptyThreads
   const [query, setQuery] = useState('')
   const [projectTargetId, setProjectTargetId] = useState<string | null>(null)
-  const activeProjectTarget = targets.some((target) => target.id === projectTargetId) ? projectTargetId : null
+  const [projectFilterOpen, setProjectFilterOpen] = useState(false)
+  const selectedProjectTarget = targets.find((target) => target.id === projectTargetId)
+  const activeProjectTarget = selectedProjectTarget?.id ?? null
   const projects = projectList?.items ?? emptyProjects
   const projectGroups = useMemo(() => {
     const matched = filterProjects(projects, targets, query, activeProjectTarget)
@@ -434,15 +436,29 @@ export function WorkspaceHome() {
             {isSessions && <NewSessionButton projects={projects} iconOnly primary className="qn-header-icon" />}
           </div>
           {!isSessions && (
-            <div className="qn-project-filters qn-scroll" role="group" aria-label="按连接筛选项目">
-              {[{ id: null, name: '全部' }, ...targets].map(({ id, name }) => (
-                <button type="button" key={id === null ? 'all' : `target:${id}`}
-                  className={`qn-chip${id === activeProjectTarget ? ' qn-chip-active' : ''}`}
-                  aria-pressed={id === activeProjectTarget} onClick={() => setProjectTargetId(id)}>
-                  <span className="truncate">{name}</span>
-                </button>
-              ))}
-            </div>
+            <>
+              <button type="button" className="qn-row qn-project-filter"
+                aria-haspopup="dialog" aria-expanded={projectFilterOpen} onClick={() => setProjectFilterOpen(true)}>
+                <Monitor size={17} className="shrink-0 text-qn-muted" aria-hidden />
+                <span className="shrink-0 text-qn-muted">主机</span>
+                <span className="min-w-0 flex-1 truncate text-right">{selectedProjectTarget?.name ?? '全部主机'}</span>
+                <ChevronDown size={16} className="shrink-0 text-qn-muted" aria-hidden />
+              </button>
+              {projectFilterOpen && (
+                <Dialog title="按主机筛选项目" onClose={() => setProjectFilterOpen(false)}>
+                  <div className="grid gap-1">
+                    {[{ id: null, name: '全部主机' }, ...targets].map(({ id, name }) => (
+                      <button type="button" key={id === null ? 'all' : `target:${id}`}
+                        className="qn-row qn-project-filter-option" aria-pressed={id === activeProjectTarget}
+                        onClick={() => { setProjectTargetId(id); setProjectFilterOpen(false) }}>
+                        <span className="min-w-0 flex-1 wrap-anywhere">{name}</span>
+                        {id === activeProjectTarget && <Check size={16} className="shrink-0 text-qn-accent" aria-hidden />}
+                      </button>
+                    ))}
+                  </div>
+                </Dialog>
+              )}
+            </>
           )}
           {isSessions ? (
             groups.length ? groups.map(({ project, threads }) => (

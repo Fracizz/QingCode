@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createServer, type Server as HttpsServer } from 'node:https'
+import { turnAccessOverride } from '@qn/codex-client'
 import { redactToken } from '../remoteCommands'
-import { toWireError } from '../router'
+import { RouterError, toWireError, type CodexReplyRoute } from '../router'
 import { mobileProjectFiles } from './projectAccess'
 import type { MobileCertificate } from './cert'
 import type { DeviceStore, MobileDevice, PairFailureState } from './pairing'
@@ -14,7 +15,7 @@ export const EVENT_HEARTBEAT_MS = 20_000
 export type GatewayEvent = { name: string; payload?: unknown }
 
 export type RouterGateway = {
-  invoke(method: string, params: unknown): Promise<unknown>
+  invoke(method: string, params: unknown, route?: CodexReplyRoute): Promise<unknown>
   onEmit(listener: (name: string, payload: unknown) => void): () => void
 }
 
@@ -39,6 +40,7 @@ type EventClient = {
   timer: ReturnType<typeof setInterval> | null
   closed: boolean
   pending: boolean
+  replyLifetime: AbortController
 }
 
 const isRecord = (value: unknown): value is JsonRecord =>
@@ -55,6 +57,7 @@ const RPC_METHODS = new Set([
   'projects.save',
   'server.req',
   'codex.send',
+  'mobile.turn.start',
   // 网关自有方法，不转发给同名 backend 方法。
   'mobile.agents',
   'mobile.files.list',
@@ -114,6 +117,8 @@ export function checkRpcWhitelist(method: unknown, params: unknown): RpcWhitelis
 
 /** 主机指纹确认只能发生在电脑端；手机只收到不含 promptId 的提示。 */
 export function mobileEventFromRouter(name: string, payload: unknown): GatewayEvent | null {
+  // 点对点回复由 router 匹配请求归属后直接投递，旁路只转发通知和审批。
+  if (name === 'codex.recv' && isRecord(payload) && payload.seq === null) return null
   // 桌面连接订阅的终端输出可能含敏感内容，不能通过共享事件总线转给手机。
   if (name === 'server.evt' && isRecord(payload) && typeof payload.name === 'string' && payload.name.startsWith('term.')) {
     return null
@@ -214,7 +219,7 @@ function forwardRpcParams(body: JsonRecord, method: string): unknown {
     const next: JsonRecord = isRecord(params) ? { ...params } : {}
     if (agent && !hasOwn(next, 'agent')) next.agent = agent
     if (isRecord(next.msg) && next.msg.method === 'turn/start' && isRecord(next.msg.params)) {
-      // 访问模式只能在电脑的会话输入框里显式选择。
+      // 手机通过独立入口提交模式，由网关生成 Agent 权限字段。
       const input = { ...next.msg.params }
       delete input.claudePermissionMode
       delete input.qingcodeAccessOverride
@@ -235,6 +240,33 @@ function forwardRpcParams(body: JsonRecord, method: string): unknown {
     return next
   }
   return params ?? {}
+}
+
+function mobileTurnParams(params: unknown): JsonRecord {
+  if (!isRecord(params) || typeof params.targetId !== 'string' || !isAgent(params.agent) ||
+      !isRecord(params.msg) || params.msg.method !== 'turn/start' || typeof params.msg.id !== 'string' ||
+      !isRecord(params.msg.params)) {
+    throw new RouterError('invalid_params', '访问模式发送参数无效')
+  }
+  const access = turnAccessOverride(params.agent, params.accessMode)
+  const { threadId, input, model, effort, serviceTier } = params.msg.params
+  if (!access || typeof threadId !== 'string' || !threadId || !Array.isArray(input)) {
+    throw new RouterError('invalid_params', '当前 Agent 不支持此访问模式，或轮次参数无效')
+  }
+  return {
+    targetId: params.targetId,
+    agent: params.agent,
+    msg: {
+      id: params.msg.id,
+      method: 'turn/start',
+      params: {
+        threadId, input, ...access,
+        ...(typeof model === 'string' ? { model } : {}),
+        ...(typeof effort === 'string' ? { effort } : {}),
+        ...(typeof serviceTier === 'string' || serviceTier === null ? { serviceTier } : {}),
+      },
+    },
+  }
 }
 
 function clientIp(req: IncomingMessage): string {
@@ -502,11 +534,20 @@ export class MobileGateway {
     }
     try {
       const invoke = (name: string, value: unknown) => this.options.router.invoke(name, value)
+      if (method === 'codex.send' || method === 'mobile.turn.start') {
+        // 独立方法让旧网关拒绝请求，避免按默认权限误发该轮。
+        const result = await this.invokeCodex(device.id, method === 'mobile.turn.start' ? mobileTurnParams(params) : params)
+        return this.sendJson(res, 200, result ?? null)
+      }
       const result = method.startsWith('mobile.files.')
         ? await mobileProjectFiles(invoke, method, params)
         : MOBILE_TERMINAL_METHODS.has(method)
           ? await this.terminals.run(invoke, device.id, method, params)
           : await invoke(method, params)
+      if (method === 'server.req' && isRecord(params) && params.method === 'codex.attach' &&
+          isRecord(result) && result.accessModes === true) {
+        return this.sendJson(res, 200, { ...result, mobileAccessModes: true })
+      }
       return this.sendJson(res, 200, result ?? null)
     } catch (err) {
       const error = toWireError(err)
@@ -516,12 +557,22 @@ export class MobileGateway {
     }
   }
 
+  private invokeCodex(deviceId: string, params: unknown): Promise<unknown> {
+    const client = [...this.eventClients].find((candidate) => candidate.deviceId === deviceId)
+    return this.options.router.invoke('codex.send', params, {
+      // 独立 signal 允许同一设备并行等待多条回复。
+      signal: client ? AbortSignal.any([client.replyLifetime.signal]) : AbortSignal.abort(),
+      receive: (payload) => this.broadcast({ name: 'codex.recv', payload }, deviceId),
+    })
+  }
+
   private async handleEvents(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const device = await this.authenticate(req)
     if (!device) {
       req.resume()
       return this.sendError(res, 401, 'unauthorized', '设备未配对或令牌已失效')
     }
+    const existing = [...this.eventClients].find((client) => client.deviceId === device.id)
     const client: EventClient = {
       deviceId: device.id,
       ip: clientIp(req),
@@ -529,6 +580,7 @@ export class MobileGateway {
       timer: null,
       closed: false,
       pending: false,
+      replyLifetime: existing?.replyLifetime ?? new AbortController(),
     }
     this.eventClients.add(client)
     const cleanup = () => this.closeClient(client)
@@ -580,8 +632,10 @@ export class MobileGateway {
     }
   }
 
-  private broadcast(event: GatewayEvent): void {
-    for (const client of [...this.eventClients]) this.writeEvent(client, event)
+  private broadcast(event: GatewayEvent, deviceId?: string): void {
+    for (const client of [...this.eventClients]) {
+      if (deviceId === undefined || client.deviceId === deviceId) this.writeEvent(client, event)
+    }
   }
 
   private writeEvent(client: EventClient, event: GatewayEvent): void {
@@ -616,6 +670,7 @@ export class MobileGateway {
     client.timer = null
     this.eventClients.delete(client)
     if (![...this.eventClients].some((candidate) => candidate.deviceId === client.deviceId)) {
+      client.replyLifetime.abort()
       this.terminals.disconnectDevice(client.deviceId)
     }
     try {

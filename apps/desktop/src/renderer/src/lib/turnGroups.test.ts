@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ItemView } from '@qn/codex-client'
-import { formatDuration, groupFlow, groupTurns, hasPendingSubmission, isGroupRunning, summarizeTools } from './turnGroups'
+import type { ItemView, ThreadView } from '@qn/codex-client'
+import { formatDuration, groupFlow, groupTurns, hasPendingSubmission, isGroupRunning, streamingReplyId, summarizeTools } from './turnGroups'
 
 const user = (id: string) => ({ kind: 'user', id, text: 'hi' }) as unknown as ItemView
 const agent = (id: string) => ({ kind: 'agent', id, text: 'ok', streaming: false }) as unknown as ItemView
@@ -8,7 +8,8 @@ const cmd = (id: string, exitCode: number | null = 0, status = 'completed') =>
   ({ kind: 'command', id, command: 'ls', output: '', status, exitCode, cwd: '' }) as unknown as ItemView
 const file = (id: string, n = 1) =>
   ({ kind: 'fileChange', id, status: 'completed', changes: Array.from({ length: n }, (_, i) => ({ path: `f${i}`, kind: 'update' })) }) as unknown as ItemView
-const think = (id: string, streaming = false) => ({ kind: 'reasoning', id, summary: '', streaming }) as unknown as ItemView
+const think = (id: string, streaming = false, summary = '分析问题'): ItemView =>
+  ({ kind: 'reasoning', id, summary, streaming })
 
 describe('hasPendingSubmission', () => {
   const pendingUser: ItemView = { kind: 'user', id: 'new-user', text: '新问题', pending: true }
@@ -22,6 +23,28 @@ describe('hasPendingSubmission', () => {
   it('已有实际回显时结束本地提交占位', () => {
     expect(hasPendingSubmission([user('u'), think('r')], true)).toBe(false)
     expect(hasPendingSubmission([pendingUser, agent('a')], true)).toBe(false)
+  })
+})
+
+describe('streamingReplyId', () => {
+  const stale: ItemView = { kind: 'agent', id: 'old', text: '检查了文件', streaming: true }
+  const latest: ItemView = { kind: 'agent', id: 'new', text: '正在总结', streaming: true }
+  const thread: ThreadView = {
+    id: 'thread', status: 'running', activeTurnId: 'turn', items: [stale, cmd('c'), latest], pendingApprovals: [],
+    turns: [{ id: 'turn', startedAtMs: 1, durationMs: null, itemIds: ['c', 'new', 'next-command'] }],
+  }
+
+  it('同一轮有多条流式标记时只取末尾回复', () => {
+    expect(streamingReplyId(thread)).toBe('new')
+    expect(streamingReplyId({ ...thread, turns: undefined })).toBe('new')
+    expect(streamingReplyId({ ...thread, items: [latest, stale] })).toBe('new')
+  })
+
+  it('轮次结束或工具接管后不恢复旧回复的标记', () => {
+    expect(streamingReplyId({ ...thread, status: 'idle' })).toBeUndefined()
+    expect(streamingReplyId({ ...thread, items: [...thread.items, cmd('next-command')] })).toBeUndefined()
+    expect(streamingReplyId({ ...thread, items: [stale, { ...latest, streaming: false }] })).toBeUndefined()
+    expect(streamingReplyId({ ...thread, items: [stale] })).toBeUndefined()
   })
 })
 
@@ -41,6 +64,13 @@ describe('groupFlow', () => {
   it('末尾的工具条目也会被收尾', () => {
     expect(groupFlow([agent('a'), cmd('c1'), cmd('c2')]).at(-1)?.kind).toBe('tools')
     expect(groupFlow([])).toEqual([])
+  })
+
+  it('已结束的空摘要不计入工具组，正在思考的条目仍显示', () => {
+    const command = cmd('c')
+    expect(groupFlow([think('r', false, '  \n'), command])).toEqual([{ kind: 'item', key: 'c', item: command }])
+    const streaming = think('r', true, '')
+    expect(groupFlow([streaming, command])).toEqual([{ kind: 'tools', key: 'tools-r', items: [streaming, command] }])
   })
 })
 
@@ -76,6 +106,22 @@ describe('groupTurns', () => {
 
   it('没有工具步骤时不折叠', () => {
     expect(kinds(groupTurns([user('u'), agent('a')], undefined, false))).toEqual(['u', 'a'])
+  })
+
+  it('完成的空摘要不生成可展开的工作过程', () => {
+    const items = [user('u'), think('r1', false, ''), think('r2', false, '\n'), agent('a')]
+    const turns = [{ id: 't', startedAtMs: 1, durationMs: 1000, itemIds: ['u', 'r1', 'r2', 'a'] }]
+    expect(kinds(groupTurns(items, turns, false))).toEqual(['u', 'a'])
+  })
+
+  it('工作摘要使用紧随其后的最终回复时间', () => {
+    const items: ItemView[] = [user('u'), cmd('c'),
+      { kind: 'agent', id: 'mid', text: '进行中', streaming: false, completedAtMs: 1000 }, cmd('c2'),
+      { kind: 'agent', id: 'final', text: '结束', streaming: false, completedAtMs: 2000 },
+      { kind: 'agent', id: 'empty', text: '', streaming: false, completedAtMs: 3000 },
+    ]
+    expect(groupTurns(items, undefined, false)[1]).toMatchObject({ kind: 'work', reply: { id: 'final', completedAtMs: 2000 } })
+    expect(groupTurns(items, undefined, true).some((entry) => entry.kind === 'work')).toBe(false)
   })
 })
 

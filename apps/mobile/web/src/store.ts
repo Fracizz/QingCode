@@ -1,5 +1,6 @@
 // 手机端全局状态：连接、目标、项目、会话（按目标 + Agent）、对话、模型、文件查看、额度与事件流。IO 全部经 Gateway 注入。
 import {
+  accessOptions,
   applyNotification,
   applyRateLimitsUpdate,
   applyServerRequest,
@@ -12,15 +13,19 @@ import {
   isThreadOutcome,
   listModels,
   listThreads,
+  loadRecentThreadHistory,
   loadThread,
+  openThreadHistory,
   pickAccount,
   pickSnapshot,
+  prependThreadHistory,
   readThread,
+  readThreadHistoryPage,
   resolveServerRequest,
-  resumeThread,
   sendInput,
   startThread,
   steerTurn,
+  type AccessMode,
   type AccountSummary,
   type ConversationState,
   type RateLimitSnapshot,
@@ -31,6 +36,7 @@ import {
   type TurnOverrides,
   type UserInput,
 } from '@qn/codex-client'
+import { ACCESS_PREFS_STORAGE_KEY, accessPreferenceKey, restoreAccessPrefs, type AccessAddress, type AccessPrefs } from './accessPrefs'
 import { create } from 'zustand'
 import {
   agentLabel,
@@ -192,6 +198,8 @@ export type AgentSession = {
   loadedThreads: Set<string>
   state: ConversationState
   opened: boolean
+  accessSupported?: boolean
+  activeTurnAccess?: Record<string, { turnId: string; mode: AccessMode }>
   opening: boolean
   openError: string | null
   openErrorCode?: string
@@ -219,7 +227,7 @@ export type DiffRequest = { path: string; diff?: string | null }
 export type SendMode = 'queue' | 'steer' | 'immediate'
 export type QueuedThreadMode = 'start' | 'continue'
 
-type SendAddress = { desktopId: string; targetId: string; agent: AgentKind; threadId: string }
+type SendAddress = AccessAddress
 
 type DiscoveredThread = ThreadSummary & { targetId: string; projectId: string }
 
@@ -268,6 +276,7 @@ type AppState = {
   /** 当前对话（或待建会话）所属 Agent。 */
   selectedAgent: AgentKind
   sessions: Record<string, AgentSession>
+  threadAccessModes: AccessPrefs
   models: Record<string, ModelList>
   modelPrefs: Record<string, ModelPrefs>
   rateLimits: Record<string, RateLimitEntry>
@@ -320,9 +329,11 @@ type AppState = {
   discoverWorkspaceSessions: (projects: readonly Project[]) => Promise<DiscoveredThread[]>
   newThread: (agent?: AgentKind, workspace?: WorkspaceProject) => Promise<boolean>
   openThread: (id: string, agent?: AgentKind, workspace?: WorkspaceProject) => Promise<boolean>
+  loadEarlierHistory: (beforeApply: () => void) => Promise<void>
   archiveConversation: (targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>) => Promise<void>
   compactConversation: () => Promise<boolean>
   setDraftText: (text: string) => void
+  setAccessMode: (mode: AccessMode) => void
   send: (text: string, attachments?: UserInput[], delegate?: boolean, mode?: SendMode, options?: { keepDraft?: boolean }) => Promise<boolean>
   removeQueuedSend: (id: string) => void
   beginQueuedEdit: (id: string) => ((resume?: boolean) => void) | null
@@ -393,6 +404,33 @@ function selectedSendAddress(state: AppState): SendAddress | null {
 export function selectedQueuedSends(state: AppState): QueuedSend[] | undefined {
   const address = selectedSendAddress(state)
   return address ? state.queuedSends[sendKey(address)] : undefined
+}
+
+function accessPreference(state: AppState, address: SendAddress): AccessMode | undefined {
+  const connection = state.connections.find((item) => item.id === address.desktopId)
+  return connection && state.threadAccessModes[accessPreferenceKey(address, connection.fp)]
+}
+
+export function selectedAccessPreference(state: AppState): AccessMode | undefined {
+  const address = selectedSendAddress(state)
+  return address ? accessPreference(state, address) : undefined
+}
+
+export function selectedAccessMode(state: AppState): AccessMode {
+  return selectedAccessPreference(state) ?? 'default'
+}
+
+export function displayedAccessMode(state: AppState): AccessMode {
+  const address = selectedSendAddress(state)
+  if (!address) return 'default'
+  const session = state.sessions[sessionKey(address.targetId, address.agent)]
+  const active = session?.activeTurnAccess?.[address.threadId]
+  if (active && active.turnId === session?.state.threads[address.threadId]?.activeTurnId) return active.mode
+  return selectedAccessMode(state)
+}
+
+function supportsMobileAccess(result: unknown): boolean {
+  return isRecord(result) && result.mobileAccessModes === true
 }
 
 export function selectedCompactionStarting(state: AppState): boolean {
@@ -507,6 +545,25 @@ export const useApp = create<AppState>((set, get) => {
     void queueStorageWrite(key, () => getGateway().storageSet(key, json))
   }
 
+  const saveAccessPrefs = (threadAccessModes: AccessPrefs): void => {
+    set({ threadAccessModes })
+    const gateway = getGateway()
+    const json = JSON.stringify(threadAccessModes)
+    void queueStorageWrite(ACCESS_PREFS_STORAGE_KEY, () => gateway.storageSet(ACCESS_PREFS_STORAGE_KEY, json))
+      .catch(() => {
+        if (get().threadAccessModes === threadAccessModes) {
+          set({ notice: '无法保存权限设置，本次修改在手机重启后可能丢失。' })
+        }
+      })
+  }
+
+  const clearDesktopAccessPrefs = (desktopId: string): void => {
+    const prefix = `[${JSON.stringify(desktopId)},`
+    const entries = Object.entries(get().threadAccessModes)
+    const remaining = entries.filter(([key]) => !key.startsWith(prefix))
+    if (remaining.length !== entries.length) saveAccessPrefs(Object.fromEntries(remaining))
+  }
+
   const writeArchives = (archivedThreads: AppState['archivedThreads']): Promise<void> =>
     getGateway().storageSet(STORAGE_ARCHIVED_THREADS, JSON.stringify(archivedThreads))
 
@@ -595,7 +652,23 @@ export const useApp = create<AppState>((set, get) => {
     const matches = (chat: SavedChat | null | undefined) =>
       chat?.targetId === targetId && chat.agent === thread.agent && chat.threadId === thread.id
     const current = get()
+    const connection = current.connections.find((item) => item.id === desktopId)
+    if (connection) {
+      const key = accessPreferenceKey({ desktopId, targetId, agent: thread.agent, threadId: thread.id }, connection.fp)
+      if (key in current.threadAccessModes) {
+        const next = { ...current.threadAccessModes }
+        delete next[key]
+        saveAccessPrefs(next)
+      }
+    }
     if (current.activeId === desktopId) {
+      const key = sessionKey(targetId, thread.agent)
+      const session = current.sessions[key]
+      if (session?.activeTurnAccess?.[thread.id]) {
+        const activeTurnAccess = { ...session.activeTurnAccess }
+        delete activeTurnAccess[thread.id]
+        patchSession(key, (value) => ({ ...value, activeTurnAccess }), session)
+      }
       if (matches(pendingRestore)) pendingRestore = null
       if (current.selectedTargetId === targetId) {
         const threads = current.threads.filter((item) => item.agent !== thread.agent || item.id !== thread.id)
@@ -659,6 +732,7 @@ export const useApp = create<AppState>((set, get) => {
     saveRecord(STORAGE_DESKTOP_MODEL_PREFS, desktopModelPrefs)
     saveRecord(STORAGE_DRAFTS, drafts)
     clearArchivedThreads(id)
+    clearDesktopAccessPrefs(id)
     discardDesktopQueue(id)
   }
 
@@ -814,19 +888,41 @@ export const useApp = create<AppState>((set, get) => {
   }
 
   async function resumeCodexConversation(session: AgentSession, threadId: string, isCurrent = () => true): Promise<void> {
-    const { thread } = await resumeThread(session.rpc, threadId, isCurrent)
+    const before = get().sessions[session.key]?.state.threads[threadId]
+    const { thread, earlier } = await openThreadHistory(session.rpc, threadId, 'resume', isCurrent)
     if (!isCurrent()) return
     session.resumedCodexThreads.add(threadId)
-    patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }), session)
+    patchSession(session.key, (value) => ({
+      ...value, state: loadRecentThreadHistory(value.state, thread, earlier, before),
+    }), session)
   }
 
-  async function startMessageTurn(session: AgentSession, address: SendAddress, input: UserInput[], overrides: TurnOverrides): Promise<void> {
-    const { threadId } = address
-    const { turn } = await sendInput(session.rpc, threadId, input, overrides)
+  async function startMessageTurn(
+    session: AgentSession, address: SendAddress, input: UserInput[], overrides: TurnOverrides, accessMode: AccessMode,
+  ): Promise<void> {
+    const { targetId, agent, threadId } = address
+    const opened = get().sessions[session.key]
+    if (accessMode !== 'default' && !opened?.accessSupported) {
+      throw new Error('电脑或目标服务暂不支持当前访问模式，请升级后重试')
+    }
+    if (!mobileTurnFits(targetId, agent, threadId, input, overrides, undefined, accessMode)) {
+      throw new Error('消息和附件合计超过 1 MiB，请移除部分内容后再发送')
+    }
+    const params = { threadId, input, model: overrides.model || undefined, effort: overrides.effort || undefined,
+      serviceTier: overrides.serviceTier, mobileAccessMode: accessMode }
+    const { turn } = accessMode === 'default'
+      ? await sendInput(session.rpc, threadId, input, overrides)
+      : await session.rpc.request('turn/start', params)
     const current = get().sessions[session.key]
     if (current?.transport !== session.transport || completedTurns.get(session.transport)?.has(turn.id)) return
     // 极短的一轮可能先完成，轮次响应也可能已是终态。
-    if (turn.status === 'inProgress' && current.state.threads[threadId]?.activeTurnId === turn.id) return
+    if (turn.status === 'inProgress') {
+      patchSession(session.key, (value) => ({
+        ...value,
+        activeTurnAccess: { ...value.activeTurnAccess, [threadId]: { turnId: turn.id, mode: accessMode } },
+      }), session)
+      if (current.state.threads[threadId]?.activeTurnId === turn.id) return
+    }
     const synthetic = {
       method: turn.status === 'inProgress' ? 'turn/started' : 'turn/completed',
       params: { threadId, turn },
@@ -890,7 +986,9 @@ export const useApp = create<AppState>((set, get) => {
         void settle(next.error)
       } else {
         submitted = true
-        await startMessageTurn(session, address, queuedInput(agent, next), next.overrides)
+        // 升级前的队列可能只有消息快照，显式修改会话权限后即以新设置为准。
+        const mode = accessPreference(get(), address) ?? next.accessMode ?? 'default'
+        await startMessageTurn(session, address, queuedInput(agent, next), next.overrides, mode)
         if (epoch === desktopEpoch) void dropQueuedSend(key, next.id)
       }
     } catch (err) {
@@ -1023,6 +1121,12 @@ export const useApp = create<AppState>((set, get) => {
         // agent 直接放进 params：网关与 backend 都按 params.agent 路由，旧桌面会忽略它。
         const current = activeConnection(get()) ?? conn
         try {
+          if (isRecord(msg) && msg.method === 'turn/start' && isRecord(msg.params) && msg.params.mobileAccessMode) {
+            const { mobileAccessMode: accessMode, ...params } = msg.params
+            return await getGateway().rpc(current, 'mobile.turn.start', {
+              targetId, agent, accessMode, msg: { ...msg, params },
+            })
+          }
           return await getGateway().rpc(current, 'codex.send', { targetId, agent, msg })
         } catch (err) {
           markRepairError(current, epoch, err)
@@ -1161,10 +1265,13 @@ export const useApp = create<AppState>((set, get) => {
 
   const reloadConversation = async (session: AgentSession, threadId: string, isCurrent = () => true): Promise<boolean> => {
     try {
-      const result = await readThread(session.rpc, threadId, isCurrent)
+      const before = get().sessions[session.key]?.state.threads[threadId]
+      const result = await openThreadHistory(session.rpc, threadId, 'read', isCurrent)
       if (!isCurrent() || result?.thread?.id !== threadId || get().sessions[session.key]?.transport !== session.transport) return false
       if (get().eventsConnected && get().sessions[session.key]?.opened) session.loadedThreads.add(threadId)
-      patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
+      patchSession(session.key, (value) => ({
+        ...value, state: loadRecentThreadHistory(value.state, result.thread, result.earlier, before),
+      }), session)
       return true
     } catch (err) {
       if (isCurrent() && showsConversation(session) && get().selectedThreadId === threadId
@@ -1209,12 +1316,14 @@ export const useApp = create<AppState>((set, get) => {
       const task = (async () => {
         try {
           // 发现首页会话时只订阅正在运行的 Agent；游标前的未决审批仍会由 daemon 补发。
-          const attached = attachResult(await attachSession(conn, session, Number.MAX_SAFE_INTEGER))
+          const result = await attachSession(conn, session, Number.MAX_SAFE_INTEGER)
+          const attached = attachResult(result)
           if (epoch !== desktopEpoch) return false
           session.transport.setLastSeq(attached.lastSeq)
           patchSession(key, (current) => ({
             ...current,
             opened: true,
+            accessSupported: supportsMobileAccess(result),
             openError: null,
             lastSeq: attached.lastSeq,
           }), session)
@@ -1283,6 +1392,7 @@ export const useApp = create<AppState>((set, get) => {
     openingThread: null,
     selectedAgent: DEFAULT_AGENT,
     sessions: {},
+    threadAccessModes: {},
     models: {},
     modelPrefs: {},
     rateLimits: {},
@@ -1350,7 +1460,7 @@ export const useApp = create<AppState>((set, get) => {
       void (async () => {
         try {
           const optional = (key: string) => gateway.storageGet(key).catch(() => null)
-          const [raw, active, legacyPrefs, prefs, storedDrafts, chats, archives, queues] = await Promise.all([
+          const [raw, active, legacyPrefs, prefs, storedDrafts, chats, archives, queues, accessPrefs] = await Promise.all([
             gateway.storageGet(STORAGE_CONNECTIONS),
             gateway.storageGet(STORAGE_ACTIVE),
             optional(STORAGE_MODEL_PREFS),
@@ -1359,6 +1469,7 @@ export const useApp = create<AppState>((set, get) => {
             optional(STORAGE_SAVED_CHATS),
             optional(STORAGE_ARCHIVED_THREADS),
             optional(QUEUE_STORAGE_KEY),
+            optional(ACCESS_PREFS_STORAGE_KEY),
           ])
           const connections = parseConnections(raw)
           const activeId = active && connections.some((item) => item.id === active) ? active : null
@@ -1372,7 +1483,8 @@ export const useApp = create<AppState>((set, get) => {
           }
           const archivedThreads = Object.fromEntries(Object.entries(parseStoredRecord(archives))
             .flatMap(([key, value]) => value === true ? [[key, true] as const] : []))
-          set({ connections, archivedThreads, queuedSends: restoreQueues(queues, connections, archivedThreads), booting: false })
+          set({ connections, archivedThreads, queuedSends: restoreQueues(queues, connections, archivedThreads),
+            threadAccessModes: restoreAccessPrefs(accessPrefs, connections, archivedThreads), booting: false })
           if (activeId) await get().activate(activeId)
           else void get().refreshStatuses()
         } catch (err) {
@@ -1607,6 +1719,7 @@ export const useApp = create<AppState>((set, get) => {
           delete savedChats[conn.id]
           saveRecord(STORAGE_SAVED_CHATS, savedChats)
           clearArchivedThreads(conn.id)
+          clearDesktopAccessPrefs(conn.id)
           discardDesktopQueue(conn.id)
         }
         set((state) => ({
@@ -2100,11 +2213,13 @@ export const useApp = create<AppState>((set, get) => {
             session.resumedCodexThreads.clear()
             clearPendingApprovals(session)
           }
+          let accessSupported = false
           let lastSeq = reset ? hostSeq : seen ?? hostSeq
           let truncated = reset
           try {
             // 每个 agent 有独立的回放缓冲，attach 必须带上 agent。
             const attached = await attachSession(conn, session, lastSeq ?? 0)
+            accessSupported = supportsMobileAccess(attached)
             const info = attachResult(attached)
             lastSeq = maxSeq(lastSeq, info.lastSeq)
             truncated ||= info.truncated
@@ -2116,6 +2231,7 @@ export const useApp = create<AppState>((set, get) => {
           patchSession(key, (value) => ({
             ...value,
             opened: true,
+            accessSupported,
             opening: false,
             openError: null,
             lastSeq,
@@ -2156,16 +2272,17 @@ export const useApp = create<AppState>((set, get) => {
           .filter((address) => address.targetId === session.targetId && address.agent === session.agent)
         try {
           const cursor = session.transport.getLastSeq() ?? 0
-          let info
+          let attached
           try {
-            info = attachResult(await attachSession(conn, session, cursor))
+            attached = await attachSession(conn, session, cursor)
           } catch (err) {
             if (!isCurrent() || !showsConversation(session) || errorCode(err) !== 'not_connected') throw err
             await connectSavedTarget(conn, session.targetId)
             if (!isCurrent()) return
-            info = attachResult(await attachSession(conn, session, cursor))
+            attached = await attachSession(conn, session, cursor)
           }
           if (!isCurrent()) return
+          let info = attachResult(attached)
           const restarted = info.lastSeq !== null && info.lastSeq < cursor
           if (restarted) {
             session.transport.resetSequence()
@@ -2180,7 +2297,8 @@ export const useApp = create<AppState>((set, get) => {
               })
               if (!isCurrent()) return
             }
-            info = attachResult(await attachSession(conn, session, 0))
+            attached = await attachSession(conn, session, 0)
+            info = attachResult(attached)
             if (!isCurrent()) return
           }
           const queueNeedsSnapshot = restarted || info.truncated || info.lastSeq === null
@@ -2188,6 +2306,7 @@ export const useApp = create<AppState>((set, get) => {
           patchSession(session.key, (value) => ({
             ...value,
             opened: true,
+            accessSupported: supportsMobileAccess(attached),
             openError: null,
             lastSeq: restarted ? info.lastSeq : maxSeq(value.lastSeq, info.lastSeq),
           }), session)
@@ -2386,16 +2505,19 @@ export const useApp = create<AppState>((set, get) => {
           throw new NativeRequestError(session?.openError ?? `${agentLabel(picked)} 未就绪`, session?.openErrorCode)
         }
         await waitForEvents(conn.id, shouldLoad)
-        let result: { thread: Thread }
+        if (!shouldLoad()) return false
+        const before = get().sessions[key]?.state.threads[id]
+        let result: Awaited<ReturnType<typeof openThreadHistory>>
         let resumed = true
         try {
-          result = await resumeThread(session.rpc, id, shouldLoad)
+          result = await openThreadHistory(session.rpc, id, 'resume', shouldLoad)
         } catch (err) {
           if (!shouldLoad()) return false
           if (isTargetDisconnected(err) || picked !== 'codex' || isOversizeHistoryResponse(err)) throw err
           await waitForEvents(conn.id, shouldLoad)
+          if (!shouldLoad()) return false
           resumed = false
-          result = await readThread(session.rpc, id, shouldLoad)
+          result = await openThreadHistory(session.rpc, id, 'read', shouldLoad)
         }
         if (!isCurrent() || archived()) return false
         if (result?.thread?.id !== id) throw new Error('电脑返回的会话与所选会话不一致，请重试')
@@ -2404,7 +2526,9 @@ export const useApp = create<AppState>((set, get) => {
           if (resumed) session.resumedCodexThreads.add(id)
           else session.resumedCodexThreads.delete(id)
         }
-        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
+        patchSession(session.key, (value) => ({
+          ...value, state: loadRecentThreadHistory(value.state, result.thread, result.earlier, before),
+        }), session)
         showConversation()
         return true
       }
@@ -2440,6 +2564,30 @@ export const useApp = create<AppState>((set, get) => {
       } finally {
         clearTimeout(timer)
         if (get().openingThread === openingThread) set({ openingThread: null })
+      }
+    },
+
+    loadEarlierHistory: async (beforeApply) => {
+      const { selectedTargetId, selectedAgent, selectedThreadId, sessions } = get()
+      if (!selectedTargetId || !selectedThreadId) return
+      const key = sessionKey(selectedTargetId, selectedAgent)
+      const session = sessions[key]
+      const cursor = session?.state.threads[selectedThreadId]?.historyCursor
+      if (!session || !cursor) return
+      const navigation = navigationEpoch
+      const isCurrent = () => {
+        const state = get()
+        const current = state.sessions[key]
+        return navigation === navigationEpoch && state.page === 'chat' && state.selectedThreadId === selectedThreadId &&
+          current?.transport === session.transport && current.state.threads[selectedThreadId]?.historyCursor === cursor
+      }
+      try {
+        const page = await readThreadHistoryPage(session.rpc, selectedThreadId, cursor, isCurrent)
+        if (!isCurrent()) return
+        beforeApply()
+        patchSession(key, (value) => ({ ...value, state: prependThreadHistory(value.state, selectedThreadId, page) }), session)
+      } catch (error) {
+        if (isCurrent()) throw error
       }
     },
 
@@ -2481,6 +2629,23 @@ export const useApp = create<AppState>((set, get) => {
     setDraftText: (text) => {
       const key = currentDraftKey()
       if (key) saveDraft(key, { text, annotations: get().annotations })
+    },
+
+    setAccessMode: (mode) => {
+      const state = get()
+      const address = selectedSendAddress(state)
+      const connection = activeConnection(state)
+      if (!address || !connection || !state.eventsConnected || state.page !== 'chat' || state.sending) return
+      const { targetId, agent, threadId } = address
+      const key = sessionKey(targetId, agent)
+      const threadKey = sendKey(address)
+      const session = state.sessions[key]
+      const view = session?.state.threads[threadId]
+      if (!session?.opened || (mode !== 'default' && !session.accessSupported) ||
+          !view || view.status === 'running' || state.compactingThreads[threadKey] ||
+          !accessOptions[agent].some((option) => option.mode === mode)) return
+      const preferenceKey = accessPreferenceKey(address, connection.fp)
+      saveAccessPrefs({ ...state.threadAccessModes, [preferenceKey]: mode })
     },
 
     compactConversation: async () => {
@@ -2583,12 +2748,14 @@ export const useApp = create<AppState>((set, get) => {
       const message = { ...draft, attachments, delegate }
       const input = queuedInput(agent, message)
       const overrides = overridesFor(agent, models, prefs)
+      const accessMode = selectedAccessMode(initial)
       const expectedTurnId = mode === 'steer' && view?.status === 'running' ? view.activeTurnId : null
       if (mode === 'steer' && !expectedTurnId) {
         set({ error: '当前一轮已结束，请选择排队或发送' })
         return false
       }
-      if (!mobileTurnFits(targetId, agent, initial.selectedThreadId, input, overrides, expectedTurnId ?? undefined)) {
+      if (!mobileTurnFits(targetId, agent, initial.selectedThreadId, input, overrides,
+        expectedTurnId ?? undefined, accessMode)) {
         set({ error: '消息和附件合计超过 1 MiB，请移除部分内容后再发送' })
         return false
       }
@@ -2676,7 +2843,7 @@ export const useApp = create<AppState>((set, get) => {
           }
           replacing.delete(queueKey)
         }
-        await startMessageTurn(session, address, input, overrides)
+        await startMessageTurn(session, address, input, overrides, accessMode)
         if (epoch !== desktopEpoch) return true
         clearSentDraft(sentDraftKey)
         return true
@@ -2728,7 +2895,8 @@ export const useApp = create<AppState>((set, get) => {
       const edited = { ...item, text }
       const input = queuedInput(address.agent, edited)
       if ((!formatQuotedMessage(item.annotations, text).trim() && !item.attachments.length)
-        || !mobileTurnFits(address.targetId, address.agent, address.threadId, input, item.overrides)) return false
+        || !mobileTurnFits(address.targetId, address.agent, address.threadId, input, item.overrides, undefined,
+          accessPreference(get(), address) ?? item.accessMode)) return false
       savingQueue.add(id)
       try {
         await updateQueue(key, (list) => list.map((entry) => entry.id === id ? edited : entry))
@@ -2849,7 +3017,8 @@ export const useApp = create<AppState>((set, get) => {
         if (agent === 'codex') session.resumedCodexThreads.add(thread.id)
         patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }), session)
         submitted = true
-        await startMessageTurn(session, { ...address, threadId: thread.id }, input, item.overrides)
+        // 新会话沿用自身的默认权限，原会话的授权只适用于原会话。
+        await startMessageTurn(session, { ...address, threadId: thread.id }, input, item.overrides, 'default')
         if (epoch !== desktopEpoch) return true
         void dropQueuedSend(key, id)
         if (isCurrent()) {
@@ -2897,12 +3066,14 @@ export const useApp = create<AppState>((set, get) => {
       try {
         const session = await withSession(address.targetId, address.agent, navigation)
         if (!session) return
-        const { thread } = address.agent === 'codex'
-          ? await resumeThread(session.rpc, address.threadId)
-          : await readThread(session.rpc, address.threadId)
-        if (epoch !== desktopEpoch || navigation !== navigationEpoch || first.id !== get().queuedSends[key]?.[0]?.id) return
+        const isCurrent = () => epoch === desktopEpoch && navigation === navigationEpoch && first.id === get().queuedSends[key]?.[0]?.id
+        const before = get().sessions[session.key]?.state.threads[address.threadId]
+        const { thread, earlier } = await openThreadHistory(session.rpc, address.threadId, address.agent === 'codex' ? 'resume' : 'read', isCurrent)
+        if (!isCurrent()) return
         if (address.agent === 'codex') session.resumedCodexThreads.add(address.threadId)
-        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }), session)
+        patchSession(session.key, (value) => ({
+          ...value, state: loadRecentThreadHistory(value.state, thread, earlier, before),
+        }), session)
       } catch (err) {
         if (epoch === desktopEpoch && navigation === navigationEpoch) set({ error: friendlyError(err, '无法恢复队列') })
         return

@@ -1,14 +1,14 @@
-import { Children, isValidElement, memo, useMemo, useState, type ReactNode } from 'react'
+import { Children, isValidElement, memo, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Square, Terminal, Wand2 } from 'lucide-react'
-import type { ItemView, ThreadActivity, UserInput } from '@qn/codex-client'
+import { formatReplyTime, localReplyDay, subscribeToReplyDay, type ItemView, type ThreadActivity, type UserInput } from '@qn/codex-client'
 import { basename, editUserText, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
 import { cn } from '../lib/cn'
 import { diffRows, lineCount, tailLines } from '../lib/diff'
 import { langFromClassName } from '../lib/highlight'
-import { formatDuration, isGroupRunning, summarizeTools, type FlowEntry } from '../lib/turnGroups'
+import { formatDuration, isEmptyReasoning, isGroupRunning, summarizeTools, type FlowEntry } from '../lib/turnGroups'
 import { createMarkdownLink, FileChangeActions, PathText, qnUrlTransform, type LinkContext } from '../features/files'
 import { useCodex } from '../store/codex'
 import { CodeBlock } from './CodeBlock'
@@ -61,7 +61,7 @@ function markdownComponents(streaming: boolean, context: LinkContext | null): Co
       )
     },
     table: ({ children }) => (
-      <div className="qn-scroll my-3 overflow-x-auto rounded-lg border border-qn-border">
+      <div className="qn-message-table qn-scroll my-3 overflow-x-auto rounded-lg border border-qn-border">
         <table className="w-full border-collapse text-[0.93em]">{children}</table>
       </div>
     ),
@@ -78,6 +78,57 @@ const statusTone = (status: string): 'muted' | 'accent' | 'danger' | 'ok' => {
 }
 
 const isRunning = (status: string) => /progress|running|started/i.test(status)
+const TOOL_PAGE_SIZE = 30
+
+function ActivityDetails({ summary, summaryClassName, inline, afterChevron, children }: {
+  summary: ReactNode
+  summaryClassName?: string
+  inline?: boolean
+  afterChevron?: ReactNode
+  children: ReactNode
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const Chevron = inline ? ChevronDown : ChevronRight
+  return (
+    <details className="text-ui" onToggle={(event) => {
+      if (event.target === event.currentTarget) setExpanded(event.currentTarget.open)
+    }}>
+      <summary className={cn(
+        'qn-message-activity min-h-7 cursor-pointer list-none items-center text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden',
+        inline ? 'inline-flex gap-1' : 'flex gap-2',
+        summaryClassName,
+      )}>
+        {summary}
+        <Chevron size={14} aria-hidden className={cn('shrink-0 text-qn-dim transition-transform', expanded && (inline ? 'rotate-180' : 'rotate-90'))} />
+        {afterChevron}
+      </summary>
+      {expanded && children}
+    </details>
+  )
+}
+
+function ToolPages<T>({ items, renderItem, className }: {
+  items: readonly T[]
+  renderItem: (item: T, index: number) => ReactNode
+  className: string
+}) {
+  const [page, setPage] = useState(0)
+  const lastPage = Math.max(0, Math.ceil(items.length / TOOL_PAGE_SIZE) - 1)
+  const currentPage = Math.min(page, lastPage)
+  const start = currentPage * TOOL_PAGE_SIZE
+  return (
+    <>
+      {lastPage > 0 && <div className="my-1 flex max-w-72 items-center justify-between gap-2 text-qn-muted">
+        <button type="button" className="qn-button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>上一批</button>
+        <span aria-live="polite">{start + 1}–{Math.min(start + TOOL_PAGE_SIZE, items.length)} / {items.length}</span>
+        <button type="button" className="qn-button" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}>下一批</button>
+      </div>}
+      <div key={currentPage} className={className}>
+        {items.slice(start, start + TOOL_PAGE_SIZE).map((item, index) => renderItem(item, start + index))}
+      </div>
+    </>
+  )
+}
 
 /** 工具类条目统一成 Codex 式的可折叠单行：图标 + 一句话摘要，展开看细节。 */
 function ToolRow({
@@ -91,25 +142,24 @@ function ToolRow({
   trailing?: ReactNode
   children?: ReactNode
 }) {
+  const content = (
+    <>
+      <span className="shrink-0">{icon}</span>
+      <span className="min-w-0 flex-1 truncate">{summary}</span>
+      {trailing}
+    </>
+  )
   if (!children) {
     return (
-      <div className="flex min-h-7 items-center gap-2 text-ui text-qn-muted">
-        <span className="shrink-0">{icon}</span>
-        <span className="min-w-0 flex-1 truncate">{summary}</span>
-        {trailing}
+      <div className="qn-message-activity flex min-h-7 items-center gap-2 text-ui text-qn-muted">
+        {content}
       </div>
     )
   }
   return (
-    <details className="group/tool text-ui">
-      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-lg text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden">
-        <span className="shrink-0">{icon}</span>
-        <span className="min-w-0 flex-1 truncate">{summary}</span>
-        {trailing}
-        <ChevronRight size={14} className="shrink-0 text-qn-dim transition-transform group-open/tool:rotate-90" />
-      </summary>
-      <div className="mt-1.5 pl-6">{children}</div>
-    </details>
+    <ActivityDetails summary={content} summaryClassName="rounded-lg">
+      <div className="mt-1.5 pl-8">{children}</div>
+    </ActivityDetails>
   )
 }
 
@@ -153,13 +203,11 @@ function diffStat(diff: string | undefined | null): { add: number; del: number }
 }
 
 function CommandItem({ item }: { item: Extract<ItemView, { kind: 'command' }> }) {
-  const output = tailLines(item.output, 200)
-  const truncated = lineCount(item.output) > 200
   const running = isRunning(item.status)
   const failed = item.exitCode !== null && item.exitCode !== undefined && item.exitCode !== 0
   return (
     <ToolRow
-      icon={running ? <LoadingIcon className="text-qn-brand" /> : <Terminal size={14} />}
+      icon={running ? <LoadingIcon /> : <Terminal size={14} />}
       summary={
         <>
           {running ? '正在运行 ' : '已运行 '}
@@ -170,6 +218,16 @@ function CommandItem({ item }: { item: Extract<ItemView, { kind: 'command' }> })
         failed ? <Badge tone="danger">退出码 {item.exitCode}</Badge> : statusTone(item.status) === 'danger' ? <Badge tone="danger">{item.status}</Badge> : null
       }
     >
+      <CommandDetails item={item} running={running} />
+    </ToolRow>
+  )
+}
+
+function CommandDetails({ item, running }: { item: Extract<ItemView, { kind: 'command' }>; running: boolean }) {
+  const output = tailLines(item.output, 200)
+  const truncated = lineCount(item.output) > 200
+  return (
+    <>
       {item.cwd && <div className="mb-1 font-mono text-ui-sm text-qn-dim">{item.cwd}</div>}
       {output ? (
         <pre className="qn-scroll max-h-72 overflow-auto whitespace-pre rounded-lg border border-qn-border bg-qn-code px-3 py-2 font-mono text-ui-sm leading-5 text-qn-text/85">
@@ -179,55 +237,67 @@ function CommandItem({ item }: { item: Extract<ItemView, { kind: 'command' }> })
       ) : (
         <div className="text-ui-sm text-qn-dim">{running ? '等待输出…' : '无输出'}</div>
       )}
-    </ToolRow>
+    </>
   )
 }
 
 function FileChangeItem({ item }: { item: Extract<ItemView, { kind: 'fileChange' }> }) {
-  const context = useLinkContext()
-  const stats = item.changes.map((change) => diffStat(change.diff))
-  const add = stats.reduce((sum, stat) => sum + stat.add, 0)
-  const del = stats.reduce((sum, stat) => sum + stat.del, 0)
   return (
     <ToolRow
       icon={<FileDiff size={14} />}
       summary={item.changes.length === 0 ? '等待改动内容…' : `编辑了 ${item.changes.length} 个文件`}
-      trailing={
-        <span className="shrink-0 font-mono text-ui-sm">
-          {add > 0 && <span className="text-emerald-400">+{add}</span>} {del > 0 && <span className="text-red-400">−{del}</span>}
-        </span>
-      }
     >
-      <div className="space-y-2">
-        {item.changes.map((change, index) => (
-          <div key={`${change.path}-${change.kind}-${index}`}>
-            <div className="flex items-center gap-2 py-1">
-              <span className="min-w-0 truncate font-mono text-ui-sm text-qn-text/90">{change.path}</span>
-              <Badge>{change.kind}</Badge>
-              {context && (
-                <FileChangeActions
-                  targetId={context.targetId}
-                  cwd={context.cwd || undefined}
-                  path={change.path}
-                  {...(typeof change.diff === 'string' ? { diff: change.diff } : {})}
-                  className="ml-auto"
-                />
-              )}
-            </div>
-            {typeof change.diff === 'string' && change.diff !== '' && <DiffBlock text={change.diff} />}
-          </div>
-        ))}
-      </div>
+      <FileChangeDetails changes={item.changes} />
     </ToolRow>
   )
 }
 
-function AgentMessage({ id, text, streaming, onFork }: { id: string; text: string; streaming: boolean; onFork?: (itemId: string, markdown: string) => void }) {
+function FileChangeDetails({ changes }: { changes: Extract<ItemView, { kind: 'fileChange' }>['changes'] }) {
+  const context = useLinkContext()
+  return (
+    <ToolPages items={changes} className="space-y-2" renderItem={(change, index) => {
+      const { add, del } = diffStat(change.diff)
+      return (
+        <div key={`${change.path}-${change.kind}-${index}`}>
+          <div className="flex items-center gap-2 py-1">
+            <span className="min-w-0 truncate font-mono text-ui-sm text-qn-text/90">{change.path}</span>
+            <Badge>{change.kind}</Badge>
+            <span className="shrink-0 font-mono text-ui-sm">
+              {add > 0 && <span className="text-emerald-400">+{add}</span>} {del > 0 && <span className="text-red-400">−{del}</span>}
+            </span>
+            {context && (
+              <FileChangeActions
+                targetId={context.targetId}
+                cwd={context.cwd || undefined}
+                path={change.path}
+                {...(typeof change.diff === 'string' ? { diff: change.diff } : {})}
+                className="ml-auto"
+              />
+            )}
+          </div>
+          {typeof change.diff === 'string' && change.diff !== '' && <DiffBlock text={change.diff} />}
+        </div>
+      )
+    }} />
+  )
+}
+
+function ReplyTime({ completedAtMs, className }: { completedAtMs: number; className: string }) {
+  const day = useSyncExternalStore(subscribeToReplyDay, localReplyDay, localReplyDay)
+  const time = formatReplyTime(completedAtMs, day)
+  return time && <time className={className} dateTime={time.dateTime} title={time.full}>{time.label}</time>
+}
+
+function AgentMessage({ id, text, streaming, completedAtMs, showStreamingDots, onFork }: {
+  id: string; text: string; streaming: boolean; completedAtMs?: number; showStreamingDots?: boolean
+  onFork?: (itemId: string, markdown: string) => void
+}) {
   const context = useLinkContext()
   const components = useMemo(() => markdownComponents(streaming, context), [streaming, context])
   return (
     <div className="group/msg">
-      <div className={cn('qn-markdown break-words text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-prose', streaming && 'qn-streaming')}>
+      {!streaming && completedAtMs !== undefined && <ReplyTime completedAtMs={completedAtMs} className="mb-1 block text-ui-sm tabular-nums text-qn-muted" />}
+      <div className={cn('qn-markdown break-words text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-prose', streaming && showStreamingDots && 'qn-streaming')}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={qnUrlTransform}>
           {text}
         </ReactMarkdown>
@@ -238,38 +308,51 @@ function AgentMessage({ id, text, streaming, onFork }: { id: string; text: strin
 }
 
 export function TurnProgress({ activity }: { activity?: ThreadActivity }) {
-  if (activity === 'interrupted') {
-    return <FeedbackRow message="本轮已中断" icon={<Square size={13} />} className="text-ui leading-6 text-qn-muted" />
-  }
-  const message = activity === 'input' ? '等待输入…' : activity === 'pending' ? '等待审批…' : '正在处理…'
-  return <FeedbackRow message={message} icon={<LoadingIcon />} className="text-ui leading-6 text-qn-muted" />
+  const interrupted = activity === 'interrupted'
+  const message = interrupted ? '本轮已中断'
+    : activity === 'input' ? '等待输入…' : activity === 'pending' ? '等待审批…' : '正在处理…'
+  return (
+    <FeedbackRow
+      message={message}
+      icon={interrupted ? <Square size={13} /> : <LoadingIcon />}
+      className="qn-message-activity text-ui leading-6 text-qn-muted"
+    />
+  )
 }
 
-export const MessageItem = memo(function MessageItem({
-  item,
-  onFork,
-  onEdit,
-}: {
+type MessageItemProps = {
   item: ItemView
+  showStreamingDots?: boolean
+  replyTimeInSummary?: boolean
   onFork?: (itemId: string, markdown: string) => void
   onEdit?: (text: string, input: UserInput[]) => Promise<boolean>
-}) {
+}
+
+export const MessageItem = memo(function MessageItem(props: MessageItemProps) {
+  if (isEmptyReasoning(props.item)) return null
+  return <div data-chat-item={props.item.id} className="contents"><MessageContent {...props} /></div>
+})
+
+function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, onEdit }: MessageItemProps) {
   switch (item.kind) {
     case 'user':
       return <UserMessage item={item} onEdit={item.pending ? undefined : onEdit} />
     case 'agent':
       return item.text.trim()
-        ? <AgentMessage id={item.id} text={item.text} streaming={item.streaming === true} onFork={onFork} />
+        ? <AgentMessage id={item.id} text={item.text} streaming={item.streaming === true}
+          completedAtMs={replyTimeInSummary ? undefined : item.completedAtMs} showStreamingDots={showStreamingDots} onFork={onFork} />
         : null
     case 'reasoning':
       return (
         <ToolRow
-          icon={<Lightbulb size={14} strokeWidth={1.75} className={item.streaming ? 'animate-pulse text-qn-brand' : ''} />}
+          icon={item.streaming ? <LoadingIcon /> : <Lightbulb size={14} strokeWidth={1.75} />}
           summary={item.streaming ? '正在思考…' : '思考过程'}
         >
-          <div className="whitespace-pre-wrap break-words border-l border-qn-border pl-3 text-[length:calc(var(--qn-chat-font-size,15px)_-_1px)] leading-[1.8] text-qn-muted">
-            {item.summary || '（暂无摘要）'}
-          </div>
+          {item.summary.trim() && (
+            <div className="whitespace-pre-wrap break-words border-l border-qn-border pl-3 text-[length:calc(var(--qn-chat-font-size,15px)_-_1px)] leading-[1.8] text-qn-muted">
+              {item.summary}
+            </div>
+          )}
         </ToolRow>
       )
     case 'command':
@@ -277,7 +360,7 @@ export const MessageItem = memo(function MessageItem({
     case 'fileChange':
       return <FileChangeItem item={item} />
     case 'subagent':
-      return <SubagentDetails item={item} renderItem={(child) => <MessageItem key={child.id} item={child} />} />
+      return <SubagentDetails item={item} renderItem={(child, showDots) => <MessageItem key={child.id} item={child} showStreamingDots={showDots} />} />
     case 'other':
       return (
         <ToolRow icon={<FileText size={14} />} summary={item.type}>
@@ -285,53 +368,46 @@ export const MessageItem = memo(function MessageItem({
         </ToolRow>
       )
   }
-})
+}
 
 // 展开状态交给原生 details，避免步骤状态变化时打断用户查看。
 export const ToolGroup = memo(function ToolGroup({ items }: { items: ItemView[] }) {
   const running = isGroupRunning(items)
   return (
-    <details className="group/steps text-ui">
-      <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden">
-        {running ? <LoadingIcon className="text-qn-brand" /> : <ListChecks size={14} />}
+    <ActivityDetails summary={
+      <>
+        {running ? <LoadingIcon /> : <ListChecks size={14} />}
         <span className="min-w-0 truncate">{summarizeTools(items)}</span>
-        <ChevronRight size={14} className="shrink-0 text-qn-dim transition-transform group-open/steps:rotate-90" />
-      </summary>
-      <div className="mt-1 space-y-0.5 border-l border-qn-border pl-3">
-        {items.map((item) => (
-          <MessageItem key={item.id} item={item} />
-        ))}
-      </div>
-    </details>
+      </>
+    }>
+      <ToolPages items={items} className="mt-1 space-y-0.5 border-l border-qn-border pl-3"
+        renderItem={(item) => <MessageItem key={item.id} item={item} />} />
+    </ActivityDetails>
   )
 })
 
 /** 已结束一轮的过程折叠头（"工作了 4m 56s ⌄"），展开后按原样显示思考与工具步骤。 */
 export const WorkGroup = memo(function WorkGroup({
   durationMs,
+  replyCompletedAtMs,
   entries,
   onFork,
 }: {
   durationMs: number | null
+  replyCompletedAtMs?: number
   entries: FlowEntry[]
   onFork?: (itemId: string, markdown: string) => void
 }) {
   return (
-    <details className="group/work text-ui">
-      <summary className="inline-flex min-h-7 cursor-pointer list-none items-center gap-1 text-qn-muted hover:text-qn-text [&::-webkit-details-marker]:hidden">
-        <span>{durationMs ? `工作了 ${formatDuration(durationMs)}` : '工作过程'}</span>
-        <ChevronDown size={14} className="shrink-0 text-qn-dim transition-transform group-open/work:rotate-180" />
-      </summary>
-      <div className="mt-2 space-y-3">
-        {entries.map((entry) =>
-          entry.kind === 'tools' ? (
-            <ToolGroup key={entry.key} items={entry.items} />
-          ) : (
-            <MessageItem key={entry.key} item={entry.item} onFork={onFork} />
-          ),
-        )}
-      </div>
-    </details>
+    <ActivityDetails
+      inline
+      summary={<span>{durationMs ? `工作了 ${formatDuration(durationMs)}` : '工作过程'}</span>}
+      afterChevron={replyCompletedAtMs !== undefined && <ReplyTime completedAtMs={replyCompletedAtMs} className="ml-2 whitespace-nowrap text-ui-sm tabular-nums text-qn-muted" />}
+    >
+      <ToolPages items={entries} className="mt-2 space-y-3" renderItem={(entry) => entry.kind === 'tools'
+        ? <ToolGroup key={entry.key} items={entry.items} />
+        : <MessageItem key={entry.key} item={entry.item} onFork={onFork} />} />
+    </ActivityDetails>
   )
 })
 

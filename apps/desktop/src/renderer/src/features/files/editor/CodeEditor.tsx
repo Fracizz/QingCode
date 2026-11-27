@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import { LockKeyhole } from 'lucide-react'
 import { EditorView } from '@codemirror/view'
 import { Transaction } from '@codemirror/state'
@@ -19,6 +19,7 @@ import {
 } from './stateCache'
 
 type Props = {
+  viewRef: RefObject<EditorView | null>
   tab: Tab
   onChange: (text: string) => void
   onSave: () => void
@@ -30,9 +31,8 @@ type Props = {
  * 受控文档但保留每个标签自己的 EditorState：切换标签时销毁 DOM、缓存 state，
  * 回来时连同撤销栈、选区一起恢复；外部重载用整篇替换，滚动位置不动。
  */
-export function CodeEditor({ tab, onChange, onSave, onLoadMore, className }: Props) {
+export function CodeEditor({ viewRef, tab, onChange, onSave, onLoadMore, className }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
-  const viewRef = useRef<EditorView | null>(null)
   const fontSize = useSetting((settings) => settings.general.editorFontSize)
   const jumped = useRef<string | null>(null)
   const reason = readOnlyReason(tab)
@@ -69,7 +69,7 @@ export function CodeEditor({ tab, onChange, onSave, onLoadMore, className }: Pro
   useEffect(() => {
     const view = viewRef.current
     if (view) view.dispatch({ effects: readOnlyCompartment.reconfigure(readOnlyExtension(readOnly)) })
-  }, [readOnly])
+  }, [readOnly, tab.id])
 
   useEffect(() => {
     const view = viewRef.current

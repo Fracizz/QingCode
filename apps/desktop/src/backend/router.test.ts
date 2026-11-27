@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { BackendRouter, RouterError, toWireError, type WirePort } from './router'
 
 class FakePort implements WirePort {
@@ -119,6 +119,50 @@ describe('BackendRouter', () => {
     newPort.send(req(4, 'targets.list'))
     await new Promise((resolve) => setImmediate(resolve))
     expect(newPort.messages).toEqual([{ t: 'res', id: 4, ok: true, result: [] }])
+  })
+
+  it('只投递匹配目标与 Agent 的回复，逾时或断开后的回复不会进入共享事件总线', async () => {
+    vi.useFakeTimers()
+    try {
+      const router = new BackendRouter()
+      const port = new FakePort()
+      router.attachPort(port)
+      const observer = vi.fn()
+      router.onEmit(observer)
+      const received = vi.fn()
+      let wireMessage: unknown
+      router.register('codex.send', ({ msg }) => { wireMessage = msg })
+      const request = async (signal?: AbortSignal) => {
+        await router.invoke('codex.send', { targetId: 'local', agent: 'claude', msg: { id: 7, method: 'thread/read' } }, {
+          ...(signal ? { signal } : {}), receive: received,
+        })
+        return (wireMessage as { id: string }).id
+      }
+      const emit = (id: string) => router.emit('codex.recv', { targetId: 'local', agent: 'claude', seq: null, msg: { id, result: {} } })
+
+      const liveId = await request()
+      router.emit('codex.recv', { targetId: 'local', agent: 'codex', seq: null, msg: { id: liveId, result: {} } })
+      router.emit('codex.recv', { targetId: 'other', agent: 'claude', seq: null, msg: { id: liveId, result: {} } })
+      expect(received).not.toHaveBeenCalled()
+      emit(liveId)
+      emit(liveId)
+      expect(received).toHaveBeenCalledExactlyOnceWith({ targetId: 'local', agent: 'claude', seq: null, msg: { id: 7, result: {} } })
+
+      const device = new AbortController()
+      const canceledId = await request(device.signal)
+      device.abort()
+      emit(canceledId)
+      const expiredId = await request()
+      await vi.advanceTimersByTimeAsync(30_000)
+      emit(expiredId)
+
+      expect(received).toHaveBeenCalledTimes(1)
+      expect(observer).not.toHaveBeenCalled()
+      expect(port.messages).toEqual([])
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

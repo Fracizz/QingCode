@@ -18,7 +18,9 @@
 | `initialize` | 支持（仅桥内部） | 返回 `pi-rpc/<version>`；`codex.open` 结果的 `initialize` 为 `null`，客户端不得再发 initialize |
 | `thread/list` | 支持 | 只读解析官方 `session-format.md` 的 `.jsonl` 会话头部（默认 `~/.pi/agent/sessions/`，尊重 `PI_CODING_AGENT_SESSION_DIR`），按 header 的 cwd 过滤 |
 | `thread/start` | 支持 | `new_session` + `get_state`；会话 id 用 pi 自己的 `sessionId` |
-| `thread/resume` / `thread/read` | 支持 | `switch_session {sessionPath}` + `get_messages`，历史按用户消息切分 turns |
+| `thread/unsubscribe` | 支持临时会话 | 空闲时释放进程并通知 `thread/closed` |
+| `thread/resume` / `thread/read` | 支持 | 元数据请求直接返回会话信息。完整历史经 `switch_session {sessionPath}` + `get_messages` 读取 |
+| `thread/turns/list` / `thread/items/list` | 支持 | `get_messages` 历史按用户消息切分，按游标返回轮次或条目，连续分页短期复用同一快照 |
 | `turn/start` | 支持**纯文本与 base64 图片** | `prompt {message, images?}`；`disposition=handled` 时不启动 run，桥自行收尾 |
 | `turn/interrupt` | 支持 | `abort`；以 `agent_settled {aborted:true}` 映射 `turn/completed {status:'interrupted'}`，另设 1.5s 兜底 |
 | `model/list` | 借用运行中的会话进程调用 `get_available_models` / `get_state` / `get_available_thinking_levels`，结果缓存；无运行中进程时返回缓存或空列表 | R9：不为列模型额外拉起 pi 进程；`turn/start` 的 `model`/`effort` 经 `set_model` / `set_thinking_level` 切换 |
@@ -30,13 +32,14 @@
 | 其它未知 v2 方法 | **不支持** → `-32601` | 统一由 `handleRequest` 默认分支处理 |
 
 `codex.open {agent:'pi'}` →
-`{ initialize:null, lastSeq, agentVersion, capabilities:{ approvals:false, rateLimits:false } }`。
+`{ initialize:null, lastSeq, agentVersion, capabilities:{ approvals:false, rateLimits:false, ephemeralNoTools:true } }`。
 pi 未安装时抛 `AgentHostError('agent_unavailable', …)`，文案只提示用户用其原有方式安装/登录，
 **不自动下载、安装或升级**。
 
 ## 进程与事件
 
-- 每个会话一个 `pi --mode rpc` 进程；`cwd` = 会话目录；空闲 30 分钟关闭 stdin 并结束子进程；
+- 临时侧聊使用 `--no-session --no-tools --no-extensions`，不写入会话历史。依赖扩展提供的模型在侧聊中不可用。侧栏收起后仍可追问，显式结束会释放进程。
+- 每个会话一个 `pi --mode rpc` 进程；`cwd` = 会话目录；持久会话空闲 30 分钟关闭 stdin 并结束子进程；
   daemon 退出时结束全部子进程。进程退出且本轮未结束时补 `turn/completed {status:'failed'}`。
 - 事件映射是纯函数 `items.ts`，单测回放 `fixtures/real-prompt.jsonl`（真实 pi 1.6.1 录的一次
   「列出当前目录」prompt；已去掉签名、路径与用户名，不含任何凭据）。
