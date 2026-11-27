@@ -3,9 +3,9 @@ import { cn } from '../../lib/cn'
 
 export function SectionHeading({ title, description }: { title: string; description?: string }) {
   return (
-    <header className="mb-3">
-      <h2 className="text-[15px] font-semibold text-qn-text">{title}</h2>
-      {description && <p className="mt-1 text-[12px] leading-5 text-qn-dim">{description}</p>}
+    <header className="mb-4">
+      <h2 className="text-ui-lg font-semibold text-qn-text">{title}</h2>
+      {description && <p className="mt-1 text-ui leading-5 text-qn-muted">{description}</p>}
     </header>
   )
 }
@@ -20,10 +20,10 @@ export function SettingRow({
   children: ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-2 border-b border-qn-border py-3 last:border-b-0 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+    <div className="flex flex-col gap-2 border-b border-qn-border py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
       <div className="min-w-0 flex-1">
-        <div className="text-[13px] text-qn-text">{title}</div>
-        {description && <p className="mt-1 text-[12px] leading-5 text-qn-dim">{description}</p>}
+        <div className="text-ui-md font-medium text-qn-text">{title}</div>
+        {description && <p className="mt-1 text-ui-sm leading-5 text-qn-muted">{description}</p>}
       </div>
       <div className="w-full shrink-0 sm:w-[17rem]">{children}</div>
     </div>
@@ -45,7 +45,7 @@ export function Segmented<T extends string>({
   return (
     <div
       role="group"
-      className={cn('inline-flex rounded-lg border border-qn-border-strong bg-[#161616] p-0.5', className)}
+      className={cn('inline-grid auto-cols-fr grid-flow-col rounded-lg border border-qn-border-strong bg-qn-chrome p-0.5', className)}
     >
       {options.map((option) => (
         <button
@@ -57,13 +57,15 @@ export function Segmented<T extends string>({
             if (!option.disabled) onChange(option.value)
           }}
           className={cn(
-            'rounded-md px-2.5 py-1 text-[12px] outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
-            value === option.value ? 'bg-qn-hover text-qn-text' : 'text-qn-muted hover:text-qn-text',
+            'rounded-md px-2.5 py-1 text-ui-sm outline-none focus-visible:ring-1 focus-visible:ring-qn-accent',
+            value === option.value
+              ? 'bg-qn-brand/10 font-semibold text-qn-brand ring-1 ring-inset ring-qn-brand/40'
+              : 'text-qn-muted hover:text-qn-text',
             option.disabled && 'cursor-not-allowed text-qn-dim',
           )}
         >
           {option.label}
-          {option.hint && <span className="ml-1 text-[11px] text-qn-dim">{option.hint}</span>}
+          {option.hint && <span className="ml-1 text-ui-xs text-qn-dim">{option.hint}</span>}
         </button>
       ))}
     </div>
@@ -99,8 +101,8 @@ export function DeferredInput({
           event.preventDefault()
           event.currentTarget.blur()
         } else if (event.key === 'Escape') {
+          event.preventDefault()
           setDraft(value)
-          event.currentTarget.blur()
         }
       }}
     />
@@ -108,13 +110,13 @@ export function DeferredInput({
 }
 
 export function FieldLabel({ children }: { children: ReactNode }) {
-  return <div className="mb-1.5 text-[12px] text-qn-muted">{children}</div>
+  return <div className="mb-1.5 text-ui-sm text-qn-muted">{children}</div>
 }
 
 export function InfoBlock({ title, children }: { title?: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-qn-border bg-white/[0.02] px-3 py-2.5 text-[12px] leading-5 text-qn-muted">
-      {title && <div className="mb-1 text-[13px] text-qn-text">{title}</div>}
+    <div className="rounded-lg border border-qn-border bg-qn-panel px-3 py-2.5 text-ui-sm leading-5 text-qn-muted">
+      {title && <div className="mb-1 text-ui text-qn-text">{title}</div>}
       {children}
     </div>
   )

@@ -13,7 +13,7 @@ import { RouterError, type BackendRouter } from './router'
 import { validateTargetInput } from './targetInput'
 import { readTargets, setSshDirect, writeTargets } from './targetStore'
 import { TargetManager } from './targets'
-import type { BackendEmit, TargetCredentials } from './types'
+import type { BackendEmit, RemoteServerCommand, TargetCredentials } from './types'
 
 const isRecord = (x: unknown): x is Record<string, unknown> =>
   typeof x === 'object' && x !== null && !Array.isArray(x)
@@ -106,41 +106,63 @@ export function registerTargetMethods(router: BackendRouter): void {
     }
   })
 
+  router.register('target.forceUpdate', (params) => manager.forceUpdate(requireId(params)))
+
   router.register('target.enableDirect', async (params) => {
     const id = requireId(params)
     if (!isRecord(params)) throw new RouterError('invalid_params', '参数无效')
     const target = await requireSshTarget(id)
+    const credentials = readCredentials(params)
     const listen = optionalString(params.listen, 'listen')?.trim() || DEFAULT_DIRECT_LISTEN
     const dialHost = optionalString(params.host, 'host')?.trim() || target.host
     const enable = ['direct', 'enable', '--listen', listen, ...(params.allowPublic === true ? ['--allow-public'] : [])]
     const grant = ['direct', 'grant', '--name', grantName(), '--host', dialHost]
+    const commands: RemoteServerCommand[] = params.reuseListener === true
+      ? [['direct', 'status'], (status) => {
+        if (status?.enabled === false) return enable
+        if (status?.listening === true) return null
+        throw new Error(typeof status?.error === 'string' ? status.error : '远端直连监听不可用')
+      }, grant]
+      : [enable, grant]
     let results: Array<Record<string, unknown>>
     try {
       // 同一 SSH 会话里先开监听再签发授权；之后 SSH 可断开，直连由远端 daemon 常驻提供。
-      results = await manager.remoteServer(target, readCredentials(params), [enable, grant])
+      results = await manager.remoteServer(target, credentials, commands)
     } catch (err) {
       throw connectFailed(err)
     }
-    const granted = results[1]
+    const granted = results.at(-1)
     const code = typeof granted?.code === 'string' ? decodeDirectCode(granted.code) : null
     const grantId = typeof granted?.grantId === 'string' ? granted.grantId : ''
     if (!code || !grantId) throw new RouterError('connect_failed', '远端未返回有效的直连授权')
-    // 旧授权留着没有意义且多一个可用凭据，换新后顺手撤销（失败不影响开启）。
-    const previous = target.direct?.grantId
-    await manager.setDirectToken(id, code.token)
     const updated = setSshDirect(await readTargets(backendConfig.userData), id, {
       host: dialHost,
       port: code.port,
       fingerprint: code.fingerprint,
       grantId,
     })
-    if (!updated) throw new RouterError('not_found', `目标 ${id} 不存在`)
-    await writeTargets(backendConfig.userData, updated.targets)
-    manager.updateTarget(updated.target)
-    if (previous && previous !== grantId) {
-      void manager.remoteServer(updated.target, readCredentials(params), [['direct', 'revoke', '--id', previous]])
-        .catch(() => undefined)
+    const revoke = (idToRevoke: string) => manager.remoteServer(target, credentials, [['direct', 'revoke', '--id', idToRevoke]])
+      .catch(() => undefined)
+    if (!updated) {
+      void revoke(grantId)
+      throw new RouterError('not_found', `目标 ${id} 不存在`)
     }
+    try {
+      const previousToken = await manager.setDirectToken(id, code.token)
+      try {
+        await writeTargets(backendConfig.userData, updated.targets)
+      } catch (err) {
+        await manager.setDirectToken(id, previousToken).catch(() => undefined)
+        throw err
+      }
+    } catch (err) {
+      void revoke(grantId)
+      throw connectFailed(err)
+    }
+    manager.updateTarget(updated.target)
+    // 新授权落盘后再撤销旧授权，保存失败时旧授权仍可用。
+    const previousGrant = target.direct?.grantId
+    if (previousGrant && previousGrant !== grantId) void revoke(previousGrant)
     return updated.target
   })
 
@@ -159,7 +181,8 @@ export function registerTargetMethods(router: BackendRouter): void {
         if (!message.includes('授权不存在')) throw connectFailed(err)
       }
     }
-    await manager.setDirectToken(id, undefined)
+    // 授权已撤销，凭据存储不可用时仍要清除本地直连配置。
+    await manager.setDirectToken(id, undefined).catch(() => undefined)
     const updated = setSshDirect(await readTargets(backendConfig.userData), id, undefined)
     if (!updated) throw new RouterError('not_found', `目标 ${id} 不存在`)
     await writeTargets(backendConfig.userData, updated.targets)

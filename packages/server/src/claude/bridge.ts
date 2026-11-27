@@ -17,8 +17,10 @@ import {
 } from '../codexHost'
 import { redact } from '../log'
 import { VERSION } from '../version'
+import { nativeAgentCwd } from '../workspace/paths'
 import { buildApprovalRequest, permissionResult } from './approval'
 import { sessionInfoToMeta, sessionMessagesToThread, threadListResponse } from './history'
+import { HistoryPageCache, listHistoryItems, listHistoryTurns } from './historyPages'
 import { BridgeRpcError } from './errors'
 import { emptyMapState, mapSdkMessage, type MapState } from './items'
 import {
@@ -32,7 +34,8 @@ import {
   threadModelConfig,
   type ClaudeSettings,
 } from './models'
-import { SkillsCatalog } from './skills'
+import { commandMetadata, SkillsCatalog } from './skills'
+import { isolatedClaudeSessionReader, type ClaudeSessionReader } from './sessionReader'
 import { resolveTurnInput, type ContentBlock, type TurnContent } from './userInput'
 import { resolveClaudeExecutable, type ClaudeExecutable } from './resolve'
 import {
@@ -54,26 +57,26 @@ export interface QueryLike extends AsyncIterable<unknown> {
   close(): void
   // 以下为流式输入模式下的控制接口；测试替身可以不实现。
   supportedModels?(): Promise<unknown[]>
+  supportedCommands?(): Promise<unknown[]>
   setModel?(model?: string): Promise<void>
   setPermissionMode?(mode: PermissionMode): Promise<void>
   applyFlagSettings?(settings: Record<string, unknown>): Promise<void>
 }
 
 /** 可注入的 SDK 门面：真机走动态 import，测试注入假的 query 工厂。 */
-export interface ClaudeDeps {
+export interface ClaudeDeps extends ClaudeSessionReader {
   query(params: { prompt: string | AsyncIterable<SDKUserMessage>; options?: Options }): QueryLike
-  listSessions(options?: { dir?: string; limit?: number; includeWorktrees?: boolean }): Promise<unknown[]>
-  getSessionInfo?(sessionId: string): Promise<unknown>
-  getSessionMessages(sessionId: string, options?: { dir?: string }): Promise<unknown[]>
 }
 
 export interface ClaudeBridgeOptions {
   deps?: ClaudeDeps
+  sessionReader?: (directory: string) => ClaudeSessionReader
   resolve?: (claudePath?: string) => ClaudeExecutable
   idleTimeoutMs?: number
 }
 
 interface BridgeSession {
+  scope: ClaudeScope
   meta: SessionMeta
   query: QueryLike | null
   input: AsyncQueue<SDKUserMessage> | null
@@ -88,8 +91,18 @@ interface BridgeSession {
   allowsBypass: boolean
 }
 
+interface ClaudeScope {
+  directory: string | undefined
+  sessions: Map<string, BridgeSession>
+  metas: Map<string, SessionMeta>
+  historyPages: HistoryPageCache
+  rateLimits: Json
+  realModels: Json | null
+  modelListRequest: Promise<Json> | null
+}
+
 interface PendingApproval {
-  threadId: string
+  session: BridgeSession
   resolve(result: PermissionResult): void
   suggestions: unknown
 }
@@ -164,16 +177,11 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private claude: ClaudeExecutable | null = null
   private deps: ClaudeDeps | null = null
   private configDir: string | undefined
-  private readonly sessions = new Map<string, BridgeSession>()
-  private readonly metas = new Map<string, SessionMeta>()
+  private readonly scopes = new Map<string | undefined, ClaudeScope>()
   private readonly approvals = new Map<JsonRpcId, PendingApproval>()
   private readonly idleTimeoutMs: number
-  private rateLimits: Json = emptyRateLimitsResponse()
   private requestCounter = 0
   private readonly skills = new SkillsCatalog()
-  /** 真实模型表按 daemon 生命周期缓存；没拿到之前一律返回别名列表。 */
-  private realModels: Json | null = null
-  private modelListRequest: Promise<Json> | null = null
 
   constructor(
     hub: AgentHostHub,
@@ -188,8 +196,17 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     initialize: unknown
     agentVersion?: string
   }> {
-    this.configDir = parseAgentConfigDir(options.claudeConfigDir, 'CLAUDE_CONFIG_DIR')
-    if (this.opened) return { initialize: this.initializeResult, agentVersion: this.claude?.version }
+    const directory = parseAgentConfigDir(options.claudeConfigDir, 'CLAUDE_CONFIG_DIR')
+    const previous = this.opened ? this.currentScope() : undefined
+    this.configDir = directory
+    if (this.opened) {
+      if (previous && previous !== this.currentScope()) {
+        for (const session of previous.sessions.values()) {
+          if (session.meta.ephemeral) this.touch(session)
+        }
+      }
+      return { initialize: this.initializeResult, agentVersion: this.claude?.version }
+    }
     const explicit =
       typeof options.claudePath === 'string' && options.claudePath.trim()
         ? options.claudePath.trim()
@@ -223,17 +240,36 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 
   protected closeAgent(): void {
     this.opened = false
-    this.realModels = null
-    this.modelListRequest = null
-    for (const session of this.sessions.values()) {
-      if (session.idleTimer) clearTimeout(session.idleTimer)
-      closeQuery(session)
+    for (const scope of this.scopes.values()) {
+      scope.historyPages.clear()
+      for (const session of scope.sessions.values()) {
+        if (session.idleTimer) clearTimeout(session.idleTimer)
+        closeQuery(session)
+      }
     }
     for (const pending of this.approvals.values()) {
       pending.resolve({ behavior: 'deny', message: 'server 正在退出' })
     }
     this.approvals.clear()
-    this.sessions.clear()
+    this.scopes.clear()
+  }
+
+  private currentScope(): ClaudeScope {
+    const directory = (this.configDir ?? process.env.CLAUDE_CONFIG_DIR) || undefined
+    let scope = this.scopes.get(directory)
+    if (!scope) {
+      scope = { directory, sessions: new Map(), metas: new Map(), historyPages: new HistoryPageCache(),
+        rateLimits: emptyRateLimitsResponse(), realModels: null, modelListRequest: null }
+      this.scopes.set(directory, scope)
+    }
+    return scope
+  }
+
+  private sessionReader(scope: ClaudeScope): ClaudeSessionReader {
+    const deps = this.requireDeps()
+    const directory = scope.directory
+    if (!directory || directory === process.env.CLAUDE_CONFIG_DIR) return deps
+    return this.options.sessionReader?.(directory) ?? (this.options.deps ? deps : isolatedClaudeSessionReader(directory))
   }
 
   private async dispatch(msg: Json): Promise<void> {
@@ -247,7 +283,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const method = scalarText(msg.method)
     const params = asRecord(msg.params) ?? {}
     try {
-      const result = await this.handleRequest(method, params)
+      const result = await this.handleRequest(method, params, this.currentScope())
       this.emit({ id, result })
     } catch (err) {
       const code = err instanceof BridgeRpcError ? err.code : -32603
@@ -257,80 +293,102 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     }
   }
 
-  private async handleRequest(method: string, params: Json): Promise<unknown> {
+  private async handleRequest(method: string, params: Json, scope: ClaudeScope): Promise<unknown> {
     // 模型列表不依赖 SDK 会话：无活动会话时也要能给出别名列表（R9 禁止为探测开会话）。
-    if (method === 'model/list') return this.listModels()
-    const deps = this.requireDeps()
+    if (method === 'model/list') return this.listModels(scope)
+    const cwd = typeof params.cwd === 'string' ? nativeAgentCwd(params.cwd) : undefined
     switch (method) {
       case 'initialize':
         return this.initializeResult
       case 'account/read':
         return { account: null }
       case 'account/rateLimits/read':
-        return this.rateLimits
+        return scope.rateLimits
+      case 'thread/unsubscribe': {
+        const threadId = scalarText(params.threadId)
+        const session = scope.sessions.get(threadId)
+        if (!session) return { status: 'notLoaded' }
+        if (!session.meta.ephemeral) throw new BridgeRpcError(-32602, '仅可结束临时会话')
+        if (session.turnId || session.preparingTurn) throw new BridgeRpcError(-32602, '请先停止当前轮次')
+        closeQuery(session)
+        this.forgetTemporary(session)
+        return { status: 'unsubscribed' }
+      }
       case 'thread/list': {
         const limit = typeof params.limit === 'number' && Number.isSafeInteger(params.limit) && params.limit > 0
           ? params.limit : undefined
-        const cwd = typeof params.cwd === 'string' && params.cwd ? params.cwd : undefined
         const dirs = Array.isArray(params.cwd)
-          ? [...new Set(params.cwd.filter((dir): dir is string => typeof dir === 'string' && dir.length > 0))]
-          : [cwd]
+          ? [...new Set(params.cwd.filter((dir): dir is string => typeof dir === 'string' && dir.length > 0)
+            .map((dir) => nativeAgentCwd(dir)))]
+          : [cwd || undefined]
         const metas = new Map<string, SessionMeta>()
+        const reader = this.sessionReader(scope)
         for (const dir of dirs) {
-          const infos = await deps.listSessions({ dir, limit, ...(Array.isArray(params.cwd) ? { includeWorktrees: false } : {}) })
+          const infos = await reader.listSessions({ dir, limit, ...(Array.isArray(params.cwd) ? { includeWorktrees: false } : {}) })
           for (const info of infos) {
             const meta = sessionInfoToMeta(info, dir ?? process.cwd())
             if (!meta.id || metas.has(meta.id)) continue
             metas.set(meta.id, meta)
-            this.metas.set(meta.id, meta)
+            scope.metas.set(meta.id, meta)
           }
         }
-        return threadListResponse([...metas.values()], limit, (id) => this.threadStatus(id))
+        return threadListResponse([...metas.values()], limit, (id) => this.threadStatus(scope, id))
       }
       case 'thread/start': {
         const id = randomUUID()
-        const cwd = typeof params.cwd === 'string' && params.cwd ? params.cwd : process.cwd()
         const ephemeral = params.ephemeral === true
         const settings = parseOverrides(params, NO_OVERRIDES)
-        const meta: SessionMeta = { id, cwd, preview: '', ephemeral }
+        const meta: SessionMeta = { id, cwd: cwd || process.cwd(), preview: '', ephemeral }
         const thread = buildThread(meta, [], threadModelConfig(settings))
-        this.sessions.set(id, makeSession(meta, false, settings))
-        this.metas.set(id, meta)
+        scope.sessions.set(id, makeSession(scope, meta, false, settings))
+        scope.metas.set(id, meta)
         this.notify({ method: 'thread/started', params: { thread } })
         return threadStartResult(meta, settings, thread)
       }
       case 'thread/resume':
-      case 'thread/read': {
+      case 'thread/read':
+      case 'thread/turns/list':
+      case 'thread/items/list': {
         const threadId = scalarText(params.threadId)
         if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
-        const session = await this.sessionFor(threadId, deps, typeof params.cwd === 'string' ? params.cwd : undefined)
-        const messages = await deps.getSessionMessages(threadId, { dir: session.meta.cwd })
-        const history = sessionMessagesToThread(session.meta, messages, threadModelConfig(session.settings))
-        const turnId = session.turnId
-        return { thread: turnId ? {
-          ...history.thread,
-          status: this.threadStatus(threadId),
-          turns: [...history.turns, buildTurn(turnId, [], 'inProgress')],
-        } : history.thread }
+        const session = await this.sessionFor(scope, threadId, cwd)
+        const metadataOnly = (method === 'thread/resume' && params.excludeTurns === true)
+          || (method === 'thread/read' && params.includeTurns === false)
+        const paged = method === 'thread/turns/list' || method === 'thread/items/list'
+        const config = threadModelConfig(session.settings)
+        if (metadataOnly) {
+          return { thread: { ...buildThread(session.meta, [], config), status: this.threadStatus(scope, threadId), historyMode: 'paginated' } }
+        }
+        const load = async () => sessionMessagesToThread(session.meta,
+          await this.sessionReader(scope).getSessionMessages(threadId, { dir: session.meta.cwd }), config).turns
+        const saved = await (paged
+          ? scope.historyPages.read(threadId, params.cursor != null || method === 'thread/items/list', load)
+          : load())
+        // 正在运行的条目由事件流补齐，避免和 SDK 已经写入历史的内容重复。
+        const active = session.turnId
+        const turns = active ? [...saved, buildTurn(active, [], 'inProgress')] : saved
+        if (method === 'thread/turns/list') return listHistoryTurns(threadId, turns, params)
+        if (method === 'thread/items/list') return listHistoryItems(threadId, turns, params)
+        return { thread: { ...buildThread(session.meta, turns, config), status: this.threadStatus(scope, threadId) } }
       }
       case 'turn/start': {
         const threadId = scalarText(params.threadId)
         if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
         const permissionMode = parsePermissionMode(params.claudePermissionMode)
         const content = await resolveTurnInput(params.input)
-        const session = await this.sessionFor(threadId, deps, typeof params.cwd === 'string' ? params.cwd : undefined)
+        const session = await this.sessionFor(scope, threadId, cwd)
         return this.startTurn(session, content, parseOverrides(params, session.settings), permissionMode)
       }
       case 'skills/list': {
         const requested = Array.isArray(params.cwds)
           ? params.cwds.filter((c): c is string => typeof c === 'string' && c.length > 0)
           : []
-        const cwds = requested.length > 0 ? requested : [this.defaultCwd()]
-        return this.skills.list(cwds, params.forceReload === true)
+        const cwds = requested.length > 0 ? requested : [scope.sessions.values().next().value?.meta.cwd ?? process.cwd()]
+        return this.listSkills(scope, cwds, params.forceReload === true)
       }
       case 'turn/interrupt': {
         const threadId = scalarText(params.threadId)
-        const session = this.sessions.get(threadId)
+        const session = scope.sessions.get(threadId)
         if (!session?.query) throw new BridgeRpcError(-32602, '没有运行中的 turn')
         await session.query.interrupt()
         this.hub.log(`claude turn 已请求中断 (thread=${threadId})`)
@@ -343,31 +401,31 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 
   /**
    * 只从用户自己已开启的 query 读真实模型表；没有活动会话时返回官方别名静态列表，
-   * 绝不为列模型创建 query 或发送 prompt（R9）。真实表按 daemon 生命周期缓存。
+   * 绝不为列模型创建 query 或发送 prompt（R9）。真实表按配置目录缓存。
    */
-  private async listModels(): Promise<Json> {
-    if (this.realModels) return this.realModels
-    const query = this.activeModelQuery()
+  private async listModels(scope: ClaudeScope): Promise<Json> {
+    if (scope.realModels) return scope.realModels
+    const query = this.activeModelQuery(scope)
     const read = query?.supportedModels
     if (!query || !read) return staticModelList()
-    this.modelListRequest ??= this.fetchModels(read.bind(query)).finally(() => {
-      this.modelListRequest = null
+    scope.modelListRequest ??= this.fetchModels(scope, read.bind(query)).finally(() => {
+      scope.modelListRequest = null
     })
-    return this.modelListRequest
+    return scope.modelListRequest
   }
 
-  private activeModelQuery(): QueryLike | null {
-    for (const session of this.sessions.values()) {
+  private activeModelQuery(scope: ClaudeScope): QueryLike | null {
+    for (const session of scope.sessions.values()) {
       if (session.query?.supportedModels) return session.query
     }
     return null
   }
 
-  private async fetchModels(read: () => Promise<unknown[]>): Promise<Json> {
+  private async fetchModels(scope: ClaudeScope, read: () => Promise<unknown[]>): Promise<Json> {
     try {
       const list = supportedModelList(await read())
       if (!list) return staticModelList()
-      this.realModels = list
+      scope.realModels = list
       return list
     } catch (err) {
       this.hub.log(`claude 模型表读取失败，回退别名列表: ${redact(describe(err))}`)
@@ -376,40 +434,62 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   }
 
   /** 会话已开启后顺手取一次真实表；不等待、不阻断 turn，失败时下次 model/list 会重试。 */
-  private cacheModels(query: QueryLike): void {
+  private cacheModels(scope: ClaudeScope, query: QueryLike): void {
     const read = query.supportedModels
-    if (this.realModels || !read) return
+    if (scope.realModels || !read) return
     void read
       .call(query)
       .then((infos) => {
         const list = supportedModelList(infos)
-        if (this.opened && list && !this.realModels) this.realModels = list
+        if (this.opened && list && !scope.realModels) scope.realModels = list
       })
       .catch((err: unknown) => {
         this.hub.log(`claude 模型表读取失败: ${redact(describe(err))}`)
       })
   }
 
-  /**
-   * 已有 query 时用 SDK 官方控制接口切换：模型走 setModel()，推理强度走
-   * applyFlagSettings({ effortLevel })。失败不阻断本轮、不自动重试，设置保持原值。
-   */
-  private async applySettings(session: BridgeSession, next: ClaudeSettings): Promise<boolean> {
+  private async listSkills(scope: ClaudeScope, cwds: string[], force: boolean): Promise<Json> {
+    if (!scope.directory) return this.skills.list(cwds, force)
+    // 自定义配置的技能通过用户已打开的 query 枚举，避免直接读配置目录或后台启动会话。
+    const data = await Promise.all(cwds.map(async (cwd) => {
+      const query = [...scope.sessions.values()].find((session) =>
+        session.meta.cwd === cwd && !session.meta.ephemeral && session.query?.supportedCommands)?.query
+      try {
+        const commands = await query?.supportedCommands?.() ?? []
+        return { cwd, skills: commands.flatMap(commandMetadata), errors: [] }
+      } catch (err) {
+        this.hub.log(`claude 技能列表读取失败: ${redact(describe(err))}`)
+        return { cwd, skills: [], errors: [] }
+      }
+    }))
+    return { data }
+  }
+
+  private async applySettings(session: BridgeSession, next: ClaudeSettings): Promise<void> {
     const query = session.query
-    if (!query) return true
+    if (!query) return
     const diff = settingsDiff(session.settings, next)
-    if (!diff) return true
-    if (('model' in diff && !query.setModel) || ('effort' in diff && !query.applyFlagSettings)) {
-      this.hub.log('claude SDK 缺少在线切换控制接口，本轮沿用原设置')
-      return false
+    if (!diff) return
+    const changesModel = 'model' in diff
+    const changesEffort = 'effort' in diff
+    if ((changesModel && !query.setModel) || (changesEffort && !query.applyFlagSettings)) {
+      throw new BridgeRpcError(-32603, '当前 Claude SDK 不支持在线切换所选模型或推理强度')
     }
+    let setting = '模型'
     try {
-      if ('model' in diff) await query.setModel?.(diff.model ?? undefined)
-      if ('effort' in diff) await query.applyFlagSettings?.({ effortLevel: diff.effort ?? null })
-      return true
+      if (changesModel) {
+        await query.setModel?.(next.model ?? undefined)
+        // 模型与强度是两个独立调用，记下已成功的部分供下次重试或恢复默认。
+        session.settings.model = next.model
+      }
+      setting = '推理强度'
+      if (changesEffort) {
+        await query.applyFlagSettings?.({ effortLevel: next.effort })
+        session.settings.effort = next.effort
+      }
     } catch (err) {
-      this.hub.log(`claude 切换模型设置失败: ${redact(describe(err))}`)
-      return false
+      this.hub.log(`claude 切换${setting}失败: ${redact(describe(err))}`)
+      throw new BridgeRpcError(-32603, `Claude 切换${setting}失败，消息未发送`)
     }
   }
 
@@ -447,9 +527,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     let started = false
     try {
       await this.setPermissionMode(session, permissionMode)
-      if (session.query && session.input) {
-        if (await this.applySettings(session, next)) session.settings = next
-      }
+      if (session.query && session.input) await this.applySettings(session, next)
       session.turnId = turnId
       session.state = emptyMapState()
       session.state.items[scalarText(userItem.id)] = userItem
@@ -477,8 +555,8 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       throw err
     } finally {
       session.preparingTurn = false
+      this.touch(session)
     }
-    this.touch(session)
     return { turn }
   }
 
@@ -513,7 +591,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
           decisionReason: extra.decisionReason,
         }),
       pathToClaudeCodeExecutable: this.claude?.path ?? '',
-      env: agentConfigEnv(envStrings(), 'CLAUDE_CONFIG_DIR', this.configDir),
+      env: agentConfigEnv(envStrings(), 'CLAUDE_CONFIG_DIR', session.scope.directory),
       stderr: (data: string) => this.hub.log(`claude stderr: ${redact(data)}`),
       // 首次用 sessionId 固定 UUID；空闲关闭后用 resume 重新拉起，保留会话历史。
       ...(session.queryCreated
@@ -527,7 +605,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     session.settings = { ...settings }
     session.permissionMode = permissionMode
     session.allowsBypass = permissionMode === 'bypassPermissions'
-    this.cacheModels(query)
+    this.cacheModels(session.scope, query)
     void this.consume(session, query)
   }
 
@@ -549,6 +627,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         session.input = null
         // CLI 提前退出且没有 result 消息时兜底结束 turn，避免 activeTurns 永远不归零。
         if (session.turnId) this.finishTurn(session, 'failed', 'claude 进程提前结束')
+        if (session.meta.ephemeral) this.forgetTemporary(session)
       }
     }
   }
@@ -558,7 +637,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     // 新 SDK 是顶层 rate_limit_event；旧 CLI 也可能把它塞进 system 消息。
     if (record?.type === 'rate_limit_event' || record?.subtype === 'rate_limit_event') {
       const snapshot = rateLimitSnapshot(record.rate_limit_info)
-      this.rateLimits = {
+      session.scope.rateLimits = {
         ...emptyRateLimitsResponse(),
         rateLimits: snapshot,
         rateLimitsByLimitId: { claude: snapshot },
@@ -571,9 +650,12 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     }
     const mapped = mapSdkMessage(message, ctx, session.state)
     session.state = mapped.state
-    for (const note of mapped.notifications) this.notify(note)
+    for (const note of mapped.notifications) {
+      if (note.method !== 'account/rateLimits/updated' || session.scope === this.currentScope()) this.notify(note)
+    }
     if (record?.type === 'result') {
       session.turnId = null
+      session.scope.historyPages.clear(session.meta.id)
       this.touch(session)
     }
   }
@@ -583,6 +665,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     const turnId = session.turnId
     if (!turnId) return
     session.turnId = null
+    session.scope.historyPages.clear(session.meta.id)
     const items = session.state.order.map((id) => session.state.items[id]).filter(isRecord)
     this.notify({
       method: 'turn/completed',
@@ -594,9 +677,10 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     this.touch(session)
   }
 
-  private threadStatus(threadId: string): ThreadStatus {
-    if (!this.sessions.get(threadId)?.turnId) return { type: 'idle' }
-    const waiting = [...this.approvals.values()].some((pending) => pending.threadId === threadId)
+  private threadStatus(scope: ClaudeScope, threadId: string): ThreadStatus {
+    const session = scope.sessions.get(threadId)
+    if (!session?.turnId) return { type: 'idle' }
+    const waiting = [...this.approvals.values()].some((pending) => pending.session === session)
     return { type: 'active', activeFlags: waiting ? ['waitingOnApproval'] : [] }
   }
 
@@ -624,7 +708,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       ...(extra.decisionReason ? { reason: extra.decisionReason } : {}),
     })
     return new Promise<PermissionResult>((resolve) => {
-      this.approvals.set(requestId, { threadId: session.meta.id, resolve, suggestions: extra.suggestions })
+      this.approvals.set(requestId, { session, resolve, suggestions: extra.suggestions })
       if (extra.signal) {
         extra.signal.addEventListener(
           'abort',
@@ -656,31 +740,46 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   }
 
   private async sessionFor(
+    scope: ClaudeScope,
     threadId: string,
-    deps: ClaudeDeps,
     cwdHint?: string,
   ): Promise<BridgeSession> {
-    const existing = this.sessions.get(threadId)
+    const existing = scope.sessions.get(threadId)
     if (existing) return existing
-    let meta = this.metas.get(threadId)
+    let meta = scope.metas.get(threadId)
     if (!meta) {
-      const info = deps.getSessionInfo
-        ? await deps.getSessionInfo(threadId)
-        : (await deps.listSessions()).find((info) => asRecord(info)?.sessionId === threadId)
-      const concurrent = this.sessions.get(threadId)
+      const reader = this.sessionReader(scope)
+      const info = reader.getSessionInfo
+        ? await reader.getSessionInfo(threadId)
+        : (await reader.listSessions()).find((info) => asRecord(info)?.sessionId === threadId)
+      const concurrent = scope.sessions.get(threadId)
       if (concurrent) return concurrent
       if (!info) throw new BridgeRpcError(-32602, '未找到 Claude 会话')
       meta = sessionInfoToMeta(info, cwdHint ?? process.cwd())
-      this.metas.set(threadId, meta)
+      scope.metas.set(threadId, meta)
     }
-    const session = makeSession(meta, true)
-    this.sessions.set(threadId, session)
+    const session = makeSession(scope, meta, true)
+    scope.sessions.set(threadId, session)
     return session
   }
 
+  private forgetTemporary({ scope, meta: { id: threadId } }: BridgeSession): void {
+    scope.historyPages.clear(threadId)
+    scope.sessions.delete(threadId)
+    scope.metas.delete(threadId)
+    this.notify({ method: 'thread/closed', params: { threadId } })
+  }
+
   private touch(session: BridgeSession): void {
-    // ephemeral 会话不落盘，关闭后无法 resume，因此不做空闲关闭。
-    if (!this.opened || session.meta.ephemeral) return
+    if (!this.opened) return
+    if (session.meta.ephemeral) {
+      // 侧聊不落盘，当前目录下不做空闲关闭。切换后等旧侧聊结束再释放。
+      if (!session.turnId && !session.preparingTurn && session.scope !== this.currentScope()) {
+        closeQuery(session)
+        this.forgetTemporary(session)
+      }
+      return
+    }
     if (session.idleTimer) clearTimeout(session.idleTimer)
     session.idleTimer = setTimeout(() => {
       session.idleTimer = null
@@ -688,12 +787,6 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       closeQuery(session)
     }, this.idleTimeoutMs)
     session.idleTimer.unref?.()
-  }
-
-  /** 没有显式 cwd 时取任一已知会话的工作目录，其次进程目录。 */
-  private defaultCwd(): string {
-    for (const session of this.sessions.values()) return session.meta.cwd
-    return process.cwd()
   }
 
   private requireDeps(): ClaudeDeps {
@@ -707,11 +800,13 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 }
 
 function makeSession(
+  scope: ClaudeScope,
   meta: SessionMeta,
   queryCreated: boolean,
   settings: ClaudeSettings = NO_OVERRIDES,
 ): BridgeSession {
   return {
+    scope,
     meta,
     query: null,
     input: null,
@@ -740,7 +835,7 @@ function closeQuery(session: BridgeSession): void {
 
 function parsePermissionMode(value: unknown): PermissionMode {
   if (value === undefined || value === 'default') return 'default'
-  if (value === 'acceptEdits' || value === 'plan' || value === 'bypassPermissions') return value
+  if (value === 'auto' || value === 'acceptEdits' || value === 'plan' || value === 'bypassPermissions') return value
   throw new BridgeRpcError(-32602, '不支持的 Claude 访问模式')
 }
 

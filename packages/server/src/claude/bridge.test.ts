@@ -5,9 +5,9 @@
 import type { Options, PermissionMode, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ServerMessage } from '@qn/protocol'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AgentHostError, type AgentHostHub } from '../codexHost'
-import { AsyncQueue, ClaudeBridge, type ClaudeDeps, type QueryLike } from './bridge'
+import { AsyncQueue, ClaudeBridge, type ClaudeBridgeOptions, type ClaudeDeps, type QueryLike } from './bridge'
 import type { Json } from './v2'
 
 class FakeQuery implements QueryLike {
@@ -36,6 +36,11 @@ class FakeQuery implements QueryLike {
     this.permissionChanges.push(mode)
   }
 
+  async supportedCommands(): Promise<unknown[]> {
+    return [{ name: path.basename(this.options?.env?.CLAUDE_CONFIG_DIR ?? 'default'), description: '自定义技能' },
+      { name: 'help', builtin: true }]
+  }
+
   close(): void {
     this.closed = true
     this.messages.close()
@@ -50,7 +55,12 @@ interface Harness {
   queries: FakeQuery[]
 }
 
-function harness(options: { failResolve?: boolean; listSessions?: ClaudeDeps['listSessions'] } = {}): Harness {
+function harness(options: {
+  failResolve?: boolean
+  listSessions?: ClaudeDeps['listSessions']
+  getSessionMessages?: ClaudeDeps['getSessionMessages']
+  sessionReader?: ClaudeBridgeOptions['sessionReader']
+} = {}): Harness {
   const sent: Harness['sent'] = []
   const recv: Harness['recv'] = []
   const events: Harness['events'] = []
@@ -70,17 +80,18 @@ function harness(options: { failResolve?: boolean; listSessions?: ClaudeDeps['li
     },
     listSessions: options.listSessions ?? (async () => [oldSession]),
     getSessionInfo: async (id) => id === oldSession.sessionId ? oldSession : undefined,
-    getSessionMessages: async () => [
+    getSessionMessages: options.getSessionMessages ?? (async () => [
       {
         message: { id: 'm1', role: 'user', content: [{ type: 'text', text: '历史问题' }] },
       },
       {
         message: { id: 'm2', role: 'assistant', content: [{ type: 'text', text: '历史回答' }] },
       },
-    ],
+    ]),
   }
   const bridge = new ClaudeBridge(hub, '0.0.1', {
     deps,
+    sessionReader: options.sessionReader,
     resolve: (claudePath) => {
       if (options.failResolve) {
         throw new AgentHostError('agent_unavailable', `未找到 claude (${claudePath ?? ''})`)
@@ -134,6 +145,44 @@ function note(h: Harness, method: string): Json {
 }
 
 describe('ClaudeBridge 端到端（假 query 工厂）', () => {
+  it('元数据跳过历史读取，分页从最近轮次回读并复用 SDK 快照', async () => {
+    const readMessages = vi.fn(async () => [0, 1, 2].flatMap((index) => [
+      { message: { id: `u${index}`, role: 'user', content: [{ type: 'text', text: `问题 ${index}` }] } },
+      { message: { id: `a${index}`, role: 'assistant', content: [{ type: 'text', text: `回答 ${index}` }] } },
+    ]))
+    const h = harness({ getSessionMessages: readMessages })
+    await h.bridge.open({})
+    const threadId = 'old-1'
+    request(h, 'metadata', 'thread/resume', { threadId, excludeTurns: true })
+    expect((await response(h, 'metadata')).result).toMatchObject({
+      thread: { id: threadId, historyMode: 'paginated', turns: [] },
+    })
+    request(h, 'read-metadata', 'thread/read', { threadId, includeTurns: false })
+    expect((await response(h, 'read-metadata')).result).toMatchObject({ thread: { turns: [] } })
+    expect(readMessages).not.toHaveBeenCalled()
+
+    const params = { threadId, sortDirection: 'desc', limit: 1, itemsView: 'full' }
+    request(h, 'latest', 'thread/turns/list', params)
+    const latest = (await response(h, 'latest')).result as Json
+    expect(latest).toMatchObject({
+      data: [{ id: 'turn-old-1-4', items: [{ type: 'userMessage' }, { type: 'agentMessage', text: '回答 2' }] }],
+      nextCursor: expect.any(String),
+    })
+    request(h, 'previous', 'thread/turns/list', { ...params, cursor: latest.nextCursor })
+    expect((await response(h, 'previous')).result).toMatchObject({
+      data: [{ id: 'turn-old-1-2' }],
+      nextCursor: expect.any(String),
+    })
+    request(h, 'items', 'thread/items/list', { threadId, turnId: 'turn-old-1-4', sortDirection: 'desc', limit: 1 })
+    expect((await response(h, 'items')).result).toMatchObject({
+      data: [{ turnId: 'turn-old-1-4', item: { type: 'agentMessage', text: '回答 2' } }],
+      nextCursor: expect.any(String),
+    })
+    expect(readMessages).toHaveBeenCalledTimes(1)
+    expect(h.queries).toHaveLength(0)
+    h.bridge.shutdown()
+  })
+
   it('跨项目查询按更新时间合并，并保留原项目目录', async () => {
     const h = harness({ listSessions: async (options) => {
       expect(options).toMatchObject({ limit: 2, includeWorktrees: false })
@@ -430,6 +479,11 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
       expect(h.queries[0]?.permissionChanges).toEqual(['acceptEdits'])
       await complete()
 
+      await send('auto', 'auto')
+      expect(h.queries).toHaveLength(1)
+      expect(h.queries[0]?.permissionChanges).toEqual(['acceptEdits', 'auto'])
+      await complete()
+
       await send('bypass', 'bypassPermissions')
       expect(h.queries[0]?.closed).toBe(true)
       expect(h.queries[1]?.options).toMatchObject({
@@ -481,6 +535,54 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
       await h.bridge.open()
       await send('third-turn', await openThread('third'))
       expect(h.queries[2]?.options?.env?.CLAUDE_CONFIG_DIR).toBe(process.env.CLAUDE_CONFIG_DIR)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('配置目录隔离会话元数据、历史分页和已打开会话的命令', async () => {
+    const first = path.resolve('profile-a')
+    const second = path.resolve('profile-b')
+    const sessionId = 'shared-session'
+    const cwd = '/work'
+    const sessionReader = vi.fn((directory: string) => {
+      const name = path.basename(directory)
+      const info = { sessionId, summary: name, cwd, lastModified: 1_700_000_000_000 }
+      return {
+        listSessions: async () => [info],
+        getSessionInfo: async (id: string) => id === sessionId ? info : undefined,
+        getSessionMessages: async () => [{
+          uuid: 'history', message: { role: 'user', content: [{ type: 'text', text: name }] },
+        }],
+      }
+    })
+    const h = harness({ sessionReader })
+    const rpc = async (id: string, method: string, params: Json) => {
+      request(h, id, method, params)
+      return response(h, id)
+    }
+    const skills = (id: string) => rpc(id, 'skills/list', { cwds: [cwd] })
+    const turns = (id: string) => rpc(id, 'thread/turns/list', { threadId: sessionId })
+    try {
+      await h.bridge.open({ claudeConfigDir: first })
+      expect(await skills('skills-before')).toHaveProperty('result.data.0.skills', [])
+      expect(h.queries).toHaveLength(0)
+      expect(await rpc('list-a', 'thread/list', { cwd })).toHaveProperty('result.data.0.preview', 'profile-a')
+      expect(JSON.stringify(await turns('history-a'))).toContain('profile-a')
+      await rpc('send-a', 'turn/start', { threadId: sessionId, input: [{ type: 'text', text: 'A' }] })
+      expect(await skills('skills-a')).toHaveProperty('result.data.0.skills.0.name', 'profile-a')
+      expect(await skills('skills-a-builtins')).toHaveProperty('result.data.0.skills.length', 1)
+
+      await h.bridge.open({ claudeConfigDir: second })
+      expect(await skills('skills-b-before')).toHaveProperty('result.data.0.skills', [])
+      const history = JSON.stringify(await turns('history-b'))
+      expect(history).toContain('profile-b')
+      expect(history).not.toContain('profile-a')
+      await rpc('send-b', 'turn/start', { threadId: sessionId, input: [{ type: 'text', text: 'B' }] })
+      expect(h.queries.map((entry) => entry.options?.env?.CLAUDE_CONFIG_DIR)).toEqual([first, second])
+      expect(await skills('skills-b-after')).toHaveProperty('result.data.0.skills.0.name', 'profile-b')
+      expect(sessionReader).toHaveBeenCalledWith(first)
+      expect(sessionReader).toHaveBeenCalledWith(second)
     } finally {
       h.bridge.shutdown()
     }
@@ -540,4 +642,25 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
     expect(denied).toEqual({ behavior: 'deny', message: 'server 正在退出' })
     expect(query?.closed).toBe(true)
   })
+})
+
+it('临时 Claude 查询在收起后可追问，显式结束才释放', async () => {
+  const h = harness()
+  await h.bridge.open({})
+  request(h, 'new', 'thread/start', { cwd: '/work', ephemeral: true })
+  const threadId = (((await response(h, 'new')).result as Json).thread as Json).id as string
+  request(h, 'send', 'turn/start', { threadId, input: [{ type: 'text', text: '解释这段话', text_elements: [] }] })
+  await response(h, 'send')
+  const query = h.queries[0]!
+  expect(query.options?.persistSession).toBe(false)
+  request(h, 'busy', 'thread/unsubscribe', { threadId })
+  expect(await response(h, 'busy')).toHaveProperty('error')
+  expect(query.closed).toBe(false)
+  query.emit({ type: 'result', subtype: 'success', usage: {} })
+  await until(() => hasNote(h, 'turn/completed'))
+  request(h, 'end', 'thread/unsubscribe', { threadId })
+  expect((await response(h, 'end')).result).toEqual({ status: 'unsubscribed' })
+  expect(query.closed).toBe(true)
+  expect(note(h, 'thread/closed').params).toEqual({ threadId })
+  h.bridge.shutdown()
 })

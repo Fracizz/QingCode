@@ -103,8 +103,7 @@ export const useLegacy = create<LegacyState>((set, get) => ({
       })
       set({ result, busy: false })
       await useTargets.getState().load()
-      const targetId = useTargets.getState().selectedId
-      await useProjects.getState().load(targetId)
+      await useProjects.getState().reloadAll()
     } catch (err) {
       set({ busy: false, error: friendlyError(err, '导入旧版数据失败') })
     }

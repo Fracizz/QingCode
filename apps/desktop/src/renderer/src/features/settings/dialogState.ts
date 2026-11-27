@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { isSettingsSection, type SettingsSectionId } from './settingsModel'
 
-/** 全局开关：侧栏齿轮按钮与 Ctrl+, 快捷键都调用 openSettings，宿主只需渲染一次 SettingsDialog。 */
+/** 统一侧栏、快捷键与命令面板的设置页入口。 */
 export type SettingsDialogState = {
   open: boolean
   section?: SettingsSectionId

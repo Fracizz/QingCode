@@ -20,6 +20,7 @@ import {
   File as FileIcon,
   FileCode2,
   FileJson,
+  Download,
   FilePlus2,
   FileText,
   Folder,
@@ -27,6 +28,7 @@ import {
   FolderPlus,
   FolderSymlink,
   Image as ImageIcon,
+  MessageSquarePlus,
   Pencil,
   RotateCw,
   Trash2,
@@ -35,6 +37,8 @@ import {
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '../../components/primitives'
 import { Checkbox, ErrorNote, IconButton, Modal } from '../../components/ui'
 import { cn } from '../../lib/cn'
+import { addProjectMention } from '../composer/projectMention'
+import { downloadProjectFile } from '../workspace/download'
 import { openFile } from '../workspace/openers'
 import { explorerScopeKey, useExplorer } from './explorerStore'
 import {
@@ -137,6 +141,7 @@ export function FileExplorer({
   )
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [menuPath, setMenuPath] = useState<string | null>(null)
+  const mentionOnClose = useRef<string | null>(null)
   const menuTarget = useRef<MenuTarget>({ path: null, dir: root, kind: 'dir' })
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
   const [recursive, setRecursive] = useState(true)
@@ -202,17 +207,6 @@ export function FileExplorer({
     setNotice(text)
     if (noticeTimer.current) clearTimeout(noticeTimer.current)
     noticeTimer.current = setTimeout(() => setNotice(null), 1600)
-  }
-
-  const currentDir = (): string => {
-    const row = rows[selectedIndex]
-    if (!row) return root
-    if (row.kind === 'draft') {
-      return row.draft.mode === 'create' ? row.draft.parent : parentPath(row.draft.path, style)
-    }
-    const node = row.node
-    if (node.kind === 'file') return parentPath(node.path, style)
-    return node.path
   }
 
   const beginCreate = (parent: string, kind: 'file' | 'dir'): void => {
@@ -308,13 +302,12 @@ export function FileExplorer({
   }
 
   const onContextMenuCapture = (event: ReactMouseEvent<HTMLDivElement>): void => {
-    const element = (event.target as HTMLElement).closest?.('[data-tree-path]')
-    const path = element?.getAttribute('data-tree-path') ?? null
-    const row = path
-      ? rows.find((item) => item.kind === 'node' && isSamePath(item.node.path, path, style))
-      : undefined
-    const kind: ExplorerEntryKind | 'placeholder' =
-      row?.kind === 'node' ? row.node.kind : 'placeholder'
+    const element = (event.target as HTMLElement).closest?.('[data-tree-key]')
+    const index = element ? rows.findIndex((item) => item.key === element.getAttribute('data-tree-key')) : -1
+    const row = rows[index]
+    const node = row?.kind === 'node' ? row.node : null
+    const path = node?.path ?? null
+    const kind = node?.kind ?? 'placeholder'
     const dir = !path
       ? root
       : kind === 'file'
@@ -322,12 +315,7 @@ export function FileExplorer({
         : path
     menuTarget.current = { path, dir, kind }
     setMenuPath(path)
-    if (path) {
-      const index = rows.findIndex(
-        (item) => item.kind === 'node' && isSamePath(item.node.path, path, style),
-      )
-      if (index >= 0) setSelectedIndex(index)
-    }
+    if (index >= 0) setSelectedIndex(index)
   }
 
   const copy = async (text: string): Promise<void> => {
@@ -378,7 +366,7 @@ export function FileExplorer({
         >
           <input
             autoFocus
-            className="qn-input h-[20px] min-w-0 flex-1 px-1.5 py-0 text-[12px]"
+            className="qn-input h-[20px] min-w-0 flex-1 px-1.5 py-0 text-ui-sm"
             value={editing?.name ?? ''}
             placeholder={row.draft.mode === 'create' ? (row.draft.kind === 'file' ? '新文件名' : '新文件夹名') : '新名称'}
             onChange={(event) =>
@@ -412,7 +400,7 @@ export function FileExplorer({
             <X size={13} />
           </button>
           {editing?.error && (
-            <span className="truncate text-[11px] text-qn-danger">{editing.error}</span>
+            <span className="truncate text-ui-xs text-qn-danger">{editing.error}</span>
           )}
         </div>
       )
@@ -423,6 +411,7 @@ export function FileExplorer({
     return (
       <div
         key={row.key}
+        data-tree-key={row.key}
         data-tree-path={node.path}
         role="treeitem"
         aria-selected={selected}
@@ -430,8 +419,8 @@ export function FileExplorer({
         style={{ ...position, paddingLeft: 6 + node.depth * 14 }}
         title={node.kind === 'placeholder' ? undefined : node.path}
         className={cn(
-          'flex cursor-default select-none items-center gap-1 pr-2 text-[12px] outline-none',
-          selected ? 'bg-qn-accent/20' : 'hover:bg-white/5',
+          'flex cursor-default select-none items-center gap-1 pr-2 text-ui-sm outline-none',
+          selected ? 'bg-qn-accent/20' : 'hover:bg-qn-fg/5',
           node.kind === 'placeholder' && 'text-qn-muted',
         )}
         onClick={() => {
@@ -457,7 +446,7 @@ export function FileExplorer({
         )}
         {entryIcon(node.name, node.kind, node.expanded)}
         <span className="min-w-0 flex-1 truncate">{node.name}</span>
-        {node.kind === 'symlink' && <span className="shrink-0 text-[10px] text-qn-dim">链接</span>}
+        {node.kind === 'symlink' && <span className="shrink-0 text-ui-2xs text-qn-dim">链接</span>}
       </div>
     )
   }
@@ -465,12 +454,6 @@ export function FileExplorer({
   return (
     <div className={cn('flex min-h-0 flex-col bg-qn-sidebar text-qn-text', className)}>
       <div className="flex shrink-0 items-center gap-0.5 border-b border-qn-border px-2 py-1.5">
-        <IconButton label="新建文件" onClick={() => beginCreate(currentDir(), 'file')}>
-          <FilePlus2 size={14} />
-        </IconButton>
-        <IconButton label="新建文件夹" onClick={() => beginCreate(currentDir(), 'dir')}>
-          <FolderPlus size={14} />
-        </IconButton>
         <IconButton label="刷新" onClick={() => void actions.refresh(targetId, root)}>
           <RotateCw size={14} />
         </IconButton>
@@ -484,9 +467,9 @@ export function FileExplorer({
           {tree.showHidden ? <Eye size={14} /> : <EyeOff size={14} />}
         </IconButton>
         <span className="min-w-0 flex-1" />
-        {notice && <span className="truncate text-[11px] text-qn-muted">{notice}</span>}
+        {notice && <span className="truncate text-ui-xs text-qn-muted">{notice}</span>}
       </div>
-      <div className="truncate border-b border-qn-border px-3 py-1 font-mono text-[11px] text-qn-dim" title={root}>
+      <div className="truncate border-b border-qn-border px-3 py-1 font-mono text-ui-xs text-qn-dim" title={root}>
         {root}
       </div>
       {scope?.error && (
@@ -514,7 +497,21 @@ export function FileExplorer({
             </div>
           </div>
         </ContextMenu.Trigger>
-        <ContextMenuContent>
+        <ContextMenuContent onCloseAutoFocus={(event) => {
+          // 等菜单释放焦点，再切换到草稿并聚焦输入框。
+          const relative = mentionOnClose.current
+          mentionOnClose.current = null
+          if (relative === null) return
+          if (addProjectMention(targetId, root, relative)) event.preventDefault()
+          else showNotice('请先打开当前项目的对话')
+        }}>
+          {menuPath && menuTarget.current.kind !== 'placeholder' && (
+            <ContextMenuItem icon={<MessageSquarePlus size={14} />} onSelect={() => {
+              mentionOnClose.current = relativePath(root, menuPath, style)
+            }}>
+              添加到对话
+            </ContextMenuItem>
+          )}
           <ContextMenuItem
             icon={<FilePlus2 size={14} />}
             onSelect={() => beginCreate(menuTarget.current.dir, 'file')}
@@ -528,6 +525,11 @@ export function FileExplorer({
             新建文件夹
           </ContextMenuItem>
           <ContextMenuSeparator />
+          {targetId !== 'local' && menuPath && menuTarget.current.kind === 'file' && (
+            <ContextMenuItem icon={<Download size={14} />} onSelect={() => void downloadProjectFile(targetId, root, menuPath)}>
+              下载到本机
+            </ContextMenuItem>
+          )}
           <ContextMenuItem
             icon={<Pencil size={14} />}
             disabled={!menuPath}

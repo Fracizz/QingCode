@@ -55,12 +55,14 @@ export function Button({
 
 export function Header({
   title,
+  icon,
   subtitle,
   onBack,
   right,
   className,
 }: {
   title: string
+  icon?: ReactNode
   subtitle?: ReactNode
   onBack?: () => void
   right?: ReactNode
@@ -73,6 +75,7 @@ export function Header({
           <ChevronLeft size={22} strokeWidth={1.9} />
         </Button>
       )}
+      {icon}
       <div className="min-w-0 flex-1">
         <div className="qn-title">{title}</div>
         {subtitle && <div className="qn-subtitle">{subtitle}</div>}
@@ -153,7 +156,7 @@ export function Dialog({
   title: string
   children: ReactNode
   onClose: () => void
-  placement?: 'bottom' | 'side' | 'full'
+  placement?: 'bottom' | 'left' | 'full'
   /** 全屏弹层默认把关闭按钮放在底部拇指区；底部已有输入区的（如终端）传 top；内容自己摆放关闭按钮时传 none。 */
   closeAt?: 'top' | 'bottom' | 'none'
 }) {

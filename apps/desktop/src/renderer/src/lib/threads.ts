@@ -2,6 +2,8 @@ import { threadActivityFromStatus, type ThreadActivity } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { DEFAULT_AGENT } from './agents'
 
+const PREVIEW_LENGTH = 160
+
 export type ThreadSummary = {
   id: string
   title: string
@@ -39,7 +41,7 @@ export function toThreadSummaries(
     summaries.push({
       id,
       title: text(entry.name) || preview.split('\n')[0]?.trim() || '未命名会话',
-      preview: preview.length > 160 ? `${preview.slice(0, 160)}…` : preview,
+      preview: preview.length > PREVIEW_LENGTH ? `${preview.slice(0, PREVIEW_LENGTH)}…` : preview,
       cwd: text(entry.cwd),
       updatedAt: toTimestamp(entry.updatedAt ?? entry.recencyAt ?? entry.createdAt),
       agent,
@@ -47,6 +49,18 @@ export function toThreadSummaries(
     })
   }
   return summaries.sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+export function threadPreviewText({ title, preview }: Pick<ThreadSummary, 'title' | 'preview'>): string {
+  const excerpt = preview.trim()
+  const [firstLine = '', ...remaining] = excerpt.split('\n')
+  const heading = title.trim()
+  // 未命名会话用摘要首行作标题，摘要也可能截在首行中间。
+  if (firstLine.trim() === heading) return remaining.join('\n').trim()
+  if (preview.length === PREVIEW_LENGTH + 1 && excerpt.endsWith('…') && heading.startsWith(excerpt.slice(0, -1))) {
+    return ''
+  }
+  return excerpt
 }
 
 /** 两个 agent 的 id 各自独立，列表 key 必须带上 agent，避免 UUID 碰撞时错行。 */
@@ -59,6 +73,32 @@ export function mergeThreadSummaries(lists: readonly ThreadSummary[][]): ThreadS
   return lists
     .flat()
     .sort((a, b) => b.updatedAt - a.updatedAt || a.agent.localeCompare(b.agent))
+}
+
+// 项目列表刷新时保留已有行的位置，同时采用服务端最新的标题、时间和状态。
+export function refreshThreadOrder(previous: ThreadSummary[], incoming: ThreadSummary[]): ThreadSummary[] {
+  if (!previous.length) return incoming
+  const remaining = new Map(incoming.map(thread => [threadKey(thread.agent, thread.id), thread]))
+  const existing: ThreadSummary[] = []
+  for (const thread of previous) {
+    const key = threadKey(thread.agent, thread.id)
+    const updated = remaining.get(key)
+    if (updated) {
+      existing.push(updated)
+      remaining.delete(key)
+    }
+  }
+  return [...remaining.values(), ...existing]
+}
+
+/**
+ * 刚建的会话在首轮结束前，Agent 的 thread/list 可能还查不到（Codex 首轮落盘后才列出）。
+ * 把本地记下的会话补进列表，cwd 为 null 的列表不限项目；服务端已返回的以服务端为准。
+ */
+export function withLocalThreads(incoming: ThreadSummary[], local: readonly ThreadSummary[], cwd: string | null): ThreadSummary[] {
+  const known = new Set(incoming.map((thread) => threadKey(thread.agent, thread.id)))
+  const missing = local.filter((thread) => !known.has(threadKey(thread.agent, thread.id)) && (cwd === null || thread.cwd === cwd))
+  return missing.length ? mergeThreadSummaries([missing, incoming]) : incoming
 }
 
 export function formatTime(ms: number): string {

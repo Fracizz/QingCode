@@ -54,9 +54,9 @@ export function FeedbackRow({
 }
 
 const errorNoteVariants = {
-  default: 'rounded-lg border border-qn-danger/30 px-3 py-2 text-[13px] leading-5',
-  compact: 'rounded-lg px-2.5 py-1.5 text-[12px] leading-4',
-  inline: 'shrink-0 border-b border-qn-border px-3 py-2 text-[12px] leading-5',
+  default: 'rounded-lg border border-qn-danger/30 px-3 py-2 text-ui leading-5',
+  compact: 'rounded-lg px-2.5 py-1.5 text-ui-sm leading-4',
+  inline: 'shrink-0 border-b border-qn-border px-3 py-2 text-ui-sm leading-5',
 }
 
 export function ErrorNote({

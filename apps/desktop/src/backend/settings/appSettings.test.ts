@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_FONT_SIZES } from '../../shared/fontSizes'
+import { DEFAULT_FONT_SIZES, FONT_SIZES_VERSION } from '../../shared/fontSizes'
 import {
   defaultAppSettings,
   isSettingsAgent,
@@ -18,9 +18,13 @@ describe('defaultAppSettings', () => {
       general: {
         sendKey: 'enter',
         autoConnectLast: true,
+        autoArchiveDays: 0,
         defaultAgent: 'codex',
+        globalAccessMode: 'default',
         density: 'comfortable',
+        theme: 'dark',
         ...DEFAULT_FONT_SIZES,
+        fontSizesVersion: FONT_SIZES_VERSION,
       },
       agents: {},
     })
@@ -51,6 +55,7 @@ describe('sanitizeAppSettings', () => {
         sendKey: 'ctrlEnter',
         autoConnectLast: 'yes',
         defaultAgent: 'pi',
+        globalAccessMode: 'bypassPermissions',
         density: 'compact',
         theme: 'light',
         unknown: 1,
@@ -68,10 +73,15 @@ describe('sanitizeAppSettings', () => {
     expect(result.general).toEqual({
       sendKey: 'ctrlEnter',
       autoConnectLast: true,
+      autoArchiveDays: 0,
       defaultAgent: 'pi',
+      globalAccessMode: 'default',
       density: 'compact',
+      theme: 'light',
       ...DEFAULT_FONT_SIZES,
+      fontSizesVersion: FONT_SIZES_VERSION,
     })
+    expect(sanitizeAppSettings({ general: { theme: 'sepia' } }).general.theme).toBe('dark')
     expect(result.agents.local).toEqual({
       codex: { enabled: false, path: 'C:\\bin\\codex.exe', configDir: 'D:\\codex-home' },
       claude: { enabled: true, configDir: 'D:\\claude-home' },
@@ -101,7 +111,7 @@ describe('sanitizeAppSettings', () => {
 describe('sanitizeSettingsPatch', () => {
   it('只保留白名单字段，空字符串用于清空路径', () => {
     const patch = sanitizeSettingsPatch({
-      general: { sendKey: 'ctrlEnter', density: 'bogus', theme: 'dark' },
+      general: { sendKey: 'ctrlEnter', density: 'bogus', theme: 'gray' },
       agents: {
         local: {
           codex: { enabled: false, path: '', configDir: '  D:\\home  ', extra: 1 },
@@ -112,7 +122,7 @@ describe('sanitizeSettingsPatch', () => {
       extra: true,
     })
     expect(patch).toEqual({
-      general: { sendKey: 'ctrlEnter' },
+      general: { sendKey: 'ctrlEnter', theme: 'gray' },
       agents: {
         local: {
           codex: { enabled: false, path: '', configDir: 'D:\\home' },
@@ -130,6 +140,13 @@ describe('sanitizeSettingsPatch', () => {
 })
 
 describe('mergeAppSettings', () => {
+  it('保存有效的归档期限并忽略非法补丁', () => {
+    const enabled = mergeAppSettings(defaultAppSettings(), { general: { autoArchiveDays: 90 } })
+    expect(enabled.general.autoArchiveDays).toBe(90)
+    expect(sanitizeSettingsPatch({ general: { autoArchiveDays: '90' } })).toEqual({})
+    expect(mergeAppSettings(enabled, { general: { autoArchiveDays: 0 } }).general.autoArchiveDays).toBe(0)
+  })
+
   it('general 与 agent 偏好分别深合并，不覆盖未提交的字段', () => {
     const current = sanitizeAppSettings({
       general: { sendKey: 'enter', autoConnectLast: true, defaultAgent: 'claude', density: 'comfortable' },
@@ -139,7 +156,7 @@ describe('mergeAppSettings', () => {
       },
     })
     const next = mergeAppSettings(current, {
-      general: { density: 'compact' },
+      general: { density: 'compact', globalAccessMode: 'restricted' },
       agents: {
         local: { codex: { path: 'D:\\new\\codex.exe' } },
         'ssh-2': { pi: { enabled: true } },
@@ -148,9 +165,13 @@ describe('mergeAppSettings', () => {
     expect(next.general).toEqual({
       sendKey: 'enter',
       autoConnectLast: true,
+      autoArchiveDays: 0,
       defaultAgent: 'claude',
+      globalAccessMode: 'restricted',
       density: 'compact',
+      theme: 'dark',
       ...DEFAULT_FONT_SIZES,
+      fontSizesVersion: FONT_SIZES_VERSION,
     })
     expect(next.agents.local?.codex).toEqual({
       enabled: false,

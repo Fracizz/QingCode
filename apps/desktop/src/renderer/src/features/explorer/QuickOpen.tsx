@@ -80,7 +80,7 @@ export function QuickOpen({
       width="max-w-2xl"
       onClose={onClose}
       footer={
-        <div className="flex items-center justify-between gap-3 text-[12px] text-qn-muted">
+        <div className="flex items-center justify-between gap-3 text-ui-sm text-qn-muted">
           <span>↑↓ 选择 · Enter 打开 · Esc 关闭</span>
           <span className="flex items-center gap-2">
             {search.searching && <Spinner label="搜索中…" />}
@@ -100,7 +100,7 @@ export function QuickOpen({
           onKeyDown={onKeyDown}
         />
         <ErrorNote message={search.error} />
-        <div className="qn-scroll max-h-[360px] overflow-y-auto rounded-lg border border-qn-border bg-black/20" role="listbox" aria-label="匹配文件">
+        <div className="qn-scroll max-h-[360px] overflow-y-auto rounded-lg border border-qn-border bg-qn-inset" role="listbox" aria-label="匹配文件">
           {ranked.length === 0 && (
             <EmptyState>
               {query.trim() === ''
@@ -115,15 +115,15 @@ export function QuickOpen({
               key={hit.path}
               selected={index === selected}
               className={cn(
-                'gap-2 rounded-none px-3 py-1.5 text-[12px]',
-                index === selected ? 'bg-qn-accent/20' : 'hover:bg-white/5',
+                'gap-2 rounded-none px-3 py-1.5 text-ui-sm',
+                index === selected ? 'bg-qn-accent/20' : 'hover:bg-qn-fg/5',
               )}
               onMouseEnter={() => setSelected(index)}
               onClick={() => choose(hit.path)}
             >
               <FileIcon size={13} className="shrink-0 text-qn-muted" />
               <span className="shrink-0 truncate font-medium">{baseName(hit.path)}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-qn-dim">
+              <span className="min-w-0 flex-1 truncate font-mono text-ui-xs text-qn-dim">
                 {hit.relative}
               </span>
             </ListOption>

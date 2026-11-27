@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppSettings, AppSettingsPatch } from '../../../../shared/backendApi'
+import { DEFAULT_FONT_SIZES } from '../../../../shared/fontSizes'
 import { BackendCallError } from '../../lib/backend'
 import { defaultAppSettings, mergeAppSettings } from './settingsModel'
 import { applyDensity, useSettings } from './settingsStore'
@@ -58,7 +59,9 @@ afterEach(() => {
 
 describe('settingsStore', () => {
   it('load 读取设置与应用信息，并写入密度 token 钩子', async () => {
-    stored = mergeAppSettings(stored, { general: { density: 'compact', chatFontSize: 18 } })
+    stored = mergeAppSettings(stored, {
+      general: { density: 'compact', chatFontSize: 18, sidebarFontSize: 17, projectFontSize: 20, sessionFontSize: 22 },
+    })
     await useSettings.getState().load()
     const state = useSettings.getState()
     expect(state.loaded).toBe(true)
@@ -66,7 +69,11 @@ describe('settingsStore', () => {
     expect(state.settings.general.density).toBe('compact')
     expect(state.error).toBeNull()
     expect(setAttribute).toHaveBeenCalledWith('data-density', 'compact')
+    expect(setAttribute).toHaveBeenCalledWith('data-theme', 'dark')
     expect(setProperty).toHaveBeenCalledWith('--qn-chat-font-size', '18px')
+    expect(setProperty).toHaveBeenCalledWith('--qn-sidebar-font-size', '17px')
+    expect(setProperty).toHaveBeenCalledWith('--qn-project-font-size', '20px')
+    expect(setProperty).toHaveBeenCalledWith('--qn-session-font-size', '22px')
   })
 
   it('load 失败时给出友好错误且不覆盖已有值', async () => {
@@ -94,14 +101,21 @@ describe('settingsStore', () => {
       if (method === 'settings.save') throw new BackendCallError('internal', '磁盘已满')
       throw new Error(`未知方法 ${method}`)
     })
-    const update = useSettings.getState().update({ general: { density: 'compact', defaultAgent: 'pi', editorFontSize: 16 } })
-    expect(setProperty).toHaveBeenLastCalledWith('--qn-editor-font-size', '16px')
+    const update = useSettings.getState().update({ general: { density: 'compact', theme: 'light', defaultAgent: 'pi', editorFontSize: 16, sessionFontSize: 24 } })
+    expect(setProperty).toHaveBeenCalledWith('--qn-editor-font-size', '16px')
+    expect(setProperty).toHaveBeenCalledWith('--qn-session-font-size', '24px')
+    expect(setAttribute).toHaveBeenLastCalledWith('data-theme', 'light')
+    setProperty.mockClear()
     await update
     expect(useSettings.getState().settings).toEqual(defaultAppSettings())
     expect(useSettings.getState().error).toContain('磁盘已满')
     expect(useSettings.getState().saving).toBe(false)
-    expect(setAttribute).toHaveBeenLastCalledWith('data-density', 'comfortable')
-    expect(setProperty).toHaveBeenLastCalledWith('--qn-editor-font-size', '12.5px')
+    expect(setAttribute.mock.calls.slice(-2)).toEqual([
+      ['data-density', 'comfortable'],
+      ['data-theme', 'dark'],
+    ])
+    expect(setProperty).toHaveBeenCalledWith('--qn-editor-font-size', `${DEFAULT_FONT_SIZES.editorFontSize}px`)
+    expect(setProperty).toHaveBeenCalledWith('--qn-session-font-size', `${DEFAULT_FONT_SIZES.sessionFontSize}px`)
   })
 
   it('并发编辑中较早的失败不回滚更晚的编辑', async () => {

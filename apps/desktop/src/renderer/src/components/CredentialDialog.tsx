@@ -49,7 +49,7 @@ export function CredentialDialog({
         </div>
       }
     >
-      <div className="mb-3 flex items-center gap-2 rounded-lg border border-qn-border bg-black/20 px-3 py-2 text-xs text-qn-muted">
+      <div className="mb-3 flex items-center gap-2 rounded-lg border border-qn-border bg-qn-inset px-3 py-2 text-ui-sm text-qn-muted">
         <KeyRound size={14} />
         <span className="truncate">{target.username}@{target.host}:{target.port}</span>
       </div>

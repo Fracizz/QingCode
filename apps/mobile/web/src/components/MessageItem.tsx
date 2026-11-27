@@ -1,6 +1,6 @@
 import { Check, ChevronRight, CircleX, Copy, Ellipsis, FileCode, FilePen, GitCompare, Image, ListChecks, Pencil, Quote, Terminal } from 'lucide-react'
-import { editUserText, splitUserText, type ItemView, type UserInput } from '@qn/codex-client'
-import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
+import { editUserText, formatReplyTime, localReplyDay, splitUserText, subscribeToReplyDay, type ItemView, type UserInput } from '@qn/codex-client'
+import { createContext, useContext, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { toolStatus, toolSummary, type ToolItem, type ToolStatus } from '../chatGroups'
@@ -20,10 +20,52 @@ export type FileActions = {
 
 export const FileActionsContext = createContext<FileActions | null>(null)
 
+function ReplyTime({ completedAtMs }: { completedAtMs: number }) {
+  const day = useSyncExternalStore(subscribeToReplyDay, localReplyDay, localReplyDay)
+  const time = formatReplyTime(completedAtMs, day)
+  return time && <time className="mb-1 block text-xs tabular-nums text-qn-muted" dateTime={time.dateTime} title={time.full}>{time.label}</time>
+}
+
 const LinkedImageContext = createContext(false)
 const RASTER_IMAGE_URL = /^data:image\/(?:jpeg|png|gif|webp);base64,/i
 const WEB_IMAGE_URL = /^(?:https?:)?\/\//i
 const MESSAGE_IMAGE_CLASS = 'max-h-36 max-w-full rounded-lg object-contain'
+const TOOL_PAGE_SIZE = 30
+
+function LazyDetails({ className, summary, children }: { className: string; summary: ReactNode; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <details className={className} onToggle={(event) => {
+      if (event.target === event.currentTarget) setExpanded(event.currentTarget.open)
+    }}>
+      {summary}
+      {expanded && children}
+    </details>
+  )
+}
+
+function ToolPages<T>({ items, renderItem, className }: {
+  items: readonly T[]
+  renderItem: (item: T, index: number) => ReactNode
+  className: string
+}) {
+  const [page, setPage] = useState(0)
+  const lastPage = Math.max(0, Math.ceil(items.length / TOOL_PAGE_SIZE) - 1)
+  const currentPage = Math.min(page, lastPage)
+  const start = currentPage * TOOL_PAGE_SIZE
+  return (
+    <>
+      {lastPage > 0 && <div className="flex items-center justify-between gap-1 px-2 text-qn-muted">
+        <Button variant="ghost" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>上一批</Button>
+        <span aria-live="polite">{start + 1}–{Math.min(start + TOOL_PAGE_SIZE, items.length)} / {items.length}</span>
+        <Button variant="ghost" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}>下一批</Button>
+      </div>}
+      <div key={currentPage} className={className}>
+        {items.slice(start, start + TOOL_PAGE_SIZE).map((item, index) => renderItem(item, start + index))}
+      </div>
+    </>
+  )
+}
 
 const urlTransform = (value: string, key: string): string =>
   key === 'src' && RASTER_IMAGE_URL.test(value) ? value : allowLocalUrl(value, defaultUrlTransform(value))
@@ -117,6 +159,34 @@ function Markdown({ text, streaming }: { text: string; streaming: boolean }): Re
   )
 }
 
+function DiffBlock({ text }: { text: string }) {
+  const all = text.split('\n')
+  const lines = all.length > 200 ? all.slice(-200) : all
+  return (
+    <div>
+      {all.length > lines.length && (
+        <div className="mb-1 text-[10px] text-qn-muted">仅显示末尾 {lines.length} 行</div>
+      )}
+      <pre className="qn-pre qn-scroll qn-diff-preview text-[11px] leading-5" tabIndex={0}>
+        {lines.map((line, index) => {
+          const tone = line.startsWith('+')
+            ? 'text-emerald-300'
+            : line.startsWith('-')
+              ? 'text-red-300'
+              : line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++')
+                ? 'text-qn-muted'
+                : ''
+          return (
+            <div key={index} className={tone}>
+              {line || ' '}
+            </div>
+          )
+        })}
+      </pre>
+    </div>
+  )
+}
+
 function MessageActions({ text, onQuote, getPlainText, onEdit, open: controlledOpen, onOpenChange, hideTrigger = false }: {
   text: string; onQuote?: (text: string) => void; getPlainText?: () => string; onEdit?: () => void
   open?: boolean; onOpenChange?: (open: boolean) => void; hideTrigger?: boolean
@@ -133,7 +203,6 @@ function MessageActions({ text, onQuote, getPlainText, onEdit, open: controlledO
     try {
       if (getWindowNativePort()) await callDevice('clipboard.write', { text: value })
       else await navigator.clipboard.writeText(value)
-      setOpen(false)
       setStatus('已复制')
       window.setTimeout(() => setStatus((current) => current === '已复制' ? '' : current), 1600)
     } catch {
@@ -148,7 +217,7 @@ function MessageActions({ text, onQuote, getPlainText, onEdit, open: controlledO
       {open && (
         <Dialog title="消息操作" onClose={() => setOpen(false)}>
           <div className="grid gap-1">
-            {hasText && <SheetAction icon={Copy} onClick={() => void copy(getPlainText ? getPlainText() : text)}>复制</SheetAction>}
+            {hasText && <SheetAction icon={Copy} onClick={() => void copy(getPlainText ? getPlainText() : text)}>{getPlainText ? '复制纯文本' : '复制文本'}</SheetAction>}
             {hasText && getPlainText && <SheetAction icon={FileCode} onClick={() => void copy(text)}>复制 Markdown 源文</SheetAction>}
             {hasText && onQuote && <SheetAction icon={Quote} onClick={() => { onQuote(text.slice(0, 4000)); setOpen(false) }}>引用到对话</SheetAction>}
             {onEdit && <SheetAction icon={Pencil} onClick={() => { setOpen(false); onEdit() }}>编辑并重发</SheetAction>}
@@ -173,11 +242,9 @@ function CommandItem({
   item: Extract<ItemView, { kind: 'command' }>
   onQuote?: (text: string) => void
 }) {
-  const all = item.output.split('\n')
-  const output = all.length > 200 ? all.slice(-200).join('\n') : item.output
   const status = toolStatus(item)
   return (
-    <details className="qn-tool">
+    <LazyDetails className="qn-tool" summary={
       <summary className="qn-tool-row">
         <Terminal size={14} className="shrink-0 text-qn-muted" aria-hidden />
         <span className="min-w-0 flex-1 truncate">{status === 'running' ? '正在运行 ' : '已运行 '}<code className="qn-mono">{item.command || '（命令）'}</code></span>
@@ -185,36 +252,53 @@ function CommandItem({
         <ToolStatusIcon status={status} />
         <ChevronRight size={14} className="qn-tool-chevron shrink-0 text-qn-dim" aria-hidden />
       </summary>
-      <div className="qn-tool-body">
-        <div className="qn-mono whitespace-pre-wrap break-all text-[12px]">$ {item.command || '（命令）'}</div>
-        {item.cwd && <div className="qn-mono mt-1 text-[10px] text-qn-muted">{item.cwd}</div>}
-        {output && (
-          <pre className="qn-pre qn-scroll qn-command-output mt-2 overflow-auto whitespace-pre text-[11px] leading-5">
-            {all.length > 200 && <span className="text-qn-muted">（只显示末尾 200 行）{'\n'}</span>}
-            {output}
-          </pre>
-        )}
-        {!output && <div className="mt-2 text-xs text-qn-muted">{status === 'running' ? '等待输出…' : '无输出'}</div>}
-        <MessageActions text={item.command || item.output} onQuote={onQuote} />
-      </div>
-    </details>
+    }>
+      <CommandDetails item={item} status={status} onQuote={onQuote} />
+    </LazyDetails>
+  )
+}
+
+function CommandDetails({ item, status, onQuote }: {
+  item: Extract<ItemView, { kind: 'command' }>
+  status: ToolStatus
+  onQuote?: (text: string) => void
+}) {
+  const text = item.output
+  const all = text.split('\n')
+  const output = all.length > 200 ? all.slice(-200).join('\n') : text
+  return (
+    <div className="qn-tool-body">
+      <div className="qn-mono whitespace-pre-wrap break-all text-[12px]">$ {item.command || '（命令）'}</div>
+      {item.cwd && <div className="qn-mono mt-1 text-[10px] text-qn-muted">{item.cwd}</div>}
+      {output && (
+        <pre className="qn-pre qn-scroll qn-command-output mt-2 overflow-auto whitespace-pre text-[11px] leading-5">
+          {all.length > 200 && <span className="text-qn-muted">（只显示末尾 200 行）{'\n'}</span>}
+          {output}
+        </pre>
+      )}
+      {!output && <div className="mt-2 text-xs text-qn-muted">{status === 'running' ? '等待输出…' : '无输出'}</div>}
+      <MessageActions text={item.command || text} onQuote={onQuote} />
+    </div>
   )
 }
 
 /** 连续工具步骤折叠后的摘要行，展开后逐条显示。 */
-export function ToolGroup({ items, onQuote }: { items: ToolItem[]; onQuote: (text: string) => void }) {
+export function ToolGroup({ items, onQuote, trail = false }: { items: ToolItem[]; onQuote: (text: string) => void; trail?: boolean }) {
   const running = items.some((item) => toolStatus(item) === 'running')
+  const failed = items.some((item) => toolStatus(item) === 'failed')
   return (
-    <details className="qn-tool-group">
+    <LazyDetails className={`qn-tool-group${trail ? ' qn-tool-trail' : ''}${failed ? ' qn-tool-failed' : ''}`} summary={
       <summary className="qn-tool-row">
-        {running ? <LoadingIcon className="text-qn-accent" /> : <ListChecks size={14} className="shrink-0 text-qn-muted" aria-hidden />}
+        {running ? <LoadingIcon className="text-qn-accent" />
+          : failed ? <CircleX size={14} className="shrink-0 text-qn-danger" aria-hidden />
+            : <ListChecks size={14} className="shrink-0 text-qn-muted" aria-hidden />}
         <span className="min-w-0 flex-1 truncate">{toolSummary(items)}</span>
         <ChevronRight size={14} className="qn-tool-chevron shrink-0 text-qn-dim" aria-hidden />
       </summary>
-      <div className="qn-tool-group-body qn-scroll mt-1 space-y-1">
-        {items.map((item) => <MessageItem key={item.id} item={item} onQuote={onQuote} />)}
-      </div>
-    </details>
+    }>
+      <ToolPages items={items} className="qn-tool-group-body qn-scroll mt-1 space-y-1"
+        renderItem={(item) => <MessageItem key={item.id} item={item} onQuote={onQuote} />} />
+    </LazyDetails>
   )
 }
 
@@ -249,28 +333,42 @@ function splitPath(path: string): { dir: string; name: string } {
 
 function FileChangeItem({
   item,
+  onQuote,
 }: {
   item: Extract<ItemView, { kind: 'fileChange' }>
   onQuote?: (text: string) => void
 }) {
-  const actions = useContext(FileActionsContext)
   const status = toolStatus(item)
-  const files = item.changes.filter((change) => change.kind !== 'output')
-  // 手机屏幕有限，只列文件清单；差异点右侧按钮全屏查看。
+  const fileCount = item.changes.filter((change) => change.kind !== 'output').length
   return (
-    <div className="qn-tool qn-tool-open qn-file-change">
-      <div className="qn-file-change-head">
+    <LazyDetails className="qn-tool qn-file-change" summary={
+      <summary className="qn-file-change-head qn-tool-row">
         <FilePen size={14} className="shrink-0 text-qn-muted" aria-hidden />
         <span className="min-w-0 flex-1 truncate">
           {status === 'running' ? '正在改动' : status === 'failed' ? '改动未完成' : '已改动'}
-          {files.length > 0 && ` ${files.length} 个文件`}
+          {fileCount > 0 && ` ${fileCount} 个文件`}
         </span>
         <ToolStatusIcon status={status} />
-      </div>
+        <ChevronRight size={14} className="qn-tool-chevron shrink-0 text-qn-dim" aria-hidden />
+      </summary>
+    }>
+      <FileChangeDetails item={item} onQuote={onQuote} />
+    </LazyDetails>
+  )
+}
+
+function FileChangeDetails({ item, onQuote }: {
+  item: Extract<ItemView, { kind: 'fileChange' }>
+  onQuote?: (text: string) => void
+}) {
+  const actions = useContext(FileActionsContext)
+  return (
+    <div className="qn-tool-body">
       {item.changes.length === 0 && <div className="px-1 pb-1 text-qn-muted">等待改动内容…</div>}
-      {item.changes.map((change, index) => {
+      <ToolPages items={item.changes} className="space-y-2" renderItem={(change, index) => {
         const kind = CHANGE_KIND[change.kind.toLowerCase()]
-        const stat = diffStat(change.diff)
+        const diff = change.diff ?? undefined
+        const stat = diffStat(diff)
         const { dir, name } = splitPath(change.path)
         const linked = Boolean(actions && change.path && change.kind !== 'output')
         return (
@@ -294,14 +392,16 @@ function FileChangeItem({
               )}
               {linked && actions && (
                 <Button variant="ghost" className="qn-file-change-diff" aria-label={`查看 ${name} 的差异`}
-                  onClick={() => actions.openDiff(resolvePath(change.path, actions.cwd), typeof change.diff === 'string' ? change.diff : undefined)}>
+                  onClick={() => actions.openDiff(resolvePath(change.path, actions.cwd), diff)}>
                   <GitCompare size={15} aria-hidden />
                 </Button>
               )}
             </div>
+            {diff && <DiffBlock text={diff} />}
           </div>
         )
-      })}
+      }} />
+      <MessageActions text={item.changes.map((change) => change.path).join('\n')} onQuote={onQuote} />
     </div>
   )
 }
@@ -372,6 +472,7 @@ export function MessageItem({
   onQuote,
   agentName,
   active,
+  showStreamingDots,
   onResend,
   showActions = true,
 }: {
@@ -379,6 +480,7 @@ export function MessageItem({
   onQuote?: (text: string) => void
   agentName?: string
   active?: boolean
+  showStreamingDots?: boolean
   onResend?: Resend
   /** 只在每轮最后一条回复下常驻操作入口；中间的过程说明不再逐条挂「⋯」。 */
   showActions?: boolean
@@ -390,8 +492,8 @@ export function MessageItem({
     case 'agent':
       return (
         <div className="px-1 py-1" aria-label={agentName}>
-          {/* 流式光标画在最后一个块的行尾（CSS），不单独占一行。 */}
-          <div ref={markdownRef} className={`qn-markdown break-words text-sm${item.streaming ? ' qn-streaming' : ''}`}>
+          {!item.streaming && item.completedAtMs !== undefined && item.text.trim() && <ReplyTime completedAtMs={item.completedAtMs} />}
+          <div ref={markdownRef} className={`qn-markdown break-words text-sm${item.streaming && showStreamingDots ? ' qn-streaming' : ''}`}>
             <Markdown text={item.text} streaming={item.streaming === true} />
           </div>
           {showActions && !item.streaming && (
@@ -401,16 +503,17 @@ export function MessageItem({
       )
     case 'reasoning':
       return (
-        <details className="rounded-xl border border-qn-border bg-black/10 px-3 py-2 text-xs">
+        <LazyDetails className="rounded-xl border border-qn-border bg-black/10 px-3 py-2 text-xs" summary={
           <summary className="flex items-center gap-2 text-qn-muted">
             <span>◌ 推理摘要</span>
             {item.streaming && <Badge tone="accent">进行中</Badge>}
           </summary>
+        }>
           <div className="mt-2 whitespace-pre-wrap break-words leading-5 text-qn-text/90">
             {item.summary || '（暂无摘要）'}
           </div>
           <MessageActions text={item.summary} onQuote={onQuote} />
-        </details>
+        </LazyDetails>
       )
     case 'command':
       return <CommandItem item={item} onQuote={onQuote} />
@@ -418,8 +521,8 @@ export function MessageItem({
       return <FileChangeItem item={item} onQuote={onQuote} />
     case 'subagent':
       return (
-        <SubagentDetails item={item} renderItem={(child) => (
-          <FileActionsContext.Provider key={child.id} value={null}><MessageItem item={child} /></FileActionsContext.Provider>
+        <SubagentDetails item={item} renderItem={(child, showDots) => (
+          <FileActionsContext.Provider key={child.id} value={null}><MessageItem item={child} showStreamingDots={showDots} /></FileActionsContext.Provider>
         )} />
       )
     case 'other':

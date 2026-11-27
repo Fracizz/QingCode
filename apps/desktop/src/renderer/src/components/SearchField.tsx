@@ -29,7 +29,7 @@ export function SearchField({
         aria-label={label}
         className={cn(
           'min-w-0 flex-1 placeholder:text-qn-dim',
-          boxed ? 'qn-input pl-8' : 'bg-transparent text-[13px] text-qn-text outline-none',
+          boxed ? 'qn-input pl-8' : 'bg-transparent text-ui text-qn-text outline-none',
           onClear && 'pr-8',
           inputClassName,
         )}

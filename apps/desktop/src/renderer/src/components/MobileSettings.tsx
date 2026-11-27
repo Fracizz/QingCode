@@ -17,13 +17,13 @@ import { useMobile } from '../store/mobile'
 import { FeedbackRow } from './FeedbackRow'
 import { FormField } from './FormField'
 import { Select, TabsContent, TabsList, TabsRoot, TabsTrigger } from './primitives'
-import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Modal, Spinner } from './ui'
+import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Spinner } from './ui'
 
 function Section({ title, action, children }: { title: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="space-y-2.5">
       <div className="flex min-h-8 items-center justify-between gap-2">
-        <h3 className="flex items-center gap-2 text-[13px] font-medium text-qn-text">{title}</h3>
+        <h3 className="flex items-center gap-2 text-ui font-medium text-qn-text">{title}</h3>
         {action}
       </div>
       {children}
@@ -31,11 +31,7 @@ function Section({ title, action, children }: { title: ReactNode; action?: React
   )
 }
 
-/**
- * 手机连接设置。内容较多，按"连接设置 / 连接地址 / 已配对设备 / 安全"分页，
- * 对话框高度固定在可视范围内，不再出现整页长滚动。
- */
-export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
+export function MobileSettings() {
   const settings = useMobile((s) => s.settings)
   const devices = useMobile((s) => s.devices)
   const busy = useMobile((s) => s.busy)
@@ -68,7 +64,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
 
   useEffect(() => setPairQr(null), [settings?.fingerprint])
 
-  // 手动复制的明文含配对密码，关闭面板后不再留在内存里。
+  // 离开设置分类时清理含配对密码的连接信息。
   useEffect(() => () => useMobile.getState().clearManualCopy(), [])
 
   // 只在首次拿到设置时初始化草稿，刷新状态不覆盖尚未保存的编辑。
@@ -148,32 +144,12 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal
-      title="手机连接"
-      width="max-w-2xl"
-      onClose={onClose}
-      bodyClassName="pt-1"
-      footer={
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-[12px] text-qn-dim">
-            {dirty ? '有未保存的修改' : '电脑需保持运行，手机才能连接。'}
-          </span>
-          <div className="flex shrink-0 gap-2">
-            <button className="qn-button-subtle" type="button" onClick={onClose}>
-              关闭
-            </button>
-            <button className="qn-button" type="submit" form="mobile-settings-form" disabled={!draft || busy !== null}>
-              保存设置
-            </button>
-          </div>
-        </div>
-      }
-    >
-      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-white/[0.03] px-3 py-2">
+    <div>
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-qn-border bg-qn-panel px-3 py-2">
         <Smartphone size={16} className="shrink-0 text-qn-accent" />
-        <span className="text-[13px]">手机网关</span>
+        <span className="text-ui">手机网关</span>
         <Badge tone={status.tone}>{status.label}</Badge>
-        <span className="font-mono text-[12px] text-qn-dim">0.0.0.0:{settings?.port ?? 38500}</span>
+        <span className="font-mono text-ui-sm text-qn-muted">0.0.0.0:{settings?.port ?? 38500}</span>
         <span className="min-w-0 flex-1" />
         {busy && <Spinner label={busy} />}
         <IconButton label="刷新状态" className="h-7 w-7" disabled={busy !== null} onClick={() => void load()}>
@@ -181,27 +157,27 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
         </IconButton>
       </div>
       <div className="space-y-2">
-        {status.detail && <p className="text-[12px] text-qn-muted">{status.detail}</p>}
+        {status.detail && <p className="text-ui-sm text-qn-muted">{status.detail}</p>}
         {settings?.error && <ErrorNote message={settings.error} onRetry={() => void retry()} />}
         <ErrorNote message={error} onClose={dismissError} />
         <ErrorNote message={formError} onClose={() => setFormError(null)} />
         <FeedbackRow
           message={notice}
-          className="rounded-lg border border-qn-warn/40 bg-qn-warn/10 px-3 py-2 text-[13px] leading-5 text-qn-warn"
+          className="rounded-lg border border-qn-warn/40 bg-qn-warn/10 px-3 py-2 text-ui leading-5 text-qn-warn"
           onClose={dismissNotice}
         />
       </div>
 
-      <form id="mobile-settings-form" onSubmit={(event) => void submit(event)}>
+      <form onSubmit={(event) => void submit(event)}>
         <TabsRoot value={tab} onValueChange={setTab}>
-          <TabsList className="mb-4 mt-2 border-b border-qn-border pb-2">
+          <TabsList aria-label="手机连接设置" className="mb-4 mt-2 border-b border-qn-border pb-2">
             <TabsTrigger value="settings">连接设置</TabsTrigger>
             <TabsTrigger value="addresses">连接地址</TabsTrigger>
             <TabsTrigger value="devices">已配对设备（{devices.length}）</TabsTrigger>
             <TabsTrigger value="security">安全</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="settings" className="min-h-[260px] space-y-4">
+          <TabsContent value="settings" className="space-y-4">
             <Checkbox checked={draft?.enabled ?? false} onChange={(value) => patch({ enabled: value })}>
               启用手机连接（关闭后手机无法连接这台电脑）
             </Checkbox>
@@ -244,7 +220,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               </FormField>
             </div>
             <Section title="导入到手机" action={
-              <button type="button" className="text-[12px] text-qn-accent hover:underline" onClick={() => setTab('addresses')}>
+              <button type="button" className="text-ui-sm text-qn-accent hover:underline" onClick={() => setTab('addresses')}>
                 管理地址
               </button>
             }>
@@ -274,7 +250,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
                   <QrCode size={16} />
                 </IconButton>
               </div>
-              <p className="text-[12px] text-qn-muted">
+              <p className="text-ui-sm text-qn-muted">
                 {dirty || !settings?.hasPassword
                   ? '请先保存配对设置，再复制连接信息。'
                   : '在手机版选择「从剪贴板导入」。信息含配对密码，请只发给自己。'}
@@ -285,19 +261,19 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
                     className="h-52 w-52 bg-white" shapeRendering="crispEdges">
                     <path fill="#000" d={pairQr.rows.map((row, y) => Array.from(row, (module, x) => module === '1' ? `M${x} ${y}h1v1h-1z` : '').join('')).join('')} />
                   </svg>
-                  <p className="text-[12px] text-qn-muted">二维码含配对密码，请用自己的手机扫描。</p>
+                  <p className="text-ui-sm text-qn-muted">二维码含配对密码，请用自己的手机扫描。</p>
                 </div>
               )}
               {manualCopy && (
                 <div className="space-y-1.5">
                   <textarea
                     aria-label="可手动复制的连接信息"
-                    className="qn-input h-24 resize-none font-mono text-[12px]"
+                    className="qn-input h-24 resize-none font-mono text-ui-sm"
                     readOnly
                     value={manualCopy}
                     onFocus={(event) => event.currentTarget.select()}
                   />
-                  <button className="qn-button-subtle px-2.5 py-1 text-[12px]" type="button" onClick={clearManualCopy}>
+                  <button className="qn-button-subtle px-2.5 py-1 text-ui-sm" type="button" onClick={clearManualCopy}>
                     收起
                   </button>
                 </div>
@@ -305,7 +281,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
             </Section>
           </TabsContent>
 
-          <TabsContent value="addresses" className="min-h-[260px] space-y-5">
+          <TabsContent value="addresses" className="space-y-5">
             <Section
               title={
                 <>
@@ -316,22 +292,22 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               {lanOptions.length > 0 ? (
                 <ul className="flex flex-wrap gap-1.5">
                   {lanOptions.map((option) => (
-                    <li key={option.value} className="rounded-md bg-white/[0.05] px-2 py-1 font-mono text-[12px]">
+                    <li key={option.value} className="rounded-md bg-qn-fg/[0.05] px-2 py-1 font-mono text-ui-sm">
                       {option.value}
                     </li>
                   ))}
                 </ul>
               ) : (
-                <div className="text-[12px] text-qn-muted">未检测到局域网 IPv4，可改用下面的对外地址。</div>
+                <div className="text-ui-sm text-qn-muted">未检测到局域网 IPv4，可改用下面的对外地址。</div>
               )}
             </Section>
 
-            <Section title="对外地址" action={<span className="font-mono text-[12px] text-qn-dim">host:port</span>}>
+            <Section title="对外地址" action={<span className="font-mono text-ui-sm text-qn-dim">host:port</span>}>
               {draft && draft.publicAddresses.length > 0 && (
                 <ul className="space-y-1">
                   {draft.publicAddresses.map((value, index) => (
-                    <li key={`${value}-${index}`} className="flex items-center gap-2 rounded-lg bg-white/[0.04] py-0.5 pl-3 pr-1">
-                      <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{value}</span>
+                    <li key={`${value}-${index}`} className="flex items-center gap-2 rounded-lg bg-qn-fg/[0.04] py-0.5 pl-3 pr-1">
+                      <span className="min-w-0 flex-1 truncate font-mono text-ui-sm">{value}</span>
                       <IconButton label="删除对外地址" danger className="h-7 w-7" onClick={() => removeAddress(index)}>
                         <Trash2 size={14} />
                       </IconButton>
@@ -342,6 +318,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               <div className="flex gap-2">
                 <input
                   className="qn-input min-w-0 flex-1"
+                  aria-label="对外地址"
                   placeholder="frp.example.com:7001"
                   value={addressInput}
                   onChange={(event) => {
@@ -359,11 +336,11 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
                   <Plus size={14} /> 添加
                 </button>
               </div>
-              <p className="text-[12px] text-qn-dim">frp / 端口转发等公网地址，填手机实际访问的地址和端口；保存后生效。</p>
+              <p className="text-ui-sm text-qn-dim">frp / 端口转发等公网地址，填手机实际访问的地址和端口；保存后生效。</p>
             </Section>
           </TabsContent>
 
-          <TabsContent value="devices" className="min-h-[260px]">
+          <TabsContent value="devices">
             <Section
               title={`已配对设备（${devices.length}）`}
               action={
@@ -377,17 +354,17 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               ) : (
                 <ul className="space-y-1.5">
                   {devices.map((device) => (
-                    <li key={device.id} className="flex items-center gap-3 rounded-lg bg-white/[0.04] px-3 py-2">
+                    <li key={device.id} className="flex items-center gap-3 rounded-lg bg-qn-fg/[0.04] px-3 py-2">
                       <Smartphone size={16} className="shrink-0 text-qn-muted" />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-[13px]">{device.name}</div>
-                        <div className="truncate text-[12px] text-qn-dim">
+                        <div className="truncate text-ui">{device.name}</div>
+                        <div className="truncate text-ui-sm text-qn-dim">
                           配对 {formatDeviceTime(device.pairedAt)} · 最近在线 {formatDeviceTime(device.lastSeenAt)} ·{' '}
                           {device.lastIp || '未知 IP'}
                         </div>
                       </div>
                       <button
-                        className="qn-button-subtle shrink-0 px-2.5 py-1 text-[12px] text-qn-danger"
+                        className="qn-button-subtle shrink-0 px-2.5 py-1 text-ui-sm text-qn-danger"
                         type="button"
                         disabled={busy !== null}
                         onClick={() => void revoke(device.id)}
@@ -401,7 +378,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
             </Section>
           </TabsContent>
 
-          <TabsContent value="security" className="min-h-[260px]">
+          <TabsContent value="security">
             <Section
               title={
                 <>
@@ -410,7 +387,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
               }
               action={
                 <button
-                  className="qn-button-subtle px-2.5 py-1 text-[12px]"
+                  className="qn-button-subtle px-2.5 py-1 text-ui-sm"
                   type="button"
                   disabled={busy !== null || confirmRegen}
                   onClick={() => setConfirmRegen(true)}
@@ -419,16 +396,16 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
                 </button>
               }
             >
-              <div className="break-all rounded-lg bg-white/[0.04] px-3 py-2 font-mono text-[12px] leading-5 text-qn-muted">
+              <div className="break-all rounded-lg bg-qn-fg/[0.04] px-3 py-2 font-mono text-ui-sm leading-5 text-qn-muted">
                 {settings?.fingerprint ? groupFingerprint(settings.fingerprint) : '尚未生成'}
               </div>
-              <p className="text-[12px] text-qn-dim">手机首次连接时会核对该指纹，防止中间人冒充这台电脑。</p>
+              <p className="text-ui-sm text-qn-dim">手机首次连接时会核对该指纹，防止中间人冒充这台电脑。</p>
               {confirmRegen && (
-                <div className="space-y-2 rounded-lg border border-qn-danger/40 bg-qn-danger/10 p-3 text-[13px]">
+                <div className="space-y-2 rounded-lg border border-qn-danger/40 bg-qn-danger/10 p-3 text-ui">
                   <p>重新生成会更换证书指纹并解除所有已配对设备，已保存的手机连接将失效，须从电脑重新复制连接信息。</p>
                   <div className="flex gap-2">
                     <button
-                      className="qn-button px-3 py-1 text-[12px]"
+                      className="qn-button px-3 py-1 text-ui-sm"
                       type="button"
                       disabled={busy !== null}
                       onClick={() => {
@@ -438,7 +415,7 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
                     >
                       确认重新生成
                     </button>
-                    <button className="qn-button-subtle px-3 py-1 text-[12px]" type="button" onClick={() => setConfirmRegen(false)}>
+                    <button className="qn-button-subtle px-3 py-1 text-ui-sm" type="button" onClick={() => setConfirmRegen(false)}>
                       取消
                     </button>
                   </div>
@@ -447,7 +424,15 @@ export function MobileSettingsDialog({ onClose }: { onClose: () => void }) {
             </Section>
           </TabsContent>
         </TabsRoot>
+        <div className="mt-4 flex items-center justify-between gap-3 border-t border-qn-border pt-4">
+          <span className="text-ui-sm text-qn-muted" role="status">
+            {dirty ? '有未保存的修改' : '电脑需保持运行，手机才能连接。'}
+          </span>
+          <button className="qn-button shrink-0" type="submit" disabled={!draft || busy !== null}>
+            保存设置
+          </button>
+        </div>
       </form>
-    </Modal>
+    </div>
   )
 }

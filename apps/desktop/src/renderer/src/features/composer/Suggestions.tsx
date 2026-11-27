@@ -30,7 +30,7 @@ export function Suggestions({
       <div ref={listRef} className={cn('qn-scroll max-h-[min(320px,45vh)] overflow-y-auto p-1.5', listClassName)}>
         {children}
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-qn-border px-3 py-1.5 text-[11px] text-qn-dim">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-qn-border px-3 py-1.5 text-ui-xs text-qn-dim">
         <span>↑↓ 选择</span>
         <span>Enter / Tab {confirmHint}</span>
         <span>Esc 关闭</span>

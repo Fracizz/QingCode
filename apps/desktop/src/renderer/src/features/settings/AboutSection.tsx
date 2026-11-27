@@ -6,10 +6,10 @@ export function AboutSection() {
 
   return (
     <div>
-      <SettingRow title="应用名称与版本" description="版本由桌面端 backend 提供。">
-        <div className="text-[13px] text-qn-text">
+      <SettingRow title="应用名称与版本">
+        <div className="text-ui text-qn-text">
           {appInfo?.name ?? 'QingCode Next'}
-          <span className="ml-2 font-mono text-[12px] text-qn-muted">
+          <span className="ml-2 font-mono text-ui-sm text-qn-muted">
             v{appInfo?.version ?? '—'}
           </span>
         </div>

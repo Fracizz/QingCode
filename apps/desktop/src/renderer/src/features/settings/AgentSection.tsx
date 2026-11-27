@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { WorkspaceMethods } from '@qn/protocol'
-import { RotateCw } from 'lucide-react'
 import type {
   AgentPrefs,
   SettingsAgentKind,
   Target,
 } from '../../../../shared/backendApi'
+import { RefreshIcon } from '../../components/LoadingIcon'
 import { Badge, Checkbox, ErrorNote, Spinner } from '../../components/ui'
 import { useTargets } from '../../store/targets'
 import { friendlyError } from '../../lib/errors'
@@ -62,10 +62,10 @@ function AgentRow({
   }
 
   return (
-    <div className="rounded-xl border border-qn-border bg-white/[0.02] p-3">
+    <div className="rounded-xl border border-qn-border bg-qn-fg/[0.02] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <span className="text-[13px] font-medium text-qn-text">{info.label}</span>
+          <span className="text-ui font-medium text-qn-text">{info.label}</span>
           <Badge tone={prefs.enabled ? 'ok' : 'muted'}>{prefs.enabled ? '已启用' : '已停用'}</Badge>
         </div>
         <Checkbox checked={prefs.enabled} onChange={(value) => onPatch({ enabled: value })}>
@@ -105,35 +105,35 @@ function AgentRow({
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          className="qn-button-subtle flex items-center gap-1.5 px-2.5 py-1 text-[12px]"
+          className="qn-button-subtle flex items-center gap-1.5 px-2.5 py-1 text-ui-sm"
           disabled={!connected || probe.busy}
           onClick={() => void detect()}
         >
-          <RotateCw size={13} className={probe.busy ? 'animate-spin' : undefined} />
+          <RefreshIcon size={13} loading={probe.busy} />
           检测
         </button>
         {probe.busy && <Spinner label="正在运行 --version…" />}
         {!probe.busy && probe.result?.found && (
-          <span className="min-w-0 break-all text-[12px] text-qn-ok">
+          <span className="min-w-0 break-all text-ui-sm text-qn-ok">
             已找到 {probe.result.version ? `· ${probe.result.version}` : '· 未返回版本号'} · {probe.result.path}
           </span>
         )}
         {!probe.busy && probe.result && !probe.result.found && (
-          <span className="min-w-0 text-[12px] text-qn-danger">
+          <span className="min-w-0 text-ui-sm text-qn-danger">
             未找到：{probe.result.error ?? '未安装或路径不正确'}
           </span>
         )}
         {!probe.busy && !probe.result && !connected && (
-          <span className="text-[12px] text-qn-dim">连接后检测</span>
+          <span className="text-ui-sm text-qn-dim">连接后检测</span>
         )}
       </div>
       {probe.error && <ErrorNote message={probe.error} onClose={() => setProbe({ busy: false })} />}
 
       {info.id === 'pi' && (
-        <p className="mt-2 text-[12px] text-qn-warn">pi 不经审批直接执行工具。</p>
+        <p className="mt-2 text-ui-sm text-qn-warn">pi 不经审批直接执行工具。</p>
       )}
       {info.configEnv && (
-        <p className="mt-2 text-[12px] leading-5 text-qn-dim">
+        <p className="mt-2 text-ui-sm leading-5 text-qn-dim">
           只保存 {info.configEnv} 路径字符串，不读取其中内容，也不提供自动切换 / 轮换。
         </p>
       )}
@@ -167,7 +167,7 @@ export function AgentSection({ visible }: { visible: (itemId: string) => boolean
               <li key={info.id}>
                 <span className="text-qn-text">{info.label}：</span>
                 {info.loginPrefix}{' '}
-                <code className="rounded-md bg-white/[0.06] px-1 py-0.5 font-mono text-[12px]">
+                <code className="rounded-md bg-qn-fg/[0.06] px-1 py-0.5 font-mono text-ui-sm">
                   {info.loginCommand}
                 </code>{' '}
                 {info.loginSuffix}
@@ -190,8 +190,8 @@ export function AgentSection({ visible }: { visible: (itemId: string) => boolean
             return (
               <section key={target.id} className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-[13px] font-medium text-qn-text">{target.name}</h3>
-                  <span className="truncate text-[12px] text-qn-dim">{targetLabel(target)}</span>
+                  <h3 className="text-ui font-medium text-qn-text">{target.name}</h3>
+                  <span className="truncate text-ui-sm text-qn-dim">{targetLabel(target)}</span>
                   {!connected && <Badge tone="muted">连接后检测</Badge>}
                 </div>
                 <div className="space-y-2">
@@ -210,7 +210,7 @@ export function AgentSection({ visible }: { visible: (itemId: string) => boolean
             )
           })}
           {targets.length === 0 && (
-            <p className="text-[12px] text-qn-dim">正在读取目标列表…</p>
+            <p className="text-ui-sm text-qn-dim">正在读取目标列表…</p>
           )}
         </div>
       )}

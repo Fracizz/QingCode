@@ -23,6 +23,8 @@ export type ConnectCredentials = {
 type TargetsState = {
   targets: Target[]
   selectedId: string
+  /** 侧栏里铺开的目标（本机始终显示，不在列表里），用户可同时操作多个远程连接。 */
+  sidebarIds: string[]
   states: Record<string, TargetStateEvent>
   connectErrors: Record<string, string>
   prompts: HostKeyPrompt[]
@@ -32,12 +34,15 @@ type TargetsState = {
   load: () => Promise<void>
   restoreLast: () => void
   select: (id: string) => void
+  showInSidebar: (id: string) => void
+  hideFromSidebar: (id: string) => void
   save: (input: SshTargetInput | DirectTargetInput) => Promise<SshTarget | DirectTarget>
   test: (input: SshTargetInput, credentials: ConnectCredentials) => Promise<TargetProbe>
   enableDirect: (params: EnableDirectParams) => Promise<SshTarget>
   disableDirect: (id: string, credentials?: { password?: string; passphrase?: string }) => Promise<SshTarget>
   remove: (id: string) => Promise<void>
   connect: (id: string, credentials?: ConnectCredentials, startup?: boolean) => Promise<void>
+  forceUpdate: (id: string) => Promise<void>
   disconnect: (id: string) => Promise<void>
   forgetSecret: (id: string) => Promise<void>
   respondHostKey: (promptId: string, accept: boolean) => Promise<void>
@@ -47,10 +52,34 @@ type TargetsState = {
 let subscribed = false
 const connecting = new Map<string, { startup: boolean }>()
 const LAST_TARGET_KEY = 'qn-last-target'
+const SIDEBAR_KEY = 'qn-sidebar-targets'
+
+function readSidebarIds(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(SIDEBAR_KEY) ?? '[]')
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id !== 'local') : []
+  } catch {
+    return []
+  }
+}
+
+function saveSidebarIds(ids: string[]): void {
+  try {
+    localStorage.setItem(SIDEBAR_KEY, JSON.stringify(ids))
+  } catch {
+    // 存储不可用时只在本次运行内生效。
+  }
+}
+
+/** 侧栏要铺开的目标：本机 + 用户加入的 + 当前活动目标，按目标列表顺序。 */
+export function sidebarTargets(targets: Target[], sidebarIds: string[], selectedId: string): Target[] {
+  return targets.filter((target) => target.id === 'local' || target.id === selectedId || sidebarIds.includes(target.id))
+}
 
 export const useTargets = create<TargetsState>((set, get) => ({
   targets: [],
   selectedId: 'local',
+  sidebarIds: readSidebarIds(),
   states: {},
   connectErrors: {},
   prompts: [],
@@ -102,17 +131,33 @@ export const useTargets = create<TargetsState>((set, get) => ({
       return
     }
     if (!id || id === 'local' || !get().targets.some((target) => target.id === id)) return
+    get().showInSidebar(id)
     set({ selectedId: id })
     void get().connect(id, undefined, true)
   },
 
   select: (id) => {
+    get().showInSidebar(id)
     set({ selectedId: id })
     try {
       localStorage.setItem(LAST_TARGET_KEY, id)
     } catch {
       // 存储不可用时，当前窗口仍可切换目标。
     }
+  },
+
+  showInSidebar: (id) => {
+    if (id === 'local' || get().sidebarIds.includes(id)) return
+    const sidebarIds = [...get().sidebarIds, id]
+    set({ sidebarIds })
+    saveSidebarIds(sidebarIds)
+  },
+
+  hideFromSidebar: (id) => {
+    const sidebarIds = get().sidebarIds.filter((item) => item !== id)
+    set({ sidebarIds })
+    saveSidebarIds(sidebarIds)
+    if (get().selectedId === id) get().select('local')
   },
 
   save: async (input) => {
@@ -147,6 +192,7 @@ export const useTargets = create<TargetsState>((set, get) => ({
 
   remove: async (id) => {
     await call('targets.remove', { id })
+    get().hideFromSidebar(id)
     await get().load()
   },
 
@@ -168,6 +214,14 @@ export const useTargets = create<TargetsState>((set, get) => ({
       }))
     } finally {
       if (connecting.get(id) === attempt) connecting.delete(id)
+    }
+  },
+
+  forceUpdate: async (id) => {
+    try {
+      await call('target.forceUpdate', { id })
+    } catch (err) {
+      set({ notice: friendlyError(err, '强制更新 Server 失败') })
     }
   },
 

@@ -10,6 +10,8 @@ import type {
   ThreadResumeResponse,
   ThreadStartParams,
   ThreadStartResponse,
+  ThreadItemsListResponse,
+  ThreadTurnsListResponse,
   Turn,
   TurnInterruptResponse,
   TurnStartResponse,
@@ -17,7 +19,7 @@ import type {
   UserInput,
 } from './codex-types'
 import { CodexRpcError, type CodexRpc } from './rpc'
-import { emptyState, loadThread } from './conversation'
+import { emptyState, loadRecentThreadHistory } from './conversation'
 
 export type CodexRpcLike = Pick<CodexRpc, 'request'>
 
@@ -25,6 +27,7 @@ export async function listThreads(
   rpc: CodexRpcLike,
   cwd?: string | string[] | null,
   limit?: number,
+  options?: { archived?: boolean },
 ): Promise<ThreadListResponse> {
   if (limit !== undefined && limit <= 0) return { data: [], nextCursor: null, backwardsCursor: null }
   const threads = new Map<string, Thread>()
@@ -35,6 +38,7 @@ export async function listThreads(
     const page: ThreadListResponse = await rpc.request('thread/list', {
       ...(cwd === undefined ? {} : { cwd }),
       ...(limit === undefined ? {} : { limit: limit - threads.size }),
+      ...(options?.archived === undefined ? {} : { archived: options.archived }),
       ...(nextCursor ? { cursor: nextCursor } : {}),
       sortKey: 'updated_at',
     })
@@ -137,12 +141,129 @@ export function readThread(
   ), isCurrent)
 }
 
-export async function readSubagentThread(rpc: CodexRpcLike, threadId: string) {
-  const { thread } = await readThread(rpc, threadId)
-  if (thread?.id !== threadId) throw new Error('返回的子代理会话与请求不一致')
+export type ThreadHistoryCursor =
+  | { turns: string }
+  | { turn: Turn; items: string; nextTurn: string | null }
+
+export type ThreadHistoryPage = { turns: Turn[]; earlier: ThreadHistoryCursor | null }
+
+function assertHistoryCurrent(isCurrent?: () => boolean): void {
+  if (isCurrent && !isCurrent()) throw new Error('已取消加载会话历史')
+}
+
+async function fitHistoryPage<T>(limit: number, request: (limit: number) => Promise<T>, isCurrent?: () => boolean): Promise<T> {
+  for (;;) {
+    assertHistoryCurrent(isCurrent)
+    try {
+      const page = await request(limit)
+      assertHistoryCurrent(isCurrent)
+      return page
+    } catch (error) {
+      if (!isOversizeHistoryResponse(error) || limit === 1) throw error
+      limit = Math.floor(limit / 2)
+    }
+  }
+}
+
+async function readTurnItemsPage(
+  rpc: CodexRpcLike,
+  threadId: string,
+  turn: Turn,
+  cursor: string | null,
+  nextTurn: string | null,
+  isCurrent?: () => boolean,
+): Promise<ThreadHistoryPage> {
+  const page = await fitHistoryPage<ThreadItemsListResponse>(24, (limit) => rpc.request('thread/items/list', {
+    threadId, turnId: turn.id, cursor, limit, sortDirection: 'desc',
+  }), isCurrent)
+  if (page.nextCursor && page.nextCursor === cursor) throw new Error('会话条目分页未前进，请重试')
+  return {
+    turns: [{ ...turn, itemsView: 'full', items: page.data.map(({ item, completedAtMs }) =>
+      item.completedAtMs == null && completedAtMs != null ? { ...item, completedAtMs } : item,
+    ).reverse() }],
+    earlier: page.nextCursor ? { turn, items: page.nextCursor, nextTurn } : nextTurn ? { turns: nextTurn } : null,
+  }
+}
+
+export async function readThreadHistoryPage(
+  rpc: CodexRpcLike,
+  threadId: string,
+  earlier: ThreadHistoryCursor | null,
+  isCurrent?: () => boolean,
+): Promise<ThreadHistoryPage> {
+  if (earlier && 'items' in earlier) {
+    return readTurnItemsPage(rpc, threadId, earlier.turn, earlier.items, earlier.nextTurn, isCurrent)
+  }
+  const cursor = earlier?.turns ?? null
+  let page: ThreadTurnsListResponse
+  try {
+    page = await fitHistoryPage(8, (limit) => rpc.request('thread/turns/list', {
+      threadId, cursor, limit, sortDirection: 'desc', itemsView: 'full',
+    }), isCurrent)
+  } catch (error) {
+    if (!isOversizeHistoryResponse(error)) throw error
+    // 超长轮次按条目向前读取，避免丢掉轮内的命令、改动或早期消息。
+    assertHistoryCurrent(isCurrent)
+    page = await rpc.request('thread/turns/list', { threadId, cursor, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' })
+    assertHistoryCurrent(isCurrent)
+    if (page.nextCursor && page.nextCursor === cursor) throw new Error('会话历史分页未前进，请重试')
+    const turn = page.data[0]
+    if (!turn) throw error
+    try {
+      return await readTurnItemsPage(rpc, threadId, { ...turn, items: [] }, null, page.nextCursor, isCurrent)
+    } catch (itemError) {
+      if (itemError instanceof CodexRpcError && itemError.code === -32601) throw error
+      throw itemError
+    }
+  }
+  if (page.nextCursor && page.nextCursor === cursor) throw new Error('会话历史分页未前进，请重试')
+  return { turns: [...page.data].reverse(), earlier: page.nextCursor ? { turns: page.nextCursor } : null }
+}
+
+export async function openThreadHistory(
+  rpc: CodexRpcLike,
+  threadId: string,
+  mode: 'resume' | 'read',
+  isCurrent?: () => boolean,
+): Promise<{ thread: Thread; earlier: ThreadHistoryCursor | null }> {
+  assertHistoryCurrent(isCurrent)
+  const result = mode === 'resume'
+    ? await rpc.request('thread/resume', { threadId, excludeTurns: true })
+    : await rpc.request('thread/read', { threadId, includeTurns: false })
+  assertHistoryCurrent(isCurrent)
+  const thread = result?.thread
+  if (thread?.id !== threadId) throw new Error('返回的会话与所选会话不一致，请重试')
+  if (thread.turns?.length) return { thread, earlier: null }
+  const cursor = 'turnsBackwardsCursor' in result && typeof result.turnsBackwardsCursor === 'string'
+    ? { turns: result.turnsBackwardsCursor } : null
+  try {
+    const page = await readThreadHistoryPage(rpc, threadId, cursor, isCurrent)
+    let status = thread.status
+    if (status?.type === 'active' && !page.turns.some((turn) => turn.status === 'inProgress')) {
+      const latest = await rpc.request('thread/read', { threadId, includeTurns: false })
+      assertHistoryCurrent(isCurrent)
+      if (latest.thread?.id === threadId) status = latest.thread.status
+    }
+    return { thread: { ...thread, turns: page.turns, status }, earlier: page.earlier }
+  } catch (error) {
+    // 老版本没有历史分页时，恢复已完成，仍可通过原本的读历史接口获取内容。
+    if (!(error instanceof CodexRpcError) || error.code !== -32601) throw error
+    assertHistoryCurrent(isCurrent)
+    const legacy = await readThread(rpc, threadId, isCurrent)
+    assertHistoryCurrent(isCurrent)
+    if (legacy.thread?.id !== threadId) throw new Error('返回的会话与所选会话不一致，请重试')
+    return { thread: legacy.thread, earlier: null }
+  }
+}
+
+export async function readSubagentThread(rpc: CodexRpcLike, threadId: string, isCurrent?: () => boolean) {
+  const { thread, earlier } = await openThreadHistory(rpc, threadId, 'read', isCurrent)
   return {
     name: thread.agentNickname || thread.name || thread.agentRole,
-    view: loadThread(emptyState(), thread).threads[threadId],
+    role: thread.agentRole,
+    model: thread.model,
+    task: thread.preview,
+    view: loadRecentThreadHistory(emptyState(), thread, earlier, undefined).threads[threadId],
   }
 }
 

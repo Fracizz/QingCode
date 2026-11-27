@@ -132,7 +132,8 @@ describe('聊天发送方式', () => {
       if (method === 'thread/resume' && occupied) {
         receive(agent, { id, error: { code: -32600, message: `thread ${threadId} already has an active writer` } })
       } else {
-        const result = method === 'turn/start' ? { turn: { id, status: 'inProgress', items: [] } } : { thread }
+        const result = method === 'turn/start' ? { turn: { id, status: 'inProgress', items: [] } }
+          : method === 'thread/turns/list' ? { data: [], nextCursor: null } : { thread }
         receive(agent, { id, result })
       }
     })
@@ -143,11 +144,13 @@ describe('聊天发送方式', () => {
     expect(useCodex.getState().notice).toContain('可查看历史')
     expect(await send('继续', { agent: 'codex' })).toBe(false)
     expect(useCodex.getState().error).toContain('另一个 Codex 进程占用')
-    expect(methods()).toEqual(['thread/resume', 'thread/read', 'thread/resume'])
+    expect(methods()).toEqual(['thread/resume', 'thread/read', 'thread/turns/list', 'thread/resume'])
 
     occupied = false
     expect(await send('继续', { agent: 'codex' })).toBe(true)
-    expect(methods()).toEqual(['thread/resume', 'thread/read', 'thread/resume', 'thread/resume', 'turn/start'])
+    expect(methods()).toEqual([
+      'thread/resume', 'thread/read', 'thread/turns/list', 'thread/resume', 'thread/resume', 'thread/turns/list', 'turn/start',
+    ])
     expect(backend.send.mock.lastCall?.[1].params).toMatchObject({
       threadId,
       input: [{ type: 'text', text: '继续', text_elements: [] }],

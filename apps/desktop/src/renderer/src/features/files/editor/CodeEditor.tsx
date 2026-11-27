@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import { LockKeyhole } from 'lucide-react'
 import { EditorView } from '@codemirror/view'
 import { Transaction } from '@codemirror/state'
@@ -19,6 +19,7 @@ import {
 } from './stateCache'
 
 type Props = {
+  viewRef: RefObject<EditorView | null>
   tab: Tab
   onChange: (text: string) => void
   onSave: () => void
@@ -30,9 +31,8 @@ type Props = {
  * 受控文档但保留每个标签自己的 EditorState：切换标签时销毁 DOM、缓存 state，
  * 回来时连同撤销栈、选区一起恢复；外部重载用整篇替换，滚动位置不动。
  */
-export function CodeEditor({ tab, onChange, onSave, onLoadMore, className }: Props) {
+export function CodeEditor({ viewRef, tab, onChange, onSave, onLoadMore, className }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
-  const viewRef = useRef<EditorView | null>(null)
   const fontSize = useSetting((settings) => settings.general.editorFontSize)
   const jumped = useRef<string | null>(null)
   const reason = readOnlyReason(tab)
@@ -69,7 +69,7 @@ export function CodeEditor({ tab, onChange, onSave, onLoadMore, className }: Pro
   useEffect(() => {
     const view = viewRef.current
     if (view) view.dispatch({ effects: readOnlyCompartment.reconfigure(readOnlyExtension(readOnly)) })
-  }, [readOnly])
+  }, [readOnly, tab.id])
 
   useEffect(() => {
     const view = viewRef.current
@@ -95,15 +95,15 @@ export function CodeEditor({ tab, onChange, onSave, onLoadMore, className }: Pro
 
   return (
     <div className={cn('relative flex min-h-0 flex-1 flex-col', className)}>
-      <div ref={hostRef} className="qn-editor-host min-h-0 flex-1 overflow-hidden bg-[#141414]" />
+      <div ref={hostRef} className="qn-editor-host min-h-0 flex-1 overflow-hidden bg-qn-code" />
       {readOnly && (
-        <div className="pointer-events-none absolute right-3 top-2 inline-flex items-center gap-1 rounded-md bg-qn-panel/90 px-1.5 py-0.5 text-[11px] text-qn-muted">
+        <div className="pointer-events-none absolute right-3 top-2 inline-flex items-center gap-1 rounded-md bg-qn-panel/90 px-1.5 py-0.5 text-ui-xs text-qn-muted">
           <LockKeyhole size={11} />
           只读 · {readOnlyLabel(reason)}
         </div>
       )}
       {tab.truncated && (
-        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-qn-border px-3 py-1.5 text-[12px] text-qn-muted">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-qn-border px-3 py-1.5 text-ui-sm text-qn-muted">
           <span>{loadedLabel(tab.loadedBytes)} · 只读</span>
           <button
             type="button"

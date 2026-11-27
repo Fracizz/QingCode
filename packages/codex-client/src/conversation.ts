@@ -14,7 +14,8 @@ import type {
   Thread,
   UserInput,
 } from './codex-types'
-import { describeSubagentItem, type SubagentItemView } from './subagents'
+import type { ThreadHistoryCursor, ThreadHistoryPage } from './api'
+import { describeSubagentItem, subagentThreadMetadata, type SubagentItemView, type SubagentThreadMetadata } from './subagents'
 import { isActiveThread, isThreadOutcome, threadActivityFromStatus, type ThreadActivity, type ThreadOutcome } from './threadStatus'
 
 export type ConversationState = { threads: Record<string, ThreadView> }
@@ -28,12 +29,15 @@ export type ThreadView = {
   pendingApprovals: ApprovalView[]
   error?: string
   tokenUsage?: unknown
-  /** 每轮的计时与所含条目，用于"工作了 4m 56s"折叠头。 */
+  subagent?: SubagentThreadMetadata
+  historyCursor?: ThreadHistoryCursor | null
+  /** 每轮的结果、计时与所含条目，用于显示工作过程和停止提示。 */
   turns?: TurnMeta[]
 }
 
 export type TurnMeta = {
   id: string
+  outcome?: ThreadOutcome
   startedAtMs: number | null
   durationMs: number | null
   itemIds: string[]
@@ -55,7 +59,7 @@ export type ItemView =
       /** 本地先渲染的占位消息；服务端回显到达后按位置替换，避免重复气泡。 */
       pending?: boolean
     }
-  | { kind: 'agent'; id: string; text: string; streaming: boolean }
+  | { kind: 'agent'; id: string; text: string; streaming: boolean; completedAtMs?: number }
   | { kind: 'reasoning'; id: string; summary: string; streaming: boolean }
   | { kind: 'command'; id: string; command: string; cwd?: string; output: string; exitCode?: number | null; status: string }
   | { kind: 'fileChange'; id: string; changes: { path: string; kind: string; diff?: string }[]; status: string }
@@ -74,7 +78,8 @@ export type ApprovalView = {
 }
 
 export type ApprovalDecision = 'accept' | 'acceptForSession' | 'decline'
-export type LoadableThread = Thread | { thread: Thread }
+type ThreadSnapshot = Pick<Thread, 'id' | 'turns'> & Partial<Thread>
+export type LoadableThread = ThreadSnapshot | { thread: ThreadSnapshot }
 
 type ThreadStatus = ThreadView['status']
 type JsonRecord = Record<string, unknown>
@@ -465,7 +470,7 @@ function isOutputMarker(change: FileChange): boolean {
   return change.kind === PATCH_OUTPUT_KIND && change.path === PATCH_OUTPUT_PATH
 }
 
-function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timestamp?: number | null): ItemView {
+function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timestamp?: number | null, completionTime?: number | null): ItemView {
   const item = asRecord(raw)
   if (!item) return { kind: 'other', id: `unknown-${index}`, type: 'unknown', summary: '' }
 
@@ -486,8 +491,11 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
         ...(sentAt != null && sentAt > 0 ? { sentAt } : {}),
       }
     }
-    case 'agentMessage':
-      return { kind: 'agent', id, text: scalarText(item.text), streaming }
+    case 'agentMessage': {
+      const completedAtMs = positive(item.completedAtMs) ?? completionTime
+      return { kind: 'agent', id, text: scalarText(item.text), streaming: streaming && !completedAtMs,
+        ...(completedAtMs ? { completedAtMs } : {}) }
+    }
     case 'reasoning':
       return {
         kind: 'reasoning',
@@ -554,6 +562,7 @@ function mergeItemView(existing: ItemView, candidate: ItemView): ItemView {
       ...existing,
       ...candidate,
       text: longer(existing.text, candidate.text),
+      streaming: (candidate.completedAtMs ?? existing.completedAtMs) ? false : candidate.streaming,
     }
   }
   if (existing.kind === 'reasoning' && candidate.kind === 'reasoning') {
@@ -592,45 +601,63 @@ function mergeItemView(existing: ItemView, candidate: ItemView): ItemView {
   return candidate
 }
 
+export function mergeSubagentHistory(
+  history: readonly ItemView[],
+  live: readonly ItemView[],
+  beforeRead: readonly ItemView[],
+): ItemView[] {
+  const items = new Map(history.map((item) => [item.id, item]))
+  const baseline = new Map(beforeRead.map((item) => [item.id, item]))
+  for (const item of live) {
+    const previous = items.get(item.id)
+    if (!previous) items.set(item.id, item)
+    else if (baseline.get(item.id) !== item) items.set(item.id, mergeItemView(previous, item))
+  }
+  return [...items.values()]
+}
+
 type TurnPhase = 'started' | 'completed' | 'loaded'
 
 function positive(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
 }
 
-/** 记录一轮的计时。部分适配器的 startedAt 在完成时才填（等于 completedAt），所以优先沿用 turn/started 时记下的起点。 */
+/** 部分适配器在结束时才填 startedAt，优先沿用 turn/started 时记下的起点。 */
 function turnMeta(
   existing: TurnMeta | undefined,
   turnId: string,
   patch: { record?: JsonRecord | null; phase?: TurnPhase; itemIds?: string[] },
 ): TurnMeta {
   const record = patch.record ?? null
+  const outcome = isThreadOutcome(record?.status) ? record.status : existing?.outcome
   const startedSec = positive(record?.startedAt)
   const completedSec = positive(record?.completedAt)
   const startedAtMs =
     existing?.startedAtMs ?? (startedSec ? startedSec * 1000 : patch.phase === 'started' ? Date.now() : null)
 
   let durationMs = existing?.durationMs ?? null
-  const explicit = positive(record?.durationMs)
-  if (explicit) durationMs = explicit
-  else if (patch.phase === 'completed' && startedAtMs) {
-    const computed = (completedSec ? completedSec * 1000 : Date.now()) - startedAtMs
-    if (computed > 0) durationMs = computed
-  } else if (patch.phase === 'loaded' && startedSec && completedSec && completedSec > startedSec) {
-    durationMs = durationMs ?? (completedSec - startedSec) * 1000
+  const explicit = record?.durationMs
+  if (typeof explicit === 'number' && Number.isFinite(explicit) && explicit >= 0) durationMs = explicit
+  else if (durationMs === null && startedAtMs !== null) {
+    const completedAtMs = completedSec === null ? null : completedSec * 1000
+    if (completedAtMs !== null && completedAtMs >= startedAtMs) durationMs = completedAtMs - startedAtMs
+    else if (patch.phase === 'completed' && existing?.startedAtMs != null) {
+      durationMs = Math.max(0, Date.now() - startedAtMs)
+    }
   }
 
   const itemIds = new Set(existing?.itemIds)
   for (const id of patch.itemIds ?? []) if (id) itemIds.add(id)
   if (
     existing &&
+    existing.outcome === outcome &&
     existing.startedAtMs === startedAtMs &&
     existing.durationMs === durationMs &&
     existing.itemIds.length === itemIds.size
   ) {
     return existing
   }
-  return { id: turnId, startedAtMs, durationMs, itemIds: [...itemIds] }
+  return { id: turnId, ...(outcome ? { outcome } : {}), startedAtMs, durationMs, itemIds: [...itemIds] }
 }
 
 function upsertTurnMeta(
@@ -739,6 +766,10 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   let activeTurnId: string | null = status === 'idle' ? null : previous?.activeTurnId ?? null
   // 历史一次性构建索引，避免每条条目都扫描并复制已加载的消息。
   const items = new Map<string, ItemView>()
+  const replyTimes = new Map<string, number>()
+  for (const item of previous?.items ?? []) {
+    if (item.kind === 'agent' && item.completedAtMs) replyTimes.set(item.id, item.completedAtMs)
+  }
   // 沿用实时记下的计时：历史里的时间戳可能缺失或只有秒级。
   const turns = new Map(previous?.turns?.map((turn) => [turn.id, turn]))
   const appendItems = (rawItems: unknown[], streaming: boolean, startedAt?: number | null) =>
@@ -746,6 +777,13 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
       const timestamp = index === 0 && startedAt ? startedAt * 1000 : undefined
       // 历史里进行中的轮次只有最后一条可能还在输出，否则已完成的回复会一直挂着流式光标。
       const candidate = itemViewFromRaw(rawItem, index, streaming && index === rawItems.length - 1, timestamp)
+      if (candidate.kind === 'agent' && candidate.completedAtMs === undefined) {
+        const recorded = replyTimes.get(candidate.id)
+        if (recorded !== undefined) {
+          candidate.completedAtMs = recorded
+          candidate.streaming = false
+        }
+      }
       const existing = items.get(candidate.id)
       items.set(candidate.id, existing ? mergeItemView(existing, candidate) : candidate)
       return candidate.id
@@ -782,6 +820,8 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
     items: [...items.values()],
     pendingApprovals: previous?.pendingApprovals ?? [],
   }
+  const subagent = subagentThreadMetadata(raw) ?? previous?.subagent
+  if (subagent) next.subagent = subagent
   if (previous?.tokenUsage !== undefined) next.tokenUsage = previous.tokenUsage
   if (turns.size || previous?.turns) next.turns = [...turns.values()]
   if (status === 'running') {
@@ -794,6 +834,57 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
     next.error = lastTurnError
   } else if (status === 'error') next.error = previous?.error ?? 'Thread error'
   return { threads: { ...s.threads, [id]: next } }
+}
+
+export function loadRecentThreadHistory(
+  s: ConversationState,
+  thread: Thread,
+  earlier: ThreadHistoryCursor | null,
+  before: ThreadView | undefined,
+): ConversationState {
+  const loaded = loadThread(s, thread)
+  const live = ownThread(s, thread.id)
+  const recent = loaded.threads[thread.id]!
+  const next = { ...recent, historyCursor: earlier }
+  if (live) {
+    const activeItems = live.activeTurnId && live.activeTurnId === recent.activeTurnId
+      ? new Set(live.turns?.find((turn) => turn.id === live.activeTurnId)?.itemIds) : undefined
+    const oldItems = new Map(before?.items.map((item) => [item.id, item]))
+    const available = new Set(recent.items.map((item) => item.id))
+    const changed = live.items.filter((item) => oldItems.get(item.id) !== item ||
+      (activeItems?.has(item.id) && !available.has(item.id)))
+    if (changed.length) next.items = mergeSubagentHistory(recent.items, changed, before?.items ?? [])
+    if (live !== before && (live.status !== before?.status || live.activeTurnId !== before?.activeTurnId ||
+        live.activity !== before?.activity || live.error !== before?.error)) {
+      const { status, activeTurnId, activity, error } = live
+      Object.assign(next, { status, activeTurnId, activity, error })
+    }
+  }
+  return { threads: { ...loaded.threads, [thread.id]: next } }
+}
+
+export function prependThreadHistory(s: ConversationState, id: string, page: ThreadHistoryPage): ConversationState {
+  const current = ownThread(s, id)
+  if (!current) return s
+  const older = loadThread(emptyState(), { id, turns: page.turns }).threads[id]!
+  const currentItems = new Set(current.items.map((item) => item.id))
+  const turns = new Map(older.turns?.map((turn) => [turn.id, turn]))
+  for (const turn of current.turns ?? []) {
+    const previous = turns.get(turn.id)
+    turns.set(turn.id, previous ? {
+      ...turn,
+      outcome: turn.outcome ?? previous.outcome,
+      startedAtMs: turn.startedAtMs ?? previous.startedAtMs,
+      durationMs: turn.durationMs ?? previous.durationMs,
+      itemIds: [...new Set([...previous.itemIds, ...turn.itemIds])],
+    } : turn)
+  }
+  return withThread(s, id, () => ({
+    ...current,
+    items: [...older.items.filter((item) => !currentItems.has(item.id)), ...current.items],
+    turns: [...turns.values()],
+    historyCursor: page.earlier,
+  }))
 }
 
 export function applyNotification(s: ConversationState, n: ServerNotification): ConversationState {
@@ -816,6 +907,8 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
           activity,
           activeTurnId: status === 'idle' ? null : current.activeTurnId,
         }
+        const subagent = thread && subagentThreadMetadata(thread)
+        if (subagent) next.subagent = subagent
         if (status !== 'error') next = clearError(next)
         if (thread && Array.isArray(thread.turns)) {
           for (const turn of thread.turns) next = mergeTurnItems(next, turn, false, 'loaded')
@@ -887,7 +980,8 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
     }
     case 'item/completed': {
       const rawItem = params.item
-      const completed = itemViewFromRaw(rawItem, 0, false, optionalNumber(params.completedAtMs))
+      const completedAtMs = positive(params.completedAtMs)
+      const completed = itemViewFromRaw(rawItem, 0, false, completedAtMs, completedAtMs)
       return withItem(
         s,
         params,

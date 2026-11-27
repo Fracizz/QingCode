@@ -12,5 +12,5 @@ const color: Record<SessionStatus, string> = {
 }
 
 export function SessionStatusBadge({ status }: { status: SessionStatus }) {
-  return <span className={`shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[11px] ${color[status]}`}>{sessionStatusLabels[status]}</span>
+  return <span className={`shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-ui-xs ${color[status]}`}>{sessionStatusLabels[status]}</span>
 }

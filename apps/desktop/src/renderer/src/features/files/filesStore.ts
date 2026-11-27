@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useDock } from '../../store/dock'
 import type { FsReadParams, FsWriteParams } from '@qn/protocol'
 import { onServerEvt, serverCall } from '../workspace/serverCall'
 import { subscribeOpen, type OpenRequest } from '../workspace/openers'
@@ -45,7 +46,7 @@ export type SaveOptions = {
 export type FilesState = {
   tabs: Tab[]
   activeId: string | null
-  /** 面板是否展开；打开任何文件/差异时自动置 true。 */
+  /** 对话旁的文件面板仅在有标签时可以展开。 */
   open: boolean
   /** 保存冲突 / 关闭确认 / 合并对话框。 */
   prompt: FilePrompt | null
@@ -61,7 +62,7 @@ export type FilesState = {
   edit: (id: string, text: string) => void
   save: (id: string, options?: SaveOptions) => Promise<boolean>
   requestClose: (id: string) => void
-  requestCloseAll: () => void
+  requestCloseAll: (ids?: string[]) => void
   confirmClose: (saveFirst: boolean) => void
   confirmRefresh: (decision: 'save' | 'discard' | 'cancel') => void
   resolveConflict: (action: ConflictAction) => void
@@ -77,11 +78,14 @@ export const useFiles = create<FilesState>((set, get) => ({
   open: false,
   prompt: null,
 
-  setOpen: (open) => set({ open }),
-  activate: (id) => set({ activeId: id, open: true }),
+  setOpen: (open) => set((state) => ({ open: open && state.tabs.length > 0 })),
+  activate: (id) => set((state) => {
+    if (!state.tabs.some((tab) => tab.id === id)) return state
+    return { activeId: id, open: state.open || useDock.getState().view === 'chat' }
+  }),
   close: (id) => forceClose(id),
   closeAll: () => {
-    set({ tabs: [], activeId: null, prompt: null })
+    set({ tabs: [], activeId: null, open: false, prompt: null })
     clearEditorStates()
   },
   setView: (id, view) =>
@@ -108,7 +112,10 @@ export const useFiles = create<FilesState>((set, get) => ({
   handleOpen: (req) => {
     const incoming = createTab(req, `tab-${nextTabId++}`)
     const result = upsertTab(get().tabs, incoming)
-    set({ tabs: result.tabs, activeId: result.id, open: true })
+    const { view, setView } = useDock.getState()
+    set({ tabs: result.tabs, activeId: result.id, open: get().open || view !== 'files' })
+    // 收起工作视图后，仍可通过快速打开直接看到文件。
+    if (view === null) setView('chat')
     const tab = result.tabs.find((item) => item.id === result.id)
     if (!tab || !(result.created || result.retry)) return
     if (tab.kind === 'file') startRead(tab.id, false)
@@ -127,14 +134,11 @@ export const useFiles = create<FilesState>((set, get) => ({
     if (isDirty(tab)) set({ prompt: { kind: 'close', ids: [id] } })
     else forceClose(id)
   },
-  requestCloseAll: () => {
-    const tabs = get().tabs
+  requestCloseAll: (ids) => {
+    const tabs = ids ? get().tabs.filter((tab) => ids.includes(tab.id)) : get().tabs
     if (tabs.length === 0) return
     if (tabs.some(isDirty)) set({ prompt: { kind: 'close', ids: tabs.map((tab) => tab.id) } })
-    else {
-      set({ tabs: [], activeId: null, prompt: null })
-      clearEditorStates()
-    }
+    else for (const tab of tabs) forceClose(tab.id)
   },
   confirmClose: (saveFirst) => void confirmClose(saveFirst),
   confirmRefresh: (decision) => void confirmRefresh(decision),
@@ -148,8 +152,10 @@ function patchTab(id: string, patch: Partial<Tab>): void {
 }
 
 function forceClose(id: string): void {
-  const result = closeTab(useFiles.getState().tabs, useFiles.getState().activeId, id)
-  useFiles.setState({ tabs: result.tabs, activeId: result.activeId })
+  const { tabs, activeId, open } = useFiles.getState()
+  const result = closeTab(tabs, activeId, id)
+  if (result.tabs === tabs) return
+  useFiles.setState({ ...result, open: open && result.tabs.length > 0 })
   forgetEditorState(id)
 }
 

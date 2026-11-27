@@ -3,6 +3,7 @@ import { create } from 'zustand'
 // 右侧工作区停靠栏：工具列（资源管理器 / 搜索 / Git）+ 文件查看面板（features/files 自管 open）。
 
 export type DockTool = 'explorer' | 'search' | 'git' | 'run'
+type DockView = 'chat' | 'files'
 
 export type DockPrefs = {
   tool: DockTool | null
@@ -38,6 +39,10 @@ export function parseDockPrefs(raw: string | null | undefined): DockPrefs {
 }
 
 type DockState = DockPrefs & {
+  view: DockView | null
+  fileTool: 'explorer' | 'search'
+  setView: (view: DockView) => void
+  toggleView: (view: DockView) => void
   /** 再次点击当前工具即收起 */
   toggleTool: (tool: DockTool) => void
   showTool: (tool: DockTool) => void
@@ -63,14 +68,25 @@ const persist = (prefs: DockPrefs): void => {
 }
 
 export const useDock = create<DockState>((set, get) => {
-  const update = (patch: Partial<DockPrefs>): void => {
+  const update = (patch: Partial<DockPrefs & { view: DockView }>): void => {
     set(patch)
     const { tool, filesWidth, toolWidth } = get()
     persist({ tool, filesWidth, toolWidth })
   }
   return {
     ...read(),
-    toggleTool: (tool) => update({ tool: get().tool === tool ? null : tool }),
+    view: 'chat',
+    fileTool: 'explorer',
+    setView: (view) => set({ view }),
+    toggleView: (view) => set((state) => ({ view: state.view === view ? null : view })),
+    toggleTool: (tool) => {
+      const { view, tool: currentTool } = get()
+      if (view === 'files' && (tool === 'explorer' || tool === 'search')) {
+        set({ fileTool: tool })
+        return
+      }
+      update({ view: 'chat', tool: view === 'chat' && currentTool === tool ? null : tool })
+    },
     showTool: (tool) => update({ tool }),
     hideTool: () => update({ tool: null }),
     setFilesWidth: (width) => update({ filesWidth: clamp(width, FILES_MIN, FILES_MAX, DEFAULT_DOCK.filesWidth) }),

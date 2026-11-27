@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeThreadSummaries, threadKey, toThreadSummaries, toTimestamp } from './threads'
+import { mergeThreadSummaries, refreshThreadOrder, threadKey, threadPreviewText, toThreadSummaries, toTimestamp, withLocalThreads } from './threads'
 
 describe('会话列表归一化', () => {
   it('兼容秒/毫秒时间戳', () => {
@@ -40,6 +40,18 @@ describe('会话列表归一化', () => {
     expect(threads.map((thread) => thread.activity)).toEqual(['pending', 'input', 'failed'])
   })
 
+  it('完成后更新时间和状态但保留原位，新增会话排前，归档会话移除', () => {
+    const [first, removed] = toThreadSummaries([{ id: 'same' }, { id: 'removed' }])
+    const [running] = toThreadSummaries([{ id: 'same', status: { type: 'active', activeFlags: [] } }], 'claude')
+    const [finished, added] = toThreadSummaries([
+      { id: 'same', updatedAt: 500, status: { type: 'idle' } },
+      { id: 'new', updatedAt: 400 },
+    ], 'claude')
+    const incoming = [finished!, added!, first!]
+    expect(refreshThreadOrder([], incoming)).toEqual(incoming)
+    expect(refreshThreadOrder([first!, running!, removed!], incoming)).toEqual([added, first, finished])
+  })
+
   it('给会话标上 agent 并合并两个来源', () => {
     const codex = toThreadSummaries({ data: [{ id: 'c1', updatedAt: 1_700_000_000 }] })
     const claude = toThreadSummaries({ data: [{ id: 'l1', updatedAt: 1_700_000_100 }] }, 'claude')
@@ -47,5 +59,40 @@ describe('会话列表归一化', () => {
     expect(claude[0]?.agent).toBe('claude')
     expect(mergeThreadSummaries([codex, claude]).map((entry) => entry.id)).toEqual(['l1', 'c1'])
     expect(threadKey('claude', 'l1')).toBe('claude:l1')
+  })
+})
+
+describe('会话悬浮摘要', () => {
+  it('只保留标题之外的内容，兼容已经截断的首行', () => {
+    expect(threadPreviewText({ title: '第一行', preview: '第一行\r\n第二行\n第三行' })).toBe('第二行\n第三行')
+    expect(threadPreviewText({ title: '第一行', preview: '第一行' })).toBe('')
+
+    const [thread] = toThreadSummaries([{ id: 'long', preview: '长标题'.repeat(60) }])
+    expect(thread!.preview).toMatch(/…$/)
+    expect(threadPreviewText(thread!)).toBe('')
+  })
+
+  it('保留自定义标题对应的独立摘要', () => {
+    expect(threadPreviewText({ title: '第一行', preview: ' 第一行后面还有内容 ' })).toBe('第一行后面还有内容')
+    expect(threadPreviewText({ title: '第一行', preview: '第一…' })).toBe('第一…')
+    expect(threadPreviewText({ title: '第一行', preview: '' })).toBe('')
+  })
+})
+
+describe('withLocalThreads', () => {
+  const summary = (id: string, cwd: string, updatedAt: number) =>
+    ({ id, title: id, preview: '', cwd, updatedAt, agent: 'codex' as const })
+
+  it('补入服务端尚未列出的本地新会话，并按项目过滤', () => {
+    const listed = summary('old', '/p', 1)
+    const fresh = summary('new', '/p', 2)
+    const other = summary('x', '/q', 3)
+    expect(withLocalThreads([listed], [fresh, other], '/p')).toEqual([fresh, listed])
+    expect(withLocalThreads([listed], [fresh, other], null)).toEqual([other, fresh, listed])
+  })
+
+  it('服务端已返回的会话以服务端为准', () => {
+    const server = { ...summary('new', '/p', 5), title: '服务端标题' }
+    expect(withLocalThreads([server], [summary('new', '/p', 2)], '/p')).toEqual([server])
   })
 })

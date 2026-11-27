@@ -6,32 +6,29 @@
 
 | 导出 | 用途 |
 |---|---|
-| `SettingsDialog` | 全窗口模态；props：`open`、`onClose`、`initialSection?`、`onEditTarget(target)`、`onRemoveTarget(id)` |
+| `SettingsPage` | 标题栏下方的整页设置，接收 `onEditTarget(target)` 和 `onRemoveTarget(id)` |
 | `useSettings` / `useSetting(selector)` | zustand 设置 store（加载、乐观更新、失败回滚） |
 | `openSettings(section?)` / `closeSettings()` / `useSettingsDialog()` | 全局开关状态，供侧栏齿轮按钮与 `Ctrl+,` 快捷键调用 |
 | `SETTINGS_SECTIONS` / `filterSettings` | 分类与搜索逻辑（纯函数，已单测） |
 | `defaultAppSettings` / `mergeAppSettings` / `agentPrefs` | 默认值、白名单合并、按目标取 Agent 偏好 |
 
-最小接入（由总管在 `App.tsx` 完成，本卡不改 `App.tsx`）：
+宿主在标题栏下方渲染设置页。工作区在设置打开期间保持挂载：
 
 ```tsx
-import { SettingsDialog, openSettings, useSettingsDialog } from './features/settings'
+import { SettingsPage, useSettingsDialog } from './features/settings'
 import type { SshTarget } from '../../shared/backendApi'
 
-const dialog = useSettingsDialog()
-// 侧栏/标题栏齿轮按钮：openSettings() 或 openSettings('agents')
-// 全局快捷键：Ctrl+, → openSettings()
-<SettingsDialog
-  open={dialog.open}
-  onClose={closeSettings}
-  initialSection={dialog.section}
-  onEditTarget={(target: SshTarget) => setTargetForm({ open: true, editing: target })}
-  onRemoveTarget={(id) => void useTargets.getState().remove(id)}
-/>
+const settingsOpen = useSettingsDialog((state) => state.open)
+{settingsOpen && (
+  <SettingsPage
+    onEditTarget={(target: SshTarget) => setTargetForm({ open: true, editing: target })}
+    onRemoveTarget={(id) => void useTargets.getState().remove(id)}
+  />
+)}
 ```
 
 `onEditTarget` / `onRemoveTarget` 是可选回调：**不传时对应按钮隐藏**，本卡不实现连接表单与删除确认。
-`initialSection` 只在对话框打开时生效；左侧导航点击分类，顶部搜索框按标题/关键字（多关键字 AND）过滤设置项。
+调用 `openSettings(section?)` 可以直接打开指定分类。顶部搜索框按设置标题和关键词匹配。
 
 ## 数据形状（`apps/desktop/src/shared/backendApi.ts` 追加）
 
@@ -72,14 +69,13 @@ type AppSettingsPatch = { general?: Partial<...>; agents?: { [targetId]: { [agen
 
 ## 手机连接 / 关于
 
-- `MobileSettings.tsx` 只导出对话框形态，因此 `MobileSection.tsx` 是只读包装：显示网关状态、端口、证书指纹与已配对设备数，点「打开手机连接设置」再打开原有对话框（嵌套 Radix Dialog，均带 `qn-no-drag`），不修改原文件、不复制其表单逻辑。
+- 侧栏和命令面板的「手机连接」入口打开设置页的手机连接分类。该分类直接渲染 `MobileSettings` 表单，修改后通过「保存设置」提交。
 - 关于页写明「QingCode Next 是第三方客户端，与 OpenAI、Anthropic 无隶属关系；所有用量计入用户自己的账号」（合规 §5），并给出开源组件占位。
 - 登录说明是静态文案：Codex `codex login`；Claude `claude` + `/login` 或 API key / Bedrock / Vertex，并提示「订阅登录仅限本人自用，推荐 API key」（§3.3）；pi `pi` 完成提供方配置，且标注「pi 不经审批直接执行工具」。不检测凭据、不提供登录入口。
 
 ## 假设
 
-1. `SettingsDialog` 用原生 `radix-ui` 的 `Dialog`（而非 `ui.tsx` 的 `Modal`）：后者高度封顶 680px，无法做「全窗口模态」；浮层样式沿用 `qn-panel` / `qn-no-drag`，其余控件仍用 `components/primitives.tsx` 与 `ui.tsx` 的封装（`Select`、`Checkbox`、`Segmented` 为自写的分段按钮，不用原生 radio）。
-2. `SettingsAgentKind` 单独定义含 `pi`，**没有改** `AgentKind`（并行任务卡 T22 正在扩它），避免类型冲突。
-3. 「连接」分类只读列出目标；编辑按钮只对 `kind==='ssh'` 的目标显示（宿主 `TargetForm` 目前只接受 `SshTarget`），直连目标仅可删除。
-4. 保存策略：开关/下拉即时 `settings.save`，路径类输入失焦或 Enter 提交；失败时回滚并给出错误提示。
-5. 主题目前固定深色，浅色置灰标「即将支持」，不写入设置文件。
+1. `SettingsAgentKind` 单独定义含 `pi`，**没有改** `AgentKind`（并行任务卡 T22 正在扩它），避免类型冲突。
+2. 「连接」分类只读列出目标，当前分类仅为 SSH 目标显示编辑按钮。
+3. 通用及 Agent 设置的开关和下拉即时保存。路径输入在失焦或按 Enter 时提交。保存失败会回滚并显示错误。
+4. 主题目前固定深色，浅色置灰标「即将支持」，不写入设置文件。

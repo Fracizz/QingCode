@@ -22,7 +22,7 @@ export function MessageActions({
   }
 
   return (
-    <div className="mt-1 flex h-7 items-center gap-0.5 text-[12px] text-qn-muted opacity-0 transition-opacity group-hover/msg:opacity-100 has-[[data-state=open]]:opacity-100">
+    <div className="mt-1 flex h-7 items-center gap-0.5 text-ui-sm text-qn-muted opacity-0 transition-opacity group-hover/msg:opacity-100 has-[[data-state=open]]:opacity-100">
       <IconButton label="复制 Markdown 原文" className="h-7 w-7" onClick={() => void copy(markdown, '已复制')}>
         {copied ? <Check size={14} className="text-qn-ok" /> : <Copy size={14} />}
       </IconButton>

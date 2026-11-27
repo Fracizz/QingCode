@@ -1,9 +1,11 @@
 import { Check, ChevronDown, Zap } from 'lucide-react'
+import { localizeModelDescription } from '@qn/codex-client'
 import { useEffect, useMemo, useState } from 'react'
 import { sessionKey } from '../agents'
-import { EMPTY_PREFS, effortLabel, pickModel, resolveSelection, triggerLabel, visibleModels } from '../models'
+import { EMPTY_PREFS, effortHint, effortLabel, pickModel, resolveSelection, triggerLabel, visibleModels } from '../models'
 import { useApp } from '../store'
 import type { AgentKind } from '../types'
+import { AgentQuota } from './RateLimitView'
 import { Button, Dialog, Loading, LoadingIcon, Note } from './ui'
 import { WorkspaceSearch } from './WorkspaceHome'
 
@@ -64,13 +66,15 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                   type="button"
                   role="option"
                   aria-selected={selected}
-                  className={`qn-row rounded-xl border px-3 py-2 ${selected ? 'border-qn-accent bg-qn-accent/10' : 'border-qn-border'}`}
+                  className={`qn-row qn-option rounded-xl border px-3 py-2.5 ${selected ? 'border-qn-accent bg-qn-accent/10' : 'border-qn-border'}`}
                   onClick={() => setPrefs(targetId, agent, pickModel(models, prefs, model.model))}
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{model.displayName}</span>
+                    <span className="block truncate text-[15px] font-medium">{model.displayName}</span>
                     {model.description && (
-                      <span className="block text-[11px] leading-4 text-qn-muted">{model.description}</span>
+                      <span className="mt-0.5 block whitespace-normal text-xs leading-[18px] text-qn-muted [overflow-wrap:anywhere]">
+                        {localizeModelDescription(model.description)}
+                      </span>
                     )}
                   </span>
                   {selected && <Check size={16} className="shrink-0 text-qn-accent" aria-hidden />}
@@ -82,7 +86,7 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
           {selection.model && selection.model.efforts.length > 0 && (
             <div className="mb-3">
               <div className="qn-label">推理强度</div>
-              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="推理强度">
+              <div className="qn-segment" role="radiogroup" aria-label="推理强度">
                 {selection.model.efforts.map((effort) => {
                   const active = effort.value === selection.effort
                   return (
@@ -91,7 +95,6 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                       type="button"
                       role="radio"
                       aria-checked={active}
-                      className={`qn-chip ${active ? 'qn-chip-active' : ''}`}
                       onClick={() => setPrefs(targetId, agent, { ...prefs, effort: effort.value })}
                     >
                       {effortLabel(effort.value)}
@@ -99,22 +102,30 @@ export function ModelPicker({ targetId, agent }: { targetId: string; agent: Agen
                   )
                 })}
               </div>
+              {selection.effort && effortHint(selection.effort) && (
+                <p className="qn-hint">{effortHint(selection.effort)}</p>
+              )}
             </div>
           )}
 
           {showFast && (
             <div className="mb-3">
               <div className="qn-label">速度</div>
-              <button
-                type="button"
-                aria-pressed={selection.fast}
-                className={`qn-chip ${selection.fast ? 'qn-chip-active' : ''}`}
-                onClick={() => setPrefs(targetId, agent, { ...prefs, fast: !selection.fast })}
-              >
-                <Zap size={14} className="inline align-[-2px] text-qn-warn" aria-hidden /> 快速（响应更快，额度消耗更多）
-              </button>
+              <div className="qn-segment" role="radiogroup" aria-label="速度">
+                <button type="button" role="radio" aria-checked={!selection.fast}
+                  onClick={() => setPrefs(targetId, agent, { ...prefs, fast: false })}>
+                  标准
+                </button>
+                <button type="button" role="radio" aria-checked={selection.fast}
+                  onClick={() => setPrefs(targetId, agent, { ...prefs, fast: true })}>
+                  <Zap size={14} className="text-qn-warn" aria-hidden /> 快速
+                </button>
+              </div>
+              <p className="qn-hint">快速档响应更快，额度消耗更多</p>
             </div>
           )}
+
+          <AgentQuota targetId={targetId} agent={agent} />
 
           <div className="flex gap-2">
             {agent !== 'codex' && (prefs.model || prefs.effort) && (

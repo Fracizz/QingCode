@@ -6,9 +6,9 @@ import {
   ChevronRight,
   FileText,
   GitCommitHorizontal,
-  RotateCw,
 } from 'lucide-react'
 import { EmptyState, ErrorNote, IconButton, Spinner } from '../../components/ui'
+import { RefreshIcon } from '../../components/LoadingIcon'
 import { cn } from '../../lib/cn'
 import { openDiff } from '../workspace/openers'
 import {
@@ -87,9 +87,9 @@ export function GitHistory({ targetId, cwd }: { targetId: string; cwd: string })
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between border-b border-qn-border px-2 py-1.5">
-        <span className="text-[12px] text-qn-muted">提交历史</span>
+        <span className="text-ui-sm text-qn-muted">提交历史</span>
         <IconButton label="刷新历史" className="h-7 w-7" onClick={() => void refresh(targetId, cwd)}>
-          <RotateCw size={13} className={state.loading ? 'animate-spin' : ''} />
+          <RefreshIcon size={13} loading={state.loading} />
         </IconButton>
       </div>
 
@@ -129,7 +129,7 @@ export function GitHistory({ targetId, cwd }: { targetId: string; cwd: string })
         {state.hasMore && !state.logLoading && (
           <button
             type="button"
-            className="mx-2 my-1 flex items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-[12px] text-qn-muted hover:bg-qn-hover"
+            className="mx-2 my-1 flex items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-ui-sm text-qn-muted hover:bg-qn-hover"
             onClick={() => void loadMore(targetId, cwd)}
           >
             <GitCommitHorizontal size={13} /> 加载更多
@@ -173,8 +173,8 @@ const CommitRow = memo(function CommitRow({
           <ChevronRight size={13} className="mt-0.5 shrink-0 text-qn-dim" />
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[12px] leading-5 text-qn-text">{item.subject}</span>
-          <span className="mt-0.5 flex items-center justify-between gap-2 text-[11px] leading-4 text-qn-dim">
+          <span className="block truncate text-ui-sm leading-5 text-qn-text">{item.subject}</span>
+          <span className="mt-0.5 flex items-center justify-between gap-2 text-ui-xs leading-4 text-qn-dim">
             <span className="min-w-0 truncate">{item.author} · {formatRelativeTime(item.date)}</span>
             <span className="shrink-0 font-mono">{shortHash(item.hash)}</span>
           </span>
@@ -185,7 +185,7 @@ const CommitRow = memo(function CommitRow({
         <div className="ml-5 border-l border-qn-border pl-2">
           {!files && !failed && <Spinner label="加载提交文件…" />}
           {files && files.length === 0 && (
-            <div className="px-1 py-1.5 text-[11px] text-qn-dim">该提交没有文件变更</div>
+            <div className="px-1 py-1.5 text-ui-xs text-qn-dim">该提交没有文件变更</div>
           )}
           {files?.map((file) => {
             const info = statusInfo(file.status)
@@ -193,7 +193,7 @@ const CommitRow = memo(function CommitRow({
               <button
                 key={file.path}
                 type="button"
-                className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-[11px] outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
+                className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-ui-xs outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent"
                 title={`查看 ${shortHash(item.hash)} 中的差异`}
                 onClick={() =>
                   openDiff({

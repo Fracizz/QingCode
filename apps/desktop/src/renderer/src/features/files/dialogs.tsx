@@ -5,7 +5,7 @@ import { MergeEditor } from './editor/MergeEditor'
 import type { FilePrompt } from './editModel'
 import { useFiles } from './filesStore'
 
-const button = 'rounded-lg px-3 py-1.5 text-[13px]'
+const button = 'rounded-lg px-3 py-1.5 text-ui'
 
 function Footer({ children }: { children: ReactNode }) {
   return <div className="flex flex-wrap items-center justify-end gap-2">{children}</div>
@@ -38,7 +38,7 @@ function CloseDialog({ ids }: { ids: string[] }) {
         </Footer>
       }
     >
-      <div className="text-[13px] leading-6 text-qn-muted">「保存并关闭」会先逐个保存；若遇到冲突，会弹出冲突对话框并保留标签。</div>
+      <div className="text-ui leading-6 text-qn-muted">「保存并关闭」会先逐个保存；若遇到冲突，会弹出冲突对话框并保留标签。</div>
     </Modal>
   )
 }
@@ -62,7 +62,7 @@ function RefreshDialog({ id }: { id: string }) {
         </Footer>
       }
     >
-      <div className="text-[13px] leading-6 text-qn-muted">刷新会从磁盘重新读取文件内容，当前未保存的编辑不会保留。</div>
+      <div className="text-ui leading-6 text-qn-muted">刷新会从磁盘重新读取文件内容，当前未保存的编辑不会保留。</div>
     </Modal>
   )
 }
@@ -99,12 +99,12 @@ function ConflictDialog({ prompt }: { prompt: Extract<FilePrompt, { kind: 'confl
         </Footer>
       }
     >
-      <div className="flex flex-col gap-2 text-[13px] leading-6 text-qn-muted">
+      <div className="flex flex-col gap-2 text-ui leading-6 text-qn-muted">
         <div className="flex items-start gap-2 rounded-lg border border-qn-warn/30 bg-qn-warn/10 px-3 py-2 text-qn-warn">
           <TriangleAlert size={15} className="mt-1 shrink-0" />
           <span>磁盘上的版本与打开时不同（可能由 Agent 或其他编辑器修改）。</span>
         </div>
-        <div className="truncate font-mono text-[12px] text-qn-dim">{tab?.path}</div>
+        <div className="truncate font-mono text-ui-sm text-qn-dim">{tab?.path}</div>
         <div>· 覆盖：不带 mtime 检查直接写入本地内容</div>
         <div>· 重新加载：丢弃本地改动，读回磁盘版本</div>
         <div>· 对比：左本地、右磁盘，逐块采纳后再保存</div>
@@ -138,8 +138,8 @@ function CompareDialog({ prompt }: { prompt: Extract<FilePrompt, { kind: 'compar
         </Footer>
       }
     >
-      <div className="flex h-[min(56vh,460px)] flex-col overflow-hidden rounded-lg border border-qn-border bg-[#141414]">
-        <div className="flex shrink-0 items-center gap-4 border-b border-qn-border px-3 py-1 text-[11px] text-qn-muted">
+      <div className="flex h-[min(56vh,460px)] flex-col overflow-hidden rounded-lg border border-qn-border bg-qn-code">
+        <div className="flex shrink-0 items-center gap-4 border-b border-qn-border px-3 py-1 text-ui-xs text-qn-muted">
           <span className="flex-1 truncate">左 · 本地改动（只读）</span>
           <span className="flex-1 truncate">右 · 磁盘内容（可编辑，保存这一侧）</span>
         </div>

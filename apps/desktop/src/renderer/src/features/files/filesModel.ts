@@ -1,6 +1,6 @@
 import type { FsReadResult } from '@qn/protocol'
 import type { OpenRequest } from '../workspace/openers'
-import { basename, dirname } from './fileLinks'
+import { basename, dirname, fileKind } from './fileLinks'
 import { applyDiskText, type Eol } from './editModel'
 
 export type TabStatus = 'loading' | 'ready' | 'error'
@@ -99,7 +99,7 @@ export function createTab(req: OpenRequest, id: string): Tab {
     truncated: false,
     binary: false,
     diff: '',
-    view: 'source',
+    view: req.kind === 'file' && !req.line && fileKind(req.path) === 'markdown' ? 'preview' : 'source',
   }
   if (req.kind === 'file') {
     if (req.line !== undefined) tab.line = req.line
@@ -136,6 +136,7 @@ export function upsertTab(tabs: Tab[], incoming: Tab): UpsertResult {
   const retry = existing.status === 'error' && !existing.dirty
   const merged: Tab = {
     ...existing,
+    view: incoming.line ? 'source' : existing.view,
     cwd: incoming.cwd ?? existing.cwd,
     line: incoming.line ?? existing.line,
     column: incoming.column ?? existing.column,

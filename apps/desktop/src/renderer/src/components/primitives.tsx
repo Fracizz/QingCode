@@ -9,7 +9,7 @@ import { cn } from '../lib/cn'
  */
 
 /** 浮层统一外观（见 styles.css 的 .qn-surface-float）；导出给非 Radix 浮层（斜杠菜单、划词工具条、右键菜单）复用。 */
-export const floatSurface = 'qn-no-drag qn-float qn-surface-float z-50 text-[13px]'
+export const floatSurface = 'qn-no-drag qn-float qn-surface-float z-50 text-ui'
 
 export const menuItemClass =
   'flex min-h-8 cursor-default select-none items-center gap-2.5 rounded-lg px-2.5 py-1 outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-qn-hover data-[state=open]:bg-qn-hover'
@@ -23,7 +23,7 @@ export function MenuItemContent({ icon, hint, danger, children }: MenuItemProps)
     <>
       {icon && <span className={cn('flex w-4 shrink-0 justify-center', !danger && 'text-qn-muted')}>{icon}</span>}
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      {hint && <span className="shrink-0 text-[12px] text-qn-dim">{hint}</span>}
+      {hint && <span className="shrink-0 text-ui-sm text-qn-dim">{hint}</span>}
     </>
   )
 }
@@ -72,7 +72,7 @@ export function MenuItem({
 }
 
 export function MenuLabel({ className, ...props }: ComponentProps<typeof DropdownMenu.Label>) {
-  return <DropdownMenu.Label className={cn('px-2.5 pb-1 pt-1.5 text-[12px] text-qn-dim', className)} {...props} />
+  return <DropdownMenu.Label className={cn('px-2.5 pb-1 pt-1.5 text-ui-sm text-qn-dim', className)} {...props} />
 }
 
 export function MenuSeparator({ className, ...props }: ComponentProps<typeof DropdownMenu.Separator>) {
@@ -140,10 +140,14 @@ export const TooltipProvider = Tooltip.Provider
 export function Tip({
   label,
   side = 'top',
+  align,
+  className,
   children,
 }: {
   label: ReactNode
   side?: 'top' | 'bottom' | 'left' | 'right'
+  align?: 'start' | 'center' | 'end'
+  className?: string
   children: ReactNode
 }) {
   return (
@@ -152,9 +156,10 @@ export function Tip({
       <Tooltip.Portal>
         <Tooltip.Content
           side={side}
+          align={align}
           sideOffset={6}
           collisionPadding={8}
-          className="qn-no-drag qn-float qn-surface-float z-[60] max-w-xs rounded-lg px-2.5 py-1.5 text-[12px] leading-4"
+          className={cn('qn-no-drag qn-float qn-surface-float z-[60] max-w-xs rounded-lg px-2.5 py-1.5 text-ui-sm leading-4', className)}
         >
           {label}
         </Tooltip.Content>
@@ -223,18 +228,18 @@ export function Select({
               <RadixSelect.Group key={index}>
                 {index > 0 && <RadixSelect.Separator className={menuSeparatorClass} />}
                 {group.label && (
-                  <RadixSelect.Label className="px-2.5 pb-1 pt-1.5 text-[12px] text-qn-dim">{group.label}</RadixSelect.Label>
+                  <RadixSelect.Label className="px-2.5 pb-1 pt-1.5 text-ui-sm text-qn-dim">{group.label}</RadixSelect.Label>
                 )}
                 {group.options.map((option) => (
                   <RadixSelect.Item
                     key={option.value}
                     value={option.value}
                     disabled={option.disabled}
-                    className="relative flex min-h-8 cursor-default select-none items-center gap-2 rounded-lg py-1.5 pl-2.5 pr-8 text-[13px] text-qn-text outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-qn-hover"
+                    className="relative flex min-h-8 cursor-default select-none items-center gap-2 rounded-lg py-1.5 pl-2.5 pr-8 text-ui text-qn-text outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[highlighted]:bg-qn-hover"
                   >
                     <span className="min-w-0 flex-1">
                       <RadixSelect.ItemText>{option.label}</RadixSelect.ItemText>
-                      {option.description && <span className="block text-[12px] text-qn-dim">{option.description}</span>}
+                      {option.description && <span className="block text-ui-sm text-qn-dim">{option.description}</span>}
                     </span>
                     <RadixSelect.ItemIndicator className="absolute right-2.5 text-qn-text">
                       <Check size={14} />
@@ -262,7 +267,7 @@ export function TabsTrigger({ className, ...props }: ComponentProps<typeof Tabs.
   return (
     <Tabs.Trigger
       className={cn(
-        'h-8 rounded-lg px-3 text-[13px] text-qn-muted outline-none hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=active]:bg-qn-hover data-[state=active]:text-qn-text',
+        'h-8 rounded-lg px-3 text-ui text-qn-muted outline-none hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=active]:bg-qn-hover data-[state=active]:text-qn-text',
         className,
       )}
       {...props}

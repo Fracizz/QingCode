@@ -30,7 +30,7 @@ export function HostKeyDialog({
       }
     >
       <div className="space-y-3">
-        <div className="flex items-start gap-2 text-xs leading-5">
+        <div className="flex items-start gap-2 text-ui-sm leading-5">
           <ShieldAlert size={16} className={changed ? 'text-qn-danger' : 'text-amber-300'} />
           <span className={changed ? 'text-qn-danger' : 'text-qn-text'}>
             {changed
@@ -38,21 +38,21 @@ export function HostKeyDialog({
               : '首次连接该主机，请核对指纹后再信任。'}
           </span>
         </div>
-        <div className="rounded-lg border border-qn-border bg-black/25 p-3 text-xs">
+        <div className="rounded-lg border border-qn-border bg-qn-inset p-3 text-ui-sm">
           <div className="text-qn-muted">
             主机：{prompt.host}:{prompt.port}
           </div>
           {changed && prompt.previous && (
             <div className="mt-2">
               <div className="text-qn-muted">已保存的指纹</div>
-              <code className="mt-1 block break-all font-mono text-[12px] text-qn-danger">
+              <code className="mt-1 block break-all font-mono text-ui-sm text-qn-danger">
                 {prompt.previous}
               </code>
             </div>
           )}
           <div className="mt-2">
             <div className="text-qn-muted">{changed ? '本次收到的指纹' : '主机指纹（SHA256）'}</div>
-            <code className="mt-1 block break-all font-mono text-[12px] text-qn-text">
+            <code className="mt-1 block break-all font-mono text-ui-sm text-qn-text">
               {prompt.fingerprint}
             </code>
           </div>

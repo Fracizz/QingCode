@@ -5,6 +5,14 @@ import path from 'node:path'
 
 export type PathImpl = typeof path.win32 | typeof path.posix
 
+/** 旧版 SSH 项目可能保存 SFTP 路径 `/D:/code/repo`，Windows Agent 需要本机盘符路径。 */
+export function nativeAgentCwd(cwd: string, platform: string = process.platform): string {
+  if (platform === 'win32' && /^\/[A-Za-z]:[\\/]/.test(cwd)) {
+    return cwd.slice(1).replace(/\//g, '\\')
+  }
+  return cwd
+}
+
 /** 盘符、UNC 或含反斜杠的路径都按 Windows 语义比较，即使 server 暂时跑在 POSIX 上。 */
 export function looksWindowsPath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.includes('\\')

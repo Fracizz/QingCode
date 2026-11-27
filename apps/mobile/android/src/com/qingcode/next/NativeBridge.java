@@ -39,6 +39,9 @@ public final class NativeBridge {
     void send(String json);
     String takePairingLink();
     boolean canShowSystemUi();
+    boolean backgroundConnectionEnabled();
+    void setBackgroundConnectionEnabled(boolean enabled);
+    void setDesktopConnectionActive(boolean active);
   }
 
   private static final ThreadFactory THREAD_FACTORY = new ThreadFactory() {
@@ -184,6 +187,15 @@ public final class NativeBridge {
     if ("rpc".equals(method)) return rpc(params);
     if ("events.open".equals(method)) return openEvents(params);
     if ("events.close".equals(method)) return closeEvents(params);
+    if ("background.get".equals(method)) return callback.backgroundConnectionEnabled();
+    if ("background.set".equals(method) || "background.connection".equals(method)) {
+      boolean setting = "background.set".equals(method);
+      Object value = params.opt(setting ? "enabled" : "active");
+      if (!(value instanceof Boolean)) throw new BridgeException("bad_request", "后台连接设置无效");
+      if (setting) callback.setBackgroundConnectionEnabled((Boolean) value);
+      else callback.setDesktopConnectionActive((Boolean) value);
+      return value;
+    }
     if ("clipboard.read".equals(method)) return readClipboard();
     if ("clipboard.write".equals(method)) return writeClipboard(params);
     if ("images.pick".equals(method)) return inputs.pickImages(params);

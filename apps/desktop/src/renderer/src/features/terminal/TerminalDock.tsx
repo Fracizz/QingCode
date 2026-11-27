@@ -99,7 +99,7 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
     <>
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-qn-border px-2">
         <Terminal size={14} className="ml-1 shrink-0 text-qn-muted" aria-hidden />
-        <span className="mr-1 shrink-0 text-[12px] text-qn-muted">终端</span>
+        <span className="mr-1 shrink-0 text-ui-sm text-qn-muted">终端</span>
         <div className="qn-scroll flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {state.tabs.map((info, index) => {
             const name = info.shell.split(/[\\/]/).at(-1) || '终端'
@@ -109,7 +109,7 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
               <div key={info.termId} className={cn('flex shrink-0 items-center rounded-md px-0.5', active ? 'bg-qn-active text-qn-text' : 'text-qn-muted')}>
                 <button
                   type="button"
-                  className="max-w-32 truncate rounded px-1.5 py-1 text-[12px] hover:text-qn-text focus-visible:outline-qn-accent"
+                  className="max-w-32 truncate rounded px-1.5 py-1 text-ui-sm hover:text-qn-text focus-visible:outline-qn-accent"
                   aria-pressed={active}
                   title={label}
                   onClick={() => setState((previous) => ({ ...previous, activeId: info.termId }))}
@@ -130,7 +130,7 @@ function TerminalPanel({ targetId, cwd, open }: { targetId: string; cwd: string;
           <X size={14} />
         </IconButton>
       </div>
-      {!ready && <div className="shrink-0 px-3 py-1 text-[12px] text-qn-warn" role="status">目标未连接</div>}
+      {!ready && <div className="shrink-0 px-3 py-1 text-ui-sm text-qn-warn" role="status">目标未连接</div>}
       {warning && (
         <div className="shrink-0 px-2 pt-2">
           <ErrorNote
@@ -187,7 +187,7 @@ export function TerminalDock() {
         <TerminalPanel key={scope} targetId={targetId} cwd={cwd} open={open} />
       ) : (
         <>
-          <div className="flex h-9 shrink-0 items-center justify-between border-b border-qn-border px-3 text-[12px] text-qn-muted">
+          <div className="flex h-9 shrink-0 items-center justify-between border-b border-qn-border px-3 text-ui-sm text-qn-muted">
             <span>终端</span>
             <IconButton size="sm" label="收起终端面板" onClick={useTerminalDock.getState().close}><X size={14} /></IconButton>
           </div>

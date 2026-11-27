@@ -1,4 +1,4 @@
-import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, Square, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, PanelLeft, Square, X } from 'lucide-react'
 import type { UserInput } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
@@ -16,6 +16,7 @@ export type ComposerProps = {
   onChangeText: (text: string) => void
   onSend: (text: string, attachments: UserInput[], mode: SendMode) => Promise<boolean>
   onInterrupt: () => void
+  onSwitchSession: () => void
   interrupting?: boolean
   running: boolean
   sending: boolean
@@ -45,7 +46,7 @@ function rememberImages(key: string, images: DraftImage[]) {
 }
 
 export function Composer({
-  draftKey, text, onChangeText, onSend, onInterrupt, interrupting, running, sending, compacting, disabled, imageUnavailable,
+  draftKey, text, onChangeText, onSend, onInterrupt, onSwitchSession, interrupting, running, sending, compacting, disabled, imageUnavailable,
   project, annotations, onUpdateAnnotation, onRemoveAnnotation, quoteDraft, onConfirmQuote,
   onCancelQuote, placeholder = '和 Codex 一起工作', toolbar, canSteer,
 }: ComposerProps) {
@@ -241,6 +242,9 @@ export function Composer({
         />
         <div className="qn-composer-toolbar">
           <div className="qn-composer-tools">
+            <Button variant="ghost" className="qn-icon-button" onClick={onSwitchSession} aria-label="切换会话" aria-haspopup="dialog">
+              <PanelLeft size={19} strokeWidth={1.75} aria-hidden />
+            </Button>
             <Button variant="ghost" className="qn-icon-button" aria-label="添加图片" title={imageUnavailable}
               onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
               <ImagePlus size={19} strokeWidth={1.75} aria-hidden />

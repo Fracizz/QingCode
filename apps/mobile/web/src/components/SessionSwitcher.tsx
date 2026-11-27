@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useApp } from '../store'
 import type { Project } from '../types'
-import { groupWorkspaceThreads, openWorkspaceThread, useWorkspace, visibleWorkspaceThreads, workspaceThreadKey, type WorkspaceThread } from '../workspace'
+import { groupWorkspaceThreads, openWorkspaceThread, useWorkspace, useWorkspacePreferences, visibleWorkspaceThreads, workspaceThreadKey, type WorkspaceThread } from '../workspace'
 import { ProjectOrigin, WorkspaceSearch, WorkspaceThreadRow } from './WorkspaceHome'
 import { NewSessionButton } from './NewSessionButton'
 import { Button, Dialog, Note } from './ui'
@@ -20,6 +20,7 @@ export function SessionSwitcher({ onClose }: { onClose: () => void }) {
   const targets = useApp((s) => s.targets)
   const recentThreads = useWorkspace((s) => activeId ? s.threads[activeId] : undefined) ?? emptyThreads
   const allProjects = useWorkspace((s) => activeId ? s.projects[activeId]?.items : undefined)
+  const preferences = useWorkspacePreferences()
   const [scope, setScope] = useState<'project' | 'all'>('project')
   const [query, setQuery] = useState('')
   const [openError, setOpenError] = useState<string | null>(null)
@@ -37,8 +38,8 @@ export function SessionSwitcher({ onClose }: { onClose: () => void }) {
     const candidates = scope === 'all' ? [...cached.values()] : [...cached.values()]
       .filter((thread) => thread.targetId === targetId && thread.projectId === projectId)
     const byId = new Map([...(allProjects ?? []), ...currentProjects].map((project) => [project.id, project]))
-    return groupWorkspaceThreads(visibleWorkspaceThreads(candidates, activeId, archived), [...byId.values()], query)
-  }, [scope, recentThreads, currentThreads, targetId, projectId, allProjects, currentProjects, activeId, archived, query])
+    return groupWorkspaceThreads(visibleWorkspaceThreads(candidates, activeId, archived), [...byId.values()], query, preferences)
+  }, [scope, recentThreads, currentThreads, targetId, projectId, allProjects, currentProjects, activeId, archived, query, preferences])
 
   function close() {
     const state = useApp.getState()
@@ -59,8 +60,8 @@ export function SessionSwitcher({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Dialog title="切换会话" onClose={close} placement="side">
-      <div className="qn-segment" aria-label="会话范围">
+    <Dialog title="切换会话" onClose={close} placement="left">
+      <div className="qn-segment mb-3" aria-label="会话范围">
         <Button aria-pressed={scope === 'project'} onClick={() => setScope('project')}>本项目</Button>
         <Button aria-pressed={scope === 'all'} onClick={() => setScope('all')}>全部</Button>
       </div>

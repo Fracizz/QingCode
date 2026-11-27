@@ -13,6 +13,8 @@ export type TargetCredentials = {
 }
 
 export interface TargetLink {
+  /** 连接的是哪一个 daemon，供重连时判断事件序号是否仍有效。 */
+  server?: { pid: number; version: string }
   /** 连接可用但需要提醒用户的情况（如旧版 server 未能替换），就绪时随状态展示。 */
   notice?: string
   request(method: string, params?: unknown): Promise<unknown>
@@ -33,6 +35,7 @@ export interface HostKeyVerifier {
 
 /** 建立 SSH 连接所需的最小信息；连接测试只需要这些。 */
 export interface SshTestContext {
+  resourcesPath: string
   target: SshTarget
   credentials: TargetCredentials
   gate: HostKeyVerifier
@@ -40,16 +43,17 @@ export interface SshTestContext {
 
 /** 经 SSH 执行远端 server 子命令（开启/关闭直连等）所需的信息。 */
 export interface SshRemoteContext extends SshTestContext {
-  resourcesPath: string
   onState?(detail: string): void
 }
+
+export type RemoteServerCommand = readonly string[] | ((previous: Record<string, unknown> | undefined) => readonly string[] | null)
 
 export interface SshLinkContext extends SshTestContext {
   hooks: LinkHooks
   userData: string
-  resourcesPath: string
   appVersion: string
   signal?: AbortSignal
+  forceReplace?: boolean
 }
 
 export interface DirectLinkContext {
@@ -67,6 +71,8 @@ export interface LocalLinkContext {
   electronPath: string
   serverScript: string
   appVersion: string
+  signal?: AbortSignal
+  forceReplace?: boolean
 }
 
 export type LinkFactory<C> = (context: C) => Promise<TargetLink>

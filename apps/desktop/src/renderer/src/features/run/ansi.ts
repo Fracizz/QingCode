@@ -17,18 +17,12 @@ export type AnsiState = { style: AnsiStyle; pending: string }
 
 export const initialAnsiState = (): AnsiState => ({ style: {}, pending: '' })
 
-// 与深色主题协调的 16 色（参考 VS Code 终端默认配色）。
-const BASIC = [
-  '#5c5c5c', '#f14c4c', '#23d18b', '#f5f543', '#3b8eea', '#d670d6', '#29b8db', '#e5e5e5',
-]
-const BRIGHT = [
-  '#808080', '#ff6b63', '#6fcf8f', '#ffe36b', '#5fa8ff', '#e48ee4', '#5fd7f0', '#ffffff',
-]
+// 16 色取 styles.css 的 --qn-ansi-N，随主题切换（浅色下黄、白等颜色会压暗）；256 色其余部分是固定色值。
+export const ansiVar = (index: number): string => `var(--qn-ansi-${index})`
 
 export function color256(index: number): string | undefined {
   if (!Number.isInteger(index) || index < 0 || index > 255) return undefined
-  if (index < 8) return BASIC[index]
-  if (index < 16) return BRIGHT[index - 8]
+  if (index < 16) return ansiVar(index)
   if (index < 232) {
     const n = index - 16
     const level = (v: number): number => (v === 0 ? 0 : 55 + v * 40)
@@ -62,11 +56,11 @@ export function applySgr(style: AnsiStyle, params: number[]): AnsiStyle {
     } else if (code === 23) delete next.italic
     else if (code === 24) delete next.underline
     else if (code === 27) delete next.inverse
-    else if (code >= 30 && code <= 37) next.fg = BASIC[code - 30]!
-    else if (code >= 90 && code <= 97) next.fg = BRIGHT[code - 90]!
+    else if (code >= 30 && code <= 37) next.fg = ansiVar(code - 30)
+    else if (code >= 90 && code <= 97) next.fg = ansiVar(code - 90 + 8)
     else if (code === 39) delete next.fg
-    else if (code >= 40 && code <= 47) next.bg = BASIC[code - 40]!
-    else if (code >= 100 && code <= 107) next.bg = BRIGHT[code - 100]!
+    else if (code >= 40 && code <= 47) next.bg = ansiVar(code - 40)
+    else if (code >= 100 && code <= 107) next.bg = ansiVar(code - 100 + 8)
     else if (code === 49) delete next.bg
     else if (code === 38 || code === 48) {
       const mode = list[i + 1]

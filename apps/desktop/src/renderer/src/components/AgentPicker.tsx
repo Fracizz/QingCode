@@ -27,7 +27,7 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
 
   if (locked) {
     return (
-      <span className="inline-flex h-8 items-center gap-1.5 px-2 text-[13px] text-qn-muted">
+      <span className="inline-flex h-8 items-center gap-1.5 px-2 text-ui text-qn-muted">
         <AgentIcon agent={agent} size={14} />
         {agentLabel(agent)}
       </span>
@@ -39,7 +39,7 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
       <MenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[13px] text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover"
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-ui text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover"
           aria-label="选择 Agent"
         >
           <AgentIcon agent={agent} size={14} />
@@ -64,7 +64,7 @@ export function AgentPicker({ targetId, agent, locked }: { targetId: string | nu
                 {agentLabel(item)}
                 {item === defaultAgent && <Badge>默认</Badge>}
               </span>
-              <span className="block truncate text-[12px] text-qn-dim">{availabilityReason(item, status)}</span>
+              <span className="block truncate text-ui-sm text-qn-dim">{availabilityReason(item, status)}</span>
             </MenuItem>
           )
         })}

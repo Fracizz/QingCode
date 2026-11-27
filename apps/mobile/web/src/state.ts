@@ -155,6 +155,12 @@ export function parseTargets(value: unknown): Target[] {
       targets.push({ id: 'local', kind: 'local', name })
       continue
     }
+    if (entry.kind === 'direct') {
+      const host = text(entry.host)
+      const port = number(entry.port, 0)
+      if (host && Number.isInteger(port) && port > 0 && port <= 65535) targets.push({ id, kind: 'direct', name, host, port })
+      continue
+    }
     if (entry.kind !== 'ssh') continue
     targets.push({
       id,

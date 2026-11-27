@@ -101,8 +101,8 @@ function cloneState(state: MapState): MapState {
 function recordItem(state: MapState, item: V2Item): void {
   const id = scalarText(item.id)
   if (!id) return
+  if (!Object.hasOwn(state.items, id)) state.order.push(id)
   state.items[id] = item
-  if (!state.order.includes(id)) state.order.push(id)
 }
 
 function blockKey(state: MapState, contentIndex: number): string {

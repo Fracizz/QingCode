@@ -1,20 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import type { DirectTarget, SshTarget } from '../../shared/backendApi'
 import { ChatPanel } from './components/ChatPanel'
+import { SideChat } from './components/SideChat'
 import { CredentialDialog } from './components/CredentialDialog'
 import { DirectoryPicker } from './components/DirectoryPicker'
 import { HostKeyDialog } from './components/HostKeyDialog'
 import { LegacyDialog } from './components/LegacyImport'
-import { MobileSettingsDialog } from './components/MobileSettings'
 import { Notice } from './components/Notice'
 import { TooltipProvider } from './components/primitives'
 import { Sidebar } from './components/shell/Sidebar'
 import { TitleBar } from './components/shell/TitleBar'
 import { TargetForm } from './components/TargetForm'
-import { useWorkspaceScope, WorkspaceDock } from './components/shell/WorkspaceDock'
+import { ProjectFilesView, useWorkspaceScope, WorkspaceDock } from './components/shell/WorkspaceDock'
 import { QuickOpen } from './features/explorer'
 import { CommandPalette, defaultCommands, registerCommands, storeCommandDeps, toggleCommandPalette } from './features/palette'
-import { closeSettings, openSettings, SettingsDialog, useSettings, useSettingsDialog } from './features/settings'
+import { openSettings, SettingsPage, useSettings, useSettingsDialog } from './features/settings'
 import { TerminalDock } from './features/terminal/TerminalDock'
 import { useTerminalDock } from './features/terminal/dockState'
 import { useWorkspaceWatch } from './hooks/useWorkspaceWatch'
@@ -49,6 +49,7 @@ export default function App() {
 
   const sidebarCollapsed = useUi((s) => s.sidebarCollapsed)
   const pickerOpen = useUi((s) => s.directoryPickerOpen)
+  const pickerTargetId = useUi((s) => s.directoryPickerTarget) ?? selectedId
 
   const [targetForm, setTargetForm] = useState<{ open: boolean; editing: SshTarget | DirectTarget | null }>({
     open: false,
@@ -56,10 +57,10 @@ export default function App() {
   })
   const [credentialTarget, setCredentialTarget] = useState<SshTarget | null>(null)
   const [rememberPrefs, setRememberPrefs] = useState<Record<string, boolean>>({})
-  const [mobileOpen, setMobileOpen] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
+  const view = useDock((s) => s.view)
   const workspace = useWorkspaceScope()
-  const settingsDialog = useSettingsDialog()
+  const settingsOpen = useSettingsDialog((s) => s.open)
   const autoConnectDone = useRef(false)
   // 命令只登记一次，快速打开是否可用通过 ref 读最新的工作区状态。
   const workspaceReadyRef = useRef(false)
@@ -75,7 +76,7 @@ export default function App() {
           quickOpen: () => setQuickOpen(true),
           canQuickOpen: () => workspaceReadyRef.current,
           addTarget: () => setTargetForm({ open: true, editing: null }),
-          openMobile: () => setMobileOpen(true),
+          openMobile: () => openSettings('mobile'),
         }),
       ),
     [],
@@ -97,8 +98,11 @@ export default function App() {
   }, [load])
 
   useEffect(() => {
-    useCodex.getState().setContext(selectedId, null)
+    // 在侧栏点了别的目标下的项目时，项目选择已把会话上下文切过去，这里不能再清空。
+    if (useCodex.getState().currentTargetId !== selectedId) useCodex.getState().setContext(selectedId, null)
+    useProjects.getState().setActiveTarget(selectedId)
     useRateLimits.getState().setActiveTarget(selectedId)
+    void useProjects.getState().load(selectedId)
   }, [selectedId])
 
   // 全局快捷键：Ctrl+B 侧栏、Ctrl+N 新会话（草稿态，发第一条消息时才创建）、Ctrl+P 快速打开文件；
@@ -221,14 +225,15 @@ export default function App() {
       className="qn-shell flex h-screen w-screen flex-col overflow-hidden bg-qn-bg text-qn-text"
       data-entered={entered}
     >
-      <TitleBar />
-      <div className="flex min-h-0 flex-1">
+      <TitleBar showWorkspace={!settingsOpen} />
+      {/* 隐藏工作区时保留编辑器、终端和对话的组件状态。 */}
+      <div className={`min-h-0 flex-1 ${settingsOpen ? 'hidden' : 'flex'}`}>
         {!sidebarCollapsed && (
           <Sidebar
             onAdd={openAddTarget}
             onEdit={(target) => setTargetForm({ open: true, editing: target })}
             onImport={() => useLegacy.getState().open()}
-            onMobile={() => setMobileOpen(true)}
+            onMobile={() => openSettings('mobile')}
             onSettings={() => openSettings()}
             onSelect={onSelect}
             onConnect={requestConnect}
@@ -236,12 +241,22 @@ export default function App() {
             onForgetSecret={(id) => void forgetSecret(id)}
           />
         )}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <ChatPanel onConnect={requestConnect} onAddTarget={openAddTarget} />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-end">
+          <div className={view === 'chat' ? 'relative flex min-h-0 min-w-0 flex-1' : 'hidden'}>
+            <ChatPanel onConnect={requestConnect} onAddTarget={openAddTarget} />
+            <SideChat />
+          </div>
+          {view === 'files' && <ProjectFilesView onQuickOpen={() => setQuickOpen(true)} />}
           <TerminalDock />
         </div>
-        <WorkspaceDock />
+        {view === 'chat' && <WorkspaceDock />}
       </div>
+      {settingsOpen && (
+        <SettingsPage
+          onEditTarget={(target) => setTargetForm({ open: true, editing: target })}
+          onRemoveTarget={(id) => void useTargets.getState().remove(id)}
+        />
+      )}
 
       {targetForm.open && (
         <TargetForm
@@ -273,26 +288,16 @@ export default function App() {
       )}
       {pickerOpen && (
         <DirectoryPicker
-          targetId={selectedId}
+          targetId={pickerTargetId}
           onClose={() => useUi.getState().closeDirectoryPicker()}
           onConfirm={(path) => {
             useUi.getState().closeDirectoryPicker()
-            void useProjects.getState().add(selectedId, path)
+            if (pickerTargetId !== selectedId) selectTarget(pickerTargetId)
+            void useProjects.getState().add(pickerTargetId, path)
           }}
         />
       )}
       <LegacyDialog />
-      {mobileOpen && <MobileSettingsDialog onClose={() => setMobileOpen(false)} />}
-      <SettingsDialog
-        open={settingsDialog.open}
-        onClose={closeSettings}
-        initialSection={settingsDialog.section}
-        onEditTarget={(target) => {
-          closeSettings()
-          setTargetForm({ open: true, editing: target })
-        }}
-        onRemoveTarget={(id) => void useTargets.getState().remove(id)}
-      />
       {quickOpen && !('reason' in workspace) && (
         <QuickOpen
           targetId={workspace.targetId}

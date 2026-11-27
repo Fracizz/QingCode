@@ -66,7 +66,7 @@ export default function TerminalView({
   return (
     <div className={cn('absolute inset-0 flex min-h-0 flex-col', !visible && 'invisible pointer-events-none')} aria-hidden={!visible} data-terminal-input>
       <div className="flex shrink-0 items-center gap-1 px-2 py-0.5">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 text-[11px] text-qn-muted" aria-live="polite">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 text-ui-xs text-qn-muted" aria-live="polite">
           {exitLabel && <span>{exitLabel}</span>}
           {status.attaching && <span>正在接回终端…</span>}
           {status.historyLost && <span className="text-qn-warn">部分历史输出已丢失</span>}
@@ -101,7 +101,7 @@ export default function TerminalView({
             value={query}
             placeholder="搜索终端输出"
             className="flex-1"
-            inputClassName="h-7 rounded bg-qn-bg py-0 text-[12px]"
+            inputClassName="h-7 rounded bg-qn-bg py-0 text-ui-sm"
             onChange={(event) => {
               const value = event.target.value
               setQuery(value)
@@ -117,7 +117,7 @@ export default function TerminalView({
               }
             }}
           />
-          {query && !found && <span className="text-[11px] text-qn-muted" role="status">无匹配</span>}
+          {query && !found && <span className="text-ui-xs text-qn-muted" role="status">无匹配</span>}
           <IconButton size="sm" label="上一个匹配" disabled={!query} onClick={() => find(query, true)}><ChevronUp size={14} /></IconButton>
           <IconButton size="sm" label="下一个匹配" disabled={!query} onClick={() => find(query)}><ChevronDown size={14} /></IconButton>
           <IconButton size="sm" label="关闭终端搜索" onClick={closeSearch}><X size={14} /></IconButton>

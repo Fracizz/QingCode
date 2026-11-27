@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { AppSettings } from '../../shared/backendApi'
-import { DEFAULT_FONT_SIZES } from '../../shared/fontSizes'
+import { DEFAULT_FONT_SIZES, FONT_SIZES_VERSION } from '../../shared/fontSizes'
 import { backendConfig } from '../config'
 import { registerSettingsMethods } from '../registerSettings'
 import { BackendRouter, RouterError } from '../router'
@@ -39,9 +39,13 @@ describe('registerSettingsMethods', () => {
       general: {
         sendKey: 'enter',
         autoConnectLast: true,
+        autoArchiveDays: 0,
         defaultAgent: 'codex',
+        globalAccessMode: 'default',
         density: 'comfortable',
+        theme: 'dark',
         ...DEFAULT_FONT_SIZES,
+        fontSizesVersion: FONT_SIZES_VERSION,
       },
       agents: {},
     })
@@ -53,37 +57,40 @@ describe('registerSettingsMethods', () => {
 
   it('settings.save 深合并、白名单过滤并原子落盘', async () => {
     const instance = router()
+    const events: unknown[] = []
+    instance.onEmit((name, payload) => events.push({ name, payload }))
     const first = (await instance.invoke('settings.save', {
-      general: { sendKey: 'ctrlEnter', autoConnectLast: false },
+      general: { sendKey: 'ctrlEnter', autoConnectLast: false, globalAccessMode: 'restricted' },
       agents: { local: { codex: { enabled: false, path: 'C:\\bin\\codex.exe' } } },
     })) as AppSettings
     expect(first.general).toMatchObject({ sendKey: 'ctrlEnter', autoConnectLast: false, density: 'comfortable' })
     expect(first.agents.local?.codex).toEqual({ enabled: false, path: 'C:\\bin\\codex.exe' })
 
     const second = (await instance.invoke('settings.save', {
-      general: { density: 'compact', theme: 'light' },
+      general: { density: 'compact', autoArchiveDays: 90, theme: 'light', accentColor: 'pink' },
       agents: { local: { codex: { path: 'D:\\codex.exe' } }, 'ssh-1': { pi: { enabled: true } } },
     })) as AppSettings
     expect(second.general.sendKey).toBe('ctrlEnter')
     expect(second.general.density).toBe('compact')
     expect(second.agents.local?.codex).toEqual({ enabled: false, path: 'D:\\codex.exe' })
     expect(second.agents['ssh-1']?.pi).toEqual({ enabled: true })
-    expect(JSON.stringify(second)).not.toContain('theme')
+    expect(JSON.stringify(second)).not.toContain('accentColor')
 
     expect(await instance.invoke('settings.get', undefined)).toEqual(second)
     const text = await readFile(join(userData, 'settings.json'), 'utf8')
-    expect(JSON.parse(text)).toMatchObject({ general: { density: 'compact' } })
+    expect(JSON.parse(text)).toMatchObject({ general: { density: 'compact', autoArchiveDays: 90, theme: 'light' } })
+    expect(events).toEqual([{ name: 'settings.access', payload: { globalAccessMode: 'restricted' } }])
   })
 
-  it('连续保存不同的字号时保留两个设置', async () => {
+  it('并发保存左侧字号时合并有效设置', async () => {
     const instance = router()
     await Promise.all([
-      instance.invoke('settings.save', { general: { chatFontSize: 18 } }),
-      instance.invoke('settings.save', { general: { terminalFontSize: 16 } }),
+      instance.invoke('settings.save', { general: { sidebarFontSize: 18, projectFontSize: 20 } }),
+      instance.invoke('settings.save', { general: { sessionFontSize: 16, projectFontSize: 25 } }),
     ])
-    expect(await instance.invoke('settings.get', undefined)).toMatchObject({
-      general: { ...DEFAULT_FONT_SIZES, chatFontSize: 18, terminalFontSize: 16 },
-    })
+    const saved = { ...DEFAULT_FONT_SIZES, sidebarFontSize: 18, projectFontSize: 20, sessionFontSize: 16 }
+    expect(await instance.invoke('settings.get', undefined)).toMatchObject({ general: saved })
+    expect(JSON.parse(await readFile(join(userData, 'settings.json'), 'utf8'))).toMatchObject({ general: saved })
   })
 
   it('非对象补丁给出 invalid_params，且不改动已存设置', async () => {

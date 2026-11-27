@@ -16,11 +16,10 @@ import {
   History,
   Minus,
   Plus,
-  RotateCw,
   RotateCcw,
 } from 'lucide-react'
 import { ListOption } from '../../components/ListOption'
-import { LoadingIcon } from '../../components/LoadingIcon'
+import { LoadingIcon, RefreshIcon } from '../../components/LoadingIcon'
 import { SearchField } from '../../components/SearchField'
 import { Badge, Checkbox, EmptyState, ErrorNote, IconButton, Modal, Spinner } from '../../components/ui'
 import {
@@ -229,7 +228,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="flex min-w-0 max-w-[52%] items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover"
+              className="flex min-w-0 max-w-[52%] items-center gap-1.5 rounded-lg px-2 py-1 text-ui-sm outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover"
             >
               <GitBranch size={14} className="shrink-0 text-qn-muted" />
               <span className="truncate">{branchLabel(current)}</span>
@@ -246,30 +245,30 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
               onChange={(event) => setBranchQuery(event.target.value)}
             />
             <div className="qn-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1" role="listbox">
-              <div className="px-2.5 py-1 text-[11px] text-qn-dim">本地分支</div>
+              <div className="px-2.5 py-1 text-ui-xs text-qn-dim">本地分支</div>
               {localBranches.length === 0 && (
-                <div className="px-2.5 py-1.5 text-[12px] text-qn-dim">无匹配分支</div>
+                <div className="px-2.5 py-1.5 text-ui-sm text-qn-dim">无匹配分支</div>
               )}
               {localBranches.map((branch) => (
                 <ListOption
                   key={branch.name}
                   selected={branch.name === current}
-                  className="gap-2 py-1.5 text-[12px]"
+                  className="gap-2 py-1.5 text-ui-sm"
                   onClick={() => void selectBranch(branch.name, false)}
                 >
                   <span className="min-w-0 flex-1 truncate">{branch.name}</span>
                   {branch.name === current && <Check size={13} className="shrink-0 text-qn-brand" />}
                 </ListOption>
               ))}
-              <div className="mt-1 border-t border-qn-border px-2.5 py-1 text-[11px] text-qn-dim">远端分支</div>
+              <div className="mt-1 border-t border-qn-border px-2.5 py-1 text-ui-xs text-qn-dim">远端分支</div>
               {remoteBranches.length === 0 && (
-                <div className="px-2.5 py-1.5 text-[12px] text-qn-dim">无匹配分支</div>
+                <div className="px-2.5 py-1.5 text-ui-sm text-qn-dim">无匹配分支</div>
               )}
               {remoteBranches.map((branch) => (
                 <ListOption
                   key={branch.name}
                   selected={false}
-                  className="gap-2 py-1.5 text-[12px]"
+                  className="gap-2 py-1.5 text-ui-sm"
                   onClick={() => void selectBranch(branch.name, true)}
                 >
                   <span className="min-w-0 flex-1 truncate">{branch.name}</span>
@@ -277,10 +276,10 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
               ))}
             </div>
             <div className="shrink-0 border-t border-qn-border p-2">
-              <div className="mb-1 text-[11px] text-qn-dim">新建分支（基于当前 HEAD）</div>
+              <div className="mb-1 text-ui-xs text-qn-dim">新建分支（基于当前 HEAD）</div>
               <div className="flex gap-1.5">
                 <input
-                  className="qn-input h-7 py-0 text-[12px]"
+                  className="qn-input h-7 py-0 text-ui-sm"
                   placeholder="分支名"
                   value={newBranch}
                   onChange={(event) => setNewBranch(event.target.value)}
@@ -290,7 +289,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
                 />
                 <button
                   type="button"
-                  className="qn-button-subtle shrink-0 px-2 py-1 text-[12px]"
+                  className="qn-button-subtle shrink-0 px-2 py-1 text-ui-sm"
                   disabled={!newBranch.trim() || busy}
                   onClick={() => void createBranch()}
                 >
@@ -303,7 +302,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
 
         {(ahead > 0 || behind > 0) && (
           <Tip label={aheadBehindText(ahead, behind)}>
-            <span className="shrink-0 font-mono text-[11px] text-qn-accent">
+            <span className="shrink-0 font-mono text-ui-xs text-qn-accent">
               {ahead > 0 && `↑${ahead}`} {behind > 0 && `↓${behind}`}
             </span>
           </Tip>
@@ -320,7 +319,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             <ArrowUp size={14} />
           </IconButton>
           <IconButton label="刷新" className="h-7 w-7" disabled={state.loading} onClick={() => void refresh(targetId, cwd)}>
-            <RotateCw size={14} className={state.loading ? 'animate-spin' : ''} />
+            <RefreshIcon loading={state.loading} />
           </IconButton>
         </div>
       </div>
@@ -397,7 +396,7 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
 
       {menu && (
         <div
-          className="qn-surface-float absolute z-30 w-44 space-y-0.5 p-1 text-[12px]"
+          className="qn-surface-float absolute z-30 w-44 space-y-0.5 p-1 text-ui-sm"
           style={{
             left: Math.max(0, Math.min(menu.x, (rootRef.current?.clientWidth ?? 400) - 180)),
             top: menu.y,
@@ -462,10 +461,10 @@ export function GitPanel({ targetId, cwd }: { targetId: string; cwd: string }) {
             </div>
           }
         >
-          <pre className="whitespace-pre-wrap font-mono text-[12px] leading-5 text-qn-muted">
+          <pre className="whitespace-pre-wrap font-mono text-ui-sm leading-5 text-qn-muted">
             {discardPrompt(discardFiles)}
           </pre>
-          <div className="mt-3 flex items-center gap-1.5 text-[12px] text-qn-danger">
+          <div className="mt-3 flex items-center gap-1.5 text-ui-sm text-qn-danger">
             <CircleAlert size={13} /> 放弃前请确认没有需要保留的改动
           </div>
         </Modal>
@@ -503,7 +502,7 @@ function CommitBox({
   return (
     <div className="shrink-0 border-b border-qn-border px-2 py-2">
       <textarea
-        className="qn-input min-h-[64px] resize-none text-[12px]"
+        className="qn-input min-h-[64px] resize-none text-ui-sm"
         placeholder={`提交信息（Ctrl+Enter 提交${amend ? '，修改上次提交' : ''}）`}
         value={message}
         disabled={busy}
@@ -525,7 +524,7 @@ function CommitBox({
         </Checkbox>
         <button
           type="button"
-          className="qn-button ml-auto flex items-center gap-1 px-3 py-1 text-[12px]"
+          className="qn-button ml-auto flex items-center gap-1 px-3 py-1 text-ui-sm"
           disabled={!check.ok || busy}
           onClick={() => void submit()}
         >
@@ -537,8 +536,8 @@ function CommitBox({
           提交
         </button>
       </div>
-      {check.error && <div className="mt-1 text-[11px] text-qn-danger">{check.error}</div>}
-      {check.warning && <div className="mt-1 text-[11px] text-qn-warn">{check.warning}</div>}
+      {check.error && <div className="mt-1 text-ui-xs text-qn-danger">{check.error}</div>}
+      {check.warning && <div className="mt-1 text-ui-xs text-qn-warn">{check.warning}</div>}
     </div>
   )
 }
@@ -573,7 +572,7 @@ function FileGroup({
   return (
     <section className="mb-1.5">
       <div className="flex items-center gap-1.5 px-2 py-1">
-        <span className="text-[12px] font-medium">{label}</span>
+        <span className="text-ui-sm font-medium">{label}</span>
         <Badge>{files.length}</Badge>
         <div className="ml-auto flex items-center gap-0.5">
           {groupKey !== 'staged' && (
@@ -594,7 +593,7 @@ function FileGroup({
       {rest > 0 && (
         <button
           type="button"
-          className="mx-2 my-1 flex w-[calc(100%-1rem)] items-center justify-center rounded-lg px-2 py-1 text-[12px] text-qn-muted hover:bg-qn-hover"
+          className="mx-2 my-1 flex w-[calc(100%-1rem)] items-center justify-center rounded-lg px-2 py-1 text-ui-sm text-qn-muted hover:bg-qn-hover"
           onClick={() => setLimit((value) => value + GROUP_PAGE * 5)}
         >
           还有 {rest} 个文件，继续显示
@@ -629,12 +628,12 @@ const FileRow = memo(function FileRow({
         title="查看差异"
       >
         <span
-          className={cn('w-4 shrink-0 text-center font-mono text-[12px]', toneClass[info.tone])}
+          className={cn('w-4 shrink-0 text-center font-mono text-ui-sm', toneClass[info.tone])}
           title={info.label}
         >
           {letter.trim() === '.' ? '·' : letter.trim()}
         </span>
-        <span className="min-w-0 flex-1 truncate text-[12px]">{label}</span>
+        <span className="min-w-0 flex-1 truncate text-ui-sm">{label}</span>
       </button>
       <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex group-focus-within:flex">
         {group !== 'staged' && (

@@ -12,6 +12,8 @@ import type {
   ServerRequest,
   ThreadArchiveParams,
   ThreadArchiveResponse,
+  ThreadUnarchiveParams,
+  ThreadUnarchiveResponse,
   ThreadCompactStartParams,
   ThreadCompactStartResponse,
   ThreadDeleteParams,
@@ -20,6 +22,8 @@ import type {
   ThreadForkResponse,
   ThreadListParams,
   ThreadListResponse,
+  ThreadItemsListParams,
+  ThreadItemsListResponse,
   ThreadReadParams,
   ThreadReadResponse,
   ThreadResumeParams,
@@ -28,6 +32,8 @@ import type {
   ThreadSetNameResponse,
   ThreadStartParams,
   ThreadStartResponse,
+  ThreadUnsubscribeParams,
+  ThreadUnsubscribeResponse,
   ThreadTurnsListParams,
   ThreadTurnsListResponse,
   TurnInterruptParams,
@@ -44,8 +50,11 @@ export type ClientRequestMap = {
   'thread/resume': { params: ThreadResumeParams; result: ThreadResumeResponse }
   'thread/read': { params: ThreadReadParams; result: ThreadReadResponse }
   'thread/turns/list': { params: ThreadTurnsListParams; result: ThreadTurnsListResponse }
+  'thread/items/list': { params: ThreadItemsListParams; result: ThreadItemsListResponse }
   'thread/name/set': { params: ThreadSetNameParams; result: ThreadSetNameResponse }
+  'thread/unsubscribe': { params: ThreadUnsubscribeParams; result: ThreadUnsubscribeResponse }
   'thread/archive': { params: ThreadArchiveParams; result: ThreadArchiveResponse }
+  'thread/unarchive': { params: ThreadUnarchiveParams; result: ThreadUnarchiveResponse }
   'thread/compact/start': { params: ThreadCompactStartParams; result: ThreadCompactStartResponse }
   'thread/delete': { params: ThreadDeleteParams; result: ThreadDeleteResponse }
   'thread/fork': { params: ThreadForkParams; result: ThreadForkResponse }

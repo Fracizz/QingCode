@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">QingCode Next</string>
+    <string name="desktop_connection_channel">电脑连接</string>
+    <string name="desktop_connection_title">QingCode 正在后台保持电脑连接</string>
 </resources>

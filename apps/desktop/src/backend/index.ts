@@ -1,3 +1,5 @@
+import type { ProjectFileChunk } from '@qn/protocol'
+import { downloadFile } from './download'
 import { randomUUID } from 'node:crypto'
 import type { BackendMethod } from '../shared/backendApi'
 import { backendConfig } from './config'
@@ -97,8 +99,20 @@ const parent = process.parentPort
 if (parent) {
   parent.on('message', (event) => {
     const data: unknown = event.data
-    if (!data || typeof data !== 'object' || (data as { type?: unknown }).type !== 'port') return
     const port = event.ports[0]
-    if (port) router.attachPort(adaptPort(port))
+    if (!port || !data || typeof data !== 'object' || !('type' in data)) return
+    if (data.type === 'download' && 'targetId' in data && 'root' in data && 'path' in data &&
+      'destination' in data && typeof data.destination === 'string') {
+      void downloadFile(data.destination, (offset, length, version) =>
+        router.invoke('server.req', {
+          targetId: data.targetId, method: 'fs.project.read',
+          params: { root: data.root, path: data.path, offset, length, version },
+        }) as Promise<ProjectFileChunk>,
+      ).then(() => port.postMessage({ ok: true }), (error: unknown) =>
+        port.postMessage({ ok: false, message: error instanceof Error ? error.message : '下载失败' }),
+      ).finally(() => port.close())
+      return
+    }
+    if (data.type === 'port') router.attachPort(adaptPort(port))
   })
 }

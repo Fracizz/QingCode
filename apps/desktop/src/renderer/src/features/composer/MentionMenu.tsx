@@ -56,8 +56,8 @@ export function MentionMenu({
         >
           <FileIcon size={14} className="shrink-0 text-qn-muted" />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] text-qn-text">{item.name}</span>
-            <span className="block truncate text-[12px] text-qn-dim">{item.relative}</span>
+            <span className="block truncate text-ui text-qn-text">{item.name}</span>
+            <span className="block truncate text-ui-sm text-qn-dim">{item.relative}</span>
           </span>
         </ListOption>
       ))}

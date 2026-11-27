@@ -41,8 +41,8 @@
 | 区域 | 尺寸 | 内容 | 组件 |
 |---|---|---|---|
 | 标题栏 | 38px，`chrome` 底，整条可拖窗 | 侧栏开关、品牌；右侧"目标 · 额度"胶囊（Popover 看详情）；最右系统按钮占位 | `shell/TitleBar.tsx` |
-| 侧栏 | 默认 288，220–460，双击手柄复位，`Ctrl+B` 收起 | 目标切换器、新会话、项目→会话树、旧版导入卡片、底部入口 + 版本号 | `shell/Sidebar.tsx` |
-| 目标切换器 | — | 大号目标名 + 状态点 + 状态/额度；Popover 内可搜索，行内连接/断开，"…"菜单（编辑、忘记密码、删除），底部"添加 SSH 连接" | `shell/TargetSwitcher.tsx` |
+| 侧栏 | 默认 288，220–460，双击手柄复位，`Ctrl+B` 收起 | 新会话、工作区（多个目标同时铺开，每个目标下挂项目→会话树，可折叠）、旧版导入卡片、底部入口 + 版本号 | `shell/Sidebar.tsx` |
+| 工作区目标 | — | 每个目标一个分组头（图标+状态点、名称、状态），悬停：添加项目 / 连接或断开 / "…"（编辑、忘记密码、从侧栏移除、删除）。点哪个目标下的项目，主区就切到那个目标（未连接则发起连接）。"工作区"右侧 + 打开可搜索的全部目标列表，点选即加入侧栏并连接，底部"添加 SSH 连接"。侧栏目标存 `localStorage['qn-sidebar-targets']`，折叠状态存 `qn-sidebar-collapsed-targets` | `shell/TargetSwitcher.tsx` |
 | 项目树 | 行高 32 | 当前项目展开显示会话（默认 8 条）；当前会话青轨 + 选中底；运行中转圈、待审批琥珀标签；非 Codex 会话显示 Agent 图标；悬停换成"新会话 / 移除项目" | `shell/ProjectTree.tsx` |
 | 主区顶栏 | 44px | 会话标题、所在项目、运行中徽标、Agent、"…"菜单 | `shell/MainHeader.tsx` |
 | 消息流 | `max-w-3xl` 居中 | 草稿页 / 消息；连续 ≥2 个工具步骤折叠成摘要行；错误横幅；"回到底部"居中悬浮 | `ChatPanel.tsx`、`MessageItem.tsx`、`shell/WelcomePane.tsx` |
@@ -80,6 +80,8 @@
 
 ### 色彩（`styles.css` `@theme`）
 
+> 所有颜色组合须满足 [`contrast.md`](contrast.md) 的对比度下限（两端共用）；改 token 前先跑其中的校验脚本。
+
 | Token | 值 | 用途 |
 |---|---|---|
 | `qn-chrome` | `#141414` | 标题栏、进场页、窗口底色、系统按钮区 |
@@ -89,8 +91,10 @@
 | `qn-elevated` | `#242424` | 用户消息气泡等抬高块 |
 | `qn-float` | `#262626` | 浮层底色（配合 `.qn-surface-float`，见下文“浮层”） |
 | `qn-hover` / `qn-active` | `#262626` / `#2c2c2c` | 悬停 / 选中 |
-| `qn-border` / `qn-border-strong` | `#2a2a2a` / `#3a3a3a` | 分隔线 / 控件与浮层边界 |
-| `qn-text` / `qn-muted` / `qn-dim` | `#e6e6e6` / `#939393` / `#6b6b6b` | 正文 / 次要 / 辅助 |
+| `qn-border` / `qn-border-strong` | `#383838` / `#4d4d4d` | 分隔线 / 控件与浮层边界 |
+| `qn-outline` / `qn-outline-hover` | `#6b6b6b` / `#858585` | 可输入控件外框（≥ 3:1）/ 悬停·聚焦 |
+| `qn-composer` | `#262626` | 对话输入框底色 |
+| `qn-text` / `qn-muted` / `qn-dim` | `#e6e6e6` / `#a0a0a0` / `#8a8a8a` | 正文 / 次要 / 辅助 |
 | `qn-brand` | `#4ecdb5` | 青轨、Logo、当前上下文、运行中 |
 | `qn-accent` | `#4f8cff` | 主按钮、焦点环、链接 |
 | `qn-ok` / `qn-warn` / `qn-danger` | `#6fcf8f` / `#e2b55d` / `#ff6b63` | 已就绪 / 连接中·待审批·Fast / 错误 |

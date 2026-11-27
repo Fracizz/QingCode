@@ -5,7 +5,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { extname, join, relative, sep } from 'node:path'
-import type { Json } from './v2'
+import { asRecord, scalarText, type Json } from './v2'
 
 export interface SkillEntry {
   name: string
@@ -114,6 +114,14 @@ export function skillMetadata(entry: SkillEntry): Json {
     enabled: true,
     pluginId: null,
   }
+}
+
+export function commandMetadata(value: unknown): Json[] {
+  const command = asRecord(value)
+  const name = scalarText(command?.name).replace(/^\//, '')
+  if (!name || /[\s/]/.test(name) || command?.builtin === true) return []
+  // SDK 只返回命令名，路径留空，由 Claude 自己按命令名解析。
+  return [{ name, description: truncateDescription(scalarText(command?.description)), path: '', enabled: true, pluginId: null }]
 }
 
 async function readDirents(dir: string): Promise<import('node:fs').Dirent[]> {

@@ -33,14 +33,14 @@ export function WelcomePane({ onConnect, onAddTarget }: { onConnect: (id: string
         />
         <Logo size={40} />
       </div>
-      <h1 className="mt-5 text-[26px] font-semibold tracking-tight text-qn-text">开始构建</h1>
+      <h1 className="mt-5 text-[28px] font-semibold tracking-tight text-qn-text">开始构建</h1>
 
       {active && projects.length > 0 && (
         <Menu>
           <MenuTrigger asChild>
             <button
               type="button"
-              className="mt-2 inline-flex h-9 max-w-md items-center gap-2 rounded-lg px-3 text-[15px] text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover"
+              className="mt-2 inline-flex h-9 max-w-md items-center gap-2 rounded-lg px-3 text-ui-lg text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=open]:bg-qn-hover"
             >
               <Folder size={16} className="shrink-0" />
               <span className="truncate">{project?.name ?? '选择项目'}</span>
@@ -61,18 +61,18 @@ export function WelcomePane({ onConnect, onAddTarget }: { onConnect: (id: string
               </MenuItem>
             ))}
             <MenuSeparator />
-            <MenuItem icon={<FolderPlus size={14} />} onSelect={openPicker}>
+            <MenuItem icon={<FolderPlus size={14} />} onSelect={() => openPicker()}>
               添加项目…
             </MenuItem>
           </MenuContent>
         </Menu>
       )}
 
-      {project && active && <p className="mt-1 font-mono text-[12px] text-qn-dim">{project.path}</p>}
+      {project && active && <p className="mt-1 font-mono text-ui-sm text-qn-dim">{project.path}</p>}
 
       {!active && (
         <div className="mt-6 flex flex-col items-center gap-3">
-          <p className="text-[14px] text-qn-muted">
+          <p className="text-ui-md text-qn-muted">
             {target?.name ?? '本机'}
             <span className="mx-1.5 text-qn-dim">·</span>
             <span className={state === 'error' ? 'text-qn-danger' : ''}>{targetStateLabel[state]}</span>
@@ -91,8 +91,8 @@ export function WelcomePane({ onConnect, onAddTarget }: { onConnect: (id: string
 
       {active && projects.length === 0 && (
         <div className="mt-6 flex flex-col items-center gap-3">
-          <p className="text-[14px] text-qn-muted">添加一个项目目录，会话会按项目归类；也可以不选项目直接开始。</p>
-          <button type="button" className="qn-button inline-flex items-center gap-2 px-4 py-2" onClick={openPicker}>
+          <p className="text-ui-md text-qn-muted">添加一个项目目录，会话会按项目归类；也可以不选项目直接开始。</p>
+          <button type="button" className="qn-button inline-flex items-center gap-2 px-4 py-2" onClick={() => openPicker()}>
             <FolderPlus size={16} /> 添加项目
           </button>
         </div>
@@ -100,7 +100,7 @@ export function WelcomePane({ onConnect, onAddTarget }: { onConnect: (id: string
 
       <button
         type="button"
-        className="mt-8 flex items-center gap-1.5 text-[13px] text-qn-dim hover:text-qn-text"
+        className="mt-8 flex items-center gap-1.5 text-ui text-qn-dim hover:text-qn-text"
         onClick={onAddTarget}
       >
         <ServerCog size={14} /> 添加 SSH 连接，在远端主机上使用 Agent

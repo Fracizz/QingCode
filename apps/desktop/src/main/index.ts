@@ -117,6 +117,12 @@ function isAllowedNavigation(url: string): boolean {
 // 与渲染进程 styles.css 的 --color-qn-chrome / 标题栏高度保持一致，否则系统窗口按钮与自绘标题栏会出现色差或错位。
 const CHROME_COLOR = '#141414'
 const CHROME_SYMBOL = '#a1a1aa'
+// 与 styles.css 各主题的 --color-qn-chrome 保持一致，系统窗口按钮区才不会出现色块。
+const THEME_CHROME: Record<string, { color: string; symbolColor: string }> = {
+  dark: { color: CHROME_COLOR, symbolColor: CHROME_SYMBOL },
+  gray: { color: '#232427', symbolColor: '#b4b4b8' },
+  light: { color: '#ebebeb', symbolColor: '#4a4a4a' },
+}
 const TITLEBAR_HEIGHT = 38
 
 // 去掉系统菜单后，开发态仍需要刷新与 DevTools 快捷键。
@@ -206,7 +212,61 @@ function registerIpc(): void {
     })
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
+  const downloading = new Set<string>()
+  ipcMain.handle('file:download', async (event, targetId: string, root: string, path: string, openAfterDownload: unknown = false) => {
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame ||
+      typeof targetId !== 'string' || typeof root !== 'string' || typeof path !== 'string' ||
+      typeof openAfterDownload !== 'boolean') throw new Error('下载请求无效')
+    const parts = path.split('/')
+    if (parts.some((part) => !part || part === '.' || part === '..' || /[:\\\x00-\x1f]/.test(part))) throw new Error('项目文件路径无效')
+    const name = parts[parts.length - 1]!
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: openAfterDownload ? '下载并打开' : '下载到本机',
+      defaultPath: join(app.getPath('downloads'), name),
+    })
+    if (canceled || !filePath) return false
+    const backend = child
+    if (!backend || !childSpawned) throw new Error('后台服务未连接')
+    const destinationKey = process.platform === 'win32' ? filePath.toLowerCase() : filePath
+    if (downloading.has(destinationKey)) throw new Error('已有下载正在使用此保存路径')
+    downloading.add(destinationKey)
+    try {
+      const { port1, port2 } = new MessageChannelMain()
+      await new Promise<void>((resolve, reject) => {
+        port1.once('close', () => reject(new Error('下载连接已中断')))
+        port1.once('message', ({ data }) => {
+          if (data?.ok === true) resolve()
+          else reject(new Error(data?.message || '下载失败'))
+          port1.close()
+        })
+        port1.start()
+        try {
+          backend.postMessage({ type: 'download', targetId, root, path, destination: filePath }, [port2])
+        } catch (error) {
+          reject(error)
+          port1.close()
+          port2.close()
+        }
+      })
+      if (openAfterDownload) {
+        const error = await shell.openPath(filePath).catch((cause: unknown) =>
+          cause instanceof Error ? cause.message : '系统打开文件失败',
+        )
+        if (error) throw new Error(`文件已下载，但无法打开：${error}`)
+      }
+      return true
+    } finally {
+      downloading.delete(destinationKey)
+    }
+  })
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.on('app:setTheme', (event, theme: unknown) => {
+    const chrome = typeof theme === 'string' && Object.hasOwn(THEME_CHROME, theme) ? THEME_CHROME[theme] : undefined
+    const target = BrowserWindow.fromWebContents(event.sender)
+    if (!chrome || !target || target.isDestroyed()) return
+    target.setBackgroundColor(chrome.color)
+    if (process.platform !== 'darwin') target.setTitleBarOverlay({ ...chrome, height: TITLEBAR_HEIGHT })
+  })
   ipcMain.on('app:smokeDone', () => {
     if (!smoke) return
     if (smokeTimer) clearTimeout(smokeTimer)

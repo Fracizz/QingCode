@@ -1,6 +1,9 @@
+import { useState } from 'react'
+import { isGlobalAccessMode } from '@qn/codex-client'
 import { Select } from '../../components/primitives'
-import { Checkbox } from '../../components/ui'
+import { Checkbox, Modal } from '../../components/ui'
 import { DEFAULT_FONT_SIZES, FONT_SIZES, isFontSize } from '../../../../shared/fontSizes'
+import { AUTO_ARCHIVE_DAYS, isAutoArchiveDays } from '../../../../shared/backendApi'
 import { useSettings } from './settingsStore'
 import {
   DEFAULT_AGENT_OPTIONS,
@@ -11,13 +14,27 @@ import {
   isSettingsAgent,
   isSettingsDensity,
   isSettingsSendKey,
+  isSettingsTheme,
 } from './settingsModel'
 import { SectionHeading, Segmented, SettingRow } from './fields'
+
+const globalAccessOptions = [
+  { value: 'default', label: 'Agent 默认权限' },
+  { value: 'restricted', label: '受限权限' },
+  { value: 'auto', label: '自动' },
+  { value: 'fullAccess', label: '完全访问' },
+]
+
+const archiveOptions = AUTO_ARCHIVE_DAYS.map((days) => ({
+  value: String(days),
+  label: days === 0 ? '永不' : `${days} 天`,
+}))
 
 export function GeneralSection({ visible }: { visible: (itemId: string) => boolean }) {
   const general = useSettings((state) => state.settings.general)
   const update = useSettings((state) => state.update)
   const fontSizes = FONT_SIZE_SETTINGS.filter(({ id }) => visible(id))
+  const [confirmFullAccess, setConfirmFullAccess] = useState(false)
 
   return (
     <div>
@@ -58,10 +75,46 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
         </SettingRow>
       )}
 
+      {visible('autoArchiveDays') && (
+        <SettingRow
+          title="自动归档不活跃的会话"
+          description="本机连接就绪时，定期归档超过所选天数未更新的会话，保留置顶和正在使用的会话。"
+        >
+          <Select
+            aria-label="自动归档不活跃的会话"
+            value={String(general.autoArchiveDays)}
+            options={archiveOptions}
+            onValueChange={(value) => {
+              const days = Number(value)
+              if (isAutoArchiveDays(days)) void update({ general: { autoArchiveDays: days } })
+            }}
+          />
+        </SettingRow>
+      )}
+
+      {visible('globalAccessMode') && (
+        <SettingRow
+          title="权限总控"
+          description="使用「继承总控」的会话采用此设置，桌面与手机端同步生效。受限权限对应 Codex 只读、Claude 计划模式；自动对应 Claude 自动模式，Codex 沿用自身配置；完全访问对应 Codex 完全访问、Claude 跳过审批。"
+        >
+          <Select
+            aria-label="权限总控"
+            value={general.globalAccessMode}
+            options={globalAccessOptions}
+            onValueChange={(value) => {
+              if (!isGlobalAccessMode(value) || value === general.globalAccessMode) return
+              // 完全访问会关闭沙箱与审批，切换前需二次确认。
+              if (value === 'fullAccess') setConfirmFullAccess(true)
+              else void update({ general: { globalAccessMode: value } })
+            }}
+          />
+        </SettingRow>
+      )}
+
       {visible('density') && (
         <SettingRow
           title="界面密度"
-          description="写入 html[data-density]，只提供样式钩子；具体紧凑规则由界面 token 决定。"
+          description="紧凑模式缩小界面间距，字体大小可单独调整。"
         >
           <Segmented
             value={general.density}
@@ -74,8 +127,14 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
       )}
 
       {visible('theme') && (
-        <SettingRow title="主题" description="当前版本只提供深色主题。">
-          <Segmented value="dark" options={THEME_OPTIONS} onChange={() => undefined} />
+        <SettingRow title="主题" description="深色为默认；灰色整体抬亮一档，浅色为白底。立即生效。">
+          <Segmented
+            value={general.theme}
+            options={THEME_OPTIONS}
+            onChange={(value) => {
+              if (isSettingsTheme(value)) void update({ general: { theme: value } })
+            }}
+          />
         </SettingRow>
       )}
 
@@ -99,6 +158,29 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
             </SettingRow>
           ))}
         </section>
+      )}
+      {confirmFullAccess && (
+        <Modal
+          title="将权限总控设为完全访问？"
+          description="所有「继承总控」的会话（含手机端发起的）将关闭沙箱与审批：Agent 能直接访问会话所在主机的文件、运行命令并访问网络。"
+          onClose={() => setConfirmFullAccess(false)}
+          width="max-w-md"
+          footer={(
+            <div className="flex justify-end gap-2">
+              <button type="button" className="qn-button-subtle" onClick={() => setConfirmFullAccess(false)}>取消</button>
+              <button
+                type="button"
+                className="qn-button bg-qn-danger hover:bg-qn-danger"
+                onClick={() => {
+                  setConfirmFullAccess(false)
+                  void update({ general: { globalAccessMode: 'fullAccess' } })
+                }}
+              >启用</button>
+            </div>
+          )}
+        >
+          已单独指定访问模式的会话不受影响。
+        </Modal>
       )}
     </div>
   )

@@ -54,6 +54,13 @@ describe('parseTargets / parseProjects', () => {
     expect(targets[1]).not.toHaveProperty('hasSavedSecret')
   })
 
+  it('保留电脑已有的直连目标和地址，丢弃不需要的授权字段', () => {
+    expect(parseTargets([
+      { id: 'direct-a', kind: 'direct', name: '直连工作机', host: 'fd00::1', port: 47390, fingerprint: FP },
+      { id: 'direct-b', kind: 'direct', name: '无效目标', host: 'host', port: 65536 },
+    ])).toEqual([{ id: 'direct-a', kind: 'direct', name: '直连工作机', host: 'fd00::1', port: 47390 }])
+  })
+
   it('解析 key 认证与秒/毫秒时间戳', () => {
     const targets = parseTargets([
       { id: 'k', kind: 'ssh', name: 'k', host: 'h', port: 2222, username: 'u', auth: { kind: 'key', keyPath: '/k' } },

@@ -51,7 +51,7 @@ function ShortcutKeys({ shortcut }: { shortcut: string }) {
           {chord.split(/\+(?!$)/).map((key, ki) => (
             <kbd
               key={ki}
-              className="rounded border border-qn-border-strong bg-white/5 px-1.5 py-px font-sans text-[11px] leading-4 text-qn-muted"
+              className="rounded border border-qn-border-strong bg-qn-fg/5 px-1.5 py-px font-sans text-ui-xs leading-4 text-qn-muted"
             >
               {key}
             </kbd>
@@ -138,7 +138,7 @@ function PaletteBody({ onError, registry }: Required<Pick<CommandPaletteProps, '
         label="搜索命令"
         icon={<Command size={15} className="text-qn-muted" />}
         className="shrink-0 border-b border-qn-border px-3 py-2.5"
-        inputClassName="text-[14px]"
+        inputClassName="text-ui-md"
         value={query}
         placeholder="输入命令名称"
         role="combobox"
@@ -174,7 +174,7 @@ function PaletteBody({ onError, registry }: Required<Pick<CommandPaletteProps, '
             selected={index === selected}
             tabIndex={-1}
             className={cn(
-              'cursor-default gap-2 rounded-md py-1.5 text-[13px]',
+              'cursor-default gap-2 rounded-md py-1.5 text-ui',
               index === selected ? 'bg-qn-accent/20 text-qn-text' : 'text-qn-text/90',
               // 最近使用与其余命令之间画一道分隔线
               index === firstRest && firstRest > 0 && 'mt-1 border-t border-qn-border pt-2',
@@ -196,7 +196,7 @@ function PaletteBody({ onError, registry }: Required<Pick<CommandPaletteProps, '
               <Highlighted text={item.command.title} positions={item.titlePositions} />
             </span>
             {item.recent && index === 0 && !normalizeQuery(query) && (
-              <span className="flex shrink-0 items-center gap-1 text-[11px] text-qn-dim">
+              <span className="flex shrink-0 items-center gap-1 text-ui-xs text-qn-dim">
                 <History size={11} />
                 最近使用
               </span>
@@ -205,7 +205,7 @@ function PaletteBody({ onError, registry }: Required<Pick<CommandPaletteProps, '
           </ListOption>
         ))}
       </div>
-      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-qn-border px-3 py-1.5 text-[11px] text-qn-dim">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-qn-border px-3 py-1.5 text-ui-xs text-qn-dim">
         <span>↑↓ 选择 · PageUp/PageDown 翻页 · Enter 执行 · Esc 关闭</span>
         <span>{ranked.length} 条命令</span>
       </div>

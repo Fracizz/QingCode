@@ -7,7 +7,11 @@ import {
   dirname,
   filterSlashItems,
   formatBytes,
+  imagePlaceholder,
+  insertAtSelection,
   isImageFile,
+  removePlaceholder,
+  uniqueImageName,
   pathSeparator,
   sanitizeFileName,
   slashQuery,
@@ -144,3 +148,26 @@ describe('splitUserText', () => {
   })
 })
 
+
+describe('粘贴图片占位', () => {
+  it('重名截图依次编号，无名时用 image.png', () => {
+    expect(uniqueImageName('image.png', [])).toBe('image.png')
+    expect(uniqueImageName('image.png', ['image.png', 'image-2.png'])).toBe('image-3.png')
+    expect(uniqueImageName('', ['image.png'])).toBe('image-2.png')
+    expect(uniqueImageName('README', ['README'])).toBe('README-2')
+  })
+
+  it('在选区处插入并补空格，光标落在占位之后', () => {
+    expect(insertAtSelection('新增 自动', 2, 2, imagePlaceholder('image.png'))).toEqual({
+      value: '新增 [image.png] 自动',
+      caret: 14,
+    })
+    expect(insertAtSelection('abc', 1, 2, '[x]')).toEqual({ value: 'a [x] c', caret: 6 })
+    expect(insertAtSelection('', 0, 0, '[x]')).toEqual({ value: '[x]', caret: 3 })
+  })
+
+  it('移除附件时删掉对应占位', () => {
+    expect(removePlaceholder('新增 [image.png] 自动', 'image.png')).toBe('新增 自动')
+    expect(removePlaceholder('无占位', 'image.png')).toBe('无占位')
+  })
+})

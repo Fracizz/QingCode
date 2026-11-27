@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_FONT_SIZES } from '../../../../shared/fontSizes'
+import { DEFAULT_FONT_SIZES, FONT_SIZES_VERSION } from '../../../../shared/fontSizes'
 import {
   DEFAULT_AGENT_OPTIONS,
   DENSITY_OPTIONS,
@@ -19,14 +19,24 @@ import {
 } from './settingsModel'
 
 describe('默认设置与白名单', () => {
+  it('设置可以按归档搜索，乐观更新使用相同的天数档位', () => {
+    expect(filterSettings('归档').itemIds).toContain('autoArchiveDays')
+    expect(mergeAppSettings(defaultAppSettings(), { general: { autoArchiveDays: 7 } }).general.autoArchiveDays).toBe(7)
+    expect(sanitizeSettingsPatch({ general: { autoArchiveDays: 99 } })).toEqual({})
+  })
+
   it('默认值完整且各次独立', () => {
     const first = defaultAppSettings()
     expect(first.general).toEqual({
       sendKey: 'enter',
       autoConnectLast: true,
+      autoArchiveDays: 0,
       defaultAgent: 'codex',
+      globalAccessMode: 'default',
       density: 'comfortable',
+      theme: 'dark',
       ...DEFAULT_FONT_SIZES,
+      fontSizesVersion: FONT_SIZES_VERSION,
     })
     first.agents.local = { codex: { enabled: false } }
     expect(defaultAppSettings().agents).toEqual({})
@@ -35,7 +45,7 @@ describe('默认设置与白名单', () => {
   it('非法输入回退默认，字段白名单与 pi 的 configDir 限制生效', () => {
     expect(sanitizeAppSettings(null)).toEqual(defaultAppSettings())
     const result = sanitizeAppSettings({
-      general: { sendKey: 'bad', density: 'compact', defaultAgent: 'pi', theme: 'light' },
+      general: { sendKey: 'bad', density: 'compact', defaultAgent: 'pi', theme: 'sepia' },
       agents: {
         local: {
           codex: { enabled: false, path: '  C:\\bin\\codex.exe  ', configDir: ' D:\\home ', junk: 1 },
@@ -48,9 +58,13 @@ describe('默认设置与白名单', () => {
     expect(result.general).toEqual({
       sendKey: 'enter',
       autoConnectLast: true,
+      autoArchiveDays: 0,
       defaultAgent: 'pi',
+      globalAccessMode: 'default',
       density: 'compact',
+      theme: 'dark',
       ...DEFAULT_FONT_SIZES,
+      fontSizesVersion: FONT_SIZES_VERSION,
     })
     expect(result.agents.local?.codex).toEqual({
       enabled: false,
@@ -63,9 +77,12 @@ describe('默认设置与白名单', () => {
   })
 
   it('补丁只保留已知字段，空字符串用于清空路径', () => {
+    expect(sanitizeSettingsPatch({ general: { globalAccessMode: 'bypassPermissions' } })).toEqual({})
+    expect(sanitizeSettingsPatch({ general: { globalAccessMode: 'fullAccess' } })).toEqual({ general: { globalAccessMode: 'fullAccess' } })
     expect(sanitizeSettingsPatch({ general: { density: 'compact', theme: 'light' } })).toEqual({
-      general: { density: 'compact' },
+      general: { density: 'compact', theme: 'light' },
     })
+    expect(sanitizeSettingsPatch({ general: { theme: 'sepia' } })).toEqual({})
     expect(sanitizeSettingsPatch({ agents: { local: { codex: { path: '' } } } })).toEqual({
       agents: { local: { codex: { path: '' } } },
     })
@@ -115,11 +132,16 @@ describe('界面元数据与合规文案', () => {
     expect(SETTINGS_AGENT_INFO.every((item) => item.notes.join(' ').includes('不保存任何凭据') || item.id === 'pi')).toBe(true)
   })
 
-  it('表单选项覆盖所有枚举值，浅色主题置灰', () => {
+  it('表单选项覆盖所有枚举值，主题默认深色并提供灰色、浅色', () => {
     expect(SEND_KEY_OPTIONS.map((item) => item.value)).toEqual(['enter', 'ctrlEnter'])
     expect(DENSITY_OPTIONS.map((item) => item.value)).toEqual(['comfortable', 'compact'])
     expect(DEFAULT_AGENT_OPTIONS.map((item) => item.value)).toEqual(['codex', 'claude', 'pi'])
-    expect(THEME_OPTIONS.find((item) => item.value === 'light')?.disabled).toBe(true)
+    expect(THEME_OPTIONS.map((item) => [item.value, item.label])).toEqual([
+      ['dark', '深色'],
+      ['gray', '灰色'],
+      ['light', '浅色'],
+    ])
+    expect(defaultAppSettings().general.theme).toBe('dark')
   })
 
   it('分类与设置项一一对应，section 校验只认已知 id', () => {
@@ -148,6 +170,9 @@ describe('filterSettings', () => {
     expect(filterSettings('手机 证书').itemIds).toEqual(['mobile'])
     expect(filterSettings('codex_home').itemIds).toEqual(['agents'])
     expect(filterSettings('字体大小 终端').itemIds).toEqual(['terminalFontSize'])
+    expect(filterSettings('左侧 字号').itemIds).toEqual(['sidebarFontSize', 'projectFontSize', 'sessionFontSize'])
+    expect(filterSettings('项目 字号').itemIds).toEqual(['projectFontSize'])
+    expect(filterSettings('会话 字号').itemIds).toEqual(['sessionFontSize'])
     expect(filterSettings('agent codex').sections.map((s) => s.id)).toContain('agents')
   })
 

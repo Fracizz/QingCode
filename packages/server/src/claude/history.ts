@@ -1,5 +1,5 @@
 /** getSessionMessages / listSessions 的历史 → v2 Thread/turns/items（纯函数）。 */
-import { emptyMapState, mapSdkMessage } from './items'
+import { emptyMapState, mapHistoryMessage } from './items'
 import type { ThreadStatus } from '../../../../vendor/codex-protocol/ts/v2/ThreadStatus'
 import {
   asRecord,
@@ -91,7 +91,7 @@ export function sessionMessagesToThread(
   messages: unknown[],
   config: ThreadConfig = {},
 ): HistoryResult {
-  let state = emptyMapState()
+  const state = emptyMapState()
   const open: OpenTurn[] = []
   let current: OpenTurn | null = null
 
@@ -121,8 +121,7 @@ export function sessionMessagesToThread(
       if (apiError) current.error = apiError
       else delete current.error
     }
-    const mapped = mapSdkMessage(sdkMessage, ctx, state, { includeUserText: true })
-    state = mapped.state
+    mapHistoryMessage(sdkMessage, ctx, state)
     for (const id of state.order.slice(before)) current.itemIds.push(id)
   }
   // item 的 completed 状态可能在后续消息里才补齐，turn 对象必须最后一次性生成。

@@ -20,10 +20,10 @@ export function GitBranchBadge({ targetId, cwd }: { targetId: string; cwd: strin
 
   return (
     <Tip label={aheadBehindText(ahead, behind)}>
-      <span className="inline-flex max-w-52 items-center gap-1 text-[12px] text-qn-muted">
+      <span className="inline-flex max-w-52 items-center gap-1 text-ui-sm text-qn-muted">
         <GitBranch size={13} className="shrink-0" />
         <span className="truncate">{branchLabel(status?.branch ?? null)}</span>
-        {badge && <span className="shrink-0 font-mono text-[11px] text-qn-accent">{badge}</span>}
+        {badge && <span className="shrink-0 font-mono text-ui-xs text-qn-accent">{badge}</span>}
       </span>
     </Tip>
   )

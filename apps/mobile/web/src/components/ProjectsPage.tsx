@@ -1,7 +1,8 @@
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useApp } from '../store'
-import { filterProjects } from '../workspace'
+import { filterProjects, orderWorkspaceProjects, placeWorkspaceProject, useWorkspacePreferences } from '../workspace'
+import { SortableList } from './SortableList'
 import { Button, Empty, Header, Loading, Note } from './ui'
 import { WorkspaceProjectRow, WorkspaceSearch } from './WorkspaceHome'
 
@@ -16,9 +17,14 @@ export function ProjectsPage() {
   const selectProject = useApp((s) => s.selectProject)
   const openDirectory = useApp((s) => s.openDirectory)
   const [query, setQuery] = useState('')
+  const preferences = useWorkspacePreferences()
+  const desktopId = useApp((s) => s.activeId)
+  // 搜索结果只是子集，拖动后会丢掉未显示项目的相对顺序。
+  const sorting = !query.trim() && desktopId !== null
 
   const target = targets.find((item) => item.id === selectedTargetId)
-  const list = filterProjects(projects.filter((item) => item.targetId === selectedTargetId), targets, query)
+  const list = selectedTargetId ? orderWorkspaceProjects(filterProjects(projects, targets, query, selectedTargetId),
+    preferences?.projectOrders[selectedTargetId]) : []
 
   return (
     <>
@@ -29,9 +35,12 @@ export function ProjectsPage() {
         {loading && <Loading text="正在读取项目…" />}
         {!loading && list.length === 0 && <Empty>{query ? '没有匹配的项目。' : '该目标下还没有项目。'}</Empty>}
         {list.length > 0 && (
-          <div className="qn-list-group mt-3">
-            {list.map((project) => <WorkspaceProjectRow key={project.id} project={project} target={target}
-              onOpen={() => void selectProject(project.id)} />)}
+          <div className="mt-3">
+            <SortableList items={list} itemKey={(project) => project.id} disabled={sorting === false} label="项目"
+              onMove={(from, to) => desktopId && placeWorkspaceProject(desktopId, list, from, to)}>
+              {(project) => <WorkspaceProjectRow project={project} target={target} sortable={sorting && list.length > 1}
+                onOpen={() => void selectProject(project.id)} />}
+            </SortableList>
           </div>
         )}
       </main>

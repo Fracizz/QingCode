@@ -1,10 +1,14 @@
 // 进场页（index.html 里的 #qn-splash）的时序与 DOM 控制。纯函数在前，便于单测。
 
+import { SPLASH_LEAVE_EVENT } from './theme'
+
 /** 入场动画最晚结束于约 1000ms（光标 400ms 延迟 + 420ms，再留一点品牌停留）。 */
 export const SPLASH_MIN_VISIBLE_MS = 1200
 export const SPLASH_REDUCED_MIN_VISIBLE_MS = 300
-/** 与 index.html 中 .qn-splash 的 transition 时长一致。 */
-export const SPLASH_FADE_MS = 440
+/** 与 index.html 中 .qn-splash 的 transition 时长一致；转场至少保留 0.5s。 */
+export const SPLASH_FADE_MS = 560
+/** 减少动态效果时的淡出时长，同样不少于 0.5s。 */
+export const SPLASH_REDUCED_FADE_MS = 500
 /** 后台迟迟不就绪也不能把用户挡在进场页外。 */
 export const SPLASH_MAX_WAIT_MS = 8000
 /** 进度条从"滑动"切到"填满"后停留一下再淡出，让用户看到完成态。 */
@@ -82,11 +86,12 @@ export function dismissSplash(onLeave?: () => void): Promise<void> {
   dismissing = new Promise<void>((resolve) => {
     window.setTimeout(() => {
       el.classList.add('qn-splash--leave')
+      window.dispatchEvent(new Event(SPLASH_LEAVE_EVENT))
       onLeave?.()
       window.setTimeout(() => {
         el.remove()
         resolve()
-      }, reducedMotion ? 140 : SPLASH_FADE_MS + 40)
+      }, (reducedMotion ? SPLASH_REDUCED_FADE_MS : SPLASH_FADE_MS) + 40)
     }, delay + (smoke ? 0 : SPLASH_READY_HOLD_MS))
   })
   return dismissing

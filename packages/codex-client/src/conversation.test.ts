@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import type { RequestId, ServerNotification, ServerRequest, UserInput } from './codex-types'
+import { describe, expect, it, vi } from 'vitest'
+import type { RequestId, ServerNotification, ServerRequest, Thread, Turn, UserInput } from './codex-types'
 import {
   DRAFT_THREAD_ID,
   addOptimisticUser,
@@ -10,8 +10,10 @@ import {
   dropOptimisticUsers,
   emptyState,
   failActiveThreads,
+  loadRecentThreadHistory,
   loadThread,
   moveOptimisticUsers,
+  prependThreadHistory,
   resolveServerRequest,
   userItemFromInput,
 } from './conversation'
@@ -37,6 +39,27 @@ function reduce(s: ConversationState, notifications: ServerNotification[]): Conv
   return s
 }
 
+describe('按需读取会话历史', () => {
+  it('最近页保留实时条目和审批，前插早期页时去重且保持当前轮次', () => {
+    const active = { id: 'active', status: 'inProgress', items: [] } as unknown as Turn
+    let state = reduce(emptyState(), [
+      note('turn/started', { threadId: 't1', turn: active }),
+      note('item/started', { threadId: 't1', turnId: 'active', item: item('agentMessage', 'live', { text: '实时回复' }) }),
+    ])
+    state = applyServerRequest(state, request('item/commandExecution/requestApproval', 'approval', { threadId: 't1', itemId: 'command' }))
+    const before = state.threads.t1
+    const thread = { id: 't1', status: { type: 'active' }, turns: [active] } as unknown as Thread
+    state = loadRecentThreadHistory(state, thread, { turns: 'previous' }, before)
+    const older = { id: 'old', status: 'completed', items: [item('agentMessage', 'old-reply', { text: '早期回复' })] } as unknown as Turn
+    state = prependThreadHistory(state, 't1', { turns: [older, { ...active, items: [item('agentMessage', 'live', { text: '旧快照' })] as unknown as Turn['items'] }], earlier: null })
+    expect(state.threads.t1).toMatchObject({
+      activeTurnId: 'active', status: 'running', pendingApprovals: [{ requestId: 'approval' }], historyCursor: null,
+      items: [{ id: 'old-reply', text: '早期回复' }, { id: 'live', text: '实时回复' }],
+      turns: [{ id: 'old' }, { id: 'active', itemIds: ['live'] }],
+    })
+  })
+})
+
 function threadOf(s: ConversationState, id = 't1') {
   const thread = s.threads[id]
   if (!thread) throw new Error(`missing thread ${id}`)
@@ -48,6 +71,23 @@ function itemOf(s: ConversationState, id: string): ItemView {
   if (!found) throw new Error(`missing item ${id}`)
   return found
 }
+
+it('记录实际回复完成时间，重读历史时保留同条回复已收到的时间', () => {
+  const raw = item('agentMessage', 'reply', { text: '已完成' })
+  const startedAtMs = 1_796_000_000_000
+  const completedAtMs = startedAtMs + 60_000
+  const started = applyNotification(emptyState(), note('item/started', { threadId: 't1', item: raw, startedAtMs }))
+  expect(itemOf(started, 'reply')).not.toHaveProperty('completedAtMs')
+  const done = applyNotification(started, note('item/completed', { threadId: 't1', item: raw, completedAtMs }))
+  expect(itemOf(done, 'reply')).toMatchObject({ completedAtMs, streaming: false })
+
+  const turn = { id: 't', status: 'completed', completedAt: completedAtMs / 1000, items: [raw, { ...raw, id: 'unknown' }] }
+  const reread = loadThread(done, { id: 't1', turns: [turn] } as unknown as LoadableThread)
+  expect(itemOf(reread, 'reply')).toMatchObject({ completedAtMs })
+  expect(itemOf(reread, 'unknown')).not.toHaveProperty('completedAtMs')
+  const recorded = loadThread(emptyState(), { id: 't1', turns: [{ ...turn, items: [{ ...raw, completedAtMs }] }] } as unknown as LoadableThread)
+  expect(itemOf(recorded, 'reply')).toMatchObject({ completedAtMs })
+})
 
 const userItem = item('userMessage', 'i-user', {
   clientId: null,
@@ -105,6 +145,7 @@ describe('跨端会话状态', () => {
     expect(view).toMatchObject({ status: 'running', activeTurnId: 'current' })
     expect(view.error).toBeUndefined()
     expect(view.pendingApprovals).toHaveLength(1)
+    expect(view.turns?.[0]).toMatchObject({ id: 'old', outcome: 'interrupted', itemIds: ['i-user'] })
     expect(itemOf(updated, 'reply')).toMatchObject({ streaming: true })
     expect(itemOf(updated, 'i-user')).toMatchObject({ kind: 'user' })
 
@@ -113,6 +154,38 @@ describe('跨端会话状态', () => {
     }))
     expect(threadOf(finished)).toMatchObject({ activity: 'interrupted', activeTurnId: null, pendingApprovals: [] })
     expect(itemOf(finished, 'reply')).toMatchObject({ streaming: false })
+  })
+
+  it('保留停止轮次的零毫秒用时和历史记录', () => {
+    const stopped = { id: 'stopped', status: 'interrupted', items: [userItem], durationMs: 0 }
+    const state = reduce(emptyState(), [
+      note('turn/started', { threadId: 't1', turn: { ...stopped, status: 'inProgress', durationMs: null } }),
+      note('turn/completed', { threadId: 't1', turn: stopped }),
+      note('turn/started', { threadId: 't1', turn: { id: 'next', status: 'inProgress', items: [] } }),
+    ])
+    const expected = { id: 'stopped', outcome: 'interrupted', durationMs: 0, itemIds: ['i-user'] }
+    expect(threadOf(state).turns?.[0]).toMatchObject(expected)
+    const snapshot = { id: 't1', turns: [stopped, { id: 'next', status: 'completed', items: [] }] } as unknown as LoadableThread
+    expect(threadOf(loadThread(emptyState(), snapshot)).turns?.[0]).toMatchObject(expected)
+    const older = { ...stopped, id: 'older', durationMs: null, startedAt: 100, completedAt: 100 } as unknown as Turn
+    const paged = prependThreadHistory(state, 't1', { turns: [older], earlier: null })
+    expect(threadOf(paged).turns?.[0]).toMatchObject({ ...expected, id: 'older' })
+  })
+
+  it('缺少服务端用时则记录本地经过时间，重放结束事件时保留用时', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_796_000_000_050)
+      const started = applyNotification(emptyState(), note('turn/started', { threadId: 't1', turn: { id: 't', status: 'inProgress', items: [] } }))
+      const stopped = note('turn/completed', { threadId: 't1', turn: { id: 't', status: 'interrupted', items: [] } })
+      vi.setSystemTime(1_796_000_000_450)
+      const done = applyNotification(started, stopped)
+      vi.setSystemTime(1_796_000_010_000)
+      expect(threadOf(applyNotification(done, stopped)).turns?.[0]).toMatchObject({ outcome: 'interrupted', durationMs: 400 })
+      expect(threadOf(applyNotification(emptyState(), stopped)).turns?.[0]).toMatchObject({ outcome: 'interrupted', durationMs: null })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -142,7 +215,7 @@ describe('子代理条目', () => {
     const state = loadThread(emptyState(), thread as unknown as LoadableThread)
     expect(threadOf(state).items).toEqual([
       { kind: 'subagent', id: 'activity', title: '子代理', status: '已完成', detail: '/root/review' },
-      { kind: 'subagent', id: 'delegate', title: '委派给子代理', status: '调用失败', detail: '核对文档' },
+      { kind: 'subagent', id: 'delegate', title: '委派给子代理', status: '调用失败', detail: '核对文档', name: '核对文档' },
     ])
   })
 

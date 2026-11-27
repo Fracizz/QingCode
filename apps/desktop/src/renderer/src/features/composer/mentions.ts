@@ -44,6 +44,11 @@ export function formatMention(relative: string): string {
   return /\s/.test(normalized) ? `@"${normalized}"` : `@${normalized}`
 }
 
+export function appendProjectMention(value: string, relative: string): string {
+  const separator = value && !/\s$/.test(value) ? ' ' : ''
+  return `${value}${separator}${formatMention(relative)} `
+}
+
 /** 用选中的路径替换当前 `@片段`，后面补一个空格方便继续输入；返回新文本与光标位置。 */
 export function applyMention(
   value: string,

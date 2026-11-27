@@ -77,6 +77,22 @@ beforeEach(() => {
 })
 
 describe('桌面会话访问模式和配置目录', () => {
+  it('草稿的首条消息继承总控，排队消息使用发送时的设置', async () => {
+    const settings = defaultAppSettings()
+    settings.general.globalAccessMode = 'restricted'
+    useSettings.setState({ settings })
+    const { send } = useCodex.getState()
+    expect(await send('开始对话')).toBe(true)
+    expect(sentTurns()[0]?.params).toMatchObject({ sandboxPolicy: { type: 'readOnly', networkAccess: false } })
+
+    expect(await send('排队消息')).toBe(true)
+    useSettings.setState({ settings: defaultAppSettings() })
+    const first = sentTurns()[0]!
+    receive({ method: 'turn/completed', params: { threadId, turn: { id: first.id, status: 'completed', items: [] } } })
+    await vi.waitFor(() => expect(sentTurns()).toHaveLength(2))
+    expect(sentTurns()[1]?.params).not.toHaveProperty('sandboxPolicy')
+  })
+
   it('首条消息带入草稿权限，恢复队列时使用会话当前选择', async () => {
     const { ensureOpen, setAccessMode, send, retryPendingSend } = useCodex.getState()
     expect(await ensureOpen(targetId, agent)).toBe(true)

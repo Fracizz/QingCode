@@ -1,13 +1,16 @@
-import { requestSubagents, supportsSubagentRequests, type TurnOverrides, type UserInput } from '@qn/codex-client'
+import { accessOptions, requestSubagents, supportsSubagentRequests, type AccessMode, type TurnOverrides, type UserInput } from '@qn/codex-client'
 import { archivedThreadKey, isAgentKind } from './agents'
 import { buildMobileTurnInput, formatQuotedMessage, parseStoredRecord, type ChatDraft } from './state'
 import type { AgentKind, Connection } from './types'
+
+export type MobileTurnAccess = { accessMode: AccessMode; inheritAccess?: boolean }
 
 export type QueuedSend = ChatDraft & {
   id: string
   attachments: UserInput[]
   delegate: boolean
   overrides: TurnOverrides
+  accessMode?: AccessMode
   saving?: boolean
   sending?: boolean
   error?: string
@@ -26,11 +29,15 @@ export function queuedInput(agent: AgentKind, item: Pick<QueuedSend, 'text' | 'a
 }
 
 export function mobileTurnFits(targetId: string, agent: AgentKind, threadId: string | null,
-  input: UserInput[], overrides: TurnOverrides, expectedTurnId?: string): boolean {
+  input: UserInput[], overrides: TurnOverrides, expectedTurnId?: string, access?: MobileTurnAccess): boolean {
   const params = expectedTurnId ? { threadId, expectedTurnId, input } : { threadId: threadId ?? 'x'.repeat(256), input, ...overrides }
-  const body = { method: 'codex.send', params: { targetId, agent, msg: {
-    id: 'x'.repeat(80), method: expectedTurnId ? 'turn/steer' : 'turn/start', params,
-  } } }
+  const msg = { id: 'x'.repeat(80), method: expectedTurnId ? 'turn/steer' : 'turn/start', params }
+  const managed = !expectedTurnId && access && (access.inheritAccess !== undefined || access.accessMode !== 'default')
+  const body = {
+    method: managed ? 'mobile.turn.start' : 'codex.send',
+    params: { targetId, agent, msg, ...(managed ? access : {}), ...(expectedTurnId ? {} : { replyViaHttp: true }) },
+    agent,
+  }
   return new TextEncoder().encode(JSON.stringify(body)).length <= 1_048_576
 }
 
@@ -60,12 +67,16 @@ export function restoreQueues(raw: string | null, connections: readonly Connecti
       && Array.isArray(item.attachments) && isRecord(item.overrides) && typeof item.delegate === 'boolean')
     if (!items.length) continue
     // 重开后无法确认中途发送的结果，保留原文供核对并等待明确操作。
-    queues[key] = items.map((item, index) => ({
-      ...item,
-      sending: false,
-      error: item.sending ? UNCONFIRMED_QUEUED_SEND
-        : typeof item.error === 'string' ? item.error : index === 0 ? '已恢复排队消息，等待继续发送' : undefined,
-    }))
+    queues[key] = items.map((item, index) => {
+      const accessMode = accessOptions[agent].find((option) => option.mode === item.accessMode)?.mode
+      return {
+        ...item,
+        accessMode,
+        sending: false,
+        error: item.sending ? UNCONFIRMED_QUEUED_SEND
+          : typeof item.error === 'string' ? item.error : index === 0 ? '已恢复排队消息，等待继续发送' : undefined,
+      }
+    })
   }
   return queues
 }

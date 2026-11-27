@@ -3,12 +3,21 @@ import {
   dedupePaths,
   isPathInside,
   looksWindowsPath,
+  nativeAgentCwd,
   normalizePathForCompare,
   pickPathImpl,
   stripLongPathPrefix,
 } from './paths'
 
 describe('Windows 路径归一', () => {
+  it('仅在 Windows 目标上将 SFTP 盘符路径转为 Agent 的本机 cwd', () => {
+    expect(nativeAgentCwd('/D:/code/qingcode', 'win32')).toBe('D:\\code\\qingcode')
+    expect(nativeAgentCwd('/D:/', 'win32')).toBe('D:\\')
+    expect(nativeAgentCwd('d:/code/qingcode', 'win32')).toBe('d:/code/qingcode')
+    expect(nativeAgentCwd('\\\\server\\share', 'win32')).toBe('\\\\server\\share')
+    expect(nativeAgentCwd('/D:/code/qingcode', 'linux')).toBe('/D:/code/qingcode')
+  })
+
   it('识别盘符、UNC、长路径前缀与反斜杠', () => {
     expect(looksWindowsPath('C:\\Repo\\a.ts')).toBe(true)
     expect(looksWindowsPath('c:/repo/a.ts')).toBe(true)

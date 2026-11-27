@@ -1,4 +1,4 @@
-import type { ItemView } from '@qn/codex-client'
+import type { ItemView, ThreadView, TurnMeta } from '@qn/codex-client'
 
 /** 子代理单独显示，便于从消息流直接查看。 */
 export type ToolItem = Exclude<ItemView, { kind: 'user' | 'agent' | 'reasoning' | 'subagent' }>
@@ -8,6 +8,15 @@ export type ChatBlock =
   | { kind: 'tools'; id: string; items: ToolItem[] }
 
 export type ToolStatus = 'running' | 'failed' | 'done'
+
+export function streamingReplyId(thread: ThreadView | undefined): string | undefined {
+  if (thread?.status !== 'running') return
+  const itemIds = thread.turns?.findLast((turn) => turn.id === thread.activeTurnId)?.itemIds
+  if (itemIds?.length === 0) return
+  // 命令或新回复接管后，不能让还没收到完成事件的旧回复重新出现指示。
+  const last = itemIds ? thread.items.findLast((item) => itemIds.includes(item.id)) : thread.items.at(-1)
+  if (last?.kind === 'agent' && last.streaming && last.text.trim()) return last.id
+}
 
 const isTool = (item: ItemView): item is ToolItem =>
   item.kind === 'command' || item.kind === 'fileChange' || (item.kind === 'other' && item.type !== 'contextCompaction')
@@ -68,6 +77,38 @@ export function isChatVisible(item: ItemView): boolean {
   return true
 }
 
+export function interruptedTurnPositions(items: readonly ItemView[], shown: readonly ItemView[], turns?: readonly TurnMeta[]) {
+  const stops = new Map<number, string[]>()
+  if (!turns?.some((turn) => turn.outcome === 'interrupted')) return stops
+
+  const visible = new Set(shown.map((item) => item.id))
+  const positions = new Map<string, { before: number; after: number }>()
+  let count = 0
+  for (const item of items) {
+    const before = count
+    if (visible.has(item.id)) count += 1
+    positions.set(item.id, { before, after: count })
+  }
+
+  let nextStart = count
+  for (const turn of [...turns].reverse()) {
+    let first = Infinity
+    let last = -1
+    for (const id of turn.itemIds) {
+      const position = positions.get(id)
+      if (!position) continue
+      first = Math.min(first, position.before)
+      last = Math.max(last, position.after)
+    }
+    if (turn.outcome === 'interrupted' && (last >= 0 || turn.itemIds.length === 0)) {
+      const anchor = last >= 0 ? last : nextStart
+      stops.set(anchor, [turn.id, ...(stops.get(anchor) ?? [])])
+    }
+    if (last >= 0) nextStart = first
+  }
+  return stops
+}
+
 /** 根据本轮最新一步推断回复阶段，命令被隐藏后仍让用户知道在忙什么。 */
 export function replyPhase(items: readonly ItemView[], activeIds: readonly string[] | undefined): string {
   if (!activeIds?.length) return '正在思考'
@@ -82,4 +123,31 @@ export function replyPhase(items: readonly ItemView[], activeIds: readonly strin
     return '正在处理'
   }
   return '正在思考'
+}
+
+/**
+ * 被隐藏的命令等工具步骤按轮次收拢，挂在该轮最后一条可见消息后面，
+ * 平时只占一行摘要，排查问题时再点开看。activeIds 内的步骤属于进行中的一轮，先不显示。
+ */
+export function hiddenToolTrails(items: readonly ItemView[], activeIds?: readonly string[]): Map<string, ToolItem[]> {
+  const trails = new Map<string, ToolItem[]>()
+  const active = new Set(activeIds ?? [])
+  let anchor: string | undefined
+  let hidden: ToolItem[] = []
+  const flush = () => {
+    if (anchor && hidden.length) trails.set(anchor, hidden)
+    hidden = []
+  }
+  for (const item of items) {
+    if (item.kind === 'user') {
+      flush()
+      anchor = item.id
+    } else if (isChatVisible(item)) {
+      anchor = item.id
+    } else if (isTool(item) && !active.has(item.id)) {
+      hidden.push(item)
+    }
+  }
+  flush()
+  return trails
 }

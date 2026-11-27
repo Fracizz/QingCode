@@ -26,14 +26,14 @@ export function FormField({
 
   return (
     <div className={cn('flex min-w-0 flex-col gap-1', className)}>
-      <label htmlFor={id} className="text-[12px] text-qn-muted">{label}</label>
+      <label htmlFor={id} className="text-ui-sm text-qn-muted">{label}</label>
       {children({
         id,
         'aria-describedby': [hintId, errorId].filter(Boolean).join(' ') || undefined,
         'aria-invalid': error ? true : undefined,
       })}
-      {hint && <p id={hintId} className="text-[12px] leading-5 text-qn-dim">{hint}</p>}
-      {error && <p id={errorId} className="text-[12px] leading-5 text-qn-danger">{error}</p>}
+      {hint && <p id={hintId} className="text-ui-sm leading-5 text-qn-dim">{hint}</p>}
+      {error && <p id={errorId} className="text-ui-sm leading-5 text-qn-danger">{error}</p>}
     </div>
   )
 }

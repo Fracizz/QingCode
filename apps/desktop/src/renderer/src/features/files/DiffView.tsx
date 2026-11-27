@@ -59,7 +59,7 @@ function UnifiedDiffBody({
           <button
             type="button"
             onClick={onOpenFile}
-            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-qn-border-strong px-2.5 py-1 text-[12px] text-qn-text hover:bg-qn-hover"
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-qn-border-strong px-2.5 py-1 text-ui-sm text-qn-text hover:bg-qn-hover"
           >
             <FileText size={13} />
             打开文件
@@ -69,7 +69,7 @@ function UnifiedDiffBody({
     )
   }
   return (
-    <div className="qn-scroll min-h-0 flex-1 overflow-auto bg-[#141414] font-mono text-[length:var(--qn-editor-font-size,12.5px)] leading-[1.6]">
+    <div className="qn-scroll min-h-0 flex-1 overflow-auto bg-qn-code font-mono text-[length:var(--qn-editor-font-size,13px)] leading-[1.6]">
       {rows.length === 0 ? (
         <EmptyState>没有改动 · {path}</EmptyState>
       ) : (
@@ -129,7 +129,7 @@ function MergeDiffBody({
   return (
     <>
       {layout === 'side' && (
-        <div className="flex shrink-0 items-center gap-4 border-b border-qn-border px-3 py-1 text-[11px] text-qn-muted">
+        <div className="flex shrink-0 items-center gap-4 border-b border-qn-border px-3 py-1 text-ui-xs text-qn-muted">
           <span className="flex-1 truncate">左 · {sides.oldLabel}</span>
           <span className="flex-1 truncate">右 · {sides.newLabel}</span>
         </div>
@@ -180,21 +180,21 @@ export function DiffView({
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
       {notice && (
-        <div className="shrink-0 border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-[12px] text-qn-warn">
+        <div className="shrink-0 border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-ui-sm text-qn-warn">
           {notice}
         </div>
       )}
       {truncated && (
-        <div className="shrink-0 border-b border-qn-border px-3 py-1 text-[12px] text-qn-dim">diff 内容已截断</div>
+        <div className="shrink-0 border-b border-qn-border px-3 py-1 text-ui-sm text-qn-dim">diff 内容已截断</div>
       )}
       {canMerge && (
         <div className="flex h-8 shrink-0 items-center gap-1 border-b border-qn-border px-2">
-          <span className="min-w-0 flex-1 truncate text-[11px] text-qn-dim">{diffModeLabel(mode, commit)} · 只读</span>
+          <span className="min-w-0 flex-1 truncate text-ui-xs text-qn-dim">{diffModeLabel(mode, commit)} · 只读</span>
           <button
             type="button"
             onClick={() => setLayout('side')}
             className={cn(
-              'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] hover:bg-qn-hover',
+              'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-ui-xs hover:bg-qn-hover',
               layout === 'side' ? 'bg-qn-active text-qn-text' : 'text-qn-muted',
             )}
           >
@@ -204,7 +204,7 @@ export function DiffView({
             type="button"
             onClick={() => setLayout('unified')}
             className={cn(
-              'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] hover:bg-qn-hover',
+              'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-ui-xs hover:bg-qn-hover',
               layout === 'unified' ? 'bg-qn-active text-qn-text' : 'text-qn-muted',
             )}
           >
@@ -213,7 +213,7 @@ export function DiffView({
         </div>
       )}
       {mergeError && (
-        <div className="shrink-0 border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-[12px] text-qn-warn">
+        <div className="shrink-0 border-b border-qn-warn/30 bg-qn-warn/10 px-3 py-1.5 text-ui-sm text-qn-warn">
           {mergeError} · 已退回 diff 文本
         </div>
       )}

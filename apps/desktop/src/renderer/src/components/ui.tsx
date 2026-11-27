@@ -1,4 +1,4 @@
-import type { ComponentPropsWithRef, ReactNode } from 'react'
+import type { ComponentProps, ComponentPropsWithRef, ReactNode } from 'react'
 import { Check, X } from 'lucide-react'
 import { Checkbox as RadixCheckbox, Dialog } from 'radix-ui'
 import { cn } from '../lib/cn'
@@ -13,6 +13,7 @@ export function IconButton({
   children,
   danger,
   tooltip = true,
+  tooltipSide,
   size = 'md',
   className,
   ref,
@@ -21,6 +22,7 @@ export function IconButton({
   label: string
   danger?: boolean
   tooltip?: boolean
+  tooltipSide?: ComponentProps<typeof Tip>['side']
   /** md：32px 方钮（工具栏、标题栏）；sm：24px（面板头、行内操作）。 */
   size?: 'sm' | 'md'
 }) {
@@ -40,12 +42,12 @@ export function IconButton({
       {children}
     </button>
   )
-  return tooltip ? <Tip label={label}>{button}</Tip> : button
+  return tooltip ? <Tip label={label} side={tooltipSide}>{button}</Tip> : button
 }
 
 export function Spinner({ label }: { label?: string }) {
   return (
-    <span role={label ? 'status' : undefined} className="inline-flex items-center gap-1.5 text-[13px] text-qn-muted">
+    <span role={label ? 'status' : undefined} className="inline-flex items-center gap-1.5 text-ui text-qn-muted">
       <LoadingIcon />
       {label}
     </span>
@@ -60,21 +62,21 @@ export function Badge({
   tone?: 'muted' | 'accent' | 'danger' | 'warn' | 'ok'
 }) {
   const tones: Record<string, string> = {
-    muted: 'bg-white/[0.06] text-qn-muted',
+    muted: 'bg-qn-fg/[0.06] text-qn-muted',
     accent: 'bg-qn-accent/12 text-qn-accent',
     danger: 'bg-qn-danger/12 text-qn-danger',
     warn: 'bg-qn-warn/12 text-qn-warn',
     ok: 'bg-qn-ok/12 text-qn-ok',
   }
   return (
-    <span className={cn('inline-flex shrink-0 items-center rounded-md px-1.5 text-[11px] leading-5', tones[tone] ?? tones.muted)}>
+    <span className={cn('inline-flex shrink-0 items-center rounded-md px-1.5 text-ui-xs leading-5', tones[tone] ?? tones.muted)}>
       {children}
     </span>
   )
 }
 
 export function EmptyState({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('px-3 py-6 text-center text-[13px] leading-6 text-qn-muted', className)}>{children}</div>
+  return <div className={cn('px-3 py-6 text-center text-ui leading-6 text-qn-muted', className)}>{children}</div>
 }
 
 /**
@@ -89,6 +91,8 @@ export function Modal({
   onClose,
   width = 'max-w-lg',
   bodyClassName,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
 }: {
   title: string
   description?: ReactNode
@@ -97,19 +101,21 @@ export function Modal({
   onClose?: () => void
   width?: string
   bodyClassName?: string
-}) {
+} & Pick<ComponentProps<typeof DialogFrame>, 'onOpenAutoFocus' | 'onCloseAutoFocus'>) {
   return (
     <DialogFrame
       described={Boolean(description)}
       onClose={onClose}
+      onOpenAutoFocus={onOpenAutoFocus}
+      onCloseAutoFocus={onCloseAutoFocus}
       overlayClassName="qn-overlay grid place-items-center p-6"
       className={cn('qn-dialog max-h-[min(680px,calc(100vh-80px))] w-full', width)}
     >
       <div className="flex shrink-0 items-start justify-between gap-3 px-5 pb-2 pt-4">
         <div className="min-w-0">
-          <Dialog.Title className="text-[15px] font-semibold text-qn-text">{title}</Dialog.Title>
+          <Dialog.Title className="text-ui-lg font-semibold text-qn-text">{title}</Dialog.Title>
           {description && (
-            <Dialog.Description className="mt-1 text-[13px] text-qn-muted">{description}</Dialog.Description>
+            <Dialog.Description className="mt-1 text-ui text-qn-muted">{description}</Dialog.Description>
           )}
         </div>
         {onClose && (
@@ -120,7 +126,7 @@ export function Modal({
           </Dialog.Close>
         )}
       </div>
-      <div className={cn('qn-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-2 text-[13px]', bodyClassName)}>
+      <div className={cn('qn-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-2 text-ui', bodyClassName)}>
         {children}
       </div>
       {footer && <div className="shrink-0 border-t border-qn-border px-5 py-3">{footer}</div>}
@@ -141,12 +147,12 @@ export function Checkbox({
 }) {
   // Radix Checkbox：原生复选框在暗色主题下是系统样式，和其它控件对不齐。
   return (
-    <label className={cn('flex items-center gap-2 text-[13px] text-qn-text', disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer')}>
+    <label className={cn('flex items-center gap-2 text-ui text-qn-text', disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer')}>
       <RadixCheckbox.Root
         checked={checked}
         disabled={disabled}
         onCheckedChange={(value) => onChange(value === true)}
-        className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border border-qn-border-strong bg-[#161616] text-white outline-none focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=checked]:border-qn-accent data-[state=checked]:bg-qn-accent"
+        className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border border-qn-outline bg-qn-field text-white outline-none focus-visible:ring-1 focus-visible:ring-qn-accent data-[state=checked]:border-qn-accent data-[state=checked]:bg-qn-accent"
       >
         <RadixCheckbox.Indicator>
           <Check size={12} strokeWidth={3} />

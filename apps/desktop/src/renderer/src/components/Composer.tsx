@@ -1,20 +1,26 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { supportsSubagentRequests } from '@qn/codex-client'
-import { ArrowUp, ChevronDown, CircleAlert, FileText, GitFork, ImageOff, Paperclip, Slash, Square, Wand2, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { accessOptions, resolveAccessMode } from '@qn/codex-client'
+import { ArrowUp, ChevronDown, CircleAlert, FileText, ImageOff, Paperclip, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
 import {
   consumeSlashToken,
   filterSlashItems,
   formatBytes,
+  imagePlaceholder,
+  insertAtSelection,
+  isImageFile,
+  MAX_ATTACHMENTS,
+  removePlaceholder,
   slashToken,
+  uniqueImageName,
   type Attachment,
   type SkillRef,
   type SlashItem,
 } from '../lib/attachments'
 import { useSetting } from '../features/settings/settingsStore'
 import { AccessModePicker } from '../features/access/AccessModePicker'
-import { accessKey, getAccessMode, type AccessAddress } from '../features/access/accessModel'
+import { accessKey, getAccessSelection, type AccessAddress } from '../features/access/accessModel'
 import {
   applyMention,
   imageSendBlock,
@@ -24,6 +30,10 @@ import {
   type ImageSupport,
   type MentionCandidate,
 } from '../features/composer'
+import { appendProjectMention } from '../features/composer/mentions'
+import { receiveProjectMentions } from '../features/composer/projectMention'
+import { useDock } from '../store/dock'
+import { ImageAttachmentChip } from '../features/composer/ImageAttachmentChip'
 import { Suggestions } from '../features/composer/Suggestions'
 import { pendingSendKey, useCodex } from '../store/codex'
 import { cn } from '../lib/cn'
@@ -35,6 +45,11 @@ import { EmptyState, ErrorNote, IconButton } from './ui'
 
 /** 输入框最高占视口 40%，再长就内部滚动，不把消息区挤没。 */
 const MAX_HEIGHT_RATIO = 0.4
+
+function fitTextarea(area: HTMLTextAreaElement): void {
+  area.style.height = 'auto'
+  area.style.height = `${Math.min(area.scrollHeight, Math.round(window.innerHeight * MAX_HEIGHT_RATIO))}px`
+}
 
 type AttachmentProps = {
   attachments: Attachment[]
@@ -71,16 +86,20 @@ export function Composer({
   onChange,
   agent,
   capabilities,
+  toolsDisabled = false,
   annotationCount = 0,
   compact = false,
   contentWidthClassName = 'max-w-3xl',
+  context,
+  placeholder,
+  autoFocus,
   leading,
   trailing,
   footer,
   attach,
   slash,
 }: {
-  onSend: (text: string, mode: SendMode, delegate: boolean) => void | Promise<boolean>
+  onSend: (text: string, mode: SendMode) => void | Promise<boolean>
   onInterrupt: () => void
   running: boolean
   sending: boolean
@@ -91,10 +110,14 @@ export function Composer({
   onChange: (value: string) => void
   agent: AgentKind
   /** codex.open 的能力字段；pi 为 { approvals: false }，未透传时按 agent 兜底。 */
+  toolsDisabled?: boolean
   capabilities?: { approvals?: boolean; rateLimits?: boolean } | null
   annotationCount?: number
   compact?: boolean
   contentWidthClassName?: string
+  context?: ReactNode
+  placeholder?: string
+  autoFocus?: boolean
   leading?: ReactNode
   trailing?: ReactNode
   footer?: ReactNode
@@ -117,27 +140,49 @@ export function Composer({
   const root = useCodex((s) => s.currentCwd)
   const threadId = useCodex((s) => s.currentThreadId)
   const draftRevision = useCodex((s) => s.access.draftRevision)
-  const [delegate, setDelegate] = useState(false)
   const accessAddress: AccessAddress | null = !compact && targetId ? { targetId, agent, threadId } : null
-  const accessMode = useCodex((s) => accessAddress ? getAccessMode(s.access, accessAddress) : 'default')
+  const accessMode = useCodex((s) => accessAddress ? getAccessSelection(s.access, accessAddress) : 'inherit')
+  const inheritedMode = resolveAccessMode(agent, useSetting((settings) => settings.general.globalAccessMode))
   const setAccessMode = useCodex((s) => s.setAccessMode)
   const accessSupported = useCodex((s) => Boolean(targetId && s.sessions[sessionKey(targetId, agent)]?.openedConfig?.accessModes))
   const sendingPending = useCodex((s) => Boolean(targetId && threadId && s.pendingSends[pendingSendKey({ targetId, agent, threadId })]?.[0]?.sending))
-  const canRequestSubagents = !compact && supportsSubagentRequests(agent)
 
-  useEffect(() => setDelegate(false), [targetId, root, agent, threadId, draftRevision])
+  useLayoutEffect(() => {
+    if (compact || disabled || !targetId || !root) return
+    return receiveProjectMentions(targetId, root, (relative) => {
+      const next = appendProjectMention(value, relative)
+      pendingCaret.current = next.length
+      setCaret(next.length)
+      useDock.getState().setView('chat')
+      onChange(next)
+    })
+  }, [compact, disabled, targetId, root, value, onChange])
 
   useLayoutEffect(() => {
     const area = areaRef.current
     if (!area) return
-    area.style.height = 'auto'
-    area.style.height = `${Math.min(area.scrollHeight, Math.round(window.innerHeight * MAX_HEIGHT_RATIO))}px`
+    fitTextarea(area)
     // 插入 `@路径` 后把光标放到插入内容之后（受控 textarea 改值后光标会跳到末尾）。
     if (pendingCaret.current !== null) {
+      area.focus()
       area.setSelectionRange(pendingCaret.current, pendingCaret.current)
       pendingCaret.current = null
     }
   }, [value, contentWidthClassName, fontSize])
+
+  useLayoutEffect(() => {
+    const area = areaRef.current
+    if (!area || typeof ResizeObserver === 'undefined') return
+    let width = area.offsetWidth
+    const observer = new ResizeObserver(() => {
+      // 只因宽度变化重新量高，避免写入高度后触发观察循环。
+      if (width === area.offsetWidth) return
+      width = area.offsetWidth
+      fitTextarea(area)
+    })
+    observer.observe(area)
+    return () => observer.disconnect()
+  }, [])
 
   const token = slash && !imeActive ? slashToken(value, caret) : null
   const query = token?.query ?? null
@@ -153,21 +198,22 @@ export function Composer({
   useEffect(() => setActive(0), [query, mentionQuery])
 
   const attachments = attach?.attachments ?? []
-  const images = attachments.flatMap((item) => (item.kind === 'image' ? [item.dataUrl] : []))
   const imageSupport = attach?.imageSupport ?? { allowed: true, reason: null }
-  const imageBlock = imageSendBlock(images, imageSupport.allowed, imageSupport.reason ?? undefined)
-  const hasExtras = attachments.length > 0 || (slash?.skills.length ?? 0) > 0 || annotationCount > 0
+  const imageBlock = useMemo(() => imageSendBlock(
+    attach?.attachments.flatMap((item) => item.kind === 'image' ? [item.dataUrl] : []) ?? [],
+    imageSupport.allowed,
+    imageSupport.reason ?? undefined,
+  ), [attach?.attachments, imageSupport.allowed, imageSupport.reason])
+  const hasAttachmentsOrSkills = attachments.length > 0 || (slash?.skills.length ?? 0) > 0
   const blocked = attach?.blockedReason ?? imageBlock
   const shortcut = sendKey === 'ctrlEnter' ? 'Ctrl+Enter' : 'Enter'
   const newlineShortcut = sendKey === 'ctrlEnter' ? 'Enter' : 'Shift+Enter'
   const sendHint = running ? `排队（${shortcut}）· 本轮结束后发送` : `发送（${shortcut}）· 换行（${newlineShortcut}）`
-  const canSend = !disabled && !sending && !blocked && (value.trim() !== '' || hasExtras)
+  const canSend = !disabled && !sending && !blocked && (value.trim() !== '' || hasAttachmentsOrSkills || annotationCount > 0)
 
   const submit = (mode: SendMode = 'queue') => {
     if (!canSend) return
-    const selected = canRequestSubagents && delegate
-    const result = onSend(value, mode, selected)
-    if (selected) void result?.then((sent) => { if (sent) setDelegate(false) })
+    void onSend(value, mode)
   }
 
   const choose = (item: SlashItem | undefined) => {
@@ -176,8 +222,8 @@ export function Composer({
     const nextValue = consumeSlashToken(value, caret)
     onChange(nextValue)
     setCaret(nextValue.length)
-    if (item.kind === 'skill' && item.path) {
-      const picked = { name: item.name, path: item.path }
+    if (item.kind === 'skill') {
+      const picked = { name: item.name, path: item.path ?? '' }
       if (!slash.skills.some((skill) => skill.name === picked.name)) {
         slash.onSkillsChange([...slash.skills, picked])
       }
@@ -192,7 +238,6 @@ export function Composer({
     pendingCaret.current = next.caret
     onChange(next.value)
     setCaret(next.caret)
-    areaRef.current?.focus()
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -253,8 +298,46 @@ export function Composer({
     const files = [...event.clipboardData.files]
     if (files.length === 0) return
     // 只有文件（截图、资源管理器里复制的文件）时拦下默认粘贴，避免把文件名当文字贴进来。
-    if (!event.clipboardData.getData('text/plain')) event.preventDefault()
-    attach.onAddFiles(files)
+    if (event.clipboardData.getData('text/plain')) {
+      attach.onAddFiles(files)
+      return
+    }
+    event.preventDefault()
+    // 图片在光标处留一个 `[名字]` 占位，说明它在正文中的位置；附件改成同名，卡片与占位能对上。
+    // 当前不能加图片或附件已满时不插占位，避免留下指向不存在附件的文字。
+    const room = MAX_ATTACHMENTS - attachments.length
+    if (!imageSupport.allowed || room <= 0) {
+      attach.onAddFiles(files)
+      return
+    }
+    const taken = new Set([
+      ...attachments.map((item) => item.name),
+      ...[...value.matchAll(/\[([^\]\n]+)\]/g)].map((match) => match[1] ?? ''),
+    ])
+    const placeholders: string[] = []
+    const renamed = files.map((file) => {
+      if (!isImageFile(file) || placeholders.length >= room) return file
+      const name = uniqueImageName(file.name, taken)
+      taken.add(name)
+      placeholders.push(imagePlaceholder(name))
+      return name === file.name ? file : new File([file], name, { type: file.type, lastModified: file.lastModified })
+    })
+    const area = event.currentTarget
+    if (placeholders.length > 0) {
+      const next = insertAtSelection(value, area.selectionStart, area.selectionEnd, placeholders.join(' '))
+      pendingCaret.current = next.caret
+      setCaret(next.caret)
+      onChange(next.value)
+    }
+    attach.onAddFiles(renamed)
+  }
+
+  const removeAttachment = (item: Attachment) => {
+    attach?.onRemoveAttachment(item.id)
+    if (item.kind === 'image') {
+      const next = removePlaceholder(value, item.name)
+      if (next !== value) onChange(next)
+    }
   }
 
   const syncCaret = () => setCaret(areaRef.current?.selectionStart ?? 0)
@@ -281,48 +364,86 @@ export function Composer({
           />
         )}
 
-        {noApprovals && (
-          <div className="mb-1.5 px-3 text-[12px] text-qn-warn">无审批：工具直接执行</div>
-        )}
-        {attach && !imageSupport.allowed && (
-          <div className="mb-1.5 flex items-center gap-1.5 px-3 text-[12px] text-qn-dim">
-            <ImageOff size={12} className="shrink-0" />
-            {imageSupport.reason}，图片附件已禁用
+        {(noApprovals || (attach && !imageSupport.allowed) || imageBlock) && (
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 text-ui-sm leading-4">
+            {noApprovals && (
+              <span className={cn(
+                'inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-0.5',
+                toolsDisabled ? 'border-qn-border-strong bg-qn-panel text-qn-muted' : 'border-qn-warn/30 bg-qn-warn/10 text-qn-warn',
+              )}>
+                {toolsDisabled ? (
+                  <>
+                    <ShieldOff size={13} className="shrink-0" aria-hidden />
+                    <span>此侧聊已禁用工具</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldAlert size={13} className="shrink-0" aria-hidden />
+                    <span className="font-medium">无审批</span>
+                    <span className="text-qn-muted">· 工具直接执行</span>
+                  </>
+                )}
+              </span>
+            )}
+            {attach && !imageSupport.allowed && (
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-qn-muted">
+                <ImageOff size={12} className="shrink-0" aria-hidden />
+                {imageSupport.reason}，图片附件已禁用
+              </span>
+            )}
+            {imageBlock && imageSupport.allowed && <span className="text-qn-warn">{imageBlock}</span>}
           </div>
         )}
         <div
           className={cn(
-            'rounded-[20px] border border-qn-border-strong bg-qn-panel shadow-[0_8px_24px_rgba(0,0,0,0.25)] transition-colors focus-within:border-[#4a4a4a]',
+            'rounded-[20px] border border-qn-outline bg-qn-composer shadow-[var(--qn-composer-shadow)] transition-colors focus-within:border-qn-outline-hover',
             disabled && 'opacity-70',
           )}
         >
-          {attachments.length > 0 && attach && (
-            <div className="qn-scroll flex max-h-[min(6rem,12cqh)] flex-wrap gap-2 overflow-y-auto px-3 pt-3">
-              {attachments.map((item) => (
+          {hasAttachmentsOrSkills && (
+            <div className="qn-scroll flex max-h-[clamp(4.25rem,12cqh,6rem)] flex-wrap items-center gap-2 overflow-y-auto px-3 pt-3">
+              {attach && attachments.map((item) => (
                 <AttachmentChip
                   key={item.id}
                   item={item}
                   problem={item.kind === 'image' && !imageSupport.allowed ? imageSupport.reason : null}
-                  onRemove={() => attach.onRemoveAttachment(item.id)}
+                  onRemove={() => removeAttachment(item)}
                 />
+              ))}
+              {slash?.skills.map((skill) => (
+                <span key={skill.name} className="inline-flex h-7 max-w-[min(14rem,100%)] items-center gap-1 rounded-lg bg-qn-brand/10 pl-2 pr-1 text-ui text-qn-brand">
+                  <Wand2 size={13} className="shrink-0" />
+                  <span className="truncate" title={skill.name}>{skill.name}</span>
+                  <button
+                    type="button"
+                    className="inline-flex size-5 shrink-0 items-center justify-center rounded-md hover:bg-qn-brand/20"
+                    aria-label={`移除技能 ${skill.name}`}
+                    onClick={() => slash.onSkillsChange(slash.skills.filter((item) => item.name !== skill.name))}
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
               ))}
             </div>
           )}
+          {context}
           <textarea
             ref={areaRef}
             className={cn(
-              'qn-scroll block w-full resize-none bg-transparent px-4 pt-3.5 text-[length:var(--qn-composer-font-size,14px)] leading-[1.7] text-qn-text outline-none placeholder:text-qn-dim',
+              'qn-scroll block w-full resize-none bg-transparent px-4 pt-3.5 text-[length:var(--qn-composer-font-size,15px)] leading-[1.7] text-qn-text outline-none placeholder:text-qn-dim',
               compact ? 'min-h-[48px]' : 'min-h-[56px] max-h-[max(56px,25cqh)]',
             )}
             rows={1}
             value={value}
             disabled={disabled}
+            autoFocus={autoFocus}
+            aria-label={placeholder ?? agentPlaceholder(agent)}
             placeholder={
-              disabled
+              placeholder ?? (disabled
                 ? '请先连接目标'
                 : slash
                   ? `${agentPlaceholder(agent)}，输入 / 使用命令和技能${targetId && root ? '，@ 引用文件' : ''}`
-                  : agentPlaceholder(agent)
+                  : agentPlaceholder(agent))
             }
             onChange={(event) => {
               onChange(event.target.value)
@@ -342,7 +463,7 @@ export function Composer({
               syncCaret()
             }}
           />
-          <div className="flex items-center gap-1 px-2 pb-2 pt-1">
+          <div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1 whitespace-nowrap">
             {attach && (
               <>
                 <Tip label={imageSupport.allowed ? '添加图片或文件（也可粘贴、拖入）' : `${imageSupport.reason}，只能添加文件`}>
@@ -370,50 +491,20 @@ export function Composer({
               </>
             )}
             {leading}
-            {canRequestSubagents && (
-              <Tip label="随本条消息请求子代理协作，由当前智能体决定如何委派">
-                <button
-                  type="button"
-                  className={cn('inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-xs hover:bg-white/10 disabled:opacity-50',
-                    delegate ? 'bg-qn-accent/10 text-qn-accent' : 'text-qn-muted')}
-                  aria-label="本条消息请求子代理"
-                  aria-pressed={delegate}
-                  disabled={disabled || sending}
-                  onClick={() => setDelegate(!delegate)}
-                >
-                  <GitFork size={14} aria-hidden />
-                  子代理
-                </button>
-              </Tip>
-            )}
-            {slash?.skills.map((skill) => (
-              <span key={skill.name} className="inline-flex h-7 max-w-[14rem] items-center gap-1 rounded-lg bg-qn-brand/10 pl-2 pr-1 text-[13px] text-qn-brand">
-                <Wand2 size={13} className="shrink-0" />
-                <span className="truncate">{skill.name}</span>
-                <button
-                  type="button"
-                  className="inline-flex h-5 w-5 items-center justify-center rounded-md hover:bg-qn-brand/20"
-                  aria-label={`移除技能 ${skill.name}`}
-                  onClick={() => slash.onSkillsChange(slash.skills.filter((item) => item.name !== skill.name))}
-                >
-                  <X size={12} />
-                </button>
-              </span>
-            ))}
-            {annotationCount > 0 && (
-              <span className="rounded-md bg-qn-accent/10 px-2 py-0.5 text-[12px] text-qn-accent">
-                {annotationCount} 条注释随消息发送
-              </span>
-            )}
             <div className="flex-1" />
-            {accessAddress && !noApprovals && (accessSupported || accessMode !== 'default') && (
+            {accessAddress && !noApprovals && (
               <AccessModePicker
                 key={`${accessKey(accessAddress)}:${threadId === null ? draftRevision : ''}`}
                 agent={agent}
                 mode={accessMode}
-                disabled={Boolean(disabled || sending || running || sendingPending || !accessSupported)}
+                inheritedMode={inheritedMode}
+                supported={accessSupported}
+                disabled={Boolean(disabled || sending || running || sendingPending)}
                 onChange={(mode) => setAccessMode(accessAddress, draftRevision, mode)}
               />
+            )}
+            {compact && inheritedMode !== 'default' && (
+              <span className="text-ui-sm text-qn-warn">继承总控 · {accessOptions[agent].find((option) => option.mode === inheritedMode)?.label}</span>
             )}
             {trailing}
             {running && (
@@ -421,12 +512,12 @@ export function Composer({
                 <Square size={12} fill="currentColor" />
               </IconButton>
             )}
-            <div className="flex shrink-0 items-center gap-0.5">
+            <div className="ml-auto flex shrink-0 items-center gap-0.5">
               <Tip label={blocked ?? sendHint}>
                 <span className="inline-flex">
                   <button
                     type="button"
-                    className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-qn-text px-2 text-[12px] font-medium text-black hover:bg-white disabled:bg-white/15 disabled:text-qn-dim disabled:opacity-100"
+                    className="inline-flex h-8 items-center justify-center gap-1 rounded-full bg-qn-text px-2 text-ui-sm font-medium text-qn-bg hover:bg-qn-text/90 disabled:bg-qn-fg/15 disabled:text-qn-dim disabled:opacity-100"
                     disabled={!canSend}
                     aria-label={running ? '排队' : '发送'}
                     onClick={() => submit()}
@@ -457,7 +548,7 @@ export function Composer({
             </div>
           </div>
         </div>
-        {footer && <div className="mt-1.5 flex min-h-6 items-center gap-3 px-3 text-[12px] text-qn-dim">{footer}</div>}
+        {footer && <div className="mt-1.5 flex min-h-6 items-center gap-3 px-3 text-ui-sm text-qn-dim">{footer}</div>}
       </div>
     </div>
   )
@@ -473,6 +564,10 @@ function AttachmentChip({
   problem?: string | null
   onRemove: () => void
 }) {
+  if (item.kind === 'image') {
+    return <ImageAttachmentChip item={item} problem={problem} onRemove={onRemove} />
+  }
+
   const remove = (
     <button
       type="button"
@@ -483,23 +578,6 @@ function AttachmentChip({
       <X size={12} />
     </button>
   )
-  if (item.kind === 'image') {
-    return (
-      <Tip label={problem ? `${item.name} · ${problem}` : `${item.name} · ${formatBytes(item.size)}`}>
-        <div className="group/att relative h-14 w-14">
-          <img
-            src={item.dataUrl}
-            alt={item.name}
-            className={cn(
-              'h-14 w-14 rounded-lg border object-cover',
-              problem ? 'border-qn-danger/70 opacity-50' : 'border-qn-border',
-            )}
-          />
-          {remove}
-        </div>
-      </Tip>
-    )
-  }
   const status =
     item.status === 'uploading' || item.status === 'pending' ? (
       <span className="flex items-center gap-1 text-qn-muted">
@@ -515,7 +593,7 @@ function AttachmentChip({
   return (
     <div
       className={cn(
-        'group/att relative flex h-14 max-w-[15rem] items-center gap-2.5 rounded-lg border bg-white/[0.03] pl-2.5 pr-3',
+        'group/att relative flex h-14 max-w-[15rem] items-center gap-2.5 rounded-lg border bg-qn-fg/[0.03] pl-2.5 pr-3',
         item.status === 'error' ? 'border-qn-danger/40' : 'border-qn-border',
       )}
       title={item.targetPath ?? item.localPath ?? item.name}
@@ -523,8 +601,8 @@ function AttachmentChip({
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-qn-accent/12 text-qn-accent">
         <FileText size={16} />
       </span>
-      <span className="min-w-0 text-[12px] leading-4">
-        <span className="block truncate text-[13px] text-qn-text">{item.name}</span>
+      <span className="min-w-0 text-ui-sm leading-4">
+        <span className="block truncate text-ui text-qn-text">{item.name}</span>
         {status}
       </span>
       {remove}
@@ -546,7 +624,7 @@ function SlashMenu({
   onChoose: (item: SlashItem) => void
 }) {
   return (
-    <Suggestions label="命令与技能" active={active} confirmHint="确认" listClassName="space-y-1">
+    <Suggestions label="命令与技能" active={active} confirmHint="确认" listClassName="space-y-0.5">
       {items.length === 0 && (
         <EmptyState className="py-3 leading-5">
           {loading ? '正在加载技能…' : '没有匹配的命令或技能'}
@@ -557,6 +635,7 @@ function SlashMenu({
           key={item.id}
           data-index={index}
           selected={index === active}
+          className="gap-2 py-1.5"
           onMouseEnter={() => onHover(index)}
           // 阻止输入框失焦，避免菜单在选择前关闭。
           onMouseDown={(event) => event.preventDefault()}
@@ -564,17 +643,17 @@ function SlashMenu({
         >
           <span
             className={cn(
-              'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
-              item.kind === 'skill' ? 'bg-qn-brand/10 text-qn-brand' : 'bg-white/[0.06] text-qn-muted',
+              'flex h-6 w-6 shrink-0 items-center justify-center rounded-md',
+              item.kind === 'skill' ? 'bg-qn-brand/10 text-qn-brand' : 'bg-qn-fg/[0.06] text-qn-muted',
             )}
           >
             {item.kind === 'skill' ? <Wand2 size={14} /> : <Slash size={14} />}
           </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] text-qn-text">/{item.name}</span>
-            {item.description && <span className="block truncate text-[12px] text-qn-dim">{item.description}</span>}
+          <span className="min-w-0 flex-1 leading-4">
+            <span className="block truncate text-ui text-qn-text">/{item.name}</span>
+            {item.description && <span className="block truncate text-ui-sm text-qn-dim">{item.description}</span>}
           </span>
-          {item.scope && <span className="shrink-0 text-[11px] text-qn-dim">{item.scope}</span>}
+          {item.scope && <span className="shrink-0 text-ui-xs text-qn-dim">{item.scope}</span>}
         </ListOption>
       ))}
     </Suggestions>
