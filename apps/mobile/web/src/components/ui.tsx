@@ -148,11 +148,14 @@ export function Dialog({
   children,
   onClose,
   placement = 'bottom',
+  closeAt = placement === 'full' ? 'bottom' : 'top',
 }: {
   title: string
   children: ReactNode
   onClose: () => void
   placement?: 'bottom' | 'side' | 'full'
+  /** 全屏弹层默认把关闭按钮放在底部拇指区；底部已有输入区的（如终端）传 top；内容自己摆放关闭按钮时传 none。 */
+  closeAt?: 'top' | 'bottom' | 'none'
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const close = useRef(onClose)
@@ -201,15 +204,29 @@ export function Dialog({
         if (event.target === event.currentTarget) onClose()
       }}>
       <div className="qn-dialog-panel" {...(placement === 'bottom' ? swipe : {})}>
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-3 flex min-h-11 items-center gap-2">
           <h2 className="qn-title flex-1">{title}</h2>
-          <Button autoFocus variant="ghost" className="qn-header-icon" onClick={onClose} aria-label="关闭">
-            <X size={20} />
-          </Button>
+          {closeAt === 'top' && (
+            <Button autoFocus variant="ghost" className="qn-header-icon" onClick={onClose} aria-label="关闭">
+              <X size={20} />
+            </Button>
+          )}
         </div>
         {children}
+        {closeAt === 'bottom' && <BottomClose autoFocus onClick={onClose} />}
       </div>
     </dialog>
+  )
+}
+
+/** 手机单手操作时手在屏幕下方：全屏页面的关闭按钮放在底部居中。 */
+export function BottomClose({ onClick, autoFocus, label = '关闭' }: { onClick: () => void; autoFocus?: boolean; label?: string }) {
+  return (
+    <div className="qn-bottom-close">
+      <Button autoFocus={autoFocus} className="qn-bottom-close-button" onClick={onClick} aria-label={label}>
+        <X size={22} strokeWidth={1.9} aria-hidden />
+      </Button>
+    </div>
   )
 }
 

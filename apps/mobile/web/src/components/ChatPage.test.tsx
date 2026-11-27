@@ -92,7 +92,7 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
       root.render(<ChatPage />)
     })
     const progress = () => host.querySelector('.qn-thinking[role="status"]')?.textContent
-    expect(progress()).toContain('Codex 正在处理…')
+    expect(progress()).toContain('Codex 正在思考…')
     await act(() => setTurn({ ...thread, activity: 'input' }))
     expect(progress()).toContain('等待输入…')
     await act(() => setTurn(thread))

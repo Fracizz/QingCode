@@ -28,7 +28,7 @@ export function ProjectTools({ project, compact = false }: { project: Project; c
       </Button>
       {tool === 'menu' && (
         <Dialog title={project.name} onClose={() => setTool(null)}>
-          <p className="qn-mono -mt-1 mb-2 text-xs text-qn-muted">{project.path}</p>
+          <p className="qn-mono -mt-1 mb-2 break-all text-xs text-qn-muted">{project.path}</p>
           <div className="qn-project-tools-menu">
             {compact && <SheetAction icon={Folder} onClick={() => setTool('files')}>浏览项目文件</SheetAction>}
             <SheetAction icon={Terminal} onClick={() => setTool('terminal')}>打开项目终端</SheetAction>
@@ -37,7 +37,7 @@ export function ProjectTools({ project, compact = false }: { project: Project; c
       )}
       {tool === 'files' && <ProjectFileBrowser key={`${desktopId}:${project.id}`} desktopId={desktopId} project={project} onClose={() => setTool(null)} />}
       {tool === 'terminal' && (
-        <Dialog title={`终端 · ${project.name}`} placement="full" onClose={() => setTool(null)}>
+        <Dialog title={`终端 · ${project.name}`} placement="full" closeAt="top" onClose={() => setTool(null)}>
           <Suspense fallback={<p className="py-4 text-center text-sm text-qn-muted" role="status">正在加载终端…</p>}>
             <TerminalPanel key={`${desktopId}:${project.id}`} project={project} />
           </Suspense>

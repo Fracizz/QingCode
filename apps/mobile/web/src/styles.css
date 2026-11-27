@@ -53,6 +53,12 @@ body,
   -webkit-tap-highlight-color: transparent;
 }
 
+/* 原生复选框跟随品牌青，不再是系统蓝。 */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--color-qn-accent);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -105,6 +111,12 @@ body,
 .qn-threads-header .qn-title {
   font-size: 16px;
   line-height: 1.35;
+  /* 项目页标题就是项目名，超长时折成两行而不是只剩开头一截。 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .qn-threads-header .qn-subtitle {
@@ -257,10 +269,18 @@ body,
 
 /* 可点击徽标单独放大触控区域，普通徽标保持紧凑。 */
 .qn-badge-button {
-  min-height: 44px;
-  padding: 8px 12px;
+  position: relative;
+  min-height: 30px;
+  padding: 4px 12px;
   cursor: pointer;
   background: var(--color-qn-card);
+}
+
+/* 外观保持紧凑的胶囊，用透明伪元素把可点区域补到约 44px 高。 */
+.qn-badge-button::after {
+  content: "";
+  position: absolute;
+  inset: -7px 0;
 }
 
 .qn-dot {
@@ -400,6 +420,40 @@ body,
   border: 0;
   border-radius: 0;
   padding-top: max(12px, env(safe-area-inset-top));
+}
+
+/* 底部关闭：圆形按钮居中，落在单手拇指能够到的区域。 */
+.qn-bottom-close {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: center;
+  padding-top: 12px;
+}
+
+.qn-bottom-close-button {
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 999px;
+  border-color: var(--color-qn-border-strong);
+  background: var(--color-qn-raised);
+  box-shadow: var(--qn-elev-1);
+}
+
+/* 全屏弹层：内容少时关闭按钮沉到底部，内容长时滚动中也一直停在底部。 */
+.qn-dialog-panel > .qn-bottom-close {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding-bottom: 4px;
+  background: var(--color-qn-panel);
+}
+
+.qn-viewer > .qn-bottom-close {
+  padding-bottom: 12px;
+  border-top: 1px solid var(--color-qn-border);
+  background: var(--color-qn-panel);
 }
 
 .qn-dialog-panel > :first-child {
@@ -849,7 +903,10 @@ body,
 }
 
 .qn-group-heading > .qn-origin {
-  flex: 1;
+  flex: 1 0 auto;
+  max-width: 45%;
+  margin-left: 4px;
+  font-weight: 500;
 }
 
 .qn-group-heading .qn-group-action {
@@ -984,6 +1041,14 @@ body,
   overflow-wrap: anywhere;
 }
 
+/* 名称最多两行：超长项目名不至于把一行撑得过高。 */
+.qn-list-primary.qn-clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
 .qn-list-action {
   flex-shrink: 0;
   min-width: 38px;
@@ -1086,7 +1151,8 @@ body,
   max-width: 14rem;
 }
 
-.qn-composer-model .qn-chip {
+/* 只改输入框里的触发按钮；弹出的选择面板也渲染在这个容器里，其中的芯片保持原样。 */
+.qn-composer-model > .qn-chip {
   width: 100%;
   min-height: 34px;
   padding: 0 8px;
@@ -1095,7 +1161,7 @@ body,
   font-size: 12.5px;
 }
 
-.qn-composer-model .qn-chip:active { background: var(--qn-press); }
+.qn-composer-model > .qn-chip:active { background: var(--qn-press); }
 
 .qn-composer-tools > * { flex-shrink: 0; }
 .qn-composer-tools > .qn-composer-model { flex-shrink: 1; }
@@ -1169,19 +1235,17 @@ body,
 }
 
 .qn-image-preview {
-  display: grid;
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   min-height: 0;
-  place-items: center;
-}
-
-.qn-image-preview > * {
-  grid-area: 1 / 1;
 }
 
 .qn-image-preview img {
-  width: 100%;
-  height: 100%;
+  max-width: 100%;
+  max-height: calc(100% - 76px);
   min-height: 0;
   object-fit: contain;
 }
@@ -1276,11 +1340,36 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   color: var(--color-qn-muted);
 }
 
-.qn-file-change .qn-diff-preview { margin: 0 0 6px; }
 .qn-pre::-webkit-scrollbar-corner { background: transparent; }
 
 .qn-turn-error {
   overflow-wrap: anywhere;
+}
+
+/* 正在回复：三点跳动的小气泡，让用户一眼看出对方还在输出。 */
+.qn-replying {
+  width: fit-content;
+  padding: 6px 12px 6px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-qn-accent) 10%, transparent);
+  color: var(--color-qn-text);
+}
+.qn-typing-dots { display: inline-flex; gap: 3px; }
+.qn-typing-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-qn-accent);
+  animation: qn-typing 1.2s ease-in-out infinite;
+}
+.qn-typing-dots i:nth-child(2) { animation-delay: 0.15s; }
+.qn-typing-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes qn-typing {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qn-typing-dots i { animation: none; opacity: 0.8; }
 }
 
 .qn-thinking,
@@ -1574,11 +1663,6 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   padding-left: 12px;
   border-left: 1px solid var(--color-qn-border);
   margin-left: 16px;
-}
-
-.qn-diff-preview {
-  max-height: min(8rem, 22dvh);
-  overflow: auto;
 }
 
 .qn-command-output { max-height: min(24rem, 48dvh); }

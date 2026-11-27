@@ -1,11 +1,11 @@
 import { ArrowDown, ChevronDown, PanelLeft, Square } from 'lucide-react'
 import { sessionStatus, sessionStatusLabels, type ItemView, type UserInput } from '@qn/codex-client'
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { nearBottom } from '../composerLogic'
 import { EMPTY_PREFS, resolveSelection } from '../models'
 import { currentCwd, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
-import { groupChatItems } from '../chatGroups'
+import { groupChatItems, isChatVisible, replyPhase } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
@@ -16,7 +16,7 @@ import { NewSessionButton } from './NewSessionButton'
 import { QueuedMessages } from './QueuedMessages'
 import { SessionSwitcher } from './SessionSwitcher'
 import { SubagentRpcContext } from './SubagentDetails'
-import { Badge, Button, Empty, Header, LoadingIcon, Note } from './ui'
+import { Badge, Button, Empty, Header, Note } from './ui'
 
 const NO_ITEMS: ItemView[] = []
 const HISTORY_BATCH_SIZE = 60
@@ -78,20 +78,22 @@ export function ChatPage() {
   const items = view?.items ?? NO_ITEMS
   const approvals = view?.pendingApprovals ?? []
   const running = view?.status === 'running'
-  const progress = running && approvals.length === 0
-    ? view.activity === 'input' ? '等待输入…'
-      : view.activity === 'pending' ? '等待审批…' : `${agentLabel(selectedAgent)} 正在处理…`
-    : null
   const interrupted = !running && view?.activity === 'interrupted'
   const turnError = !running && !interrupted ? view?.error : undefined
   const currentStop = running && stopRequest?.chatKey === chatKey && stopRequest.turnId === view.activeTurnId ? stopRequest : null
   const stopping = currentStop !== null && currentStop.error === null
   const stopError = currentStop?.error
   const activeItemIds = running ? view.turns?.find((turn) => turn.id === view.activeTurnId)?.itemIds : undefined
+  const progress = running && approvals.length === 0
+    ? view.activity === 'input' ? '等待输入…'
+      : view.activity === 'pending' ? '等待审批…'
+        : `${agentLabel(selectedAgent)} ${replyPhase(items, activeItemIds)}…`
+    : null
   const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
     item.type === 'contextCompaction' && item.status === 'inProgress' && activeItemIds?.includes(item.id))
   const shownItems = useMemo(
-    () => withoutErrorEcho(items, view?.error, running).filter((item) => item.kind !== 'reasoning'),
+    // 手机屏幕有限：推理摘要、命令和其它工具步骤都不进消息流，进度只在底部回复状态里体现。
+    () => withoutErrorEcho(items, view?.error, running).filter(isChatVisible),
     [items, view?.error, running],
   )
   // 每轮只有最后一条回复常驻操作入口：从后往前，遇到用户消息重置。
@@ -126,6 +128,13 @@ export function ChatPage() {
   // 冷启动恢复会话时列表可能还没加载，先用首条用户消息顶上，避免标题只剩项目名。
   const firstUser = items.find((item) => item.kind === 'user')
   const thread = threads.find((item) => item.id === selectedThreadId && item.agent === selectedAgent)
+  // 冷启动直接恢复到对话页时会话列表为空：补拉一次，让标题换成真正的会话名。
+  const titleFetched = useRef('')
+  useEffect(() => {
+    if (!selectedThreadId || thread || !eventsConnected || titleFetched.current === chatKey) return
+    titleFetched.current = chatKey
+    void useApp.getState().refreshThreads({ skipFailed: true })
+  }, [chatKey, eventsConnected, selectedThreadId, thread])
   const threadTitle = thread?.title
     || (firstUser?.kind === 'user' ? firstUser.text.replace(/\s+/g, ' ').trim().slice(0, 60) : '')
   const statusLabel = selectedThreadId ? sessionStatusLabels[sessionStatus(view, thread?.activity)] : null
@@ -213,7 +222,14 @@ export function ChatPage() {
     <>
       <Header
         title={threadTitle || project?.name || '对话'}
-        subtitle={[statusLabel, project?.name, agentLabel(selectedAgent)].filter(Boolean).join(' · ')}
+        subtitle={
+          // 项目名可能很长：只让项目名截断，状态与 Agent 始终可见。
+          <span className="flex min-w-0 items-center gap-1">
+            {statusLabel && <span className="shrink-0">{statusLabel} ·</span>}
+            {project?.name && <span className="min-w-0 truncate">{project.name}</span>}
+            <span className="shrink-0">{project?.name ? '· ' : ''}{agentLabel(selectedAgent)}</span>
+          </span>
+        }
         onBack={goBack}
         right={
           <>
@@ -267,7 +283,9 @@ export function ChatPage() {
               </FileActionsContext.Provider>
             </SubagentRpcContext.Provider>
             {progress && (
-              <div className="qn-thinking" role="status"><LoadingIcon aria-hidden />{progress}</div>
+              <div className="qn-thinking qn-replying" role="status">
+                <span className="qn-typing-dots" aria-hidden><i /><i /><i /></span>{progress}
+              </div>
             )}
             {interrupted && <div className="qn-turn-interrupted" role="status"><Square size={13} aria-hidden />本轮已中断</div>}
             {turnError && <TurnErrorCard message={turnError} />}
@@ -356,3 +374,4 @@ function TurnErrorCard({ message }: { message: string }) {
     </div>
   )
 }
+

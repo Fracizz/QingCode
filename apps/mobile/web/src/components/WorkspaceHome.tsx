@@ -308,8 +308,8 @@ export function WorkspaceProjectRow({ project, target, onOpen }: {
     <div className="qn-row qn-list-row">
       <button type="button" className="qn-row-trigger" onClick={onOpen} disabled={!target}>
         <span className="qn-row-copy">
-          <span className="qn-list-primary">{project.name}</span>
-          <span className="qn-subtitle qn-mono block">{displayPath(project.path)}</span>
+          <span className="qn-list-primary qn-clamp-2" title={project.name}>{project.name}</span>
+          <span className="qn-subtitle qn-mono block" title={project.path}>{displayPath(project.path)}</span>
         </span>
       </button>
       {target && <NewSessionButton project={project} iconOnly className="qn-list-action" />}

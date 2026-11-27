@@ -213,7 +213,7 @@ export function ConnectionsPage() {
                     <button type="button" className="qn-row-trigger" onClick={() => void activate(conn.id, 'targets')}>
                       <StatusDot tone={tone} />
                       <span className="qn-row-copy">
-                        <span className="qn-list-primary">{conn.name}</span>
+                        <span className="qn-list-primary qn-clamp-2">{conn.name}</span>
                         <span className="qn-subtitle block">{current ? '当前电脑 · ' : ''}{formatAddress(conn.host, conn.port)}</span>
                       </span>
                       <span className="flex shrink-0 flex-col items-end gap-1">

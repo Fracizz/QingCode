@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { basename, imageDataUrl, isImagePath } from '../fileLinks'
 import { useApp } from '../store'
 import { diffRows, formatBytes, numberLines, viewKind, type DiffRow } from '../viewer'
-import { Badge, Button, Header, Loading, Note } from './ui'
+import { Badge, BottomClose, Button, Header, Loading, Note } from './ui'
 
 const DIFF_CLASS: Record<DiffRow['kind'], string> = {
   add: 'qn-diff-add',
@@ -148,6 +148,7 @@ export function FileViewer() {
           </>
         )}
       </div>
+      <BottomClose onClick={close} label="关闭文件" />
     </div>
   )
 }

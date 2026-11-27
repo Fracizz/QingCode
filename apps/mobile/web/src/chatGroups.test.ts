@@ -1,6 +1,6 @@
 import type { ItemView } from '@qn/codex-client'
 import { describe, expect, it } from 'vitest'
-import { groupChatItems, toolSummary, type ToolItem } from './chatGroups'
+import { groupChatItems, isChatVisible, replyPhase, toolSummary, type ToolItem } from './chatGroups'
 
 const command = (id: string, status = 'completed', exitCode: number | null = 0): ItemView =>
   ({ kind: 'command', id, command: 'ls', output: '', exitCode, status })
@@ -29,5 +29,20 @@ describe('toolSummary', () => {
   })
   it('有命令仍在运行时用进行时', () => {
     expect(toolSummary([command('1'), command('2', 'inProgress', null)] as ToolItem[])).toBe('正在运行 2 条命令')
+  })
+})
+
+describe('手机消息流精简', () => {
+  it('隐藏命令与其它工具步骤，保留回复与文件改动', () => {
+    const items = [agent('a'), command('c'), change('f', ['x']), { kind: 'other', id: 'o', type: 'mcpToolCall', summary: '' } as ItemView]
+    expect(items.filter(isChatVisible).map((item) => item.id)).toEqual(['a', 'f'])
+  })
+
+  it('按本轮最新一步给出回复阶段', () => {
+    const streaming: ItemView = { kind: 'agent', id: 's', text: '…', streaming: true }
+    expect(replyPhase([], undefined)).toBe('正在思考')
+    expect(replyPhase([agent('a'), command('c', 'inProgress', null)], ['a', 'c'])).toBe('正在执行命令')
+    expect(replyPhase([command('c'), streaming], ['c', 's'])).toBe('正在回复')
+    expect(replyPhase([agent('old'), change('f', ['x'])], ['f'])).toBe('正在修改文件')
   })
 })

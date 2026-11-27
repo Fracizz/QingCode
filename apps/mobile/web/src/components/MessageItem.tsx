@@ -117,37 +117,6 @@ function Markdown({ text, streaming }: { text: string; streaming: boolean }): Re
   )
 }
 
-function DiffBlock({ text }: { text: string }) {
-  const raw = text.split('\n')
-  // 文件名已在上方列出，预览从第一个 hunk 开始，省掉 diff/index/---/+++ 头。
-  const firstHunk = raw.findIndex((line) => line.startsWith('@@'))
-  const all = firstHunk > 0 ? raw.slice(firstHunk) : raw
-  const lines = all.length > 200 ? all.slice(-200) : all
-  return (
-    <div>
-      {all.length > lines.length && (
-        <div className="mb-1 text-[10px] text-qn-muted">仅显示末尾 {lines.length} 行</div>
-      )}
-      <pre className="qn-pre qn-scroll qn-diff-preview text-[11px] leading-5" tabIndex={0}>
-        {lines.map((line, index) => {
-          const tone = line.startsWith('+')
-            ? 'text-emerald-300'
-            : line.startsWith('-')
-              ? 'text-red-300'
-              : line.startsWith('@@') || line.startsWith('---') || line.startsWith('+++')
-                ? 'text-qn-muted'
-                : ''
-          return (
-            <div key={index} className={tone}>
-              {line || ' '}
-            </div>
-          )
-        })}
-      </pre>
-    </div>
-  )
-}
-
 function MessageActions({ text, onQuote, getPlainText, onEdit, open: controlledOpen, onOpenChange, hideTrigger = false }: {
   text: string; onQuote?: (text: string) => void; getPlainText?: () => string; onEdit?: () => void
   open?: boolean; onOpenChange?: (open: boolean) => void; hideTrigger?: boolean
@@ -287,8 +256,7 @@ function FileChangeItem({
   const actions = useContext(FileActionsContext)
   const status = toolStatus(item)
   const files = item.changes.filter((change) => change.kind !== 'output')
-  // 只有一个文件时直接展开差异预览；多个文件先列清单，避免一屏全是 diff。
-  const inlineDiff = item.changes.length === 1
+  // 手机屏幕有限，只列文件清单；差异点右侧按钮全屏查看。
   return (
     <div className="qn-tool qn-tool-open qn-file-change">
       <div className="qn-file-change-head">
@@ -331,7 +299,6 @@ function FileChangeItem({
                 </Button>
               )}
             </div>
-            {inlineDiff && typeof change.diff === 'string' && change.diff !== '' && <DiffBlock text={change.diff} />}
           </div>
         )
       })}
