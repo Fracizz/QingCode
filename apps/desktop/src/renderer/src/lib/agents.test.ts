@@ -1,0 +1,91 @@
+import { describe, expect, it } from 'vitest'
+import {
+  agentLabel,
+  agentPlaceholder,
+  availabilityReason,
+  classifyAgentOpenError,
+  emptyAgentStatus,
+  exitedAgentOf,
+  isAgentKind,
+  parseDefaultAgents,
+  parseSessionKey,
+  preferredAgent,
+  sessionKey,
+} from './agents'
+
+describe('agent 会话键与标签', () => {
+  it('目标 id 含冒号时仍可还原', () => {
+    expect(sessionKey('ssh:host:22', 'claude')).toBe('claude:ssh:host:22')
+    expect(parseSessionKey('claude:ssh:host:22')).toEqual({
+      agent: 'claude',
+      targetId: 'ssh:host:22',
+    })
+    expect(parseSessionKey('codex:local')).toEqual({ agent: 'codex', targetId: 'local' })
+    expect(parseSessionKey('local')).toEqual({ agent: 'codex', targetId: 'local' })
+  })
+
+  it('agent 守卫、标签与占位符', () => {
+    expect(isAgentKind('claude')).toBe(true)
+    expect(isAgentKind('other')).toBe(false)
+    expect(agentLabel('codex')).toBe('Codex')
+    expect(agentPlaceholder('claude')).toBe('和 Claude 一起工作')
+  })
+})
+
+describe('连接的默认 Agent', () => {
+  it('默认优先于自动选择，确认不可用时才回退', () => {
+    const status = emptyAgentStatus()
+    expect(preferredAgent(undefined, 'claude')).toBe('claude')
+    status.codex = { state: 'ready' }
+    expect(preferredAgent(status, 'claude')).toBe('claude')
+    status.claude = { state: 'unavailable' }
+    expect(preferredAgent(status, 'claude')).toBe('codex')
+  })
+
+  it('只保留合法条目', () => {
+    expect(parseDefaultAgents('{"local":"claude","a":"other","b":1}')).toEqual({ local: 'claude' })
+    expect(parseDefaultAgents('[1]')).toEqual({})
+    expect(parseDefaultAgents('{')).toEqual({})
+    expect(parseDefaultAgents(null)).toEqual({})
+  })
+})
+
+describe('agent 可用性', () => {
+  it('缺少可执行文件才置为不可用，连接问题是暂时状态', () => {
+    expect(classifyAgentOpenError('claude', { code: 'agent_unavailable', message: '未找到 claude' }))
+      .toEqual({ state: 'unavailable', detail: '未找到 claude' })
+    expect(classifyAgentOpenError('codex', new Error('spawn codex ENOENT')).state).toBe('unavailable')
+    expect(classifyAgentOpenError('codex', { code: 'not_connected', message: '目标未连接' }).state)
+      .toBe('unknown')
+    expect(classifyAgentOpenError('codex', new Error('超时')).state).toBe('error')
+  })
+
+  it('优先选已就绪的 agent，其次避开明确不可用的', () => {
+    const status = emptyAgentStatus()
+    expect(preferredAgent(status)).toBe('codex')
+    status.codex = { state: 'unavailable', detail: '未找到 codex' }
+    status.claude = { state: 'ready', version: '2.1.331' }
+    expect(preferredAgent(status)).toBe('claude')
+    expect(availabilityReason('claude', status.claude)).toContain('2.1.331')
+    expect(availabilityReason('codex', status.codex)).toBe('未找到 codex')
+    expect(availabilityReason('claude', undefined)).toBe('等待连接后检测')
+  })
+})
+
+describe('agent 退出事件', () => {
+  it('新 server：codex.exited 带 agent 字段', () => {
+    expect(exitedAgentOf('codex.exited', { agent: 'pi', code: 1 })).toBe('pi')
+    expect(exitedAgentOf('codex.exited', { agent: 'codex' })).toBe('codex')
+  })
+
+  it('旧 server：codex.exited 不带 agent 只表示 codex，其它 agent 用各自事件名', () => {
+    expect(exitedAgentOf('codex.exited', { code: null })).toBe('codex')
+    expect(exitedAgentOf('pi.exited', { code: 1 })).toBe('pi')
+    expect(exitedAgentOf('claude.exited', null)).toBe('claude')
+  })
+
+  it('非退出事件返回 null', () => {
+    expect(exitedAgentOf('term.exited', {})).toBeNull()
+    expect(exitedAgentOf('git.changed', {})).toBeNull()
+  })
+})

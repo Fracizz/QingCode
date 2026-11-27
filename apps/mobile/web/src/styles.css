@@ -1,0 +1,1788 @@
+@import "tailwindcss";
+
+@theme {
+  /* 中性色与功能色对齐电脑版（apps/desktop/src/renderer/src/styles.css）；强调色沿用品牌青（旧版手机规范：不用蓝色）。 */
+  --color-qn-bg: #181818;
+  --color-qn-panel: #1f1f1f;
+  --color-qn-card: #242424;
+  --color-qn-raised: #2c2c2c;
+  --color-qn-field: #141414;
+  --color-qn-border: #2e2e2e;
+  --color-qn-border-strong: #3a3a3a;
+  --color-qn-text: #e6e6e6;
+  --color-qn-muted: #939393;
+  --color-qn-dim: #6b6b6b;
+  --color-qn-accent: #4ecdb5;
+  --color-qn-danger: #ff6b63;
+  --color-qn-ok: #6fcf8f;
+  --color-qn-warn: #e2b55d;
+}
+
+/*
+ * 组件样式放进 components 层：Tailwind 工具类在 utilities 层，才能按预期覆盖（如 px-2、text-xs）。
+ * 之前这些规则不在任何层里，会压过所有工具类，导致组件上的尺寸类全部失效、按钮偏大。
+ */
+@layer components {
+:root {
+  --qn-radius: 12px;
+  --qn-accent-surface: color-mix(in srgb, var(--color-qn-accent) 16%, transparent);
+  --qn-press: rgb(255 255 255 / 5%);
+  /* 表面层级：靠 1px 边缘高光与投影分层，不靠更多边框或卡片套卡片。 */
+  --qn-edge: rgb(255 255 255 / 6%);
+  --qn-edge-top: rgb(255 255 255 / 10%);
+  --qn-elev-1: 0 1px 2px rgb(0 0 0 / 35%), 0 6px 18px rgb(0 0 0 / 18%);
+  --qn-elev-3: 0 -8px 32px rgb(0 0 0 / 45%);
+  /* 动效：时长与曲线同旧版手机规范（mobile/android/design.md「动效」）。 */
+  --qn-motion-short: 150ms;
+  --qn-motion-medium: 260ms;
+  --qn-motion-long: 380ms;
+  --qn-ease-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --qn-ease-spring: linear(0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 15.5%, 0.938 20.7%, 1.017 25.1%, 1.043 28.6%, 1.04 32.4%, 1.017 39.5%, 0.999 46.7%, 0.996 55.6%, 1);
+  color-scheme: dark;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 15px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--color-qn-bg);
+  color: var(--color-qn-text);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 原生复选框跟随品牌青，不再是系统蓝。 */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--color-qn-accent);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.qn-app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  background: var(--color-qn-bg);
+}
+
+.qn-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-height: 52px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-qn-border);
+  background: var(--color-qn-panel);
+}
+
+.qn-title {
+  min-width: 0;
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qn-subtitle {
+  font-size: 11px;
+  color: var(--color-qn-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qn-threads-header {
+  gap: 4px;
+  min-height: 56px;
+  padding-inline: 8px;
+}
+
+.qn-threads-header .qn-title {
+  font-size: 16px;
+  line-height: 1.35;
+  /* 项目页标题就是项目名，超长时折成两行而不是只剩开头一截。 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.qn-threads-header .qn-subtitle {
+  margin-top: 2px;
+}
+
+.qn-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px;
+}
+
+.qn-pull-refresh {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.qn-body.qn-pull-scroll {
+  overscroll-behavior-y: none;
+}
+
+.qn-pull-indicator {
+  position: absolute;
+  z-index: 3;
+  top: -36px;
+  left: 50%;
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--qn-edge-top);
+  border-radius: 999px;
+  background: var(--color-qn-raised);
+  box-shadow: var(--qn-elev-1);
+  color: var(--color-qn-accent);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.qn-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-qn-border);
+  background: var(--color-qn-panel);
+  padding: 8px 12px;
+}
+
+.qn-card {
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-card);
+  padding: 12px;
+}
+
+.qn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  text-align: left;
+}
+
+.qn-input,
+.qn-textarea {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-field);
+  color: var(--color-qn-text);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+}
+
+.qn-textarea {
+  resize: none;
+  line-height: 1.5;
+}
+
+.qn-input:focus,
+.qn-textarea:focus {
+  border-color: var(--color-qn-accent);
+}
+
+.qn-input:disabled,
+.qn-textarea:disabled {
+  opacity: 0.6;
+}
+
+.qn-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 42px;
+  min-width: 42px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-card);
+  color: var(--color-qn-text);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.qn-button-primary {
+  border-color: transparent;
+  background: var(--color-qn-accent);
+  color: #102720;
+  font-weight: 600;
+}
+
+.qn-button-danger {
+  border-color: color-mix(in srgb, var(--color-qn-danger) 50%, transparent);
+  color: var(--color-qn-danger);
+}
+
+.qn-button-ghost {
+  background: transparent;
+}
+
+.qn-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.qn-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-qn-border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--color-qn-muted);
+  white-space: nowrap;
+}
+
+/* 可点击徽标单独放大触控区域，普通徽标保持紧凑。 */
+.qn-badge-button {
+  position: relative;
+  min-height: 30px;
+  padding: 4px 12px;
+  cursor: pointer;
+  background: var(--color-qn-card);
+}
+
+/* 外观保持紧凑的胶囊，用透明伪元素把可点区域补到约 44px 高。 */
+.qn-badge-button::after {
+  content: "";
+  position: absolute;
+  inset: -7px 0;
+}
+
+.qn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--color-qn-muted);
+}
+
+.qn-note {
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-qn-muted);
+}
+
+/* 提示条里的操作：紧凑文字按钮，不把提示撑成两倍高；命中区靠伪元素补足。 */
+.qn-note-action,
+.qn-note-close {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  margin: -4px 0;
+  border-radius: 8px;
+  color: var(--color-qn-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.qn-note-action {
+  padding: 0 10px;
+  background: rgb(255 255 255 / 7%);
+}
+
+.qn-note-close {
+  min-width: 28px;
+  margin-right: -6px;
+  color: inherit;
+  opacity: 0.8;
+}
+
+.qn-note-action::before,
+.qn-note-close::before {
+  position: absolute;
+  inset: -8px -4px;
+  content: "";
+}
+
+.qn-note-action:active,
+.qn-note-close:active { background: var(--qn-press); }
+
+.qn-note-error {
+  border-color: color-mix(in srgb, var(--color-qn-danger) 50%, transparent);
+  color: var(--color-qn-danger);
+}
+
+.qn-note-warn {
+  border-color: color-mix(in srgb, var(--color-qn-warn) 50%, transparent);
+  color: var(--color-qn-warn);
+}
+
+.qn-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--color-qn-muted);
+}
+
+.qn-mono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  word-break: break-all;
+}
+
+.qn-dialog {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--color-qn-text);
+  background: transparent;
+}
+
+.qn-dialog[open] {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.qn-dialog::backdrop {
+  background: rgb(0 0 0 / 63%);
+}
+
+.qn-dialog-panel {
+  width: 100%;
+  max-width: 560px;
+  max-height: 90%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius) var(--qn-radius) 0 0;
+  background: var(--color-qn-panel);
+  padding: 12px max(14px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+}
+
+.qn-dialog[data-placement="side"] {
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.qn-dialog[data-placement="side"] .qn-dialog-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(87%, 440px);
+  max-width: none;
+  max-height: 100%;
+  border-radius: 0 var(--qn-radius) var(--qn-radius) 0;
+  padding-top: max(16px, env(safe-area-inset-top));
+}
+
+.qn-dialog[data-placement="full"] .qn-dialog-panel {
+  display: flex;
+  flex-direction: column;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  padding-top: max(12px, env(safe-area-inset-top));
+}
+
+/* 底部关闭：圆形按钮居中，落在单手拇指能够到的区域。 */
+.qn-bottom-close {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: center;
+  padding-top: 12px;
+}
+
+.qn-bottom-close-button {
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 999px;
+  border-color: var(--color-qn-border-strong);
+  background: var(--color-qn-raised);
+  box-shadow: var(--qn-elev-1);
+}
+
+/* 全屏弹层：内容少时关闭按钮沉到底部，内容长时滚动中也一直停在底部。 */
+.qn-dialog-panel > .qn-bottom-close {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding-bottom: 4px;
+  background: var(--color-qn-panel);
+}
+
+.qn-viewer > .qn-bottom-close {
+  padding-bottom: 12px;
+  border-top: 1px solid var(--color-qn-border);
+  background: var(--color-qn-panel);
+}
+
+.qn-dialog-panel > :first-child {
+  flex-shrink: 0;
+}
+
+.qn-project-tools-menu {
+  display: grid;
+  gap: 4px;
+}
+
+.qn-project-tools-menu .qn-button {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.qn-switcher-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.qn-pre {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+  background: var(--color-qn-field);
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius);
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.qn-markdown {
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+  font-size: 14px;
+}
+
+.qn-streaming > :last-child::after,
+.qn-streaming:empty::after {
+  display: inline-block;
+  width: 6px;
+  height: 0.95em;
+  margin-left: 3px;
+  border-radius: 1px;
+  background: var(--color-qn-accent);
+  vertical-align: -0.1em;
+  animation: qn-caret 1s steps(2, start) infinite;
+  content: "";
+}
+
+.qn-streaming > :is(pre, ul, ol, table):last-child::after { display: none; }
+
+@keyframes qn-caret { to { visibility: hidden; } }
+
+.qn-markdown p {
+  margin: 0 0 8px;
+}
+
+.qn-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.qn-markdown a {
+  color: var(--color-qn-accent);
+  text-decoration: underline;
+}
+
+.qn-markdown ul,
+.qn-markdown ol {
+  padding-left: 20px;
+  margin: 4px 0 8px;
+}
+
+.qn-markdown h1,
+.qn-markdown h2,
+.qn-markdown h3 {
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+
+.qn-markdown table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.qn-markdown th,
+.qn-markdown td {
+  border: 1px solid var(--color-qn-border);
+  padding: 4px 6px;
+}
+
+.qn-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-qn-field);
+  overflow: hidden;
+}
+
+.qn-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.qn-scroll::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.qn-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-qn-border);
+  border-radius: 4px;
+}
+
+/* 消息里的可点击路径：保持行内排版，只加下划线与强调色。 */
+.qn-path-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-qn-accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+/* 只读查看页：全屏覆盖在对话页之上，返回键先关闭它。 */
+.qn-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+  background: var(--color-qn-bg);
+}
+
+.qn-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--color-qn-field);
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius);
+  overflow-x: auto;
+  padding: 4px 0;
+}
+
+.qn-code-row {
+  display: flex;
+  min-width: max-content;
+  white-space: pre;
+}
+
+.qn-code-no {
+  position: sticky;
+  left: 0;
+  flex-shrink: 0;
+  min-width: 3.2em;
+  padding: 0 8px 0 6px;
+  text-align: right;
+  color: var(--color-qn-muted);
+  background: var(--color-qn-field);
+  user-select: none;
+}
+
+.qn-code-text {
+  padding-right: 12px;
+}
+
+.qn-code-row-hit {
+  background: color-mix(in srgb, var(--color-qn-warn) 18%, transparent);
+}
+
+.qn-diff-add {
+  background: rgb(16 185 129 / 12%);
+  color: #6ee7b7;
+}
+
+.qn-diff-remove {
+  background: rgb(239 68 68 / 12%);
+  color: #fca5a5;
+}
+
+.qn-diff-hunk {
+  color: var(--color-qn-accent);
+}
+
+.qn-diff-meta {
+  color: var(--color-qn-muted);
+}
+
+.qn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 3px 12px;
+  border: 1px solid var(--color-qn-border);
+  border-radius: 999px;
+  background: var(--color-qn-card);
+  color: var(--color-qn-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.qn-chip-active {
+  border-color: var(--color-qn-accent);
+  color: var(--color-qn-text);
+  background: color-mix(in srgb, var(--color-qn-accent) 18%, var(--color-qn-card));
+}
+
+.qn-agent-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
+  border: 1px solid var(--color-qn-border);
+  color: var(--color-qn-muted);
+}
+
+.qn-agent-tag-claude {
+  border-color: color-mix(in srgb, #d97757 60%, transparent);
+  color: #f0a37f;
+}
+
+.qn-agent-tag-pi {
+  border-color: color-mix(in srgb, var(--color-qn-ok) 60%, transparent);
+  color: var(--color-qn-ok);
+}
+
+
+:where(button, input, textarea, a, summary):focus-visible {
+  outline: 2px solid var(--color-qn-accent);
+  outline-offset: -2px;
+}
+
+:where(button, input, textarea, summary) {
+  touch-action: manipulation;
+}
+
+.qn-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-qn-border);
+  background: var(--color-qn-panel);
+}
+
+.qn-nav-button {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 3px;
+  min-height: 60px;
+  color: var(--color-qn-muted);
+  font-size: 12px;
+}
+
+.qn-nav-button span {
+  display: grid;
+  place-items: center;
+  width: min(56px, 100%);
+  min-height: 27px;
+  border-radius: var(--qn-radius);
+  transition: background-color var(--qn-motion-short) ease-out;
+}
+
+.qn-nav-button[aria-current="page"] {
+  color: var(--color-qn-text);
+  font-weight: 650;
+}
+
+.qn-nav-button[aria-current="page"] span {
+  background: var(--qn-accent-surface);
+  color: var(--color-qn-accent);
+}
+
+.qn-workspace {
+  padding: 0 16px 16px;
+}
+
+.qn-workspace-home {
+  padding-top: 12px;
+}
+
+.qn-workspace-title {
+  position: relative;
+  padding: 8px 0 18px;
+}
+
+.qn-workspace-title[data-connected="true"]::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0 -16px -20px;
+  background: radial-gradient(ellipse at top right, color-mix(in srgb, var(--color-qn-accent) 12%, transparent) 0%, transparent 70%);
+  pointer-events: none;
+  content: "";
+}
+
+.qn-workspace-title > * {
+  position: relative;
+}
+
+.qn-workspace-context {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--color-qn-muted);
+}
+
+.qn-workspace-context > .qn-button {
+  border-color: transparent;
+}
+
+.qn-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 10px;
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius);
+  color: var(--color-qn-muted);
+  background: var(--color-qn-bg);
+}
+
+.qn-search:focus-within {
+  border-color: var(--color-qn-accent);
+}
+
+.qn-search input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  color: var(--color-qn-text);
+  font: inherit;
+  outline: none;
+}
+
+.qn-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.qn-search button {
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0 -10px 0 0;
+  font-size: 20px;
+}
+
+.qn-project-filters {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 2px;
+  overflow-x: auto;
+}
+
+.qn-project-filters .qn-chip {
+  flex-shrink: 0;
+  max-width: min(16rem, 100%);
+  min-width: 44px;
+}
+
+.qn-workspace-group {
+  margin-top: 16px;
+}
+
+.qn-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 40px;
+  margin-bottom: 4px;
+  padding-left: 4px;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+/* 分组标题本身可点进入项目：名称、来源、箭头一体，右侧只留 + 与 ⋯。 */
+.qn-group-title {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  margin-left: -4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.qn-group-title:active { background: var(--qn-press); }
+.qn-group-title > h2 { min-width: 0; margin: 0; flex-shrink: 1; }
+.qn-group-title > .qn-origin { flex-shrink: 0; font-weight: 500; }
+
+/* 工作台顶部当前电脑行：状态点 + 名称 + 文字状态。 */
+.qn-workspace-context-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-height: 36px;
+  margin: 2px 0 8px -4px;
+  padding: 0 8px 0 4px;
+  border-radius: 8px;
+  color: var(--color-qn-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.qn-workspace-context-bar:active { background: var(--qn-press); }
+
+.qn-workspace-context-state {
+  flex-shrink: 0;
+  color: var(--color-qn-muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.qn-workspace-context-state[data-tone="warn"] { color: var(--color-qn-warn); }
+.qn-workspace-context-state[data-tone="danger"] { color: var(--color-qn-danger); }
+.qn-dot[data-tone="ok"] { background: var(--color-qn-ok); }
+.qn-dot[data-tone="warn"] { background: var(--color-qn-warn); animation: qn-breathe 1.6s ease-in-out infinite; }
+.qn-dot[data-tone="danger"] { background: var(--color-qn-danger); }
+
+.qn-group-heading > :is(h2, h3) {
+  min-width: 0;
+  margin: 0;
+}
+
+.qn-group-heading > .qn-origin {
+  flex: 1 0 auto;
+  max-width: 45%;
+  margin-left: 4px;
+  font-weight: 500;
+}
+
+.qn-group-heading .qn-group-action {
+  margin-left: auto;
+  border-color: transparent;
+  padding: 4px;
+}
+
+.qn-origin {
+  overflow: hidden;
+  color: var(--color-qn-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qn-list-group {
+  overflow: hidden;
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-card);
+}
+
+.qn-list-row {
+  min-height: 58px;
+  padding: 8px 10px 8px 13px;
+}
+
+.qn-list-row + .qn-list-row,
+.qn-thread-row + .qn-thread-row {
+  border-top: 1px solid var(--color-qn-border);
+}
+
+.qn-session-more,
+.qn-session-overflow {
+  border-top: 1px solid var(--color-qn-border);
+}
+
+.qn-session-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  color: var(--color-qn-accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.qn-session-more[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.qn-list-row[aria-current="true"] {
+  background: var(--color-qn-raised);
+}
+
+.qn-list-row:active,
+.qn-row-trigger:active {
+  background: var(--qn-press);
+}
+
+.qn-thread-swipe {
+  position: relative;
+  overflow: hidden;
+  touch-action: pan-y pinch-zoom;
+}
+
+.qn-thread-content {
+  position: relative;
+  z-index: 1;
+  background: var(--color-qn-card);
+  transition: transform 160ms ease-out;
+  user-select: none;
+}
+
+.qn-list-row.qn-thread-content:active {
+  background: var(--color-qn-raised);
+}
+
+.qn-thread-content[data-dragging="true"] {
+  transition: none;
+}
+
+.qn-thread-archive {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: grid;
+  place-content: center;
+  gap: 2px;
+  background: #7a4422;
+  color: #fff;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.qn-thread-archive small {
+  font-size: 11px;
+}
+
+.qn-thread-archive-error {
+  padding: 4px 13px 8px;
+  color: var(--color-qn-danger);
+  font-size: 13px;
+}
+
+.qn-row-trigger {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  min-height: 44px;
+  text-align: left;
+}
+
+.qn-row-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.qn-list-primary {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: var(--color-qn-text);
+  font-size: 15px;
+  font-weight: 620;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/* 名称最多两行：超长项目名不至于把一行撑得过高。 */
+.qn-list-primary.qn-clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.qn-list-action {
+  flex-shrink: 0;
+  min-width: 38px;
+  min-height: 38px;
+  border-color: transparent;
+  padding: 0;
+  color: var(--color-qn-muted);
+}
+
+.qn-segment {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 4px;
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-bg);
+}
+
+.qn-segment button {
+  flex: 1;
+  border-color: transparent;
+  background: transparent;
+}
+
+.qn-segment button[aria-pressed="true"] {
+  background: var(--qn-accent-surface);
+  color: var(--color-qn-accent);
+}
+
+.qn-details > summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--color-qn-muted);
+  font-size: 13px;
+}
+
+.qn-details > summary::before {
+  content: '›';
+  margin-right: 8px;
+}
+
+.qn-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .qn-nav-button { min-height: 47px; }
+  .qn-workspace-title { padding-bottom: 12px; }
+}
+
+.qn-composer {
+  border: 1px solid var(--color-qn-border);
+  border-radius: 18px;
+  background: var(--color-qn-card);
+  transition: border-color var(--qn-motion-short) ease;
+}
+
+.qn-composer:focus-within {
+  border-color: color-mix(in srgb, var(--color-qn-accent) 55%, var(--color-qn-border));
+}
+
+.qn-composer .qn-textarea {
+  display: block;
+  min-height: 40px;
+  padding: 10px 14px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 16px;
+}
+
+.qn-composer .qn-textarea:focus-visible {
+  outline: none;
+}
+
+/* 工具行：一行排下，左侧工具可收缩省略，右侧操作固定；按钮视觉 34px，命中区靠伪元素扩到 44px。 */
+.qn-composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 46px;
+  padding: 2px 6px 6px 4px;
+}
+
+.qn-composer-tools {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.qn-composer-model {
+  flex: 0 1 auto;
+  min-width: 4.5rem;
+  max-width: 14rem;
+}
+
+/* 只改输入框里的触发按钮；弹出的选择面板也渲染在这个容器里，其中的芯片保持原样。 */
+.qn-composer-model > .qn-chip {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 8px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 12.5px;
+}
+
+.qn-composer-model > .qn-chip:active { background: var(--qn-press); }
+
+.qn-composer-tools > * { flex-shrink: 0; }
+.qn-composer-tools > .qn-composer-model { flex-shrink: 1; }
+
+.qn-icon-button {
+  padding: 0;
+  border-color: transparent;
+  color: var(--color-qn-muted);
+}
+
+.qn-composer-toolbar .qn-icon-button {
+  min-width: 34px;
+  min-height: 34px;
+}
+
+.qn-composer-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: auto;
+}
+
+.qn-composer-actions .qn-send-options {
+  min-width: 24px;
+  margin-inline-start: -4px;
+}
+
+.qn-send-button,
+.qn-stop-button {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.qn-composer-toolbar :is(.qn-send-button, .qn-stop-button, .qn-icon-button)::before {
+  position: absolute;
+  inset: -5px;
+  content: "";
+}
+
+.qn-composer-toolbar .qn-icon-button { position: relative; }
+
+.qn-send-button.qn-button-primary:disabled {
+  border-color: transparent;
+  background: var(--color-qn-raised);
+  color: var(--color-qn-dim);
+  opacity: 1;
+}
+
+.qn-stop-button.qn-button-danger {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--color-qn-danger) 16%, var(--color-qn-card));
+}
+
+.qn-image-thumbnail {
+  display: inline-flex;
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-in;
+  vertical-align: middle;
+  border-radius: 8px;
+}
+
+.qn-image-preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+.qn-image-preview img {
+  max-width: 100%;
+  max-height: calc(100% - 76px);
+  min-height: 0;
+  object-fit: contain;
+}
+
+/* 消息操作入口是次要操作：小尺寸、低对比，靠左贴着回复，不撑高消息。 */
+.qn-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  min-height: 28px;
+}
+
+.qn-user-bubble + .qn-message-actions { justify-content: flex-end; }
+
+.qn-message-more {
+  position: relative;
+  min-width: 32px;
+  min-height: 28px;
+  margin-left: -6px;
+  color: var(--color-qn-dim);
+}
+
+.qn-message-more::before {
+  position: absolute;
+  inset: -8px -6px;
+  content: "";
+}
+
+/* 底部弹层的菜单行：左对齐图标 + 文字，按下只叠状态色。 */
+.qn-sheet-action {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 6px;
+  border-radius: var(--qn-radius);
+  color: var(--color-qn-text);
+  font-size: 15px;
+  text-align: left;
+  transition: background-color var(--qn-motion-short) ease;
+}
+
+.qn-sheet-action svg { color: var(--color-qn-muted); flex-shrink: 0; }
+.qn-sheet-action:active { background: var(--qn-press); }
+.qn-sheet-action:disabled { opacity: 0.45; }
+.qn-sheet-action-danger, .qn-sheet-action-danger svg { color: var(--color-qn-danger); }
+
+/* 文件改动卡片：头行摘要 + 每个文件一行（类型、目录淡色、文件名、增删行数、差异入口）。 */
+.qn-file-change { padding: 6px 8px 6px 10px; font-size: 12px; }
+
+.qn-file-change-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  color: var(--color-qn-muted);
+}
+
+.qn-file-change-row + .qn-file-change-row { border-top: 1px solid var(--qn-edge); }
+
+.qn-file-change-path {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.qn-file-change-dir {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-qn-dim);
+  text-overflow: ellipsis;
+  direction: rtl;
+  unicode-bidi: plaintext;
+}
+
+.qn-file-change-name { flex-shrink: 0; color: var(--color-qn-text); }
+button.qn-file-change-path .qn-file-change-name { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--color-qn-accent) 60%, transparent); text-underline-offset: 3px; }
+
+.qn-file-change-diff {
+  min-width: 34px;
+  min-height: 34px;
+  margin-right: -4px;
+  padding: 0;
+  color: var(--color-qn-muted);
+}
+
+.qn-pre::-webkit-scrollbar-corner { background: transparent; }
+
+.qn-turn-error {
+  overflow-wrap: anywhere;
+}
+
+/* 正在回复：三点跳动的小气泡，让用户一眼看出对方还在输出。 */
+.qn-replying {
+  width: fit-content;
+  padding: 6px 12px 6px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-qn-accent) 10%, transparent);
+  color: var(--color-qn-text);
+}
+.qn-typing-dots { display: inline-flex; gap: 3px; }
+.qn-typing-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-qn-accent);
+  animation: qn-typing 1.2s ease-in-out infinite;
+}
+.qn-typing-dots i:nth-child(2) { animation-delay: 0.15s; }
+.qn-typing-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes qn-typing {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qn-typing-dots i { animation: none; opacity: 0.8; }
+}
+
+.qn-thinking,
+.qn-turn-interrupted {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 13px;
+  color: var(--color-qn-muted);
+}
+
+/* ===== 表面层级 ===== */
+.qn-list-group {
+  border: 0;
+  background: var(--color-qn-card);
+  box-shadow: var(--qn-elev-1), inset 0 0 0 1px var(--qn-edge), inset 0 1px 0 var(--qn-edge-top);
+}
+
+.qn-card {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--qn-edge), inset 0 1px 0 var(--qn-edge-top);
+}
+
+.qn-header {
+  border-bottom-color: var(--qn-edge);
+  background: color-mix(in srgb, var(--color-qn-bg) 82%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.qn-nav,
+.qn-footer {
+  border-top-color: var(--qn-edge);
+  background: var(--color-qn-panel);
+}
+
+/* 顶部氛围光：随连接状态变化，在线常亮、连接中呼吸、离线熄灭；固定在背后，不随列表滚动。 */
+.qn-glow {
+  position: fixed;
+  z-index: 0;
+  inset: 0 0 auto;
+  height: 260px;
+  background:
+    radial-gradient(120% 90% at 85% -10%, color-mix(in srgb, var(--color-qn-accent) 16%, transparent) 0%, transparent 62%),
+    radial-gradient(90% 70% at 10% -20%, color-mix(in srgb, var(--color-qn-accent) 7%, transparent) 0%, transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 600ms ease;
+}
+
+.qn-glow[data-state="online"] { opacity: 1; }
+.qn-glow[data-state="connecting"] { animation: qn-breathe 2.4s ease-in-out infinite; }
+
+.qn-workspace-title[data-connected="true"]::before { display: none; }
+.qn-page,
+.qn-nav { position: relative; z-index: 1; }
+
+@keyframes qn-breathe {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.8; }
+}
+
+/* 次要入口：居中强调色文字，不占一整块按钮。 */
+.qn-text-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: fit-content;
+  min-height: 40px;
+  margin: 14px auto 0;
+  padding: 0 12px;
+  border-radius: 8px;
+  color: var(--color-qn-accent);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.qn-text-action:active { background: var(--qn-press); }
+
+/* 空状态操作区：虚线框，不套卡片。 */
+.qn-dashed-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  margin-top: 14px;
+  border: 1.5px dashed var(--color-qn-border-strong);
+  border-radius: var(--qn-radius);
+  color: var(--color-qn-text);
+  font-size: 14px;
+}
+
+/* ===== 按下反馈 ===== */
+/* 整行可点：只叠一层淡状态色，按下 150ms 淡入、松手 260ms 淡出，不缩放、不做涟漪。 */
+.qn-list-row,
+.qn-row-trigger,
+.qn-pressable {
+  position: relative;
+  isolation: isolate;
+}
+
+.qn-list-row::after,
+.qn-row-trigger::after,
+.qn-pressable::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--qn-press);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--qn-motion-medium) ease;
+  content: "";
+}
+
+.qn-list-row:active::after,
+.qn-row-trigger:active::after,
+.qn-pressable:active::after {
+  opacity: 1;
+  transition-duration: var(--qn-motion-short);
+}
+
+.qn-list-row:active,
+.qn-row-trigger:active { background: transparent; }
+.qn-list-row[aria-current="true"] { background: var(--color-qn-raised); }
+
+/* 小按钮：0.97 缩放回弹；与行的状态层不叠加。 */
+.qn-button,
+.qn-chip {
+  transition: transform var(--qn-motion-short) var(--qn-ease-spring), background-color var(--qn-motion-short) ease,
+    border-color var(--qn-motion-short) ease, color var(--qn-motion-short) ease;
+}
+
+.qn-button:not(:disabled):active,
+.qn-chip:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.qn-button-ghost { border-color: transparent; }
+.qn-button-ghost:not(:disabled):active { background: var(--qn-press); }
+
+/* ===== 页面切换 ===== */
+.qn-page {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.qn-page[data-motion="forward"] { animation: qn-push-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+.qn-page[data-motion="back"] { animation: qn-back-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+.qn-page[data-motion="tab"] { animation: qn-tab-fade var(--qn-motion-short) ease-out backwards; }
+
+@keyframes qn-push-in { from { opacity: 0; transform: translateX(32px); } }
+@keyframes qn-back-in { from { opacity: 0; transform: translateX(-24px); } }
+@keyframes qn-tab-fade { from { opacity: 0.82; } }
+
+/* 页面分区上浮 14px，逐段最多延迟 60ms。 */
+.qn-rise > * { animation: qn-rise var(--qn-motion-medium) var(--qn-ease-emphasized) backwards; }
+.qn-rise > :nth-child(2) { animation-delay: 20ms; }
+.qn-rise > :nth-child(3) { animation-delay: 40ms; }
+.qn-rise > :nth-child(n + 4) { animation-delay: 60ms; }
+
+/* 标签内各区域同步出现，避免淡入时叠加位移。 */
+.qn-page[data-motion="tab"] .qn-rise > * { animation: none; }
+
+@keyframes qn-rise { from { opacity: 0; transform: translateY(14px); } }
+
+/* 消息逐条淡入上浮；历史批量载入时只有最后几条明显。 */
+.qn-message-enter { animation: qn-rise var(--qn-motion-medium) var(--qn-ease-emphasized) backwards; }
+
+/* ===== 弹层 ===== */
+.qn-dialog[open]::backdrop { animation: qn-fade var(--qn-motion-medium) ease backwards; }
+.qn-dialog[open] .qn-dialog-panel { animation: qn-sheet-up var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+.qn-dialog[data-placement="side"][open] .qn-dialog-panel { animation: qn-drawer-in 240ms var(--qn-ease-emphasized) backwards; }
+.qn-dialog[data-placement="full"][open] .qn-dialog-panel { animation: qn-push-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+
+.qn-dialog-panel {
+  border: 0;
+  box-shadow: var(--qn-elev-3), inset 0 1px 0 var(--qn-edge-top);
+}
+
+/* 底部弹层顶部拖动条，提示可下滑关闭。 */
+.qn-dialog:not([data-placement]) .qn-dialog-panel::before,
+.qn-dialog[data-placement="bottom"] .qn-dialog-panel::before {
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: -4px auto 10px;
+  border-radius: 2px;
+  background: var(--color-qn-border-strong);
+  content: "";
+}
+
+.qn-viewer { animation: qn-push-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+.qn-viewer[data-image] { animation: qn-fade var(--qn-motion-short) ease-out backwards; }
+
+@keyframes qn-fade { from { opacity: 0; } }
+@keyframes qn-sheet-up { from { transform: translateY(100%); } }
+@keyframes qn-drawer-in { from { opacity: 0; transform: translateX(-12px); } }
+
+.qn-spin { animation: qn-spin 2s linear infinite; }
+@keyframes qn-spin { to { transform: rotate(360deg); } }
+
+/* ===== 减少动效：入场与弹跳不播放，指示块直接切换 ===== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 顶栏图标按钮：无边框，保持 44px 触控区。 */
+.qn-header-icon {
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-qn-text);
+}
+
+/* 会话行打开时，窄屏也让转圈与文字保持在同一行。 */
+.qn-row-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.qn-unread-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-qn-accent);
+}
+
+/* ===== 对话 ===== */
+/* 用户消息：右侧灰色气泡，回复无边框（同电脑版）。 */
+.qn-user-bubble {
+  max-width: 86%;
+  padding: 9px 13px;
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-raised);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* 工具步骤：一行紧凑摘要，点开看细节。 */
+.qn-tool,
+.qn-tool-group {
+  border-radius: var(--qn-radius);
+  font-size: 12px;
+}
+
+.qn-tool-open {
+  padding: 8px 10px;
+  background: var(--color-qn-panel);
+  box-shadow: inset 0 0 0 1px var(--qn-edge);
+}
+
+.qn-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: var(--qn-radius);
+  color: var(--color-qn-muted);
+  list-style: none;
+  cursor: pointer;
+  transition: background-color var(--qn-motion-short) ease;
+}
+
+.qn-tool-row::-webkit-details-marker { display: none; }
+.qn-tool-row:active { background: var(--qn-press); }
+.qn-tool[open] > .qn-tool-row,
+.qn-tool-group[open] > .qn-tool-row { color: var(--color-qn-text); }
+
+.qn-tool-chevron { transition: transform var(--qn-motion-medium) var(--qn-ease-emphasized); }
+.qn-tool[open] > .qn-tool-row .qn-tool-chevron,
+.qn-tool-group[open] > .qn-tool-row .qn-tool-chevron { transform: rotate(90deg); }
+.qn-tool-group-body {
+  max-height: min(18rem, 36dvh);
+  overflow-y: auto;
+  padding-left: 12px;
+  border-left: 1px solid var(--color-qn-border);
+  margin-left: 16px;
+}
+
+.qn-command-output { max-height: min(24rem, 48dvh); }
+
+.qn-tool-body {
+  margin: 2px 0 4px;
+  padding: 8px 10px;
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-panel);
+  animation: qn-rise var(--qn-motion-medium) var(--qn-ease-emphasized) backwards;
+}
+
+/* ===== 首次配对引导 ===== */
+.qn-onboard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 420px;
+  margin: 8vh auto 0;
+  padding: 0 4px;
+}
+
+.qn-hero-title {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 300;
+  letter-spacing: 0.01em;
+}
+
+.qn-onboard-lead {
+  margin: -6px 0 6px;
+  color: var(--color-qn-muted);
+  font-size: 14px;
+}
+
+.qn-onboard-steps {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 10px;
+  padding: 6px 14px;
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-card);
+  box-shadow: inset 0 0 0 1px var(--qn-edge), inset 0 1px 0 var(--qn-edge-top);
+  list-style: none;
+  font-size: 13.5px;
+}
+
+.qn-onboard-steps li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+}
+
+.qn-onboard-steps li + li { border-top: 1px solid var(--qn-edge); }
+
+.qn-onboard-steps span {
+  display: grid;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--qn-accent-surface);
+  color: var(--color-qn-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.qn-onboard .qn-dashed-action { margin-top: 0; }
+
+.qn-imported {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 12px;
+  border-radius: var(--qn-radius);
+  background: color-mix(in srgb, var(--color-qn-ok) 8%, var(--color-qn-card));
+  font-size: 13.5px;
+}
+
+/* 回到最新：右下角小圆钮，运行中带一个呼吸点提示有新输出。 */
+.qn-jump-latest {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  z-index: 2;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-qn-raised);
+  box-shadow: var(--qn-elev-1), inset 0 0 0 1px var(--qn-edge-top);
+  color: var(--color-qn-text);
+  animation: qn-fade var(--qn-motion-short) ease-out backwards;
+}
+
+.qn-jump-latest:active { transform: scale(0.94); }
+
+.qn-jump-live {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-qn-accent);
+  animation: qn-breathe 1.6s ease-in-out infinite;
+}
+
+/* 待审批卡片：琥珀色描边 + 淡底，在消息流里一眼可见。 */
+.qn-card.qn-approval {
+  background: color-mix(in srgb, var(--color-qn-warn) 6%, var(--color-qn-card));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-qn-warn) 45%, transparent);
+}
+
+/* 排队列表：每行操作收成 34px 小图标，正文优先占宽。 */
+.qn-queue-list li { min-height: 44px; }
+.qn-queue-list .qn-button { min-width: 34px; min-height: 34px; }
+.qn-queue-list .qn-icon-button { color: var(--color-qn-muted); }
+}

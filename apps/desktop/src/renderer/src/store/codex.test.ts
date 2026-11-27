@@ -1,0 +1,156 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { DRAFT_THREAD_ID } from '@qn/codex-client'
+import { sessionKey } from '../lib/agents'
+import { pendingSendKey, useCodex } from './codex'
+
+const { callMock, listeners } = vi.hoisted(() => ({
+  callMock: vi.fn(),
+  listeners: new Map<string, Set<(payload: unknown) => void>>(),
+}))
+
+vi.mock('../lib/backend', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>
+  return {
+    ...actual,
+    call: callMock,
+    on: (name: string, cb: (payload: unknown) => void) => {
+      const bucket = listeners.get(name) ?? new Set<(payload: unknown) => void>()
+      bucket.add(cb)
+      listeners.set(name, bucket)
+      return () => bucket.delete(cb)
+    },
+  }
+})
+
+type CallParams = { method?: string; agent?: string; msg?: { id?: number; method?: string } }
+
+const emitRecv = (msg: unknown, agent = 'codex'): void => {
+  for (const cb of [...(listeners.get('codex.recv') ?? [])]) {
+    cb({ targetId: 'local', agent, seq: null, msg })
+  }
+}
+
+/** 假 backend：codex.send 用事件回 JSON-RPC 响应，其余方法直接给结果。 */
+async function fakeCall(method: string, params?: CallParams): Promise<unknown> {
+  if (method === 'server.req') {
+    if (params?.method === 'codex.open') return { initialize: {}, lastSeq: 0 }
+    if (params?.method === 'codex.attach') return { lastSeq: 0, truncated: false }
+    return {}
+  }
+  if (method === 'codex.send') {
+    const msg = params?.msg
+    const agent = params?.agent ?? 'codex'
+    queueMicrotask(() => {
+      const result =
+        msg?.method === 'thread/start'
+          ? { thread: { id: 't1', status: { type: 'idle' }, turns: [] } }
+          : msg?.method === 'turn/start'
+            ? { turn: { id: 'turn1', status: 'inProgress', items: [] } }
+            : { data: [] }
+      emitRecv({ id: msg?.id, result }, agent)
+    })
+    return {}
+  }
+  return {}
+}
+
+const viewItems = (threadId: string) =>
+  useCodex.getState().sessions[sessionKey('local', 'codex')]?.state.threads[threadId]?.items ?? []
+
+beforeEach(() => {
+  listeners.clear()
+  callMock.mockReset()
+  callMock.mockImplementation(fakeCall)
+  useCodex.setState({
+    sessions: {},
+    agents: {},
+    currentTargetId: 'local',
+    currentCwd: null,
+    currentThreadId: null,
+    currentAgent: 'codex',
+    threads: [],
+    sending: false,
+    error: null,
+    notice: null,
+  })
+})
+
+describe('发送时的乐观用户消息', () => {
+  it('不等待 codex.open 回包就先显示气泡', async () => {
+    const gate: { resolve?: (value: unknown) => void } = {}
+    const open = new Promise<unknown>((resolve) => {
+      gate.resolve = resolve
+    })
+    callMock.mockImplementation((method: string, params?: CallParams) =>
+      method === 'server.req' && params?.method === 'codex.open' ? open : fakeCall(method, params),
+    )
+
+    const sending = useCodex.getState().send('你好')
+    // 此刻 codex.open 还挂在网络上，气泡必须已经在草稿线程里。
+    expect(viewItems(DRAFT_THREAD_ID)).toMatchObject([{ kind: 'user', text: '你好', pending: true }])
+    expect(useCodex.getState().sending).toBe(true)
+    expect(useCodex.getState().sendingMessage?.key).toBe(pendingSendKey({ targetId: 'local', agent: 'codex', threadId: DRAFT_THREAD_ID }))
+
+    gate.resolve?.({ initialize: {}, lastSeq: 0 })
+    await expect(sending).resolves.toBe(true)
+    expect(viewItems('t1')).toMatchObject([{ kind: 'user', text: '你好' }])
+    expect(useCodex.getState().sendingMessage).toBeNull()
+  })
+
+  it('服务端回显到达后替换占位，不会留下重复气泡', async () => {
+    await expect(useCodex.getState().send('你好')).resolves.toBe(true)
+    expect(viewItems('t1')).toHaveLength(1)
+    emitRecv({
+      method: 'item/completed',
+      params: {
+        threadId: 't1',
+        item: { type: 'userMessage', id: 'u1', content: [{ type: 'text', text: '你好' }] },
+      },
+    })
+    expect(viewItems('t1').map((item) => item.id)).toEqual(['u1'])
+  })
+
+  it('请求子代理时只发送一轮，并把委派请求放在这一轮的正文中', async () => {
+    await expect(useCodex.getState().send('核对文档', { delegate: true })).resolves.toBe(true)
+    const turns = callMock.mock.calls
+      .filter(([method, params]) => method === 'codex.send' && params?.msg?.method === 'turn/start')
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.[1].msg.params.input).toEqual([
+      { type: 'text', text: expect.stringMatching(/^核对文档\n\n请.*子代理/), text_elements: [] },
+    ])
+  })
+
+  it('发送失败时撤回占位、复位 sending 并返回 false', async () => {
+    callMock.mockImplementation(async (method: string, params?: CallParams) => {
+      if (method === 'codex.send' && params?.msg?.method === 'turn/start') throw new Error('turn 失败')
+      return fakeCall(method, params)
+    })
+    await expect(useCodex.getState().send('你好')).resolves.toBe(false)
+    expect(useCodex.getState().sending).toBe(false)
+    expect(useCodex.getState().sendingMessage).toBeNull()
+    expect(viewItems('t1').filter((item) => item.kind === 'user')).toEqual([])
+  })
+})
+
+describe('打开历史会话', () => {
+  it('回包丢失时超时报错并释放打开状态，可再次点击', async () => {
+    vi.useFakeTimers()
+    try {
+      // 旧版 server 丢弃超长 thread/resume 回包：永远不回。
+      callMock.mockImplementation((method: string, params?: CallParams) =>
+        method === 'codex.send' && params?.msg?.method === 'thread/resume' ? Promise.resolve({}) : fakeCall(method, params),
+      )
+      const opening = useCodex.getState().openThread('old')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(useCodex.getState().openingThread?.threadId).toBe('old')
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      await opening
+      expect(useCodex.getState().openingThread).toBeNull()
+      expect(useCodex.getState().error).toContain('打开会话超时')
+      expect(useCodex.getState().currentThreadId).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
