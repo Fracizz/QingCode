@@ -38,10 +38,11 @@ it('连接状态跨标签页更新，持续失联只显示一条提示', async (
       root.render(<App />)
     })
 
-    // 会话页大标题上方显示当前电脑与延迟（同 rust 版首页）；失联后延迟隐藏。
+    // 会话页顶部不再放大标题、电脑延迟和设置按钮，这些统一放在「连接」页。
     expect(activeTab()).toBe('会话')
-    expect(host.textContent).toContain('测试电脑')
-    expect(host.textContent).toContain('368 ms')
+    expect(host.querySelector('h1')).toBeNull()
+    expect(host.textContent).not.toContain('368 ms')
+    expect(host.querySelector('[aria-label="应用设置"]')).toBeNull()
     const refreshes = loadProjects.mock.calls.length
     await act(() => useApp.setState({ eventsConnected: false }))
     expect(host.textContent).not.toContain('368 ms')
@@ -63,10 +64,13 @@ it('连接状态跨标签页更新，持续失联只显示一条提示', async (
     expect(notice?.textContent).toContain(warning)
     await act(() => selectTab('项目').click())
     expect(activeTab()).toBe('项目')
-    expect(host.textContent).toContain('测试电脑 · 0 个项目')
+    expect(host.querySelector('h1')).toBeNull()
     expect(host.textContent).not.toContain('368 ms')
+    expect(host.querySelector('[aria-label="应用设置"]')).toBeNull()
     await act(() => selectTab('连接').click())
     expect(activeTab()).toBe('连接')
+    expect(host.querySelector('h1')?.textContent).toBe('QingCode')
+    expect(host.querySelector('[aria-label="应用设置"]')).not.toBeNull()
     expect(host.textContent).toContain('测试电脑')
     expect(host.textContent).not.toContain('368 ms')
     expect(host.querySelector('[role="status"]')).toBe(notice)

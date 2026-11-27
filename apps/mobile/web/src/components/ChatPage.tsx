@@ -17,6 +17,7 @@ import { ContextUsage } from './ContextUsage'
 import { GitChangesDialog } from './GitChangesDialog'
 import { FileActionsContext, MessageItem, ToolGroup, WorkGroup, type FileActions } from './MessageItem'
 import { ModelPicker } from './ModelSheet'
+import { NewSessionButton } from './NewSessionButton'
 import { QueuedMessages } from './QueuedMessages'
 import { AgentQuota } from './RateLimitView'
 import { SessionSwitcher } from './SessionSwitcher'
@@ -329,12 +330,18 @@ export function ChatPage() {
             <span className="shrink-0">{subtitleProject ? '· ' : ''}{agentLabel(selectedAgent)}</span>
           </span>
         }
-        right={subagents.length > 0 && (
-          <FileActionsContext.Provider value={fileActions}>
-            <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={eventsConnected && session?.opened ? session.rpc : null}
-              renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
-          </FileActionsContext.Provider>
-        )}
+        right={
+          <>
+            {subagents.length > 0 && (
+              <FileActionsContext.Provider value={fileActions}>
+                <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={eventsConnected && session?.opened ? session.rpc : null}
+                  renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
+              </FileActionsContext.Provider>
+            )}
+            {/* 常驻新建入口：不必先回到会话列表；无当前项目时由按钮内弹出项目选择。 */}
+            <NewSessionButton project={project} projects={projects} iconOnly className="qn-header-icon size-[44px] shrink-0" />
+          </>
+        }
       />
       {needsRepair && activeId && (
         <div className="border-b border-qn-border bg-qn-panel px-3 pt-2">

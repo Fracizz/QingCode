@@ -192,7 +192,7 @@ export function Dialog({
       const dy = drag.current?.dy ?? 0
       drag.current = null
       const panel = event.currentTarget
-      panel.style.transition = 'transform var(--qn-motion-medium) var(--qn-ease-emphasized)'
+      panel.style.transition = 'transform var(--qn-motion-medium) var(--qn-ease-sheet)'
       if (dy > 80) {
         panel.style.transform = 'translateY(100%)'
         window.setTimeout(() => close.current(), 180)
@@ -204,7 +204,8 @@ export function Dialog({
 
   return (
     <dialog ref={ref} className="qn-dialog" data-placement={placement} aria-label={title}
-      onCancel={(event) => { event.preventDefault(); onClose() }}
+      // 嵌套弹层（如设置页里的选项面板）取消时只关自己，不冒泡到外层。
+      onCancel={(event) => { event.preventDefault(); event.stopPropagation(); onClose() }}
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}>

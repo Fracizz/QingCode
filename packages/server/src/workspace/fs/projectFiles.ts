@@ -1,6 +1,7 @@
 import { constants, promises as fs, type Stats } from 'node:fs'
 import path from 'node:path'
 import type { ProjectFileChunk, ProjectFileEntry, ProjectFileList } from '@qn/protocol'
+import { nativeAgentCwd } from '../paths'
 import { WorkspaceError } from '../registry'
 import { isSkippedDir } from './ignore'
 import { runFs } from './io'
@@ -9,6 +10,11 @@ import { requireAbsolutePath } from './logic'
 const MAX_DIRECTORY_ENTRIES = 2000
 const MAX_SEARCH_ENTRIES = 10_000
 const MAX_CHUNK = 256 * 1024
+
+// 旧版 SSH 项目保存的是 SFTP 路径 `/D:/code/repo`，Windows 上直接 realpath 会变成 `C:\D:\...`。
+function projectRoot(value: unknown): Promise<string> {
+  return fs.realpath(nativeAgentCwd(requireAbsolutePath(value, 'root')))
+}
 
 function pathParts(value: unknown): string[] {
   if (value === '' || value === undefined) return []
@@ -82,7 +88,7 @@ async function readEntries(actual: string, parts: string[], hidden: boolean, lim
 
 export function listProjectFiles(params: Record<string, unknown>): Promise<ProjectFileList> {
   return runFs(async () => {
-    const root = await fs.realpath(requireAbsolutePath(params.root))
+    const root = await projectRoot(params.root)
     const parts = pathParts(params.path)
     const { entries, truncated } = await readEntries(await projectPath(root, parts), parts, params.hidden === true, MAX_DIRECTORY_ENTRIES)
     return { entries, truncated }
@@ -91,7 +97,7 @@ export function listProjectFiles(params: Record<string, unknown>): Promise<Proje
 
 export function searchProjectFiles(params: Record<string, unknown>): Promise<ProjectFileList> {
   return runFs(async () => {
-    const root = await fs.realpath(requireAbsolutePath(params.root))
+    const root = await projectRoot(params.root)
     const parts = pathParts(params.path)
     if (typeof params.query !== 'string' || params.query.length > 256) throw new WorkspaceError('params', '搜索词无效')
     const query = params.query.toLocaleLowerCase()
@@ -128,7 +134,7 @@ function versionOf(stat: Stats): string {
 
 export function readProjectFile(params: Record<string, unknown>): Promise<ProjectFileChunk> {
   return runFs(async () => {
-    const root = await fs.realpath(requireAbsolutePath(params.root))
+    const root = await projectRoot(params.root)
     const parts = pathParts(params.path)
     const actual = await projectPath(root, parts)
     const offset = params.offset ?? 0

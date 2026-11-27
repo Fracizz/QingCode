@@ -5,7 +5,7 @@ import { expect, it, vi } from 'vitest'
 import { useApp } from '../store'
 import { QueuedMessages } from './QueuedMessages'
 
-it('新会话图标在引导之前，打开说明后才可确认发送', async () => {
+it('行内只留引导、更多、移除，新会话入口在更多面板中且需确认后发送', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const initial = useApp.getState()
   const host = document.createElement('div')
@@ -34,13 +34,15 @@ it('新会话图标在引导之前，打开说明后才可确认发送', async (
     })
     expect([...host.querySelectorAll('li button')].slice(0, 3)
       .map((item) => item.getAttribute('aria-label') ?? item.textContent))
-      .toEqual(['新会话开始', '新对话继续', '引导'])
+      .toEqual(['引导', '更多操作', '移除排队消息 1'])
+    await act(() => button('更多操作').click())
     await act(() => button('新会话开始').click())
     expect(host.querySelector('dialog')?.textContent).toContain('从空白会话开始')
     await act(() => button('取消').click())
     expect(release).toHaveBeenCalledTimes(1)
     expect(send).not.toHaveBeenCalled()
 
+    await act(() => button('更多操作').click())
     await act(() => button('新对话继续').click())
     expect(host.querySelector('dialog')?.textContent).toContain('继承已结束轮次的上下文')
     expect(send).not.toHaveBeenCalled()
@@ -49,6 +51,7 @@ it('新会话图标在引导之前，打开说明后才可确认发送', async (
     expect(send).toHaveBeenCalledExactlyOnceWith('message', 'continue')
 
     await act(() => useApp.setState({ selectedAgent: 'claude' }))
+    await act(() => button('更多操作').click())
     await act(() => button('新对话继续').click())
     expect(host.querySelector('dialog')?.textContent).toContain('仅 Codex 支持')
     expect(button('在新会话发送').disabled).toBe(true)

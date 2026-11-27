@@ -1,8 +1,9 @@
 import { accessOptions, resolveAccessMode, type AccessSelection, t, translateMessage } from '@qn/codex-client'
-import { GitBranch, ListOrdered, MessageSquarePlus, Pencil, X } from 'lucide-react'
+import { ChevronRight, GitBranch, ListOrdered, MessageSquarePlus, MoreHorizontal, Pencil, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { UNCONFIRMED_QUEUED_SEND } from '../queuedSends'
 import { selectedAccessPreference, selectedQueuedSends, useApp, type QueuedThreadMode } from '../store'
+import { MODE_ICONS } from './AccessModePicker'
 import { Badge, Button, Dialog, Note } from './ui'
 
 const newChatActions = [
@@ -26,6 +27,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
   const [edit, setEdit] = useState<{ id: string; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState(false)
+  const [actionsFor, setActionsFor] = useState<string | null>(null)
   const [destination, setDestination] = useState<{ id: string; mode: QueuedThreadMode } | null>(null)
   const [moving, setMoving] = useState(false)
   const [moveError, setMoveError] = useState<string | null>(null)
@@ -91,15 +93,25 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
   const continuing = destination?.mode === 'continue'
   const destinationTitle = continuing ? t('新对话继续') : t('新会话开始')
   const destinationError = moveError ?? (movingMessage?.error === UNCONFIRMED_QUEUED_SEND ? movingMessage.error : null)
-  const accessLabel = (selection?: AccessSelection) => {
+  const accessOption = (selection?: AccessSelection) => {
     const mode = resolveAccessMode(agent, globalAccessMode, selection)
-    return mode !== 'default' ? accessOptions[agent].find((option) => option.mode === mode)?.label : undefined
+    return mode !== 'default' ? accessOptions[agent].find((option) => option.mode === mode) : undefined
+  }
+  const accessLabel = (selection?: AccessSelection) => accessOption(selection)?.label
+  const actionMessage = queue.find((item) => item.id === actionsFor)
+  const startEdit = (id: string, text: string) => {
+    if (unlock.current) return
+    const release = beginEdit(id)
+    if (!release) return
+    unlock.current = release
+    setEditError(false)
+    setEdit({ id, text })
   }
   return (
-    <section className="shrink-0 border-t border-qn-border bg-qn-panel px-3" aria-label={t('发送队列')}>
-      <details className="qn-details" open>
+    <section className="qn-queue" aria-label={t('发送队列')}>
+      <details className="qn-details qn-queue-details" open>
         <summary>
-          <ListOrdered size={16} className="mr-1.5 shrink-0" aria-hidden />
+          <ListOrdered size={15} className="mr-1.5 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1 truncate">{queue.length === 1 ? t('1 条消息排队') : t('{count} 条消息排队', { count: queue.length })}</span>
           {first?.error && <Badge tone="warn">{t('已暂停')}</Badge>}
           {!first?.error && !connected && <Badge tone="warn">{t('等待重连')}</Badge>}
@@ -110,45 +122,61 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
             <Button variant="ghost" className="shrink-0 px-2 text-xs" disabled={!connected || running || first.sending || first.saving} onClick={() => void retry()}>{t('继续发送')}</Button>
           </div>
         )}
-        <ul className="qn-scroll qn-queue-list mb-2 max-h-[min(26dvh,9rem)] overflow-y-auto" aria-label={t('待发送的消息')}>
-          {queue.map((message, index) => (
-            <li key={message.id} className="flex items-center gap-2 border-t border-qn-border text-sm">
-              <div className="min-w-0 flex-1">
-                <p className="truncate">{message.text.trim() || t('附件或引用')}</p>
-                {accessLabel(accessPreference ?? message.accessMode) && (
-                  <span className="text-xs text-qn-warn">{accessLabel(accessPreference ?? message.accessMode)}</span>
+        <ul className="qn-scroll qn-queue-list" aria-label={t('待发送的消息')}>
+          {queue.map((message, index) => {
+            const access = accessOption(accessPreference ?? message.accessMode)
+            const AccessIcon = access ? MODE_ICONS[access.mode] : null
+            return (
+              <li key={message.id} className="qn-queue-item">
+                {/* 访问模式与输入框一致只用盾牌图标，档位名留给读屏。 */}
+                {access && AccessIcon && (
+                  <AccessIcon size={14} strokeWidth={1.9} role="img" aria-label={access.label}
+                    className={`shrink-0 ${access.warning ? 'text-qn-danger' : 'text-qn-warn'}`} />
                 )}
-              </div>
-              {message.sending || message.saving ? <Badge>{message.saving ? t('保存中') : t('发送中')}</Badge> : (
-                <div className="flex shrink-0 items-center">
-                  {newChatActions.map(({ mode, label, Icon }) => (
-                    <Button key={mode} variant="ghost" className="qn-icon-button"
-                      aria-label={label} title={label} onClick={() => chooseDestination(message.id, mode)}>
-                      <Icon size={18} aria-hidden />
+                <p className="min-w-0 flex-1 truncate">{message.text.trim() || t('附件或引用')}</p>
+                {message.sending || message.saving ? <Badge>{message.saving ? t('保存中') : t('发送中')}</Badge> : (
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    {running && canSteer && (
+                      <Button variant="ghost" className="qn-queue-steer" disabled={!connected}
+                        title={agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
+                        onClick={() => void steer(message.id)}>{t('引导')}</Button>
+                    )}
+                    <Button variant="ghost" className="qn-icon-button" aria-label={t('更多操作')} aria-haspopup="dialog"
+                      onClick={() => setActionsFor(message.id)}>
+                      <MoreHorizontal size={17} aria-hidden />
                     </Button>
-                  ))}
-                  {running && canSteer && (
-                    <Button variant="ghost" className="shrink-0 px-2 text-xs" disabled={!connected}
-                      title={agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
-                      onClick={() => void steer(message.id)}>{t('引导')}</Button>
-                  )}
-                  <Button variant="ghost" className="qn-icon-button" aria-label={t('重新编辑')} title={t('重新编辑')} onClick={() => {
-                    if (unlock.current) return
-                    const release = beginEdit(message.id)
-                    if (!release) return
-                    unlock.current = release
-                    setEditError(false)
-                    setEdit({ id: message.id, text: message.text })
-                  }}><Pencil size={16} aria-hidden /></Button>
-                  <Button variant="ghost" className="qn-icon-button" aria-label={t('移除排队消息 {index}', { index: index + 1 })} onClick={() => remove(message.id)}>
-                    <X size={16} aria-hidden />
-                  </Button>
-                </div>
-              )}
-            </li>
-          ))}
+                    <Button variant="ghost" className="qn-icon-button" aria-label={t('移除排队消息 {index}', { index: index + 1 })} onClick={() => remove(message.id)}>
+                      <X size={16} aria-hidden />
+                    </Button>
+                  </div>
+                )}
+              </li>
+            )
+          })}
         </ul>
       </details>
+      {/* 低频操作收进底部面板：一行只留引导、更多、移除，正文不再被挤成几个字。 */}
+      {actionMessage && (
+        <Dialog title={t('排队消息')} onClose={() => setActionsFor(null)}>
+          <p className="mb-3 line-clamp-3 whitespace-pre-wrap break-words text-sm text-qn-muted">{actionMessage.text.trim() || t('附件或引用')}</p>
+          <div className="qn-list-group">
+            {newChatActions.map(({ mode, label, Icon }) => (
+              <button key={mode} type="button" className="qn-row qn-list-row w-full gap-3 text-left"
+                onClick={() => { setActionsFor(null); chooseDestination(actionMessage.id, mode) }}>
+                <Icon size={18} className="shrink-0 text-qn-muted" aria-hidden />
+                <span className="qn-list-primary min-w-0 flex-1">{label}</span>
+                <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />
+              </button>
+            ))}
+            <button type="button" className="qn-row qn-list-row w-full gap-3 text-left"
+              onClick={() => { setActionsFor(null); startEdit(actionMessage.id, actionMessage.text) }}>
+              <Pencil size={18} className="shrink-0 text-qn-muted" aria-hidden />
+              <span className="qn-list-primary min-w-0 flex-1">{t('重新编辑')}</span>
+              <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />
+            </button>
+          </div>
+        </Dialog>
+      )}
       {edit && edited && (
         <Dialog title={t('重新编辑排队消息')} onClose={() => { if (!saving) closeEditor() }}>
           <form onSubmit={(event) => { event.preventDefault(); void submitEdit() }}>

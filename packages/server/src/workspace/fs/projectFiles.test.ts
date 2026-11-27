@@ -45,4 +45,11 @@ describe('项目只读文件', () => {
     await expect(readProjectFile({ root, path: 'external/outside' })).rejects.toMatchObject({ code: 'permission' })
     expect((await listProjectFiles({ root })).entries.map((entry) => entry.path)).not.toContain('external')
   })
+
+  it.runIf(process.platform === 'win32')('接受旧版 SFTP 形式的 Windows 项目根', async () => {
+    const { root } = await fixture()
+    const sftpRoot = `/${root.replace(/\\/g, '/')}`
+    expect((await listProjectFiles({ root: sftpRoot })).entries.map((entry) => entry.path)).toEqual(['src'])
+    expect((await readProjectFile({ root: sftpRoot, path: 'src/Demo.ts' })).content).toBe('YWJjZGVm')
+  })
 })

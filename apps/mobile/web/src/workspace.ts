@@ -123,17 +123,36 @@ export function workspaceThreadOrder(groups: WorkspaceGroup[]): string[] {
   return groups.flatMap((group) => group.threads.map(workspaceThreadKey))
 }
 
+export function workspaceGroupKey(group: WorkspaceGroup): string {
+  return JSON.stringify([group.project.targetId, group.project.id])
+}
+
+/**
+ * 项目分组的固定顺序：已出现过的项目保持原位，不随会话状态变化上下跳；
+ * 新出现的项目按当前顺序插到最前。暂时被搜索过滤掉的项目也保留位置，清空搜索后回到原处。
+ */
+export function stickyGroupOrder(fresh: readonly string[], previous: readonly string[]): string[] {
+  const known = new Set(previous)
+  const added = fresh.filter((key) => !known.has(key))
+  return added.length ? [...added, ...previous] : [...previous]
+}
+
 /**
  * 按已稳定的顺序重排分组：状态频繁变化时列表不跟着跳，等一段时间后再统一换成最新顺序。
- * 不在旧顺序里的新会话排在最前，分组按其中最靠前的会话排序。
+ * 不在旧顺序里的新会话排在最前；分组优先按 groupOrder 固定排序，未给出时按其中最靠前的会话排序。
  */
-export function applyThreadOrder(groups: WorkspaceGroup[], order: readonly string[]): WorkspaceGroup[] {
-  if (!order.length) return groups
+export function applyThreadOrder(groups: WorkspaceGroup[], order: readonly string[], groupOrder?: readonly string[]): WorkspaceGroup[] {
   const rank = new Map(order.map((key, index) => [key, index]))
   const rankOf = (thread: WorkspaceThread) => rank.get(workspaceThreadKey(thread)) ?? -1
-  return groups
-    .map((group) => ({ ...group, threads: [...group.threads].sort((a, b) => rankOf(a) - rankOf(b)) }))
-    .sort((a, b) => rankOf(a.threads[0]!) - rankOf(b.threads[0]!))
+  const sorted = order.length
+    ? groups.map((group) => ({ ...group, threads: [...group.threads].sort((a, b) => rankOf(a) - rankOf(b)) }))
+    : groups
+  if (groupOrder?.length) {
+    const groupRank = new Map(groupOrder.map((key, index) => [key, index]))
+    const groupRankOf = (group: WorkspaceGroup) => groupRank.get(workspaceGroupKey(group)) ?? -1
+    return [...sorted].sort((a, b) => groupRankOf(a) - groupRankOf(b))
+  }
+  return order.length ? [...sorted].sort((a, b) => rankOf(a.threads[0]!) - rankOf(b.threads[0]!)) : sorted
 }
 
 export function orderWorkspaceProjects(projects: Project[], ids: string[] = []): Project[] {

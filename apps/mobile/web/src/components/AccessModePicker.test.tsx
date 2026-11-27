@@ -44,7 +44,8 @@ it('三档切换：替我批准立即生效，完全访问需要再次确认', a
 
     // 选回与总控相同的档位即恢复跟随总控。
     await act(() => root.render(<AccessModePicker agent="codex" mode="fullAccess" effectiveMode="fullAccess" inheritedMode="default" supported disabled={false} onChange={change} />))
-    expect(host.querySelector('.qn-access-chip')?.textContent).toBe('完全访问')
+    // 输入框里只显示图标，档位文字通过无障碍标签和弹窗提供。
+    expect(host.querySelector('.qn-access-chip')?.textContent).toBe('')
     expect(host.querySelector('[aria-label="访问模式：完全访问"]')?.getAttribute('data-tone')).toBe('danger')
     change.mockClear()
     await click('访问模式：完全访问')

@@ -42,7 +42,8 @@ it('无用量数据也能打开压缩入口，只有确认按钮发送请求', a
     expect(usage?.textContent).toContain('128 tokens')
     expect(usage?.textContent).toMatch(/费用估算 .*0\.012/)
     expect(usage?.querySelector('progress')).toBeNull()
-    expect(host.querySelector('[data-testid="context-ring"]')).toBeNull()
+    // 没有窗口大小时也显示圆环（空环），与有用量时同一图标。
+    expect(host.querySelector('[data-testid="context-ring"] circle:nth-of-type(2)')?.getAttribute('stroke-dasharray')).toBe('0 100')
 
     // 有窗口大小时按钮与电脑版一样显示占用环，不再显示百分比文字。
     await act(() => root.render(<ContextUsage tokenUsage={{ last: { totalTokens: 160_000 }, modelContextWindow: 200_000 }} />))

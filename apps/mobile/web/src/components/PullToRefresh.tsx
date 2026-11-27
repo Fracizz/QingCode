@@ -1,23 +1,27 @@
 import { t } from '@qn/codex-client'
 import { ArrowDown } from 'lucide-react'
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { LoadingIcon, Note } from './ui'
 
 const TOUCH_SLOP = 8
 const REFRESH_DISTANCE = 56
 const MAX_DISTANCE = 80
+// 各页面离开时的滚动位置；进入对话再返回时页面会重新挂载，靠它回到原来的位置。
+const scrollPositions = new Map<string, number>()
 
 function pullDistance(delta: number): number {
   return Math.max(0, Math.min(MAX_DISTANCE, (delta - TOUCH_SLOP) * 0.65))
 }
 
 export function PullToRefresh({
-  label, className, disabled, onRefresh, children,
+  label, className, disabled, onRefresh, scrollKey, children,
 }: {
   label: string
   className: string
   disabled?: boolean
   onRefresh: () => Promise<void>
+  /** 给出时记住滚动位置，重新挂载后恢复。 */
+  scrollKey?: string
   children: ReactNode
 }) {
   const main = useRef<HTMLElement>(null)
@@ -26,6 +30,16 @@ export function PullToRefresh({
   const [failed, setFailed] = useState(false)
   const isDisabled = useEffectEvent(() => disabled)
   const refresh = useEffectEvent(() => onRefresh())
+
+  useLayoutEffect(() => {
+    const node = main.current
+    if (!node || !scrollKey) return
+    const saved = scrollPositions.get(scrollKey)
+    if (saved) node.scrollTop = saved
+    const save = () => { scrollPositions.set(scrollKey, node.scrollTop) }
+    node.addEventListener('scroll', save, { passive: true })
+    return () => node.removeEventListener('scroll', save)
+  }, [scrollKey])
 
   useEffect(() => {
     const node = main.current

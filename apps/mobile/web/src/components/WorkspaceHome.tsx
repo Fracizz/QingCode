@@ -1,8 +1,8 @@
 import { sessionStatusLabels, type SessionStatus, t, translateMessage } from '@qn/codex-client'
-import { Archive, Check, ChevronDown, ChevronRight, Cloud, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, Settings, X } from 'lucide-react'
+import { Archive, Check, ChevronDown, ChevronRight, Cloud, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { sessionKey } from '../agents'
-import { connectionName, pageName } from '../names'
+import { pageName } from '../names'
 import { useApp } from '../store'
 import type { Project, Target } from '../types'
 import {
@@ -20,10 +20,12 @@ import {
   threadPreviewLine,
   displayPath,
   showWorkspaceProject,
+  stickyGroupOrder,
   threadPreferenceKey,
   useWorkspace,
   useWorkspacePreferences,
   visibleWorkspaceThreads,
+  workspaceGroupKey,
   workspaceThreadKey,
   type WorkspaceTab,
   type WorkspaceThread,
@@ -31,7 +33,6 @@ import {
 import { formatTime, friendlyError } from '../state'
 import { ARCHIVE_ACTION_WIDTH, threadSwipeAxis, threadSwipeOffset } from '../threadSwipe'
 import { AgentTag, Badge, Button, Dialog, Empty, Loading, LoadingIcon, Note, SheetAction } from './ui'
-import { MobileSettings } from './MobileSettings'
 import { NewSessionButton } from './NewSessionButton'
 import { ProjectTools } from './ProjectTools'
 import { PullToRefresh } from './PullToRefresh'
@@ -64,14 +65,21 @@ const workspaceIcons = {
 /** 列表重排的稳定窗口（参考 Orca 手机版 SORT_SETTLE_MS）。 */
 export const SORT_SETTLE_MS = 3000
 
+// 进入对话再返回时首页会重新挂载，这里记住上次的稳定顺序，返回后列表保持离开时的样子。
+let lastSettled: { order: string[]; resetKey: string } | null = null
+// 每台电脑的项目分组顺序，本次运行内固定，避免项目随会话状态来回跳。
+const projectGroupOrders = new Map<string, string[]>()
+
 /** 顺序变化时先沿用旧顺序，SORT_SETTLE_MS 后一次换成最新顺序；resetKey 变化时立即生效。 */
 function useSettledOrder(fresh: string[], resetKey: string): string[] {
-  const [settled, setSettled] = useState<{ order: string[]; resetKey: string }>({ order: fresh, resetKey })
+  const [settled, setSettled] = useState<{ order: string[]; resetKey: string }>(() =>
+    lastSettled?.resetKey === resetKey ? lastSettled : { order: fresh, resetKey })
   const latest = useRef(fresh)
   latest.current = fresh
   const freshKey = fresh.join('\n')
   const settledKey = settled.order.join('\n')
   const reset = settled.resetKey !== resetKey
+  useEffect(() => { if (!reset) lastSettled = settled }, [reset, settled])
   useEffect(() => {
     if (reset) {
       setSettled({ order: latest.current, resetKey })
@@ -147,51 +155,6 @@ function SourceTag({ target }: { target?: Target }) {
   if (!target) return <span className="qn-source-tag">{t('目标已移除')}</span>
   const label = target.kind === 'ssh' ? t('远端') : target.kind === 'direct' ? t('直连') : t('本机')
   return <span className="qn-source-tag" data-kind={target.kind} title={target.kind === 'local' ? undefined : target.name}>{label}</span>
-}
-
-/** 工作台大标题（rust 版 .hero）：上方一行小字说明当前电脑与延迟，右侧放刷新与设置，下方细体大标题。 */
-function WorkspaceHero({ title, context, onRefresh, refreshing }: {
-  title: string
-  /** 省略时显示当前电脑、连接状态与延迟。 */
-  context?: string
-  onRefresh?: () => void
-  refreshing?: boolean
-}) {
-  const desktopId = useApp((s) => s.activeId)
-  const connection = useApp((s) => s.connections.find((item) => item.id === s.activeId))
-  const connected = useApp((s) => s.eventsConnected)
-  const latency = useApp((s) => s.activeId ? s.connectionLatencyMs[s.activeId] : undefined)
-  const setTab = useWorkspace((s) => s.setTab)
-  const [settings, setSettings] = useState(false)
-  const name = connection ? connectionName(connection.name) : ''
-  const state = !desktopId ? 'offline' : connected ? 'online' : 'connecting'
-  return (
-    <header className="qn-workspace-title">
-      <div className="qn-workspace-context">
-        {context === undefined ? (
-          <button type="button" className="qn-host-pill" onClick={() => setTab('connections')} aria-label={t('切换电脑')}>
-            <span className="qn-dot" data-state={state} aria-hidden
-              style={{ background: state === 'online' ? 'var(--color-qn-accent)' : state === 'connecting' ? 'var(--color-qn-warn)' : 'var(--color-qn-danger)' }} />
-            <span>{name}</span>
-            {state === 'online' && latency != null && <span className="qn-host-latency">{latency} ms</span>}
-            <ChevronRight size={14} aria-hidden />
-          </button>
-        ) : <span className="min-w-0 truncate text-[13px]">{context}</span>}
-        <div className="flex shrink-0">
-          {onRefresh && (
-            <Button variant="ghost" className="qn-list-action" onClick={onRefresh} disabled={refreshing} aria-label={t('刷新项目')}>
-              <RotateCw size={20} strokeWidth={1.75} className={refreshing ? 'qn-spin' : undefined} aria-hidden />
-            </Button>
-          )}
-          <Button variant="ghost" className="qn-list-action" onClick={() => setSettings(true)} aria-label={t('应用设置')}>
-            <Settings size={20} strokeWidth={1.75} aria-hidden />
-          </Button>
-        </div>
-      </div>
-      <h1 className="qn-hero-title">{title}</h1>
-      {settings && <MobileSettings onClose={() => setSettings(false)} />}
-    </header>
-  )
 }
 
 export function WorkspaceThreadRow({
@@ -500,7 +463,6 @@ export function WorkspaceHome() {
   const tab = useWorkspace((s) => s.tab)
   const setTab = useWorkspace((s) => s.setTab)
   const desktopId = useApp((s) => s.activeId)
-  const connection = useApp((s) => s.connections.find((item) => item.id === s.activeId))
   const archived = useApp((s) => s.archivedThreads)
   const connected = useApp((s) => s.eventsConnected)
   const repairReason = useApp((s) => s.activeId ? s.needsRepair[s.activeId] : undefined)
@@ -536,7 +498,14 @@ export function WorkspaceHome() {
   }, [threadList, statusKey, desktopId, archived, projects, query, preferences])
   // 换电脑或改搜索词是用户主动操作，立即按新顺序排；其余变化攒 3 秒再统一重排，避免列表来回跳。
   const order = useSettledOrder(workspaceThreadOrder(freshGroups), JSON.stringify([desktopId, query]))
-  const groups = useMemo(() => applyThreadOrder(freshGroups, order), [freshGroups, order])
+  // 项目分组位置固定：只有新项目插到最前，已有项目不随会话状态重排。
+  const groupOrder = useMemo(() => {
+    const key = desktopId ?? ''
+    const next = stickyGroupOrder(freshGroups.map(workspaceGroupKey), projectGroupOrders.get(key) ?? [])
+    projectGroupOrders.set(key, next)
+    return next
+  }, [freshGroups, desktopId])
+  const groups = useMemo(() => applyThreadOrder(freshGroups, order, groupOrder), [freshGroups, order, groupOrder])
 
   const refresh = useCallback(async () => {
     if (desktopId) await Promise.all([loadTargets(), loadProjects(desktopId)])
@@ -554,11 +523,9 @@ export function WorkspaceHome() {
   }
   return (
     <PullToRefresh className="qn-body qn-scroll qn-workspace qn-workspace-home qn-rise"
-      label={pageName(isSessions ? 'sessions' : 'projects')} disabled={!desktopId || projectList?.loading} onRefresh={refresh}>
-      {isSessions ? <WorkspaceHero title="QingCode" /> : (
-        <WorkspaceHero title={pageName('projects')} onRefresh={() => void refresh()} refreshing={projectList?.loading}
-          context={[connection ? connectionName(connection.name) : '', t('{count} 个项目', { count: projectCount })].filter(Boolean).join(' · ')} />
-      )}
+      label={pageName(isSessions ? 'sessions' : 'projects')} disabled={!desktopId || projectList?.loading} onRefresh={refresh}
+      scrollKey={JSON.stringify(['workspace', tab, desktopId])}>
+      {/* 大标题、电脑延迟与设置入口统一放在「连接」页，会话和项目页顶部直接从内容开始。 */}
       {repairReason && desktopId && (
         <Note message={repairReason === 'fingerprint' ? t('电脑证书已变化，请核对后重新配对。') : t('电脑已撤销此设备的授权。')}
           tone="error" actionLabel={t('重新配对')} onAction={() => beginRepair(desktopId)} />

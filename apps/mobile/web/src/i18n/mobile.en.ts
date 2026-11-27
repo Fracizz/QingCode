@@ -136,7 +136,8 @@ export default {
 
   // 应用设置与更新
   '应用设置': 'App settings',
-  '常用设置': 'General',
+  '外观': 'Appearance',
+  '设备': 'Device',
   '关于与更新': 'About & updates',
   '主题': 'Theme',
   '深色': 'Dark',
@@ -489,6 +490,8 @@ export default {
   '待发送的消息': 'Messages to send',
   '附件或引用': 'Attachments or quotes',
   '重新编辑': 'Edit',
+  '更多操作': 'More actions',
+  '排队消息': 'Queued message',
   '移除排队消息 {index}': 'Remove queued message {index}',
   '重新编辑排队消息': 'Edit queued message',
   '排队消息正文': 'Queued message text',

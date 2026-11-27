@@ -79,7 +79,7 @@ export function ConnectionsPage() {
               </Button>
             </div>
           </div>
-          {connections.length > 0 && <h1 className="qn-hero-title">{pageName('connections')}</h1>}
+          {connections.length > 0 && <h1 className="qn-hero-title">QingCode</h1>}
         </header>
         {error && <Note message={error} tone="error" onClose={clearError} />}
         {notice && <Note message={notice} tone="warn" onClose={clearNotice} />}

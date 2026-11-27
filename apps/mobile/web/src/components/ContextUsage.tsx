@@ -1,5 +1,4 @@
 import { contextUsage, estimatedTurnUsage, formatTokens, getLocale, t } from '@qn/codex-client'
-import { Gauge } from 'lucide-react'
 import { useState } from 'react'
 import { Button, Dialog, LoadingIcon } from './ui'
 
@@ -28,9 +27,9 @@ export function ContextUsage({ tokenUsage, estimatedCostUsd, compact, panel: con
       <Button variant="ghost" className="qn-icon-button px-1!"
         aria-label={busy ? t('正在压缩会话') : sessionUsage ? t('查看会话用量') : t('查看上下文，{label}', { label })}
         aria-haspopup="dialog" onClick={() => setPanel('usage')}>
-        {/* 与电脑版输入区的上下文环一致：有窗口大小时显示占用环，否则显示仪表图标。 */}
+        {/* 与电脑版输入区的上下文环一致；尚无窗口大小时显示空环，图标不随数据到达而变形。 */}
         <span className={`flex items-center ${color}`} aria-hidden>
-          {busy ? <LoadingIcon size={16} /> : usage ? <ProgressRing percent={percent} size={16} /> : <Gauge size={16} />}
+          {busy ? <LoadingIcon size={16} /> : <ProgressRing percent={percent} size={16} />}
         </span>
       </Button>
       {panel && (

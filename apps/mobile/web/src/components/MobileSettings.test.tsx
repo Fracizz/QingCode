@@ -39,6 +39,19 @@ it('常用设置即时应用并保存，对话继承原有字号且选词时不�
     return act(() => button.click())
   }
 
+  // 选项行点开后在弹层里选；选完弹层关闭，行内显示新值。
+  async function choose(title: string, option: string) {
+    const row = [...host.querySelectorAll('.qn-setting-row')]
+      .find((item) => item.querySelector('.qn-setting-title')?.textContent === title)
+    if (!(row instanceof HTMLButtonElement)) throw new Error(`缺少设置行 ${title}`)
+    await act(() => row.click())
+    const radio = [...document.querySelectorAll('[role="radio"]')].find((item) => item.textContent === option)
+    if (!(radio instanceof HTMLButtonElement)) throw new Error(`缺少选项 ${option}`)
+    await act(() => radio.click())
+    expect(document.querySelector('[role="radio"]')).toBeNull()
+    expect(row.querySelector('.qn-setting-value')?.textContent).toBe(option)
+  }
+
   try {
     localStorage.setItem('qn.mobile.chatFontSize', '21')
     await act(() => root.render(<Harness settings />))
@@ -48,12 +61,12 @@ it('常用设置即时应用并保存，对话继承原有字号且选词时不�
     const unbind = bindChatPinch(transcript)
     expect(transcript.style.getPropertyValue('--chat-font')).toBe('22px')
     unbind()
-    await click('浅色')
-    await click('减少动效')
+    await choose('主题', '浅色')
+    await choose('界面动效', '减少动效')
     expect(document.documentElement.dataset.theme).toBe('light')
     expect(document.documentElement.hasAttribute('data-reduce-motion')).toBe(true)
 
-    await click('回车发送')
+    await choose('发送按键', '回车发送')
     expect(JSON.parse(localStorage.getItem('qn.mobile.preferences') ?? 'null')).toEqual({
       theme: 'light', reduceMotion: true, sendKey: 'send',
     })

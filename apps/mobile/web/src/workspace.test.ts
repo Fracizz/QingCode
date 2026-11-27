@@ -4,7 +4,7 @@ import { createGateway, setGateway } from './client'
 import { MOCK_FP } from './mock'
 import { useApp } from './store'
 import type { Connection, Project, Target } from './types'
-import { applyThreadOrder, threadAttentionTier, workspaceThreadOrder, changeThreadPreference, closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, moveWorkspaceProject, orderWorkspaceProjects, recentThreadStatus, registerBackHandler, startWorkspaceObserver, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
+import { applyThreadOrder, threadAttentionTier, workspaceThreadOrder, changeThreadPreference, closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, moveWorkspaceProject, orderWorkspaceProjects, recentThreadStatus, registerBackHandler, startWorkspaceObserver, stickyGroupOrder, workspaceGroupKey, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
 
 const laptop: Project = { id: 'laptop', targetId: 'local', name: 'sandbox', path: 'C:\\sandbox', lastOpenedAt: 1 }
 const remote: Project = { id: 'remote', targetId: 'ssh', name: 'sandbox', path: '/srv/sandbox', lastOpenedAt: 0 }
@@ -214,6 +214,21 @@ describe('会话分档排序', () => {
     const settled = workspaceThreadOrder([{ project: laptop, threads: [a, b] }])
     expect(applyThreadOrder(fresh, settled).map((group) => group.threads.map((item) => item.id))).toEqual([['c'], ['a', 'b']])
     expect(applyThreadOrder(fresh, [])).toBe(fresh)
+  })
+
+  it('项目分组位置固定：已有项目不随会话状态重排，新项目插到最前', () => {
+    const a = thread(laptop, { id: 'a' })
+    const c = thread(remote, { id: 'c' })
+    const before = [{ project: laptop, threads: [a] }, { project: remote, threads: [c] }]
+    const fixed = stickyGroupOrder(before.map(workspaceGroupKey), [])
+    // remote 的会话变成待审批后排到了最前，但分组位置不变。
+    const fresh = [{ project: remote, threads: [c] }, { project: laptop, threads: [a] }]
+    const next = stickyGroupOrder(fresh.map(workspaceGroupKey), fixed)
+    expect(next).toEqual(fixed)
+    expect(applyThreadOrder(fresh, [], next).map((group) => group.project.id)).toEqual([laptop.id, remote.id])
+    expect(stickyGroupOrder(['x', ...fixed], fixed)).toEqual(['x', ...fixed])
+    // 被搜索暂时过滤掉的项目保留原位。
+    expect(stickyGroupOrder([fixed[1]!], fixed)).toEqual(fixed)
   })
 })
 

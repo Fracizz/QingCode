@@ -1,8 +1,11 @@
 import { accessOptions, type AccessMode, type AccessSelection, t } from '@qn/codex-client'
-import { Check, Shield, ShieldAlert } from 'lucide-react'
+import { Check, Shield, ShieldAlert, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
 import type { AgentKind } from '../types'
 import { Button, Dialog } from './ui'
+
+// 三档各用一个盾牌图标：输入框里只放图标省出宽度，文字只在切换弹窗中显示。
+export const MODE_ICONS: Record<AccessMode, LucideIcon> = { default: Shield, auto: ShieldCheck, fullAccess: ShieldAlert }
 
 export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, supported, disabled, deferred = false, onChange }: {
   agent: AgentKind
@@ -21,7 +24,7 @@ export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, su
   const current = available.find((option) => option.mode === effectiveMode)
   const pending = available.find((option) => option.mode === confirm)
   if (!current) return null
-  const Icon = current.warning ? ShieldAlert : Shield
+  const Icon = MODE_ICONS[current.mode]
   const label = mode === 'inherit' ? t('{label}（跟随总控）', { label: current.label }) : current.label
   const close = () => {
     setOpen(false)
@@ -38,8 +41,7 @@ export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, su
         data-tone={current.warning ? 'danger' : effectiveMode !== 'default' ? 'warn' : undefined}
         aria-label={t('访问模式：{label}', { label })} aria-haspopup="dialog" aria-expanded={open}
         title={label} disabled={disabled} onClick={() => setOpen(true)}>
-        <Icon size={16} strokeWidth={1.75} className="shrink-0" aria-hidden />
-        {effectiveMode !== 'default' && <span>{current.label}</span>}
+        <Icon size={18} strokeWidth={1.75} className="shrink-0" aria-hidden />
       </Button>
       {open && (
         <Dialog title={pending ? t('启用{label}？', { label: pending.label }) : t('访问模式')} onClose={close}>
@@ -58,15 +60,18 @@ export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, su
               {available.map((option) => {
                 // 选中与总控相同的档位即恢复跟随总控；总控未知时保持显式选择。
                 const next: AccessSelection = option.mode === inheritedMode ? 'inherit' : option.mode
+                const OptionIcon = MODE_ICONS[option.mode]
                 return (
                   <button key={option.mode} type="button" aria-pressed={option.mode === effectiveMode}
-                    className="qn-row rounded-xl border border-qn-border px-3 py-2 disabled:opacity-50"
+                    className="qn-row gap-3 rounded-xl border border-qn-border px-3 py-2 disabled:opacity-50"
                     disabled={disabled || (!supported && option.mode !== 'default')}
                     onClick={() => {
                       if (next === mode) close()
                       else if (next !== 'inherit' && option.warning) setConfirm(option.mode)
                       else select(next)
                     }}>
+                    <OptionIcon size={18} strokeWidth={1.75} aria-hidden
+                      className={`shrink-0 ${option.warning ? 'text-qn-danger' : option.mode === 'auto' ? 'text-qn-warn' : 'text-qn-muted'}`} />
                     <span className="min-w-0 flex-1">
                       <span className={`block text-sm font-medium${option.warning ? ' text-qn-danger' : ''}`}>{option.label}</span>
                       <span className="block text-xs text-qn-muted">{option.hint}</span>

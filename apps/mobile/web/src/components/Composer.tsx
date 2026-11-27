@@ -206,7 +206,7 @@ export function Composer({
   }
 
   return (
-    <div className="qn-footer relative">
+    <div className="qn-footer qn-composer-footer relative">
       {status && <Note message={status} tone="warn" onClose={() => setStatus(null)} />}
       {quoteDraft && (
         <div className="mb-2 rounded-xl border border-qn-border bg-qn-card p-2">
@@ -275,18 +275,22 @@ export function Composer({
           ))}
         </div>
       )}
-      {images.length > 0 && (
-        <ul className="mb-2 flex flex-wrap gap-2" aria-label={t('图片附件')}>
-          {images.map((image, index) => (
-            <li className="flex items-center gap-1 rounded-xl border border-qn-border px-1" key={`${image.name}:${index}`}>
-              <ImageThumbnail src={image.dataUrl} alt={image.name} className="h-11 w-11 rounded-lg object-cover" />
-              <Button variant="ghost" className="p-0!" disabled={sending || picking} onClick={() => updateImages(images.filter((_, at) => at !== index))} aria-label={t('移除 {name}', { name: image.name })}><X size={15} /></Button>
-            </li>
-          ))}
-        </ul>
-      )}
       {images.length > 0 && imageUnavailable && <div className="mb-2 text-xs text-qn-warn">{imageUnavailable}</div>}
       <div className="qn-composer">
+        {/* 附件放进输入框内：方形缩略图 + 右上角移除角标，与常见聊天应用一致。 */}
+        {images.length > 0 && (
+          <ul className="qn-composer-images" aria-label={t('图片附件')}>
+            {images.map((image, index) => (
+              <li className="qn-composer-image" key={`${image.name}:${index}`}>
+                <ImageThumbnail src={image.dataUrl} alt={image.name} className="qn-composer-image-img" />
+                <button type="button" className="qn-composer-image-remove" disabled={sending || picking}
+                  onClick={() => updateImages(images.filter((_, at) => at !== index))} aria-label={t('移除 {name}', { name: image.name })}>
+                  <X size={12} strokeWidth={2.5} aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <textarea
           ref={textarea}
           className="qn-textarea"
