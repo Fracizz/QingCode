@@ -16,6 +16,7 @@ import {
   type AgentOpenOptions,
 } from '../codexHost'
 import { redact } from '../log'
+import { ArchiveStore } from '../archiveStore'
 import { SteerHistoryStore } from '../steerHistory'
 import { VERSION } from '../version'
 import { nativeAgentCwd } from '../workspace/paths'
@@ -202,6 +203,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private readonly approvals = new Map<JsonRpcId, PendingApproval>()
   private readonly idleTimeoutMs: number
   private readonly steerHistory: SteerHistoryStore<ClaudeSteerHistory>
+  private readonly archives: ArchiveStore
   private requestCounter = 0
   private readonly skills = new SkillsCatalog()
 
@@ -213,6 +215,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     super(hub, version, 'claude-bridge', 'claude')
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
     this.steerHistory = new SteerHistoryStore(options.stateDir, 'claude', parseClaudeSteer, (msg) => this.hub.log(msg))
+    this.archives = new ArchiveStore(options.stateDir, 'claude', (msg) => this.hub.log(msg))
   }
 
   protected async openAgent(options: AgentOpenOptions): Promise<{
@@ -445,16 +448,30 @@ export class ClaudeBridge extends JsonRpcAgentHost {
           : [cwd || undefined]
         const metas = new Map<string, SessionMeta>()
         const reader = this.sessionReader(scope)
+        // 与 Codex 的 thread/list 一致：archived=true 只列归档，否则排除归档。
+        const archived = params.archived === true
         for (const dir of dirs) {
           const infos = await reader.listSessions({ dir, limit, ...(Array.isArray(params.cwd) ? { includeWorktrees: false } : {}) })
           for (const info of infos) {
             const meta = sessionInfoToMeta(info, dir ?? process.cwd())
             if (!meta.id || metas.has(meta.id)) continue
-            metas.set(meta.id, meta)
             scope.metas.set(meta.id, meta)
+            if (this.archives.has(meta.id) !== archived) continue
+            metas.set(meta.id, meta)
           }
         }
         return threadListResponse([...metas.values()], limit, (id) => this.threadStatus(scope, id))
+      }
+      case 'thread/archive':
+      case 'thread/unarchive': {
+        const threadId = scalarText(params.threadId)
+        if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
+        const archive = method === 'thread/archive'
+        // 广播与 Codex 同名的通知，同一目标上的电脑和手机都据此移出或恢复列表。
+        if (this.archives.set(threadId, archive)) {
+          this.notify({ method: archive ? 'thread/archived' : 'thread/unarchived', params: { threadId } })
+        }
+        return {}
       }
       case 'thread/start': {
         const id = randomUUID()

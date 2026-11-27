@@ -11,6 +11,8 @@ type ThreadPrefsState = {
   setUnread: (targetId: string, key: string, unread: boolean) => void
   setLocalName: (targetId: string, key: string, name: string | null) => void
   setArchived: (targetId: string, agent: AgentKind, threadId: string, archived: boolean) => void
+  /** 旧版本地归档已补写到目标机后清除。 */
+  clearHidden: (targetId: string, key: string) => void
   setRevisionTurn: (targetId: string, key: string, turnId: string) => void
   /** 会话被永久删除后清掉它的所有本地偏好。 */
   forget: (targetId: string, key: string) => void
@@ -58,10 +60,15 @@ export const useThreadPrefs = create<ThreadPrefsState>((set, get) => {
       const key = threadKey(agent, threadId)
       patch(targetId, (prefs) => ({
         ...prefs,
-        hidden: toggleKey(prefs.hidden, key, archived && agent !== 'codex' ? true : undefined),
+        // 归档状态以目标机为准，本地只在恢复时清掉旧版遗留的隐藏标记。
+        hidden: archived ? prefs.hidden : toggleKey(prefs.hidden, key, undefined),
         pinned: archived ? toggleKey(prefs.pinned, key, undefined) : prefs.pinned,
         restoredAt: toggleKey(prefs.restoredAt, key, archived ? undefined : Date.now()),
       }))
+    },
+    clearHidden: (targetId, key) => {
+      if (!get().byTarget[targetId]?.hidden[key]) return
+      patch(targetId, (prefs) => ({ ...prefs, hidden: toggleKey(prefs.hidden, key, undefined) }))
     },
     setRevisionTurn: (targetId, key, turnId) =>
       patch(targetId, (prefs) => ({ ...prefs, revisionTurns: toggleKey(prefs.revisionTurns, key, turnId) })),

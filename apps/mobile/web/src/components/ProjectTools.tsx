@@ -1,5 +1,5 @@
 import { getLocale, t } from '@qn/codex-client'
-import { Archive, Ellipsis, FileText, Folder, RotateCw, Terminal } from 'lucide-react'
+import { Archive, Ellipsis, FileText, Folder, Pin, PinOff, RotateCw, Terminal } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { callDevice } from '../client'
 import { getWindowNativePort, NativeRequestError } from '../native'
@@ -8,7 +8,7 @@ import { friendlyError } from '../state'
 import { useApp } from '../store'
 import type { Project } from '../types'
 import { formatBytes } from '../viewer'
-import { threadPreferenceKey, useWorkspace, useWorkspacePreferences } from '../workspace'
+import { threadPreferenceKey, toggleProjectPin, useWorkspace, useWorkspacePreferences, workspaceProjectKey } from '../workspace'
 import { AgentTag, Button, Dialog, Empty, Loading, Note, SheetAction } from './ui'
 
 const CHUNK_BYTES = 256 * 1024
@@ -17,6 +17,7 @@ const TerminalPanel = lazy(async () => ({ default: (await import('./TerminalPane
 export function ProjectTools({ project, compact = false, sortable = false }: { project: Project; compact?: boolean; sortable?: boolean }) {
   const [tool, setTool] = useState<'files' | 'terminal' | 'menu' | 'archive' | null>(null)
   const desktopId = useApp((s) => s.activeId)
+  const pinned = useWorkspacePreferences()?.pinnedProjects?.includes(workspaceProjectKey(project)) ?? false
   return (
     <>
       {!compact && (
@@ -32,6 +33,11 @@ export function ProjectTools({ project, compact = false, sortable = false }: { p
         <Dialog title={project.name} onClose={() => setTool(null)}>
           <p className="qn-mono -mt-1 mb-2 break-all text-xs text-qn-muted">{project.path}</p>
           <div className="qn-project-tools-menu">
+            {desktopId && (
+              <SheetAction icon={pinned ? PinOff : Pin} onClick={() => { toggleProjectPin(desktopId, project); setTool(null) }}>
+                {pinned ? t('取消置顶（仅此手机）') : t('置顶（仅此手机）')}
+              </SheetAction>
+            )}
             {compact && <SheetAction icon={Folder} onClick={() => setTool('files')}>{t('浏览项目文件')}</SheetAction>}
             <SheetAction icon={Terminal} onClick={() => setTool('terminal')}>{t('打开项目终端')}</SheetAction>
             <SheetAction icon={Archive} onClick={() => setTool('archive')}>{t('已归档会话')}</SheetAction>

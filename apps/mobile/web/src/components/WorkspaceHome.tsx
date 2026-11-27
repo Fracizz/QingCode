@@ -14,6 +14,7 @@ import {
   workspaceThreadOrder,
   openWorkspaceThread,
   orderWorkspaceProjects,
+  pinnedFirst,
   placeWorkspaceProject,
   renameCachedThread,
   recentThreadStatus,
@@ -26,6 +27,7 @@ import {
   useWorkspacePreferences,
   visibleWorkspaceThreads,
   workspaceGroupKey,
+  workspaceProjectKey,
   workspaceThreadKey,
   type WorkspaceTab,
   type WorkspaceThread,
@@ -484,7 +486,8 @@ export function WorkspaceHome() {
   const projects = projectList?.items ?? emptyProjects
   const projectGroups = useMemo(() => {
     const matched = filterProjects(projects, targets, query, activeProjectTarget)
-    return targets.map((target) => ({ target, rows: orderWorkspaceProjects(matched.filter((item) => item.targetId === target.id), preferences?.projectOrders[target.id]) }))
+    return targets.map((target) => ({ target, rows: pinnedFirst(orderWorkspaceProjects(matched.filter((item) => item.targetId === target.id),
+      preferences?.projectOrders[target.id]), preferences?.pinnedProjects, workspaceProjectKey) }))
       .filter(({ rows }) => rows.length > 0)
   }, [projects, targets, query, activeProjectTarget, preferences])
   // 对话页的实时状态（待审批、运行中）参与分档；只订阅拼好的状态串，流式增量不会让整页重渲染。
@@ -503,8 +506,9 @@ export function WorkspaceHome() {
     const key = desktopId ?? ''
     const next = stickyGroupOrder(freshGroups.map(workspaceGroupKey), projectGroupOrders.get(key) ?? [])
     projectGroupOrders.set(key, next)
-    return next
-  }, [freshGroups, desktopId])
+    // 置顶项目始终排在最前；取消置顶后回到原来的固定位置。
+    return pinnedFirst(next, preferences?.pinnedProjects, (item) => item)
+  }, [freshGroups, desktopId, preferences])
   const groups = useMemo(() => applyThreadOrder(freshGroups, order, groupOrder), [freshGroups, order, groupOrder])
 
   const refresh = useCallback(async () => {
@@ -574,6 +578,8 @@ export function WorkspaceHome() {
                     aria-label={t('进入 {name} 项目的会话', { name: project.name })}>
                     <Folder size={18} strokeWidth={1.75} className="qn-group-icon" aria-hidden />
                     <h2 className="truncate">{project.name}</h2>
+                    {preferences?.pinnedProjects?.includes(workspaceProjectKey(project))
+                      && <Pin size={13} className="shrink-0 text-qn-muted" aria-label={t('已置顶')} />}
                     <SourceTag target={targets.find((item) => item.id === project.targetId)} />
                     <span className="qn-group-count">{threads.length}</span>
                   </button>

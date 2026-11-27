@@ -4,7 +4,7 @@ import { createGateway, setGateway } from './client'
 import { MOCK_FP } from './mock'
 import { useApp } from './store'
 import type { Connection, Project, Target } from './types'
-import { applyThreadOrder, threadAttentionTier, workspaceThreadOrder, changeThreadPreference, closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, moveWorkspaceProject, orderWorkspaceProjects, recentThreadStatus, registerBackHandler, startWorkspaceObserver, stickyGroupOrder, workspaceGroupKey, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
+import { applyThreadOrder, threadAttentionTier, workspaceThreadOrder, changeThreadPreference, closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, moveWorkspaceProject, orderWorkspaceProjects, recentThreadStatus, registerBackHandler, startWorkspaceObserver, stickyGroupOrder, workspaceGroupKey, pinnedFirst, toggleProjectPin, workspaceProjectKey, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
 
 const laptop: Project = { id: 'laptop', targetId: 'local', name: 'sandbox', path: 'C:\\sandbox', lastOpenedAt: 1 }
 const remote: Project = { id: 'remote', targetId: 'ssh', name: 'sandbox', path: '/srv/sandbox', lastOpenedAt: 0 }
@@ -85,6 +85,8 @@ describe('移动工作台', () => {
     try {
       changeThreadPreference(desktopId, older, { pinned: true, title: '本地别名' })
       moveWorkspaceProject(desktopId, nextProject, [laptop, nextProject], -1)
+      toggleProjectPin(desktopId, remote)
+      toggleProjectPin(desktopId, laptop)
       await vi.waitFor(async () => expect(await gateway.storageGet('workspace.sessions')).toContain('本地别名'))
       stop()
       useWorkspace.setState({ preferences: {} })
@@ -95,6 +97,10 @@ describe('移动工作台', () => {
         .toEqual(['本地别名', newer.title])
       expect(groupWorkspaceThreads([newer, older], [laptop], '本地别名', prefs)[0]?.threads).toHaveLength(1)
       expect(orderWorkspaceProjects([laptop, nextProject], prefs?.projectOrders.local)).toEqual([nextProject, laptop])
+      // 置顶项目持久化，后置顶的排在前面；再次切换即取消。
+      expect(prefs?.pinnedProjects).toEqual([workspaceProjectKey(laptop), workspaceProjectKey(remote)])
+      toggleProjectPin(desktopId, laptop)
+      expect(useWorkspace.getState().preferences[desktopId]?.pinnedProjects).toEqual([workspaceProjectKey(remote)])
       expect(useWorkspace.getState().preferences['another-desktop']).toBeUndefined()
     } finally {
       stop()
@@ -214,6 +220,11 @@ describe('会话分档排序', () => {
     const settled = workspaceThreadOrder([{ project: laptop, threads: [a, b] }])
     expect(applyThreadOrder(fresh, settled).map((group) => group.threads.map((item) => item.id))).toEqual([['c'], ['a', 'b']])
     expect(applyThreadOrder(fresh, [])).toBe(fresh)
+  })
+
+  it('置顶项目排在最前，其余保持原顺序', () => {
+    expect(pinnedFirst(['a', 'b', 'c', 'd'], ['c', 'x', 'b'], (item) => item)).toEqual(['c', 'b', 'a', 'd'])
+    expect(pinnedFirst(['a', 'b'], undefined, (item) => item)).toEqual(['a', 'b'])
   })
 
   it('项目分组位置固定：已有项目不随会话状态重排，新项目插到最前', () => {

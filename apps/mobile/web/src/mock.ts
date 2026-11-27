@@ -590,7 +590,8 @@ export class MockNativePort implements NativePort {
     const threadId = str(inner.threadId, threads[0] ? str(threads[0].id) : 't-demo')
     const nowSec = Math.floor(Date.now() / SECOND)
     const recv = (payload: unknown) => this.recv(targetId, agent, payload)
-    const archiveKey = (id: unknown) => `mock.archive:${JSON.stringify([targetId, id])}`
+    // 与 server 一致：三个 Agent 都支持归档（Claude/pi 由 server 的 archiveStore 记录）。
+    const archiveKey = (id: unknown) => `mock.archive:${JSON.stringify([targetId, agent, id])}`
     const key = JSON.stringify([targetId, agent, threadId])
     const turns = this.turns.get(key) ?? []
     const last = turns.at(-1)
@@ -614,7 +615,7 @@ export class MockNativePort implements NativePort {
       case 'thread/list': {
         const cwds = Array.isArray(inner.cwd) ? inner.cwd : typeof inner.cwd === 'string' ? [inner.cwd] : null
         const data = threads.filter((thread) => {
-          const archived = agent === 'codex' && this.readStorage(archiveKey(thread.id)) === '1'
+          const archived = this.readStorage(archiveKey(thread.id)) === '1'
           return (!cwds || cwds.includes(thread.cwd)) && archived === (inner.archived === true)
         })
         recv({ id, result: { data } })
@@ -622,9 +623,7 @@ export class MockNativePort implements NativePort {
       }
       case 'thread/archive':
       case 'thread/unarchive': {
-        if (agent !== 'codex') {
-          recv({ id, error: { code: -32601, message: 'Method not found' } })
-        } else if (!threads.some((thread) => thread.id === threadId)) {
+        if (!threads.some((thread) => thread.id === threadId)) {
           recv({ id, error: { code: -32602, message: '会话不存在' } })
         } else {
           const archived = msg.method === 'thread/archive'

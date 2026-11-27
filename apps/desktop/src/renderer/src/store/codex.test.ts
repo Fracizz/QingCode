@@ -177,15 +177,21 @@ describe('归档会话', () => {
 
   const oldThread = (id: string): HistoryThread => ({ id, cwd: '/work', updatedAt: Date.now() / 1000 - 2 * 86400 })
 
+  // 模拟目标机：Codex 原生归档，Claude 由 server 的 archiveStore 归档，两者都走 thread/archive。
   function mockHistory(codex: HistoryThread[], claude: HistoryThread[], archived: HistoryThread[] = []) {
+    const lists: Record<string, { active: HistoryThread[]; archived: HistoryThread[] }> = {
+      codex: { active: codex, archived },
+      claude: { active: claude, archived: [] },
+    }
     callMock.mockImplementation(async (method: string, params?: CallParams) => {
       const msg = params?.msg
       const agent = params?.agent ?? 'codex'
+      const list = lists[agent] ?? { active: [], archived: [] }
       let result: unknown
       if (msg?.method === 'thread/list') {
-        result = { data: agent === 'codex' ? (msg.params?.archived ? archived : codex) : agent === 'claude' ? claude : [] }
+        result = { data: msg.params?.archived ? list.archived : list.active }
       } else if (msg?.method === 'thread/unarchive' || msg?.method === 'thread/archive') {
-        const [from, to] = msg.method === 'thread/unarchive' ? [archived, codex] : [codex, archived]
+        const [from, to] = msg.method === 'thread/unarchive' ? [list.archived, list.active] : [list.active, list.archived]
         const index = from.findIndex(({ id }) => id === msg.params?.threadId)
         if (index >= 0) to.push(...from.splice(index, 1))
         result = {}
@@ -197,7 +203,7 @@ describe('归档会话', () => {
     })
   }
 
-  it('同一列表可恢复 Codex 原生归档与 Claude 本地归档', async () => {
+  it('同一列表可恢复 Codex 与 Claude 的目标机归档', async () => {
     const store = useCodex.getState
     mockHistory([], [oldThread('claude-old'), oldThread('claude-active')], [oldThread('codex-old')])
     useCodex.setState({ currentThreadId: 'claude-old', currentAgent: 'claude' })
@@ -211,7 +217,7 @@ describe('归档会话', () => {
 
     expect((await store().listArchivedThreads('local')).threads).toEqual([])
     expect(callMock.mock.calls.filter(([, params]) => params?.msg?.method === 'thread/unarchive')
-      .map(([, { agent, msg }]) => [agent, msg.params.threadId])).toEqual([['codex', 'codex-old']])
+      .map(([, { agent, msg }]) => [agent, msg.params.threadId]).sort()).toEqual([['claude', 'claude-old'], ['codex', 'codex-old']])
     const prefs = useThreadPrefs.getState().byTarget.local
     expect(prefs?.restoredAt).toMatchObject({ 'codex:codex-old': expect.any(Number), 'claude:claude-old': expect.any(Number) })
     expect(applyThreadPrefs(threads, prefs)).toHaveLength(2)
@@ -236,9 +242,11 @@ describe('归档会话', () => {
       expect(callMock).not.toHaveBeenCalled()
       useSettings.setState({ saving: false })
       await vi.waitFor(() => {
-        expect(useThreadPrefs.getState().byTarget.local?.hidden['claude:claude-old']).toBe(true)
+        // Claude 也写到目标机，不再只记本地隐藏。
+        expect(useThreadPrefs.getState().byTarget.local?.hidden['claude:claude-old']).toBeUndefined()
         const calls = callMock.mock.calls.filter(([, params]) => params?.msg?.method === 'thread/archive')
-        expect(calls.map(([, { targetId, msg }]) => [targetId, msg.params.threadId])).toEqual([['local', 'old']])
+        expect(calls.map(([, { targetId, agent, msg }]) => [targetId, agent, msg.params.threadId]).sort())
+          .toEqual([['local', 'claude', 'claude-old'], ['local', 'codex', 'old']])
       })
       expect(useCodex.getState().currentThreadId).toBe('open')
     } finally {

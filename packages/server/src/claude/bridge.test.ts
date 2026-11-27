@@ -151,6 +151,42 @@ function note(h: Harness, method: string): Json {
 }
 
 describe('ClaudeBridge 端到端（假 query 工厂）', () => {
+  it('归档记在目标机状态目录：列表排除、archived=true 只列归档、重启后保留并广播通知', async () => {
+    const stateDir = mkdtempSync(path.join(tmpdir(), 'qn-claude-archive-'))
+    const sessionInfos = [
+      { sessionId: 'keep', summary: '保留', cwd: '/work', lastModified: 2 },
+      { sessionId: 'gone', summary: '归档', cwd: '/work', lastModified: 1 },
+    ]
+    const options = { stateDir, listSessions: async () => sessionInfos }
+    const h = harness(options)
+    const restarted = harness(options)
+    const ids = (msg: { result?: unknown }) => ((msg.result as Json).data as Json[]).map((thread) => thread.id)
+    try {
+      await h.bridge.open({})
+      request(h, 'archive', 'thread/archive', { threadId: 'gone' })
+      expect((await response(h, 'archive')).result).toEqual({})
+      expect(note(h, 'thread/archived')).toMatchObject({ params: { threadId: 'gone' } })
+      request(h, 'list', 'thread/list', { cwd: '/work' })
+      expect(ids(await response(h, 'list'))).toEqual(['keep'])
+      request(h, 'archived', 'thread/list', { cwd: '/work', archived: true })
+      expect(ids(await response(h, 'archived'))).toEqual(['gone'])
+
+      // 另一个客户端（手机经电脑网关）连到重启后的 daemon，看到同一份归档。
+      await restarted.bridge.open({})
+      request(restarted, 'list-2', 'thread/list', { cwd: '/work' })
+      expect(ids(await response(restarted, 'list-2'))).toEqual(['keep'])
+      request(restarted, 'restore', 'thread/unarchive', { threadId: 'gone' })
+      await response(restarted, 'restore')
+      expect(note(restarted, 'thread/unarchived')).toMatchObject({ params: { threadId: 'gone' } })
+      request(restarted, 'list-3', 'thread/list', { cwd: '/work' })
+      expect(ids(await response(restarted, 'list-3'))).toEqual(['keep', 'gone'])
+    } finally {
+      h.bridge.shutdown()
+      restarted.bridge.shutdown()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
   it('以 SDK 回显确认引导归属，并在 Claude 已排好下一轮时保持会话运行', async () => {
     const transcript: { uuid: string; message: unknown }[] = []
     const stateDir = mkdtempSync(path.join(tmpdir(), 'qn-claude-steering-'))

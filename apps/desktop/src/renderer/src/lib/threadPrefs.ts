@@ -7,7 +7,7 @@ import { threadKey } from './threads'
  * - pinned：置顶，值为置顶时间，越晚置顶越靠前
  * - unread：手动标记为未读，打开会话即清除
  * - names：agent 不支持 thread/name/set 时（如 Claude）的本地重命名
- * - hidden：agent 不支持 thread/archive 时的本地归档
+ * - hidden：旧版 Claude/pi 的本地归档；加载列表时补写到目标机后清除
  * - restoredAt：恢复后重新计算自动归档的等待时间
  * - revisionTurns：修订分支中开始新对话的轮次 ID
  * 键统一用 threadKey(agent, id)，并按目标隔离，避免不同主机的同 id 会话互相影响。
@@ -85,7 +85,6 @@ export function applyThreadPrefs(threads: readonly ThreadSummary[], prefs: Threa
 export function archivedThreadSummaries(threads: readonly ThreadSummary[], prefs: ThreadPrefs | undefined): ThreadSummary[] {
   return threads.flatMap((thread) => {
     const key = threadKey(thread.agent, thread.id)
-    if (thread.agent !== 'codex' && !prefs?.hidden[key]) return []
     const name = prefs?.names[key]
     return [name ? { ...thread, title: name } : thread]
   })

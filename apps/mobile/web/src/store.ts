@@ -727,11 +727,29 @@ export const useApp = create<AppState>((set, get) => {
   const recordArchive = (desktopId: string, targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>): void => {
     const key = archivedThreadKey(desktopId, targetId, thread)
     if (get().archivedThreads[key]) return
-    const archivedThreads: AppState['archivedThreads'] = { ...get().archivedThreads, [key]: true }
-    set({ archivedThreads })
+    // Claude/pi 的归档存在目标机上，thread/list 已排除归档会话，手机不再另记一份。
+    if (thread.agent === 'codex') {
+      set({ archivedThreads: { ...get().archivedThreads, [key]: true } })
+      persistArchives()
+    }
     updateQueue(sendKey({ desktopId, targetId, agent: thread.agent, threadId: thread.id }), () => [])
-    persistArchives()
     forgetArchivedChat(desktopId, targetId, thread)
+  }
+
+  /** 旧版只记在手机上的 Claude/pi 归档：补写到目标机后删掉本地记录，电脑端随之隐藏。 */
+  const migrateLocalArchives = (desktopId: string, session: AgentSession, threads: readonly ThreadSummary[]): void => {
+    for (const thread of threads) {
+      const key = archivedThreadKey(desktopId, session.targetId, thread)
+      if (!get().archivedThreads[key] || archiveFlights.has(key)) continue
+      archiveFlights.add(key)
+      void archiveThread(session.rpc, thread.id).then(() => {
+        if (get().activeId !== desktopId) return
+        const archivedThreads = { ...get().archivedThreads }
+        delete archivedThreads[key]
+        set({ archivedThreads })
+        persistArchives()
+      }).catch(() => undefined).finally(() => archiveFlights.delete(key))
+    }
   }
 
   const conversationSession = async (targetId: string, agent: AgentKind, epoch: number) => {
@@ -756,6 +774,7 @@ export const useApp = create<AppState>((set, get) => {
         persistArchives()
       }
     }
+    if (session.agent !== 'codex' && get().activeId === desktopId) migrateLocalArchives(desktopId, session, threads)
     return threads.filter((thread) => !isArchived(desktopId, session.targetId, thread))
   }
 
@@ -2814,19 +2833,7 @@ export const useApp = create<AppState>((set, get) => {
       const stillPaired = () => get().connections.some((item) => item.id === conn.id && item.fp === conn.fp)
       archiveFlights.add(key)
       try {
-        if (thread.agent !== 'codex') {
-          await queueStorageWrite(STORAGE_ARCHIVED_THREADS, async () => {
-            if (!stillPaired()) throw new Error(t('电脑连接已移除或重新配对'))
-            await writeArchives({ ...get().archivedThreads, [key]: true })
-            if (stillPaired()) {
-              set({ archivedThreads: { ...get().archivedThreads, [key]: true } })
-              forgetArchivedChat(conn.id, targetId, thread)
-            } else {
-              persistArchives()
-            }
-          })
-          return
-        }
+        // 所有 Agent 都在目标机上归档（Claude/pi 由 server 记录），电脑端同步隐藏。
         const session = await conversationSession(targetId, thread.agent, epoch)
         await archiveThread(session.rpc, thread.id)
         session.resumedCodexThreads.delete(thread.id)
@@ -2841,13 +2848,15 @@ export const useApp = create<AppState>((set, get) => {
       const conn = activeConnection(get())
       if (!conn) throw new Error(t('尚未选择电脑'))
       const epoch = desktopEpoch
-      const agents = AGENTS.filter((agent) => agent === 'codex' && targetAgents(get(), targetId).includes(agent)
-        || agent !== 'codex' && Object.keys(get().archivedThreads).some((key) => key.startsWith(`${JSON.stringify([conn.id, targetId, agent]).slice(0, -1)},`)))
+      // 已确认打开失败（如未安装 pi）的 Agent 不在归档页重复报错，与会话列表的 skipFailed 一致。
+      const enabled = targetAgents(get(), targetId)
+      const unavailable = unavailableAgents(get(), targetId, enabled)
+      const agents = AGENTS.filter((agent) => enabled.includes(agent) && !unavailable.has(agent))
       const results = await Promise.all(agents.map(async (agent) => {
         try {
           const session = await conversationSession(targetId, agent, epoch)
-          const result = await listThreads(session.rpc, path, undefined, agent === 'codex' ? { archived: true } : undefined)
-          const threads = toThreadSummaries(result, agent).filter((thread) => agent === 'codex' || isArchived(conn.id, targetId, thread))
+          const result = await listThreads(session.rpc, path, undefined, { archived: true })
+          const threads = toThreadSummaries(result, agent)
           return { threads, error: null }
         } catch (err) {
           const message = translateMessage(friendlyError(err, t('读取归档失败')))
@@ -2867,22 +2876,14 @@ export const useApp = create<AppState>((set, get) => {
       const stillPaired = () => get().connections.some((item) => item.id === conn.id && item.fp === conn.fp)
       archiveFlights.add(key)
       try {
-        if (thread.agent === 'codex') {
-          const session = await conversationSession(targetId, thread.agent, epoch)
-          await session.rpc.request('thread/unarchive', { threadId: thread.id })
+        const session = await conversationSession(targetId, thread.agent, epoch)
+        await session.rpc.request('thread/unarchive', { threadId: thread.id })
+        if (stillPaired() && get().archivedThreads[key]) {
+          const archivedThreads = { ...get().archivedThreads }
+          delete archivedThreads[key]
+          set({ archivedThreads })
+          persistArchives()
         }
-        await queueStorageWrite(STORAGE_ARCHIVED_THREADS, async () => {
-          if (!stillPaired()) return
-          const archived = { ...get().archivedThreads }
-          delete archived[key]
-          if (thread.agent !== 'codex') await writeArchives(archived)
-          if (stillPaired()) {
-            const archivedThreads = { ...get().archivedThreads }
-            delete archivedThreads[key]
-            set({ archivedThreads })
-          }
-        })
-        persistArchives()
         if (epoch === desktopEpoch && get().selectedTargetId === targetId) await get().refreshThreads({ skipFailed: true })
       } finally {
         archiveFlights.delete(key)

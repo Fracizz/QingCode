@@ -30,6 +30,7 @@ import {
 } from '../claude/v2'
 import { HistoryPageCache, listHistoryItems, listHistoryTurns } from '../claude/historyPages'
 import { redact } from '../log'
+import { ArchiveStore } from '../archiveStore'
 import { SteerHistoryStore } from '../steerHistory'
 import { VERSION } from '../version'
 import { nativeAgentCwd } from '../workspace/paths'
@@ -105,6 +106,7 @@ export class PiHost extends JsonRpcAgentHost {
   private readonly historyPages = new HistoryPageCache()
   private readonly idleTimeoutMs: number
   private readonly steerHistory: SteerHistoryStore<UserMessageIdentity>
+  private readonly archives: ArchiveStore
   private counter = 0
   // 最近一次从运行中进程取到的模型列表，daemon 生命周期内复用
   private cachedModels: Json | null = null
@@ -117,6 +119,7 @@ export class PiHost extends JsonRpcAgentHost {
     super(hub, version, 'pi-rpc', 'pi')
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
     this.steerHistory = new SteerHistoryStore(options.stateDir, 'pi', parsePiSteer, (msg) => this.hub.log(msg))
+    this.archives = new ArchiveStore(options.stateDir, 'pi', (msg) => this.hub.log(msg))
   }
 
   /** codex.open {agent:'pi'} 的结果：能力字段让前端如实标注无审批、无额度。 */
@@ -205,6 +208,17 @@ export class PiHost extends JsonRpcAgentHost {
       }
       case 'thread/list':
         return this.threadList(params)
+      case 'thread/archive':
+      case 'thread/unarchive': {
+        const threadId = scalarText(params.threadId)
+        if (!threadId) throw new PiRpcError(-32602, 'threadId 不能为空')
+        const archive = method === 'thread/archive'
+        // 广播与 Codex 同名的通知，同一目标上的电脑和手机都据此移出或恢复列表。
+        if (this.archives.set(threadId, archive)) {
+          this.notify({ method: archive ? 'thread/archived' : 'thread/unarchived', params: { threadId } })
+        }
+        return {}
+      }
       case 'thread/start':
         return this.threadStart(params)
       case 'thread/fork':
@@ -239,11 +253,14 @@ export class PiHost extends JsonRpcAgentHost {
       ? params.limit : undefined
     const infos = await this.safeListSessions(cwd)
     const metas = new Map<string, PiSessionMeta>()
+    // 与 Codex 的 thread/list 一致：archived=true 只列归档，否则排除归档。
+    const archived = params.archived === true
     for (const info of infos) {
       if (metas.has(info.meta.id)) continue
       const meta = { ...info.meta, sessionFile: info.sessionFile }
-      metas.set(meta.id, meta)
       this.metas.set(meta.id, meta)
+      if (this.archives.has(meta.id) !== archived) continue
+      metas.set(meta.id, meta)
     }
     return {
       data: [...metas.values()].slice(0, limit).map((meta) => {

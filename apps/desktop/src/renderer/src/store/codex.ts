@@ -518,6 +518,9 @@ export const useCodex = create<CodexState>((set, get) => {
         return state === current.state ? current : { ...current, state }
       })
       if (notification.method === 'thread/closed') expireSides(targetId, agent, notification.params.threadId)
+      // 归档状态存在目标机上：手机或其他窗口归档/恢复后，这里同步移出或刷新列表。
+      if (notification.method === 'thread/archived') removeFromThreadLists({ targetId, agent, threadId: notification.params.threadId })
+      if (notification.method === 'thread/unarchived') refreshThreadListsFor(targetId, agent, notification.params.threadId)
       if (notification.method === 'turn/completed' && notification.params?.threadId && notification.params.turn) {
         const chat = { targetId, agent, threadId: notification.params.threadId }
         const state = get()
@@ -853,22 +856,20 @@ export const useCodex = create<CodexState>((set, get) => {
     changingParentThreads.add(key)
     try {
       const fallback = action === 'archive' ? t('归档失败') : t('删除失败')
-      const native = action === 'delete' || agent === 'codex'
-      if (native || sides.some(([, side]) => side.threadId && !side.expired)) {
-        const ok = await withSession(agent, threadId, fallback, async (session) => {
-          for (const [sideKey] of sides) {
-            const side = get().sideChats[sideKey]
-            if (!side?.threadId || side.expired) continue
-            if (sideHasWork(side)) throw new Error(t('请先停止侧聊并处理审批或排队消息'))
-            await session.rpc.request('thread/unsubscribe', { threadId: side.threadId })
-            patchSide(sideKey, { expired: true, error: t('侧聊已结束，可重新开始。') })
-          }
-          if (threadHasWork(chat)) throw new Error(t('请先停止会话并处理审批或排队消息'))
-          if (native) await (action === 'archive' ? archiveThread : deleteThread)(session.rpc, threadId)
-          return true
-        })
-        if (!ok) return false
-      }
+      // Claude 与 pi 的归档也由目标机 server 记录（archiveStore），与 Codex 一样电脑和手机同步。
+      const ok = await withSession(agent, threadId, fallback, async (session) => {
+        for (const [sideKey] of sides) {
+          const side = get().sideChats[sideKey]
+          if (!side?.threadId || side.expired) continue
+          if (sideHasWork(side)) throw new Error(t('请先停止侧聊并处理审批或排队消息'))
+          await session.rpc.request('thread/unsubscribe', { threadId: side.threadId })
+          patchSide(sideKey, { expired: true, error: t('侧聊已结束，可重新开始。') })
+        }
+        if (threadHasWork(chat)) throw new Error(t('请先停止会话并处理审批或排队消息'))
+        await (action === 'archive' ? archiveThread : deleteThread)(session.rpc, threadId)
+        return true
+      })
+      if (!ok) return false
       for (const [sideKey, side] of sides) dropSide(sideKey, side)
       for (const [sideKey, side] of Object.entries(get().sideChats)) {
         if (side.forked && side.targetId === targetId && side.agent === agent && (side.parentThreadId === threadId || side.threadId === threadId)) {
@@ -877,10 +878,8 @@ export const useCodex = create<CodexState>((set, get) => {
       }
       if (action === 'archive') useThreadPrefs.getState().setArchived(targetId, agent, threadId, true)
       if (get().currentTargetId === targetId) leaveIfCurrent(threadId, agent)
-      if (native) {
-        refreshThreadListsFor(targetId, agent, threadId)
-        removeFromThreadLists(chat)
-      }
+      refreshThreadListsFor(targetId, agent, threadId)
+      removeFromThreadLists(chat)
       return true
     } finally {
       changingParentThreads.delete(key)
@@ -896,15 +895,35 @@ export const useCodex = create<CodexState>((set, get) => {
         return { threads: [], error }
       }
       try {
-        const result = await listThreads(session.rpc, cwd, undefined, archived && agent === 'codex' ? { archived: true } : undefined)
+        const result = await listThreads(session.rpc, cwd, undefined, archived ? { archived: true } : undefined)
         const current = get().sessions[session.key]
         const threads = current?.opened && current.openedConfig === session.openedConfig ? toThreadSummaries(result, agent) : []
+        if (!archived && agent !== 'codex') void migrateLocalArchives(targetId, session, threads)
         return { threads, error: null }
       } catch (err) {
         return { threads: [], error: t('{agent}：{detail}', { agent: agentLabel(agent), detail: friendlyError(err, t('加载会话列表失败')) }) }
       }
     }))
     return { threads: mergeThreadSummaries(lists.map(({ threads }) => threads)), error: lists.find(({ error }) => error)?.error ?? null }
+  }
+
+  /** 旧版只在本机记录的 Claude/pi 归档：补写到目标机，成功后清掉本地标记，手机端随之隐藏。 */
+  const migratingArchives = new Set<string>()
+  async function migrateLocalArchives(targetId: string, session: { rpc: Parameters<typeof archiveThread>[0] }, threads: readonly ThreadSummary[]) {
+    const prefs = useThreadPrefs.getState()
+    for (const thread of threads) {
+      const key = pendingSendKey({ targetId, agent: thread.agent, threadId: thread.id })
+      if (!prefs.byTarget[targetId]?.hidden[threadKey(thread.agent, thread.id)] || migratingArchives.has(key)) continue
+      migratingArchives.add(key)
+      try {
+        await archiveThread(session.rpc, thread.id)
+        useThreadPrefs.getState().clearHidden(targetId, threadKey(thread.agent, thread.id))
+      } catch {
+        // 留着本地标记，下次加载列表再试；列表仍按本地标记隐藏。
+      } finally {
+        migratingArchives.delete(key)
+      }
+    }
   }
 
   async function archiveInactiveLocalThreads(days: number, isCurrent: () => boolean) {
@@ -936,11 +955,9 @@ export const useCodex = create<CodexState>((set, get) => {
             threadHasWork(chat) || Object.values(state.sideChats).some((side) => pendingSendKey(parentAddress(side)) === key)) continue
           changingParentThreads.add(key)
           try {
-            if (agent === 'codex') {
-              await archiveThread(session.rpc, thread.id)
-              changedDirectories.add(thread.cwd)
-              removeFromThreadLists(chat)
-            }
+            await archiveThread(session.rpc, thread.id)
+            changedDirectories.add(thread.cwd)
+            removeFromThreadLists(chat)
             prefs.setArchived(targetId, agent, thread.id, true)
           } catch {
             // 单个会话归档失败时，下一轮检查会重新读取它的状态。
@@ -1305,12 +1322,10 @@ export const useCodex = create<CodexState>((set, get) => {
       if (changingParentThreads.has(key)) throw new Error(t('正在更新该会话，请稍后重试'))
       changingParentThreads.add(key)
       try {
-        if (agent === 'codex') {
-          const ready = await ensureOpen(targetId, agent)
-          const session = get().sessions[sessionKey(targetId, agent)]
-          if (!ready || !session) throw new Error(session?.openError ?? t('Codex 未就绪'))
-          await session.rpc.request('thread/unarchive', { threadId })
-        }
+        const ready = await ensureOpen(targetId, agent)
+        const session = get().sessions[sessionKey(targetId, agent)]
+        if (!ready || !session) throw new Error(session?.openError ?? t('{agent} 未就绪', { agent: agentLabel(agent) }))
+        await session.rpc.request('thread/unarchive', { threadId })
         useThreadPrefs.getState().setArchived(targetId, agent, threadId, false)
         refreshThreadListsFor(targetId, agent, threadId, cwd)
       } finally {

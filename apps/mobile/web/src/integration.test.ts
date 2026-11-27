@@ -516,23 +516,22 @@ describe('模拟网关全链路', () => {
     }))
     archiveRpc.mockClear()
     await vi.waitFor(async () => expect(await gateway.storageGet('archivedThreads')).toBeTruthy())
-    const storage = vi.spyOn(gateway, 'storageSet').mockImplementation((key, value) => key === 'archivedThreads'
-      ? Promise.reject(new Error('模拟本地归档失败')) : writeStorage(key, value))
-    await expect(state().archiveConversation('local', claudeConversation)).rejects.toThrow('模拟本地归档失败')
-    storage.mockRestore()
+    // Claude 也在目标机上归档：失败时停留在会话，成功后电脑端经同一 server 同步隐藏。
+    archiveRpc.mockRejectedValueOnce(new Error('模拟 Claude 归档失败'))
+    await expect(state().archiveConversation('local', claudeConversation)).rejects.toThrow('模拟 Claude 归档失败')
     expect(state()).toMatchObject({ page: 'chat', selectedThreadId: claudeThread })
     await state().archiveConversation('local', claudeConversation)
-    expect(archiveRpc).not.toHaveBeenCalledWith(expect.anything(), 'codex.send', expect.objectContaining({
-      msg: expect.objectContaining({ method: 'thread/archive' }),
+    expect(archiveRpc).toHaveBeenCalledWith(edited, 'codex.send', expect.objectContaining({
+      agent: 'claude', msg: expect.objectContaining({ method: 'thread/archive', params: { threadId: claudeThread } }),
     }))
     expect(state()).toMatchObject({ page: 'threads', selectedThreadId: null })
     await state().refreshThreads({ skipFailed: true })
     expect(state().threads.some((thread) => thread.id === codexThread.id || thread.id === claudeThread)).toBe(false)
     await vi.waitFor(async () => {
       const archives = JSON.parse((await gateway.storageGet('archivedThreads')) ?? '{}')
+      // 手机只缓存 Codex 的归档；Claude 的归档以目标机为准，不再本地记录。
       expect(archives).toEqual({
         [archivedThreadKey(edited.id, 'local', codexThread)]: true,
-        [archivedThreadKey(edited.id, 'local', claudeConversation)]: true,
       })
       const saved = JSON.parse((await gateway.storageGet('savedChats')) ?? '{}')
       expect(saved[edited.id]).toBeUndefined()

@@ -34,11 +34,11 @@ describe('applyThreadPrefs', () => {
   })
 })
 
-it('归档列表合并原生归档与旧版隐藏记录，并保留本地名称', () => {
-  const prefs = parseThreadPrefs('{"local":{"hidden":{"claude:old":true},"names":{"claude:old":"旧项目"}}}').local
+it('归档列表直接采用目标机返回的归档会话，并保留本地名称', () => {
+  const prefs = parseThreadPrefs('{"local":{"names":{"claude:old":"旧项目"}}}').local
   expect(archivedThreadSummaries([
-    thread('native', 3), thread('old', 2, 'claude'), thread('regular', 1, 'pi'),
-  ], prefs).map(({ title }) => title)).toEqual(['native', '旧项目'])
+    thread('native', 3), thread('old', 2, 'claude'), thread('pi-archived', 1, 'pi'),
+  ], prefs).map(({ title }) => title)).toEqual(['native', '旧项目', 'pi-archived'])
 })
 
 it('只归档有时间记录、未置顶、未恢复且已超过期限的空闲会话', () => {

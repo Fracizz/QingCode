@@ -28,6 +28,8 @@ type WorkspacePreferences = {
   fp: string
   threads: Record<string, ThreadPreference>
   projectOrders: Record<string, string[]>
+  /** 置顶项目的键（workspaceProjectKey），越靠前越晚置顶；旧数据没有此字段。 */
+  pinnedProjects?: string[]
 }
 
 export const threadPreferenceKey = (targetId: string, agent: AgentKind, threadId: string) => JSON.stringify([targetId, agent, threadId])
@@ -123,8 +125,20 @@ export function workspaceThreadOrder(groups: WorkspaceGroup[]): string[] {
   return groups.flatMap((group) => group.threads.map(workspaceThreadKey))
 }
 
+export function workspaceProjectKey(project: Pick<Project, 'targetId' | 'id'>): string {
+  return JSON.stringify([project.targetId, project.id])
+}
+
 export function workspaceGroupKey(group: WorkspaceGroup): string {
-  return JSON.stringify([group.project.targetId, group.project.id])
+  return workspaceProjectKey(group.project)
+}
+
+/** 置顶项目排在最前（按置顶列表顺序），其余保持原顺序。 */
+export function pinnedFirst<T>(items: readonly T[], pinned: readonly string[] | undefined, keyOf: (item: T) => string): T[] {
+  if (!pinned?.length) return [...items]
+  const rank = new Map(pinned.map((key, index) => [key, index]))
+  const top = items.filter((item) => rank.has(keyOf(item))).sort((a, b) => rank.get(keyOf(a))! - rank.get(keyOf(b))!)
+  return [...top, ...items.filter((item) => !rank.has(keyOf(item)))]
 }
 
 /**
@@ -171,7 +185,9 @@ function parsePreferences(raw: unknown): WorkspacePreferences | undefined {
   }))
   const projectOrders = Object.fromEntries(Object.entries(value.projectOrders ?? {}).flatMap(([key, order]) =>
     Array.isArray(order) ? [[key, [...new Set(order.filter((id) => typeof id === 'string'))]]] : []))
-  return { fp: value.fp, threads, projectOrders }
+  const pinnedProjects = Array.isArray(value.pinnedProjects)
+    ? [...new Set(value.pinnedProjects.filter((key) => typeof key === 'string'))] : []
+  return { fp: value.fp, threads, projectOrders, ...(pinnedProjects.length ? { pinnedProjects } : {}) }
 }
 
 type WorkspaceState = {
@@ -316,6 +332,17 @@ export function moveWorkspaceProject(desktopId: string, project: Project, rows: 
   ids[index] = neighbor.id
   ids[index + offset] = project.id
   changePreferences(desktopId, (current) => ({ ...current, projectOrders: { ...current.projectOrders, [project.targetId]: ids } }))
+}
+
+/** 置顶或取消置顶项目（仅此手机）；新置顶的项目排在已置顶项目之前。 */
+export function toggleProjectPin(desktopId: string, project: Pick<Project, 'targetId' | 'id'>): void {
+  const key = workspaceProjectKey(project)
+  changePreferences(desktopId, (current) => {
+    const pinned = current.pinnedProjects ?? []
+    const next = pinned.includes(key) ? pinned.filter((item) => item !== key) : [key, ...pinned]
+    const { pinnedProjects: _, ...rest } = current
+    return next.length ? { ...rest, pinnedProjects: next } : rest
+  })
 }
 
 /** 长按拖动后保存当前目标下的项目顺序（仅此手机）。 */
