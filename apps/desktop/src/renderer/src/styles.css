@@ -19,8 +19,10 @@
   --color-qn-outline-hover: #858585;
   --color-qn-composer: #262626;
   --color-qn-text: #e6e6e6;
-  /* 对话正文比界面文字再暗一档：大段阅读时纯亮白太刺眼，参考 Codex 的柔和灰。 */
-  --color-qn-prose: #d0d0d0;
+  /* 对话正文：原 #d0d0d0 在 #181818 上偏灰、发虚，提亮到接近界面文字，只比 qn-text 暗一点避免纯白刺眼。 */
+  --color-qn-prose: #e2e2e2;
+  /* 用户消息气泡：要和对话背景明显区分，比 elevated 再亮两档并配细描边。 */
+  --color-qn-bubble: #2e2e2e;
   --color-qn-muted: #a0a0a0;
   --color-qn-dim: #8a8a8a;
   --color-qn-brand: #4ecdb5;
