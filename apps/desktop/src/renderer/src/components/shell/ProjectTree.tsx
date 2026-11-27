@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent } from 'react'
-import { Copy, Ellipsis, FolderPlus, GripVertical, Pencil, Pin, PinOff, SquarePen, X } from 'lucide-react'
+import { Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, SquarePen, X } from 'lucide-react'
 import { copyText } from '../../lib/clipboard'
 import type { Project } from '../../../../shared/backendApi'
 import { sessionKey } from '../../lib/agents'
@@ -288,8 +288,8 @@ function ProjectRow({
         <span className="min-w-0 flex-1 truncate">{project.name}</span>
         {pinned && <Pin size={11} className="shrink-0 text-qn-dim" aria-label="已置顶" />}
         {sortProps && (
-          <span title="拖动排序，或按 Alt+↑ / Alt+↓ 移动" className="shrink-0 text-qn-dim opacity-0 group-focus-visible:opacity-100 group-hover:opacity-100">
-            <GripVertical size={13} aria-hidden />
+          <span title="拖动排序，或按 Alt+↑ / Alt+↓ 移动" className="flex h-7 w-5 shrink-0 items-center justify-center text-qn-muted opacity-0 group-focus-visible:opacity-100 group-hover:opacity-100">
+            <DragHandleIcon />
           </span>
         )}
       </button>
@@ -485,5 +485,19 @@ function ThreadList({ project, now, active, reveal, onActivate, onNewDraft }: {
         <div className="py-1 pl-(--qn-tree-title-start) text-[length:var(--qn-session-detail-font-size)] leading-tight text-qn-muted">会话列表不可用</div>
       )}
     </div>
+  )
+}
+
+/** 拖动握把：16px 网格上整数坐标的实心圆点，避免 lucide 描边圆点缩小后发虚。 */
+function DragHandleIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" shapeRendering="geometricPrecision" aria-hidden>
+      {[4, 8, 12].map((y) => (
+        <g key={y}>
+          <circle cx="6" cy={y} r="1.5" />
+          <circle cx="10" cy={y} r="1.5" />
+        </g>
+      ))}
+    </svg>
   )
 }
