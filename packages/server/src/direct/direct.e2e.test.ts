@@ -165,6 +165,12 @@ describe('daemon 直连', () => {
     expect(await good.wait((f) => f.t === 'res' && f.id === 1)).toMatchObject({ ok: true })
     good.send({ t: 'req', id: 2, method: 'server.shutdown' })
     expect(await good.wait((f) => f.t === 'res' && f.id === 2)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+    good.send({ t: 'req', id: 3, method: 'plugins.rgStatus' })
+    expect(await good.wait((f) => f.t === 'res' && f.id === 3)).toMatchObject({ ok: true, result: { source: expect.any(String) } })
+    for (const [id, method] of [[4, 'plugins.rgInstall'], [5, 'plugins.rgRemove']] as const) {
+      good.send({ t: 'req', id, method })
+      expect(await good.wait((f) => f.t === 'res' && f.id === id)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+    }
 
     const listed = runJson<{ grants: Array<{ id: string; name: string }> }>('direct', 'status')
     expect(listed.grants).toEqual([expect.objectContaining({ id: granted.grantId, name: 'laptop' })])

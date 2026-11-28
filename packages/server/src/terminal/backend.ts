@@ -45,3 +45,48 @@ export interface PtyBackendImpl {
 
 /** 按偏好挑选后端；无可用后端时抛 WorkspaceError('pty_unavailable')。 */
 export type PtyBackendResolver = (preference: TermBackendPreference) => Promise<PtyBackendImpl>
+
+/** 先于 manager 登记回调时缓存早到的数据与退出事件，避免丢首屏输出。 */
+export class PtyEvents {
+  private dataListener: ((chunk: Buffer) => void) | null = null
+  private exitListener: ((exit: PtyExit) => void) | null = null
+  private early: Buffer[] = []
+  private exitInfo: PtyExit | null = null
+  private exitDelivered = false
+
+  get exited(): boolean {
+    return this.exitInfo !== null
+  }
+
+  onData(listener: (chunk: Buffer) => void): void {
+    this.dataListener = listener
+    const early = this.early
+    this.early = []
+    for (const chunk of early) listener(chunk)
+  }
+
+  onExit(listener: (exit: PtyExit) => void): void {
+    this.exitListener = listener
+    this.deliverExit()
+  }
+
+  data(chunk: Buffer): void {
+    if (this.exitInfo) return
+    if (this.dataListener) this.dataListener(chunk)
+    else this.early.push(chunk)
+  }
+
+  exit(info: PtyExit): void {
+    if (this.exitInfo) return
+    this.exitInfo = info
+    this.deliverExit()
+  }
+
+  private deliverExit(): void {
+    if (!this.exitInfo || !this.exitListener || this.exitDelivered) return
+    // 早到的数据必须先于退出交付。
+    if (this.early.length > 0 && this.dataListener) this.onData(this.dataListener)
+    this.exitDelivered = true
+    this.exitListener(this.exitInfo)
+  }
+}

@@ -4,6 +4,7 @@ import {
   Bot,
   Info,
   Network,
+  Puzzle,
   SlidersHorizontal,
   Smartphone,
 } from 'lucide-react'
@@ -17,6 +18,7 @@ import { AboutSection } from './AboutSection'
 import { AgentSection } from './AgentSection'
 import { ConnectionSection } from './ConnectionSection'
 import { GeneralSection } from './GeneralSection'
+import { PluginsSection } from './PluginsSection'
 import { closeSettings, openSettings, useSettingsDialog } from './dialogState'
 import { SectionHeading } from './fields'
 import {
@@ -42,6 +44,8 @@ function SectionIcon({ id }: { id: SettingsSectionId }) {
       return <Bot size={15} />
     case 'connections':
       return <Network size={15} />
+    case 'plugins':
+      return <Puzzle size={15} />
     case 'mobile':
       return <Smartphone size={15} />
     case 'about':
@@ -94,6 +98,8 @@ export function SettingsPage({
         return <AgentSection visible={visible} />
       case 'connections':
         return <ConnectionSection onEditTarget={onEditTarget} onRemoveTarget={onRemoveTarget} />
+      case 'plugins':
+        return <PluginsSection />
       case 'mobile':
         return <MobileSettings />
       case 'about':

@@ -77,6 +77,33 @@ describe('retryDelay', () => {
 })
 
 describe('TargetManager', () => {
+  it('SSH 加速目标的插件写入使用临时 SSH 通道，保留现有直连链路', async () => {
+    const direct = Object.assign(new FakeLink(), { viaDirect: true as const })
+    const ssh = new FakeLink()
+    const createSsh = vi.fn(async (_context: SshLinkContext) => ssh)
+    const manager = new TargetManager({
+      userData: '', resourcesPath: '', electronPath: '', appVersion: 'test', emit: vi.fn(),
+      createDirect: async () => direct, createSsh,
+      loadSecret: async () => ({ directToken: 'tls-token' }),
+    })
+    const target = {
+      id: 'remote', kind: 'ssh', name: '远程', host: 'host', port: 22, username: 'user', auth: { kind: 'password' },
+      direct: { host: 'host', port: 47390, fingerprint: 'ab'.repeat(32), grantId: 'grant' },
+    } as const
+    try {
+      await manager.connect(target, { password: 'session-password' })
+      await expect(manager.manageRg(target.id, 'plugins.rgRemove')).resolves.toMatchObject({ method: 'plugins.rgRemove' })
+      expect(createSsh).toHaveBeenCalledOnce()
+      expect(createSsh.mock.calls[0]?.[0].credentials.password).toBe('session-password')
+      expect(ssh.closed).toBe(true)
+      expect(direct.closed).toBe(false)
+      expect(direct.requests).toEqual([])
+      expect(manager.getState(target.id)).toBe('ready')
+    } finally {
+      manager.shutdown()
+    }
+  })
+
   it('强制更新使用 SSH 和当前凭据，切到新 daemon 时从头回放', async () => {
     const direct = new FakeLink()
     const updated = new FakeLink()

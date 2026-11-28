@@ -9,7 +9,7 @@ ipcRenderer.on('backend-port', (event) => {
 const isSmoke = new URLSearchParams(window.location.search).get('smoke') === '1'
 
 contextBridge.exposeInMainWorld('qn', {
-  openFile: (kind?: 'sshKey' | 'legacyDb'): Promise<string | null> =>
+  openFile: (kind?: 'sshKey' | 'legacyDb' | 'plugin'): Promise<string | null> =>
     ipcRenderer.invoke('dialog:openFile', kind ?? 'sshKey'),
   downloadFile: (targetId: string, root: string, path: string, openAfterDownload = false): Promise<boolean> =>
     ipcRenderer.invoke('file:download', targetId, root, path, openAfterDownload),

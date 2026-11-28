@@ -40,6 +40,7 @@ import { terminalManager } from './terminal/index'
 import { UnreadStore } from './unreadStore'
 import { isScheduleClient, ScheduleRunner } from './schedule/runner'
 import { ScheduleService } from './schedule/service'
+import { RgPlugin } from './rgPlugin'
 
 export interface DaemonOptions {
   stateDir?: string
@@ -68,7 +69,10 @@ interface ClientSession {
 }
 
 // 管理方法和状态栏写入仅接受持有主 token 的 IPC 连接。
-const ADMIN_METHODS = new Set(['server.shutdown', 'direct.reload', 'direct.status', 'claude.statusline.publish'])
+const ADMIN_METHODS = new Set([
+  'server.shutdown', 'direct.reload', 'direct.status', 'claude.statusline.publish',
+  'plugins.rgInstall', 'plugins.rgRemove',
+])
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000
 const DEFAULT_IDLE_CHECK_MS = 5_000
@@ -76,6 +80,7 @@ const HELLO_TIMEOUT_MS = 10_000
 
 export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> {
   const paths = resolvePaths(options.stateDir)
+  const rgPlugin = new RgPlugin(paths.stateDir)
   ensureRunDir(paths)
   const logger = new Logger(paths.daemonLog)
   const token = readOrCreateToken(paths)
@@ -178,6 +183,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   const workspaceContext = (session: ClientSession): WorkspaceContext => {
     session.workspace ??= {
       clientId: session.id,
+      resolveRg: () => rgPlugin.executables(),
       emit(name, payload) {
         if (clients.has(session.id)) session.conn.send({ t: 'evt', name, payload: payload ?? null })
       },
@@ -207,6 +213,12 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
           return sendOk(session, id, { serverVersion: options.version, protocol: PROTOCOL_VERSION })
         case 'system.metrics':
           return sendOk(session, id, await readSystemMetrics())
+        case 'plugins.rgStatus':
+          return sendOk(session, id, await rgPlugin.status(true))
+        case 'plugins.rgInstall':
+          return sendOk(session, id, await rgPlugin.install(p?.info, p?.binary))
+        case 'plugins.rgRemove':
+          return sendOk(session, id, await rgPlugin.remove())
         case 'fs.home':
           return sendOk(session, id, fsHome())
         case 'fs.list': {

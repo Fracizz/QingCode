@@ -2,7 +2,9 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
+import * as client from '../client'
 import { useApp, type ViewerState } from '../store'
+import { clearToasts, useToasts } from '../toast'
 import { FileViewer } from './FileViewer'
 
 const content = '# 标题\n\n正文 **加粗**\n'
@@ -13,7 +15,10 @@ const viewer = (path: string, line: number | null = null): ViewerState => ({
 })
 
 afterEach(() => {
-  useApp.setState({ viewer: null })
+  useApp.setState({ viewer: null, projects: [], activeId: null, connections: [] })
+  clearToasts()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -52,6 +57,59 @@ it('带行号打开 Markdown 时默认源码，非 Markdown 文件没有切换�
     await act(() => useApp.setState({ viewer: viewer('/repo/a.ts') }))
     expect(host.querySelector('.qn-markdown-file')).toBeNull()
     expect(host.querySelector('button[aria-label="查看源码"]')).toBeNull()
+  } finally {
+    await act(() => root.unmount())
+  }
+})
+
+it('截断的二进制文件从预览启动完整下载，关闭预览后仍提示保存结果', async () => {
+  vi.useFakeTimers()
+  vi.stubGlobal('QnNative', { postMessage: vi.fn() })
+  const address = { host: 'pc.example', port: 38500, fp: 'a'.repeat(64), token: 'test-token' }
+  const project = { id: 'p', targetId: 't', name: 'repo', path: '/D:/Code/Repo', lastOpenedAt: 0 }
+  useApp.setState({
+    activeId: 'pc',
+    connections: [{ ...address, id: 'pc', name: 'PC', desktopName: 'PC', createdAt: 0 }],
+    projects: [project],
+  })
+  const path = 'dist/app.apk'
+  const size = 800_000
+  const job = { id: 'apk', path, name: 'app.apk', size, written: 0, state: 'running', auto: true }
+  const callDevice = vi.spyOn(client, 'callDevice').mockResolvedValueOnce(job)
+    .mockResolvedValueOnce({ ...job, state: 'done', written: size })
+  const state = viewer('d:\\code\\Repo\\dist\\app.apk')
+  const { host, root } = await mount({ ...state, file: { ...state.file!, content: '', binary: true, truncated: true, size, length: 0 } })
+  try {
+    expect(host.textContent).toContain('已截断')
+    const button = [...host.querySelectorAll('button')].find((item) => item.textContent === '下载')!
+    await act(() => button.click())
+    expect(callDevice).toHaveBeenCalledWith('download.start', {
+      ...address, projectId: 'p', targetId: 't', path, name: 'app.apk', size,
+    }, 300_000)
+
+    await act(() => useApp.getState().closeViewer())
+    await act(() => vi.advanceTimersByTimeAsync(1000))
+    expect(callDevice).toHaveBeenCalledWith('download.status', { id: 'apk' })
+    expect(useToasts.getState().items.map((item) => item.message)).toContain('已下载 app.apk，保存在 下载/QingCode')
+  } finally {
+    await act(() => root.unmount())
+  }
+})
+
+it('下载入口只匹配同一目标上的项目目录', async () => {
+  vi.stubGlobal('QnNative', { postMessage: vi.fn() })
+  useApp.setState({
+    activeId: 'pc',
+    projects: [
+      { id: 'p1', targetId: 't', name: 'repo', path: '/repo', lastOpenedAt: 0 },
+      { id: 'p2', targetId: 'other', name: 'repo2', path: '/repo2', lastOpenedAt: 0 },
+    ],
+  })
+  const { host, root } = await mount(viewer('/repo/releases/app.apk'))
+  try {
+    expect(host.textContent).toContain('下载')
+    await act(() => useApp.setState({ viewer: viewer('/repo2/app.apk') }))
+    expect(host.textContent).not.toContain('下载')
   } finally {
     await act(() => root.unmount())
   }

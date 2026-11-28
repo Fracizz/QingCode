@@ -317,6 +317,33 @@ export class TargetManager {
     }
   }
 
+  async manageRg(id: string, method: 'plugins.rgInstall' | 'plugins.rgRemove', params?: unknown): Promise<unknown> {
+    const session = this.sessions.get(id)
+    if (!session?.link) throw new RouterError('not_connected', '请先连接目标')
+    if (session.target.kind === 'direct') throw new RouterError('forbidden', '直连目标需要由主机管理员安装或移除插件')
+    if (session.target.kind !== 'ssh' || !session.link.viaDirect) return this.request(id, method, params)
+    const generation = session.generation
+    // 日常会话可能走 TLS 加速。管理写入经临时 SSH 通道执行，现有会话继续使用原通道。
+    const link = await this.createSsh({
+      target: session.target,
+      credentials: session.credentials,
+      userData: this.options.userData,
+      resourcesPath: this.options.resourcesPath,
+      appVersion: this.options.appVersion,
+      gate: this.gate,
+      hooks: { onState() {}, onEvent() {}, onCodexRecv() {}, onClose() {} },
+    })
+    try {
+      if (session.generation !== generation) throw new RouterError('not_connected', '请先连接目标')
+      return await link.request(method, params)
+    } catch (error) {
+      if (error instanceof ServerClientError) throw new RouterError(error.code, error.message)
+      throw error
+    } finally {
+      link.close()
+    }
+  }
+
   codexSend(id: string, msg: unknown, agent: AgentKind = 'codex'): void {
     if (!isRecord(msg)) throw new RouterError('invalid_params', 'codex.send 需要 JSON-RPC 对象')
     const session = this.sessions.get(id)

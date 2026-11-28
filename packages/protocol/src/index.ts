@@ -99,3 +99,6 @@ export type {
   ScheduleCadence, ScheduleChangedEvent, ScheduleFrequency, ScheduleInput, ScheduleMethods,
   ScheduleRun, ScheduleRunReason, ScheduleRunStatus, ScheduleRuntime, ScheduleSummary,
 } from './schedule'
+
+export { MAX_RG_BINARY_BYTES, RG_PLUGIN_PLATFORMS, isRgPluginPlatform, isRgPluginVersion, parseRgPluginInfo } from './plugins'
+export type { PluginMethods, RgPluginInfo, RgPluginPlatform, RgPluginStatus } from './plugins'

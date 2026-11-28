@@ -4,5 +4,6 @@ import components from './components.en'
 import core from './core.en'
 import features from './features.en'
 import schedule from './schedule.en'
+import plugins from './plugins.en'
 
-initLocale([core, components, features, schedule])
+initLocale([core, components, features, schedule, plugins])

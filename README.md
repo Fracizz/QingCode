@@ -25,3 +25,5 @@ cmd /d /c 'set QINGCODE_PACKAGE_BASE_VERSION=0.0.2&& pnpm package --publish neve
 ```
 
 GitHub 发布配置读取当前工作树的 `origin`，Beta 使用预发行，标签以 `next-v` 开头。
+
+`rg` 离线插件包可随同版本作为独立附件发布。制作命令与平台清单见[离线工具插件](docs/tasks/T42-offline-tool-plugins.md#制作发布附件)。

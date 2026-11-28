@@ -521,9 +521,10 @@ export function FileExplorer({
             tabIndex={0}
             role="tree"
             aria-label={t('文件树')}
-            onScroll={(event) =>
-              setViewport((value) => ({ ...value, top: event.currentTarget.scrollTop }))
-            }
+            onScroll={(event) => {
+              const top = event.currentTarget.scrollTop
+              setViewport((value) => ({ ...value, top }))
+            }}
             onKeyDown={onTreeKeyDown}
             onContextMenuCapture={onContextMenuCapture}
             className="qn-scroll relative min-h-0 flex-1 overflow-y-auto outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover"

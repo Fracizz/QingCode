@@ -1,6 +1,6 @@
 import { Check, ChevronDown, Zap } from 'lucide-react'
 import { t, translateMessage, withoutHiddenModels } from '@qn/codex-client'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { sessionKey } from '../agents'
 import { effortHint, effortLabel, pickModel, prefsFor, resolveSelection, triggerLabel, visibleModels, type ModelPrefs } from '../models'
 import { useApp } from '../store'
@@ -35,12 +35,32 @@ export function ModelPicker({ targetId, agent, open: controlledOpen, onOpenChang
   const open = controlledOpen ?? ownOpen
   const setOpen = onOpenChange ?? setOwnOpen
   const [query, setQuery] = useState('')
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [hasMoreBelow, setHasMoreBelow] = useState(false)
   // 电脑端设置的隐藏名单，手机只读。
   const hidden = useApp((s) => s.agentSettings?.hiddenModels?.[agent])
 
   useEffect(() => {
     if (opened) void load(targetId, agent)
   }, [opened, load, targetId, agent])
+
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current
+    const content = contentRef.current
+    if (!open || !scroll || !content) return
+    const update = () => setHasMoreBelow(scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop > 1)
+    update()
+    // 筛选模型、加载额度和窗口高度变化都可能改变剩余可滚动距离。
+    const observer = new ResizeObserver(update)
+    observer.observe(scroll)
+    observer.observe(content)
+    scroll.addEventListener('scroll', update, { passive: true })
+    return () => {
+      observer.disconnect()
+      scroll.removeEventListener('scroll', update)
+    }
+  }, [open, opened])
 
   const models = list?.models ?? []
   const selection = useMemo(() => resolveSelection(models, prefs), [models, prefs])
@@ -77,82 +97,89 @@ export function ModelPicker({ targetId, agent, open: controlledOpen, onOpenChang
       </Button>
       {open && (
         <Dialog title={t('模型与推理强度')} onClose={close}>
-          {list?.error && <Note tone="error" message={list.error} actionLabel={t('重试')} onAction={() => void load(targetId, agent, true)} />}
-          {searchable && (
-            <div className="mb-2"><WorkspaceSearch label={t('搜索模型')} query={query} onChange={setQuery} /></div>
-          )}
-          {list?.loading && models.length === 0 && <Loading text={t('正在加载模型…')} />}
-          {!list?.loading && !list?.error && options.length === 0 && (
-            <p className="py-3 text-center text-sm text-qn-muted">{query.trim() ? t('没有匹配的模型') : t('暂无可选模型')}</p>
-          )}
-          {/* 紧凑单行列表：只显示模型名。描述由关键词粗略翻译，常与模型不符，手机上不再展示。 */}
-          {options.length > 0 && (
-            <div className="mb-3 qn-surface divide-y divide-qn-divider overflow-hidden" role="listbox" aria-label={t('模型')}>
-              {options.map((model) => {
-                const selected = model.model === selection.model?.model
-                return (
-                  <button
-                    key={model.id}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    className={`qn-row px-3 py-2 active:bg-qn-raised ${selected ? 'bg-qn-accent/10' : ''}`}
-                    onClick={() => setPrefs(targetId, agent, pickModel(models, prefs, model.model))}
-                  >
-                    <span className={`min-w-0 flex-1 truncate text-[15px] ${selected ? 'font-medium' : ''}`}>{translateMessage(model.displayName)}</span>
-                    {selected && <Check size={16} className="shrink-0 text-qn-accent" aria-hidden />}
-                  </button>
-                )
-              })}
-            </div>
-          )}
-
-          <AgentQuota targetId={targetId} agent={agent} />
-
-          {/* 推理强度与完成按钮吸底：模型再多也不用滚到底才能调强度。 */}
-          <div className="qn-sheet-footer">
-            {selection.model && selection.model.efforts.length > 0 && (
-              <div className="mb-3">
-                <div className="qn-label">{t('推理强度')}</div>
-                <div className="qn-segment" role="radiogroup" aria-label={t('推理强度')}>
-                  {selection.model.efforts.map((effort) => {
-                    const active = effort.value === selection.effort
+          {/* 正文的滑动交给浏览器，避免在顶部向下滑时被弹层收起手势接管。 */}
+          <div ref={scrollRef} className="qn-model-sheet-body" role="region" aria-label={t('模型与推理强度')} tabIndex={0}
+            onTouchStart={(event) => event.stopPropagation()} onTouchEnd={(event) => event.stopPropagation()}>
+            <div ref={contentRef}>
+              {list?.error && <Note tone="error" message={list.error} actionLabel={t('重试')} onAction={() => void load(targetId, agent, true)} />}
+              {searchable && (
+                <div className="mb-2"><WorkspaceSearch label={t('搜索模型')} query={query} onChange={setQuery} /></div>
+              )}
+              {list?.loading && models.length === 0 && <Loading text={t('正在加载模型…')} />}
+              {!list?.loading && !list?.error && options.length === 0 && (
+                <p className="py-3 text-center text-sm text-qn-muted">{query.trim() ? t('没有匹配的模型') : t('暂无可选模型')}</p>
+              )}
+              {/* 紧凑单行列表：只显示模型名。描述由关键词粗略翻译，常与模型不符，手机上不再展示。 */}
+              {options.length > 0 && (
+                <div className="mb-3 qn-surface divide-y divide-qn-divider overflow-hidden" role="listbox" aria-label={t('模型')}>
+                  {options.map((model) => {
+                    const selected = model.model === selection.model?.model
                     return (
                       <button
-                        key={effort.value}
+                        key={model.id}
                         type="button"
-                        role="radio"
-                        aria-checked={active}
-                        onClick={() => setPrefs(targetId, agent, { ...prefs, effort: effort.value })}
+                        role="option"
+                        aria-selected={selected}
+                        className={`qn-row px-3 py-2 active:bg-qn-raised ${selected ? 'bg-qn-accent/10' : ''}`}
+                        onClick={() => setPrefs(targetId, agent, pickModel(models, prefs, model.model))}
                       >
-                        {effortLabel(effort.value)}
+                        <span className={`min-w-0 flex-1 truncate text-[15px] ${selected ? 'font-medium' : ''}`}>{translateMessage(model.displayName)}</span>
+                        {selected && <Check size={16} className="shrink-0 text-qn-accent" aria-hidden />}
                       </button>
                     )
                   })}
                 </div>
-                {selection.effort && effortHint(selection.effort) && (
-                  <p className="qn-hint">{effortHint(selection.effort)}</p>
-                )}
-              </div>
-            )}
+              )}
 
-            {showFast && (
-              <div className="mb-3">
-                <div className="qn-label">{t('速度')}</div>
-                <div className="qn-segment" role="radiogroup" aria-label={t('速度')}>
-                  <button type="button" role="radio" aria-checked={!selection.fast}
-                    onClick={() => setPrefs(targetId, agent, { ...prefs, fast: false })}>
-                    {t('标准')}
-                  </button>
-                  <button type="button" role="radio" aria-checked={selection.fast}
-                    onClick={() => setPrefs(targetId, agent, { ...prefs, fast: true })}>
-                    <Zap size={14} className="text-qn-warn" aria-hidden /> {t('快速')}
-                  </button>
+              <AgentQuota targetId={targetId} agent={agent} />
+
+              {selection.model && selection.model.efforts.length > 0 && (
+                <div className="mb-3">
+                  <div className="qn-label">{t('推理强度')}</div>
+                  <div className="qn-segment" role="radiogroup" aria-label={t('推理强度')}>
+                    {selection.model.efforts.map((effort) => {
+                      const active = effort.value === selection.effort
+                      return (
+                        <button
+                          key={effort.value}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          onClick={() => setPrefs(targetId, agent, { ...prefs, effort: effort.value })}
+                        >
+                          {effortLabel(effort.value)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {selection.effort && effortHint(selection.effort) && (
+                    <p className="qn-hint">{effortHint(selection.effort)}</p>
+                  )}
                 </div>
-                <p className="qn-hint">{t('快速档响应更快，额度消耗更多')}</p>
-              </div>
-            )}
+              )}
 
+              {showFast && (
+                <div className="mb-3">
+                  <div className="qn-label">{t('速度')}</div>
+                  <div className="qn-segment" role="radiogroup" aria-label={t('速度')}>
+                    <button type="button" role="radio" aria-checked={!selection.fast}
+                      onClick={() => setPrefs(targetId, agent, { ...prefs, fast: false })}>
+                      {t('标准')}
+                    </button>
+                    <button type="button" role="radio" aria-checked={selection.fast}
+                      onClick={() => setPrefs(targetId, agent, { ...prefs, fast: true })}>
+                      <Zap size={14} className="text-qn-warn" aria-hidden /> {t('快速')}
+                    </button>
+                  </div>
+                  <p className="qn-hint">{t('快速档响应更快，额度消耗更多')}</p>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="qn-model-sheet-footer">
+            <p className="qn-model-scroll-hint" aria-hidden={!hasMoreBelow}>
+              {t('滑动查看更多')} <ChevronDown size={14} aria-hidden />
+            </p>
             <Button variant="primary" className="w-full" onClick={close}>
               {t('完成')}
             </Button>

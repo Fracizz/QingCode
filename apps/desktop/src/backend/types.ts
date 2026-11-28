@@ -13,6 +13,7 @@ export type TargetCredentials = {
 }
 
 export interface TargetLink {
+  viaDirect?: true
   /** 连接的是哪一个 daemon，供重连时判断事件序号是否仍有效。 */
   server?: { pid: number; version: string }
   /** 连接可用但需要提醒用户的情况（如旧版 server 未能替换），就绪时随状态展示。 */

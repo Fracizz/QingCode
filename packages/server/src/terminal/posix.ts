@@ -3,7 +3,7 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import os from 'node:os'
 import type { Socket } from 'node:net'
 import type { TermBackendPreference } from './types'
-import type { PtyBackendImpl, PtyBackendResolver, PtyExit, PtyProcess, PtySpawnOptions } from './backend'
+import { PtyEvents, type PtyBackendImpl, type PtyBackendResolver, type PtyExit, type PtyProcess, type PtySpawnOptions } from './backend'
 import {
   ControlLineDecoder,
   chooseBackend,
@@ -74,51 +74,6 @@ export function resetCapabilitiesCache(): void {
   cachedCaps = null
 }
 
-/** 先于 manager 登记回调时缓存早到的数据与退出事件，避免丢首屏输出。 */
-class Emitter {
-  private dataListener: ((chunk: Buffer) => void) | null = null
-  private exitListener: ((exit: PtyExit) => void) | null = null
-  private early: Buffer[] = []
-  private exitInfo: PtyExit | null = null
-  private exitDelivered = false
-
-  get exited(): boolean {
-    return this.exitInfo !== null
-  }
-
-  onData(listener: (chunk: Buffer) => void): void {
-    this.dataListener = listener
-    const early = this.early
-    this.early = []
-    for (const chunk of early) listener(chunk)
-  }
-
-  onExit(listener: (exit: PtyExit) => void): void {
-    this.exitListener = listener
-    this.deliverExit()
-  }
-
-  data(chunk: Buffer): void {
-    if (this.exitInfo) return
-    if (this.dataListener) this.dataListener(chunk)
-    else this.early.push(chunk)
-  }
-
-  exit(info: PtyExit): void {
-    if (this.exitInfo) return
-    this.exitInfo = info
-    this.deliverExit()
-  }
-
-  private deliverExit(): void {
-    if (!this.exitInfo || !this.exitListener || this.exitDelivered) return
-    // 早到的数据必须先于退出交付。
-    if (this.early.length > 0 && this.dataListener) this.onData(this.dataListener)
-    this.exitDelivered = true
-    this.exitListener(this.exitInfo)
-  }
-}
-
 function signalName(value: unknown): string | null {
   return normalizeSignal(value, os.constants.signals as unknown as Record<string, number>)
 }
@@ -159,7 +114,7 @@ export const pythonBackend: PtyBackendImpl = {
 
 function wirePython(child: ChildProcess): Promise<PtyProcess> {
   const control = (child.stdio[3] ?? null) as Socket | null
-  const emitter = new Emitter()
+  const emitter = new PtyEvents()
   const decoder = new ControlLineDecoder()
   let stderr = ''
   let ctrlExit: PtyExit | null = null
@@ -282,7 +237,7 @@ export const scriptBackend: PtyBackendImpl = {
 }
 
 function wireScript(child: ChildProcess): Promise<PtyProcess> {
-  const emitter = new Emitter()
+  const emitter = new PtyEvents()
   let killTimer: ReturnType<typeof setTimeout> | null = null
   child.stdin?.on('error', () => {})
   child.stdout?.on('data', (chunk: Buffer) => emitter.data(chunk))
@@ -331,7 +286,7 @@ function wireScript(child: ChildProcess): Promise<PtyProcess> {
   })
 }
 
-/** POSIX 探测 python3 → script；Windows 按需加载本机 Electron 的预编译模块。 */
+/** POSIX 探测 python3 → script；Windows 使用 ConPTY。 */
 export function createDefaultResolver(
   probe: () => Promise<Capabilities> = cachedCapabilities,
 ): PtyBackendResolver {

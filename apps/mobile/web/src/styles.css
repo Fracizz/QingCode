@@ -30,6 +30,8 @@
   --color-qn-outline-hover: #858585;
   /* 对话输入框：略带冷调的石板灰，与纯中性页面底拉开质感；扁平无投影，层级靠外框表达。 */
   --color-qn-composer: #212226;
+  --color-qn-composer-stop: color-mix(in srgb, var(--color-qn-accent) 32%, var(--color-qn-composer));
+  --color-qn-composer-stop-pressed: color-mix(in srgb, var(--color-qn-text) 3%, var(--color-qn-composer-stop));
   /* 对话输入框只压在页面底色上，外框按页面底色取 3:1 下限即可（#666a71 为 3.27:1），比通用输入外框柔和一档。 */
   --color-qn-composer-outline: #666a71;
   --color-qn-composer-focus: #8a8f98;
@@ -147,6 +149,7 @@
   --color-qn-outline: #777777;
   --color-qn-outline-hover: #555555;
   --color-qn-composer: #ffffff;
+  --color-qn-composer-stop: color-mix(in srgb, var(--color-qn-accent) 46%, var(--color-qn-composer));
   --color-qn-composer-outline: #8f8f8f;
   --color-qn-composer-focus: #555555;
   --color-qn-text: #1a1a1a;
@@ -2270,20 +2273,19 @@ input[type="radio"] {
   opacity: 1;
 }
 
-/* 停止键与发送键同色同形，只换成圆角方块图标：同一位置始终是“主操作”，不用警示红打扰阅读。 */
-.qn-stop-button.qn-button-danger {
-  border-color: transparent;
-  background: var(--color-qn-accent);
-  background-clip: content-box;
-  color: var(--color-qn-primary-text);
-  box-shadow: none;
+/* 用强调色与输入框底色混合，让停止键和发送键在同一位置也能区分。 */
+.qn-stop-button {
+  background-color: var(--color-qn-composer-stop);
+  color: var(--color-qn-text);
 }
+
+.qn-stop-button:enabled:active { background-color: var(--color-qn-composer-stop-pressed); }
+.qn-stop-button[aria-busy="true"] { opacity: 1; }
+
 .qn-send-button,
 .qn-stop-button { transition: transform var(--qn-motion-short) ease, background-color var(--qn-motion-short) ease; }
 .qn-send-button:not(:disabled):active,
 .qn-stop-button:not(:disabled):active { transform: scale(0.94); }
-
-.qn-stop-button svg { border-radius: 2.5px; }
 
 .qn-image-thumbnail {
   display: inline-flex;
@@ -2382,16 +2384,48 @@ input[type="radio"] {
   margin-inline: auto;
 }
 
-/* 弹层吸底区：面板底部留白交给吸底区自己承担，否则下方会露出滚动内容。 */
-.qn-dialog[data-placement] .qn-dialog-panel:has(> .qn-sheet-footer) { padding-bottom: 0; }
-
-.qn-sheet-footer {
-  position: sticky;
-  bottom: 0;
-  border-top: 1px solid var(--color-qn-border);
-  background: var(--color-qn-panel);
-  padding: 12px 0 max(16px, env(safe-area-inset-bottom));
+/* 模型弹层的正文独立滚动，页脚不覆盖额度卡片。 */
+.qn-dialog[data-placement="bottom"] > .qn-dialog-panel:has(> .qn-model-sheet-body) {
+  display: flex;
+  flex-direction: column;
+  overflow: clip;
+  padding-bottom: 0;
 }
+
+.qn-dialog-panel:has(> .qn-model-sheet-body)::before { flex-shrink: 0; }
+
+.qn-model-sheet-body {
+  min-height: 0;
+  /* 将滚动条留在内容右侧，避免 WebView 的悬浮滚动条盖住按钮和数字。 */
+  margin-inline-end: -8px;
+  padding-inline-end: 8px;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-qn-outline) transparent;
+}
+
+.qn-model-sheet-body:focus-visible { outline-offset: -2px; }
+
+.qn-model-sheet-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-qn-border);
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.qn-model-scroll-hint {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--color-qn-accent);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* 保留提示行的高度，滚到底时不会因提示消失而改变滚动位置。 */
+.qn-model-scroll-hint[aria-hidden="true"] { visibility: hidden; }
 
 /* 面板顶部被操作对象的摘要：浅底圆角块与下方动作区分开，最多三行。 */
 .qn-sheet-quote {

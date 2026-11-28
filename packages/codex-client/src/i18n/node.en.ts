@@ -244,6 +244,8 @@ export default {
 
   // 桌面主进程（原生对话框、托盘与下载）
   '选择旧版 QingCode 数据库': 'Select the legacy QingCode database',
+  '选择离线插件包': 'Select an offline plugin package',
+  'QingCode 插件包': 'QingCode plugin packages',
   'SQLite 数据库': 'SQLite database',
   '选择 SSH 私钥文件': 'Select an SSH private key file',
   '私钥文件': 'Private key files',
@@ -494,6 +496,10 @@ export default {
   '无法加载 Windows ConPTY，请确认预编译模块和 Electron 版本相容':
     'Cannot load Windows ConPTY. Make sure the prebuilt module is compatible with the Electron version',
   '无法启动 Windows ConPTY 终端': 'Cannot start the Windows ConPTY terminal',
+  'Windows 终端需要 ConPTY 后端': 'Windows terminals require the ConPTY backend',
+  '无法使用 Windows ConPTY，请确认目标系统支持 ConPTY，且 Windows PowerShell 可运行':
+    'Cannot use Windows ConPTY. Make sure the target supports ConPTY and can run Windows PowerShell',
+  'Windows ConPTY 启动超时': 'Windows ConPTY startup timed out',
 
   // Agent 探测
   '执行 --version 超时': 'Running --version timed out',

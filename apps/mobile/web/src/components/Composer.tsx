@@ -3,7 +3,7 @@ import {
   insertImagePlaceholders, insertSkillToken, isSlashDraft, matchingChatCommands, removePlaceholder, runningSendMode, splitSkillTokens, t,
   takeSkillTokens, translateMessage, uniqueImageName, type ChatCommandId, type SlashCommandView, type UserInput,
 } from '@qn/codex-client'
-import { ArrowUp, ChevronDown, ChevronUp, FileText, Image, ListTodo, Square, Wand2, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, FileText, Image, ListTodo, Wand2, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
 import { attachmentBytes, IMAGE_BYTES, insertFileMention, isDraftImage, MAX_IMAGES, mentionAt, type DraftImage } from '../composerLogic'
@@ -517,9 +517,9 @@ export function Composer({
             </Button>
             {/* 停止与发送共用一个位置（参考 Orca 手机版）：没有可发送内容时是停止键，一输入就换成发送键（排队）。 */}
             {running && !canSend && !sending && (
-              <Button variant="danger" className="qn-stop-button" aria-label={interrupting ? t('正在中断') : t('停止运行')}
+              <Button variant="ghost" className="qn-stop-button" aria-label={interrupting ? t('正在中断') : t('停止运行')}
                 aria-busy={interrupting} disabled={sending || interrupting} onClick={onInterrupt}>
-                {interrupting ? <LoadingIcon size={14} /> : <Square size={11} fill="currentColor" aria-hidden />}
+                {interrupting ? <LoadingIcon size={14} /> : <span className="size-[14px] rounded-[3px] bg-current" aria-hidden />}
               </Button>
             )}
             {/* 长按发送键可选「打断后发送」（停止本轮后发送），输入后仍能中断当前轮。 */}

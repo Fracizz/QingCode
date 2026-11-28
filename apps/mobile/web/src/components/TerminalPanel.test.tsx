@@ -69,3 +69,33 @@ it('打开项目终端时新建并选中一个会话，重连后接回同一个�
     vi.unstubAllGlobals()
   }
 })
+
+it('新建失败后点重试，会再次请求新建终端', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const initial = useApp.getState()
+  const project = { id: 'project', targetId: 'windows', path: 'C:/work', name: 'Work', lastOpenedAt: 1 }
+  const request = vi.mocked(projectRpc).mockImplementation(async (_project, method) => {
+    if (method === 'mobile.term.list') return { terminals: [] }
+    throw new Error('Windows ConPTY 启动超时')
+  })
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  try {
+    await act(() => {
+      useApp.setState({ activeId: 'desktop', eventsConnected: true })
+      root.render(<TerminalPanel project={project} />)
+    })
+    expect(host.textContent).toContain('Windows ConPTY 启动超时')
+    const retry = Array.from(host.querySelectorAll('button')).find((button) => button.textContent === '重试')
+    expect(retry).toBeDefined()
+    await act(() => retry?.click())
+    expect(request.mock.calls.map(([, method]) => method)).toEqual([
+      'mobile.term.list', 'mobile.term.open', 'mobile.term.open',
+    ])
+  } finally {
+    await act(() => root.unmount())
+    useApp.setState(initial, true)
+    request.mockReset()
+    vi.unstubAllGlobals()
+  }
+})

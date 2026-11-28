@@ -64,7 +64,7 @@ if (process.platform === 'win32') {
     addonEntry = createRequire(entry).resolve('@lydell/node-pty-win32-x64')
   } catch (err) {
     if (err.code !== 'MODULE_NOT_FOUND') throw err
-    console.warn('Windows ConPTY 资源缺失：需要 @lydell/node-pty 和对应的 win32-x64 预编译包')
+    console.log('未找到 Windows ConPTY 预编译模块，运行时将使用 Windows PowerShell')
   }
   if (addonEntry) {
     // Electron 的 extraResources 已将整个 server 目录复制到 ASAR 外。

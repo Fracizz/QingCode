@@ -8,6 +8,7 @@ import {
   type Target,
 } from '../shared/backendApi'
 import { backendConfig } from './config'
+import { registerPluginMethods } from './registerPlugins'
 import { redactToken } from './remoteCommands'
 import { RouterError, type BackendRouter } from './router'
 import { validateTargetInput } from './targetInput'
@@ -69,6 +70,7 @@ export function registerTargetMethods(router: BackendRouter): void {
     ...(process.env['QN_AUTO_ACCEPT_HOST_KEY'] === '1' ? { autoAcceptHostKey: true } : {}),
   })
   const connecting = new Map<string, symbol>()
+  registerPluginMethods(router, manager, backendConfig.userData)
 
   router.register('target.connect', async (params) => {
     const id = requireId(params)
@@ -211,6 +213,9 @@ export function registerTargetMethods(router: BackendRouter): void {
       throw new RouterError('invalid_params', 'server.req 参数无效')
     }
     const { targetId, method, params: args } = params
+    if (method === 'plugins.rgInstall' || method === 'plugins.rgRemove') {
+      throw new RouterError('forbidden', '请在插件管理中安装或移除插件')
+    }
     const forward = (value: unknown) => manager.request(targetId, method, value)
     if (method === 'schedule.upsert' || method === 'schedule.runNow' ||
       (method === 'schedule.setEnabled' && isRecord(args) && args.enabled === true)) {

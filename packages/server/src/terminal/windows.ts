@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { PtyBackendImpl, PtyExit, PtyProcess, PtySpawnOptions } from './backend'
 import { termError } from './logic'
 import type { TermBackendPreference } from './types'
+import { windowsSystemPty } from './windowsSystemPty'
 
 type NativePty = {
   readonly pid: number
@@ -21,11 +22,11 @@ let cachedBackend: PtyBackendImpl | undefined
 
 export function resolveWindowsPty(preference: TermBackendPreference): PtyBackendImpl {
   if (preference !== 'auto' && preference !== 'conpty') {
-    throw termError('pty_unavailable', 'Windows 本机终端需要 ConPTY 后端')
+    throw termError('pty_unavailable', 'Windows 终端需要 ConPTY 后端')
   }
   const serverPath = process.argv[1]
   if (process.arch !== 'x64' || process.env.ELECTRON_RUN_AS_NODE !== '1' || !serverPath) {
-    throw termError('pty_unavailable', 'ConPTY 仅在 Windows x64 桌面端的本机目标可用')
+    return windowsSystemPty
   }
   if (cachedBackend) return cachedBackend
   try {
@@ -36,7 +37,7 @@ export function resolveWindowsPty(preference: TermBackendPreference): PtyBackend
     cachedBackend = createConPtyBackend(addon)
     return cachedBackend
   } catch {
-    throw termError('pty_unavailable', '无法加载 Windows ConPTY，请确认预编译模块和 Electron 版本相容')
+    return windowsSystemPty
   }
 }
 

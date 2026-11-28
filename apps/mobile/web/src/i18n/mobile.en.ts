@@ -656,6 +656,7 @@ export default {
   '正在加载模型…': 'Loading models…',
   '没有匹配的模型': 'No matching models',
   '暂无可选模型': 'No models available',
+  '滑动查看更多': 'Swipe to see more',
   '推理强度': 'Reasoning effort',
   '速度': 'Speed',
   '标准': 'Standard',

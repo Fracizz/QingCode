@@ -25,6 +25,8 @@
   /* 对话输入框：参考 Codex，底色比页面亮一档、外框取 3:1 下限（#181818 上 3.19），不再显得发亮。 */
   --color-qn-composer: #2a2a2a;
   --color-qn-composer-control: #3e3e42;
+  --color-qn-composer-stop: color-mix(in srgb, var(--color-qn-accent) 50%, var(--color-qn-composer));
+  --color-qn-composer-stop-hover: color-mix(in srgb, var(--color-qn-text) 4%, var(--color-qn-composer-stop));
   --color-qn-composer-outline: #686868;
   --color-qn-text: #e6e6e6;
   /* 对话正文：原 #d0d0d0 在 #181818 上偏灰、发虚，提亮到接近界面文字，只比 qn-text 暗一点避免纯白刺眼。 */

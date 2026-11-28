@@ -2,9 +2,9 @@ import { getLocale, t } from '@qn/codex-client'
 import { Archive, ArrowUp, Check, ChevronRight, Download, Ellipsis, Eye, EyeOff, FileText, Folder, Pin, PinOff, RotateCw, Terminal, X, type LucideIcon } from 'lucide-react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { callDevice } from '../client'
-import { watchDownload } from '../downloads'
+import { startProjectDownload, watchDownload } from '../downloads'
 import { getWindowNativePort, NativeRequestError } from '../native'
-import { folderCrumbs, formatFileTime, parentFolder, projectConnection, projectRpc, type DeviceDownload, type ProjectFile, type ProjectFiles } from '../projectApi'
+import { folderCrumbs, formatFileTime, parentFolder, projectRpc, type DeviceDownload, type ProjectFile, type ProjectFiles } from '../projectApi'
 import { friendlyError } from '../state'
 import { useApp } from '../store'
 import type { Project } from '../types'
@@ -224,24 +224,10 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
 
   async function download(file: ProjectFile) {
     if (busy) return
-    const connection = projectConnection(desktopId)
-    if (!connection) {
-      toast(t('请先连接电脑'), { tone: 'error' })
-      return
-    }
     setStarting(file.path)
     try {
-      // 原生前台服务直接经网关拉取分块，应用切到后台或关闭此页面后继续下载。
-      const started = await callDevice<DeviceDownload | null>('download.start', {
-        host: connection.host, port: connection.port, fp: connection.fp, token: connection.token,
-        projectId: project.id, targetId: project.targetId, path: file.path, name: file.name, size: file.size,
-      }, 300_000)
-      if (started) {
-        setJob(started)
-        // 不阻塞：可以继续浏览、关掉此页或切到后台，完成后由 watchDownload 提示。
-        watchDownload(started.id)
-        toast(t('已开始后台下载，完成后会提醒你'))
-      }
+      const started = await startProjectDownload(desktopId, project, file)
+      if (started) setJob(started)
     } catch (error) {
       toast(friendlyError(error, t('下载失败')), { tone: 'error' })
     } finally {

@@ -257,6 +257,8 @@ function registerIpc(): void {
     const preset =
       kind === 'legacyDb'
         ? { title: t('选择旧版 QingCode 数据库'), filters: [{ name: t('SQLite 数据库'), extensions: ['db'] }] }
+        : kind === 'plugin'
+          ? { title: t('选择离线插件包'), filters: [{ name: t('QingCode 插件包'), extensions: ['qnplugin'] }] }
         : { title: t('选择 SSH 私钥文件'), filters: [{ name: t('私钥文件'), extensions: ['pem', 'key', 'ppk'] }] }
     const result = await dialog.showOpenDialog({
       title: preset.title,

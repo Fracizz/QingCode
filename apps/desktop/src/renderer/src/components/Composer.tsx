@@ -3,7 +3,7 @@ import {
   accessOptions, AGENT_CAPABILITIES, alternateSendMode, attachmentTextPattern, exactChatCommand, hasSkillToken, insertSkillToken, isSlashDraft, resolveAccessMode,
   runningSendMode, t, takeSkillTokens, translateMessage,
 } from '@qn/codex-client'
-import { ArrowUp, CircleAlert, FileText, ImageOff, ListTodo, Paperclip, Shield, ShieldAlert, ShieldOff, Square, Wand2, X } from 'lucide-react'
+import { ArrowUp, CircleAlert, FileText, ImageOff, ListTodo, Paperclip, Shield, ShieldAlert, ShieldOff, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
 import {
@@ -693,13 +693,15 @@ export function Composer({
               {running && (
                 <IconButton
                   label={t('停止运行')}
-                  className={cn('rounded-full focus-visible:ring-inset', stopInPrimarySlot
-                    ? 'bg-qn-text text-qn-bg hover:bg-qn-text/90 hover:text-qn-bg'
-                    : 'text-qn-muted hover:text-qn-text')}
+                  className={cn(
+                    'rounded-full bg-qn-composer-stop text-qn-text transition-colors',
+                    'hover:bg-qn-composer-stop-hover disabled:hover:bg-qn-composer-stop',
+                    'focus-visible:ring-offset-2 focus-visible:ring-offset-qn-composer',
+                  )}
                   disabled={sending || compactionStarting}
                   onClick={onInterrupt}
                 >
-                  <Square size={11} fill="currentColor" strokeWidth={0} className="rounded-[2px]" />
+                  <span className="size-[12px] rounded-[2.5px] bg-current" aria-hidden />
                 </IconButton>
               )}
               {!stopInPrimarySlot && <Tip label={blocked ? translateMessage(blocked) : sendHint}>

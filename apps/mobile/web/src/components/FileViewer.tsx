@@ -1,11 +1,17 @@
 import { t } from '@qn/codex-client'
-import { Code, Eye } from 'lucide-react'
+import { Code, Download, Eye } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { startProjectDownload } from '../downloads'
 import { basename, imageDataUrl, isImagePath } from '../fileLinks'
+import { getWindowNativePort } from '../native'
+import { projectFileLocation } from '../projectApi'
+import { friendlyError } from '../state'
 import { useApp } from '../store'
+import { toast } from '../toast'
+import type { Project } from '../types'
 import { diffRows, formatBytes, isMarkdownPath, numberLines, parentDir, viewKind, type DiffRow } from '../viewer'
 import { FileActionsContext, Markdown, type FileActions } from './MessageItem'
-import { Badge, Button, Header, Loading, Note } from './ui'
+import { Badge, Button, Header, Loading, LoadingIcon, Note } from './ui'
 import { ZoomableImage } from './ZoomableImage'
 
 const DIFF_CLASS: Record<DiffRow['kind'], string> = {
@@ -57,9 +63,35 @@ export function DiffView({ text }: { text: string }) {
   )
 }
 
-/** 全屏只读查看页：只有查看与"加载更多"，没有任何编辑、保存、暂存、提交入口。 */
+function FileDownloadButton({ desktopId, project, path, name, size }: {
+  desktopId: string; project: Project; path: string; name: string; size: number
+}) {
+  const [starting, setStarting] = useState(false)
+
+  async function download() {
+    setStarting(true)
+    try {
+      await startProjectDownload(desktopId, project, { path, name, size })
+    } catch (error) {
+      toast(friendlyError(error, t('下载失败')), { tone: 'error' })
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  return (
+    <Button variant="ghost" className="ml-auto shrink-0 px-3 text-xs" onClick={() => void download()} disabled={starting}>
+      {starting ? <LoadingIcon size={16} /> : <Download size={16} strokeWidth={1.75} aria-hidden />}
+      {t('下载')}
+    </Button>
+  )
+}
+
+/** 全屏只读查看页，可下载项目内的原文件。 */
 export function FileViewer() {
   const viewer = useApp((s) => s.viewer)
+  const desktopId = useApp((s) => s.activeId)
+  const projects = useApp((s) => s.projects)
   const close = useApp((s) => s.closeViewer)
   const loadMore = useApp((s) => s.loadMoreFile)
   const openFile = useApp((s) => s.openFile)
@@ -77,6 +109,9 @@ export function FileViewer() {
   const file = viewer.file
   const kind = file ? viewKind(file) : null
   const title = basename(viewer.path) || viewer.path
+  const download = desktopId && file && viewer.mode === 'file' && getWindowNativePort()
+    ? projectFileLocation(projects, viewer.targetId, viewer.path)
+    : null
   const imageRequested = viewer.mode === 'file' && isImagePath(viewer.path)
   const markdown = viewer.mode === 'file' && kind === 'text' && isMarkdownPath(viewer.path)
   // Markdown 默认预览；带行号跳转时默认源码，才能定位到目标行。
@@ -136,6 +171,10 @@ export function FileViewer() {
               <span>{formatBytes(file.size)}</span>
               {viewer.line && <span>{t('· 第 {line} 行', { line: viewer.line })}</span>}
               {file.truncated && <Badge tone="warn">{t('已截断')}</Badge>}
+              {desktopId && download && (
+                <FileDownloadButton key={JSON.stringify([desktopId, viewer.targetId, download.project.id, download.path])}
+                  desktopId={desktopId} project={download.project} path={download.path} name={title} size={file.size} />
+              )}
             </div>
             {kind === 'image' && (
               <ZoomableImage key={file.path} src={imageDataUrl(file.content, file.path)} alt={title}

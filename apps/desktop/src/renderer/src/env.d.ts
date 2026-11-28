@@ -3,7 +3,7 @@ export {}
 declare global {
   interface Window {
     qn: {
-      openFile(kind?: 'sshKey' | 'legacyDb'): Promise<string | null>
+      openFile(kind?: 'sshKey' | 'legacyDb' | 'plugin'): Promise<string | null>
       downloadFile(targetId: string, root: string, path: string, openAfterDownload?: boolean): Promise<boolean>
       version(): Promise<string>
       smokeDone(): void

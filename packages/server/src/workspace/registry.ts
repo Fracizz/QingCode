@@ -14,6 +14,7 @@ export class WorkspaceError extends Error {
 /** 每个客户端连接一份；连接断开时 daemon 依次调用 onClose 登记的清理函数。 */
 export interface WorkspaceContext {
   clientId: number
+  resolveRg?(): Promise<string[]>
   /** 只发给本连接的 evt（fs.searchResult、fs.changed） */
   emit(name: string, payload: unknown): void
   onClose(cleanup: () => void): void

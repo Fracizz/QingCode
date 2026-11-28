@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createConPtyBackend } from './windows'
+import type { PtyExit } from './backend'
+import { buildEnv } from './logic'
+import { createConPtyBackend, resolveWindowsPty } from './windows'
+import { windowsSystemPty } from './windowsSystemPty'
 
 const options = {
   shell: 'C:/Windows/System32/cmd.exe',
@@ -11,6 +14,44 @@ const options = {
 }
 
 describe('Windows ConPTY 适配', () => {
+  it('普通 Node 启动的 Windows daemon 可以使用系统 ConPTY', () => {
+    vi.stubEnv('ELECTRON_RUN_AS_NODE', undefined)
+    try {
+      expect(resolveWindowsPty('auto')).toBe(windowsSystemPty)
+      expect(resolveWindowsPty('conpty')).toBe(windowsSystemPty)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it.skipIf(process.platform !== 'win32')('系统 ConPTY 隔离宿主管道并传递终端输入和退出码', async () => {
+    const proc = await windowsSystemPty.spawn({
+      ...options,
+      cwd: process.cwd(),
+      env: buildEnv(process.env, {}, 80, 24),
+      shell: process.execPath,
+      args: ['-e', [
+        'if (!process.stdin.isTTY || !process.stdout.isTTY) process.exit(1)',
+        'process.stdout.write("QN_READY\\n")',
+        'require("node:readline").createInterface({ input: process.stdin }).once("line", (line) => {',
+        '  process.stdout.write("QN_READ:" + line + "\\n", () => process.exit(7))',
+        '})',
+      ].join('\n')],
+    })
+    const chunks: Buffer[] = []
+    proc.onData((data) => chunks.push(data))
+    let exit: PtyExit | undefined
+    proc.onExit((result) => { exit = result })
+    try {
+      await vi.waitFor(() => expect(Buffer.concat(chunks).toString('utf8')).toContain('QN_READY'), { timeout: 5_000 })
+      proc.write(Buffer.from('中文输入\r'))
+      await vi.waitFor(() => expect(exit).toEqual({ code: 7, signal: null }), { timeout: 5_000 })
+      expect(Buffer.concat(chunks).toString('utf8')).toContain('QN_READ:中文输入')
+    } finally {
+      proc.kill()
+    }
+  }, 25_000)
+
   it('按 argv 启动并传递字节、尺寸及退出事件', async () => {
     const output: Array<(data: string) => void> = []
     const exits: Array<(exit: { exitCode: number }) => void> = []

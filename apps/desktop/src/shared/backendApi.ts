@@ -1,4 +1,5 @@
 import type { AgentKind, GlobalAccessMode, HiddenModels } from '@qn/codex-client'
+import type { RgPluginInfo, RgPluginPlatform, RgPluginStatus } from '@qn/protocol'
 
 /** 目标上可用的对话 Agent（mvp §11、T22）；缺省为 codex。 */
 export type { AgentKind }
@@ -224,6 +225,12 @@ export type AppSettingsPatch = {
 export type AppInfo = { name: string; version: string }
 
 export interface BackendMethods {
+  'plugins.list': { params: void; result: RgPluginInfo[] }
+  'plugins.import': { params: { path: string }; result: RgPluginInfo }
+  'plugins.forget': { params: { platform: RgPluginPlatform }; result: void }
+  'plugins.status': { params: { id: string }; result: RgPluginStatus }
+  'plugins.install': { params: { id: string; info: RgPluginInfo }; result: RgPluginStatus }
+  'plugins.remove': { params: { id: string }; result: RgPluginStatus }
   'targets.list': { params: void; result: Target[] }
   'targets.save': { params: SshTargetInput | DirectTargetInput; result: SshTarget | DirectTarget }
   'targets.remove': { params: { id: string }; result: void }

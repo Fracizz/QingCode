@@ -1,10 +1,11 @@
-import { execFile, spawn, type ChildProcessByStdio } from 'node:child_process'
+import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import { promises as fsp } from 'node:fs'
 import type { Stats } from 'node:fs'
 import type { Readable } from 'node:stream'
 import path from 'node:path'
 import readline from 'node:readline'
 import type { FsSearchResultEvt } from '@qn/protocol'
+import { findSystemRg } from '../../rgPlugin'
 import type { WorkspaceContext } from '../registry'
 import { decodeText, detectTextEncoding, type TextEncoding } from './encoding'
 import {
@@ -80,25 +81,15 @@ function stateFor(ctx: WorkspaceContext): SearchState {
 }
 
 /** 探测结果进程内缓存，避免每次搜索都起一个 shell。 */
-let rgProbe: Promise<boolean> | undefined
+let rgProbe: ReturnType<typeof findSystemRg> | undefined
 
 export function resetRgProbe(): void {
   rgProbe = undefined
 }
 
-export function hasRg(): Promise<boolean> {
-  rgProbe ??= probeRg()
-  return rgProbe
-}
-
-function probeRg(): Promise<boolean> {
-  const command = process.platform === 'win32' ? 'where' : 'sh'
-  const args = process.platform === 'win32' ? ['rg'] : ['-c', 'command -v rg']
-  return new Promise<boolean>((resolve) => {
-    execFile(command, args, { timeout: 3000, windowsHide: true }, (err, stdout) => {
-      resolve(!err && typeof stdout === 'string' && stdout.trim().length > 0)
-    })
-  })
+async function resolveSystemRg(): Promise<string[]> {
+  const command = (await (rgProbe ??= findSystemRg()))?.command
+  return command ? [command] : []
 }
 
 export function startSearch(
@@ -135,6 +126,7 @@ export function startSearch(
   const deps: SearchDeps = {
     setChild(value) {
       child = value
+      if (cancelled) child.kill()
     },
     isCancelled: () => cancelled || finished,
     batcher,
@@ -152,14 +144,16 @@ export function startSearch(
         finish(false, `无法访问 root: ${describe(err)}`)
         return
       }
-      const useRg = options.rgAvailable ?? (await hasRg())
-      let outcome: SearchOutcome
-      if (useRg) {
-        outcome = await runRgSearch(params, rootStat, deps)
-        if (outcome.rgMissing) outcome = await runNodeSearch(params, rootStat, deps)
-      } else {
-        outcome = await runNodeSearch(params, rootStat, deps)
+      const candidates = options.rgAvailable === false ? [] : await (ctx.resolveRg?.() ?? resolveSystemRg())
+      for (const executable of candidates) {
+        if (deps.isCancelled()) return
+        const outcome = await runRgSearch(params, rootStat, deps, executable)
+        if (!outcome.rgMissing) {
+          finish(outcome.truncated, outcome.error)
+          return
+        }
       }
+      const outcome = await runNodeSearch(params, rootStat, deps)
       finish(outcome.truncated, outcome.error)
     } catch (err) {
       finish(false, describe(err))
@@ -209,11 +203,12 @@ async function runRgSearch(
   params: ParsedSearch,
   rootStat: Stats,
   deps: SearchDeps,
+  executable: string,
 ): Promise<SearchOutcome> {
   const { cwd, args } = rgCommand(params, rootStat)
   let child: RgChild
   try {
-    child = spawn('rg', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    child = spawn(executable, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
   } catch {
     return { truncated: false, rgMissing: true }
   }

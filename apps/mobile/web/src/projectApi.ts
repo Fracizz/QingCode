@@ -1,5 +1,6 @@
 import { t } from '@qn/codex-client'
 import { getGateway } from './client'
+import { isAbsolutePath, pathStyle } from './fileLinks'
 import { useApp } from './store'
 import type { Connection, Project, RpcMethod } from './types'
 
@@ -28,6 +29,27 @@ export function projectRpc<T>(project: Project, method: RpcMethod, params: Recor
 
 export async function suggestFiles(project: Project, query: string): Promise<ProjectFile[]> {
   return (await projectRpc<ProjectFiles>(project, 'mobile.files.search', { query, limit: 8 })).entries
+}
+
+/** 把预览的绝对路径映射到同一目标上最具体的项目，实际路径由目标服务核对。 */
+export function projectFileLocation(projects: readonly Project[], targetId: string, filePath: string): { project: Project; path: string } | null {
+  if (!isAbsolutePath(filePath)) return null
+  let match: { project: Project; path: string } | null = null
+  for (const project of projects) {
+    if (project.targetId !== targetId || !isAbsolutePath(project.path)) continue
+    const windows = pathStyle(project.path) === 'windows'
+    // 旧 SSH 项目可能使用 /D:/...，文件链接则通常使用 D:\...。
+    const toSlash = (value: string) => value.replace(/^\/(?=[A-Za-z]:[\\/])/, '').replaceAll('\\', '/')
+    const root = windows ? toSlash(project.path) : project.path
+    const file = windows ? toSlash(filePath) : filePath
+    const prefix = root.replace(/\/+$/, '') + '/'
+    const head = file.slice(0, prefix.length)
+    if (windows ? head.toLowerCase() !== prefix.toLowerCase() : head !== prefix) continue
+    const path = file.slice(prefix.length)
+    if (path.split('/').some((part) => !part || part === '.' || part === '..' || /[:\\\u0000-\u001f]/.test(part))) continue
+    if (!match || path.length < match.path.length) match = { project, path }
+  }
+  return match
 }
 
 export function parentFolder(path: string): string {

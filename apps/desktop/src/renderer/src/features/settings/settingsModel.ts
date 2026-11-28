@@ -296,7 +296,7 @@ export const DEFAULT_AGENT_OPTIONS: ReadonlyArray<{ value: SettingsAgentKind; la
 
 export const LANGUAGE_TITLE = '语言 / Language' // i18n-ignore: 双语标题，任何界面语言下都认得出
 
-export type SettingsSectionId = 'general' | 'agents' | 'connections' | 'mobile' | 'about'
+export type SettingsSectionId = 'general' | 'agents' | 'connections' | 'plugins' | 'mobile' | 'about'
 
 // i18n-ignore: 名词“连接”与连接按钮的动词同形，英文不同，不能共用词条
 export const CONNECTIONS_LABEL = getLocale() === 'en' ? 'Connections' : '连接'
@@ -311,6 +311,7 @@ export const SETTINGS_SECTIONS: ReadonlyArray<{
   { id: 'general', label: t('通用'), description: t('发送、启动、界面与默认 Agent'), keywords: ['通用', 'general'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
   { id: 'agents', label: 'Agent', description: t('按目标启用、路径与官方配置目录'), keywords: ['agent'] },
   { id: 'connections', label: CONNECTIONS_LABEL, description: t('已保存的本机与远程目标'), keywords: ['连接', 'connections'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  { id: 'plugins', label: t('插件'), description: t('离线导入并管理目标机工具'), keywords: ['插件', 'plugin', 'offline', 'ripgrep', 'rg'] }, // i18n-ignore: 搜索关键词
   { id: 'mobile', label: t('手机连接'), description: t('手机网关、配对与证书'), keywords: ['手机连接', 'mobile'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
   { id: 'about', label: t('关于'), description: t('版本与第三方声明'), keywords: ['关于', 'about'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
 ]
@@ -402,6 +403,12 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     section: 'connections',
     title: t('已保存的连接'),
     keywords: ['连接', '目标', 'ssh', '主机', '编辑', '删除', '地址', 'connection', '直连', '已保存的连接', 'saved connections', 'target', 'host', 'edit', 'delete', 'address', 'direct'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  },
+  {
+    id: 'ripgrep',
+    section: 'plugins',
+    title: 'ripgrep (rg)',
+    keywords: ['插件', '工具', '离线', '文件搜索', 'plugin', 'tool', 'offline', 'file search', 'ripgrep', 'rg'], // i18n-ignore: 搜索关键词
   },
   {
     id: 'mobile',

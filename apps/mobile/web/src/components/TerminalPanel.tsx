@@ -413,8 +413,8 @@ export function TerminalPanel({ project }: { project: Project }) {
   const [list, setList] = useState<TermInfo[] | null>(null)
   const [termId, setTermId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [needsTarget, setNeedsTarget] = useState(false)
+  const [error, setError] = useState<{ message: string; action: 'list' | 'open' | 'connect' } | null>(null)
+  const needsTarget = error?.action === 'connect'
   const requestConnect = useApp((s) => s.requestConnect)
   const [refresh, setRefresh] = useState(0)
   const [closing, setClosing] = useState(false)
@@ -431,7 +431,7 @@ export function TerminalPanel({ project }: { project: Project }) {
       setTermId(terminal.termId)
       return true
     } catch (error) {
-      setError(friendlyError(error, t('新建项目终端失败')))
+      setError({ message: friendlyError(error, t('新建项目终端失败')), action: 'open' })
       return false
     } finally {
       setBusy(false)
@@ -445,7 +445,6 @@ export function TerminalPanel({ project }: { project: Project }) {
       if (!current) return
       if (!Array.isArray(result?.terminals)) throw new Error(t('电脑未提供手机终端，请检查桌面版设置。'))
       setError(null)
-      setNeedsTarget(false)
       const terminals = [...result.terminals].sort((a, b) => a.startedAt - b.startedAt)
       setList(terminals)
       const defaultId = terminals.find((item) => item.alive)?.termId ?? terminals[0]?.termId ?? null
@@ -460,8 +459,7 @@ export function TerminalPanel({ project }: { project: Project }) {
         ?? defaultId)
     }).catch((error: unknown) => {
       if (!current) return
-      setError(friendlyError(error, t('读取终端失败')))
-      setNeedsTarget(errorCode(error) === 'not_connected')
+      setError({ message: friendlyError(error, t('读取终端失败')), action: errorCode(error) === 'not_connected' ? 'connect' : 'list' })
       setList((existing) => existing ?? [])
     })
     return () => { current = false }
@@ -480,9 +478,23 @@ export function TerminalPanel({ project }: { project: Project }) {
         ?? list?.find((item) => item.termId !== selected.termId)?.termId ?? null)
       setClosing(false)
     } catch (error) {
-      setError(friendlyError(error, t('关闭终端失败')))
+      setError({ message: friendlyError(error, t('关闭终端失败')), action: 'list' })
     } finally {
       setBusy(false)
+    }
+  }
+
+  const retry = () => {
+    if (!connected || busy) return
+    switch (error?.action) {
+      case 'open':
+        void open()
+        return
+      case 'list':
+        setRefresh((attempt) => attempt + 1)
+        return
+      case 'connect':
+        requestConnect(project.targetId)
     }
   }
 
@@ -504,8 +516,7 @@ export function TerminalPanel({ project }: { project: Project }) {
           <Button variant="danger" disabled={busy} onClick={() => void terminate()}>{t('关闭')}</Button>
         </div>
       )}
-      {error && <Note message={error} tone="error" actionLabel={needsTarget ? t('连接目标') : t('重试')}
-        onAction={() => needsTarget ? requestConnect(project.targetId) : setRefresh((attempt) => attempt + 1)} />}
+      {error && <Note message={error.message} tone="error" actionLabel={needsTarget ? t('连接目标') : t('重试')} onAction={retry} />}
       {list === null && connected && <Loading text={t('正在读取可接回的项目终端…')} />}
       {list !== null && !selected && busy && <Loading text={t('正在新建终端…')} />}
       {!connected && connectionWarning && <Note message={connectionWarning} tone="warn" />}

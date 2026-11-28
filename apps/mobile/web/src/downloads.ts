@@ -2,8 +2,28 @@
 // 关掉文件页、切到别的页面也能在完成时给一条提示。纯逻辑（downloadOutcome）与轮询分开。
 import { t, translateMessage } from '@qn/codex-client'
 import { callDevice } from './client'
-import type { DeviceDownload } from './projectApi'
+import { projectConnection, type DeviceDownload, type ProjectFile } from './projectApi'
 import { toast, type ToastTone } from './toast'
+import type { Project } from './types'
+
+export async function startProjectDownload(
+  desktopId: string | null,
+  project: Project,
+  file: Pick<ProjectFile, 'path' | 'name' | 'size'>,
+): Promise<DeviceDownload | null> {
+  const connection = projectConnection(desktopId)
+  if (!connection) throw new Error(t('请先连接电脑'))
+  // 原生前台服务经网关逐块读取完整原文件，退出预览或切到后台时继续。
+  const started = await callDevice<DeviceDownload | null>('download.start', {
+    host: connection.host, port: connection.port, fp: connection.fp, token: connection.token,
+    projectId: project.id, targetId: project.targetId, path: file.path, name: file.name, size: file.size,
+  }, 300_000)
+  if (started) {
+    watchDownload(started.id)
+    toast(t('已开始后台下载，完成后会提醒你'))
+  }
+  return started
+}
 
 /** 下载结束时给用户的提示；进行中与用户主动取消不提示。 */
 export function downloadOutcome(job: DeviceDownload): { message: string; tone: ToastTone } | null {

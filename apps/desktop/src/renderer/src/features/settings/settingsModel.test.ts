@@ -146,7 +146,7 @@ describe('界面元数据与合规文案', () => {
 
   it('分类与设置项一一对应，section 校验只认已知 id', () => {
     expect(SETTINGS_SECTIONS.map((item) => item.id)).toEqual([
-      'general', 'agents', 'connections', 'mobile', 'about',
+      'general', 'agents', 'connections', 'plugins', 'mobile', 'about',
     ])
     expect(new Set(SETTING_ITEMS.map((item) => item.id)).size).toBe(SETTING_ITEMS.length)
     expect(SETTING_ITEMS.every((item) => SETTINGS_SECTIONS.some((s) => s.id === item.section))).toBe(true)
