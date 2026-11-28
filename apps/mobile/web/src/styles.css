@@ -1934,7 +1934,7 @@ input[type="radio"] {
   margin-inline-start: auto;
 }
 
-/* 触控区 44px，可见圆 40px（背景裁到内容区）：发送与停止是输入框里唯一的主操作，做成醒目的品牌色实心圆。 */
+/* 触控区 44px，可见圆 36px（背景裁到内容区），与左侧 36px 胶囊同高对齐；品牌色实心圆，不抢正文。 */
 .qn-send-button,
 .qn-stop-button {
   flex-shrink: 0;
@@ -1942,16 +1942,17 @@ input[type="radio"] {
   min-width: 44px;
   height: 44px;
   min-height: 44px;
-  padding: 2px;
+  padding: 4px;
   border-radius: 999px;
   background-clip: content-box;
 }
 
 .qn-send-button.qn-button-primary:disabled {
   border-color: transparent;
-  /* 没有内容时退成淡品牌色，位置和形状不变，一输入就点亮。 */
-  background: color-mix(in srgb, var(--color-qn-accent) 28%, var(--color-qn-composer));
-  color: var(--color-qn-composer);
+  /* 没有内容时是浅灰底、灰箭头，一输入就换成品牌色。 */
+  background: color-mix(in srgb, var(--color-qn-text) 9%, transparent);
+  background-clip: content-box;
+  color: var(--color-qn-dim);
   opacity: 1;
 }
 
@@ -1968,7 +1969,7 @@ input[type="radio"] {
 .qn-send-button:not(:disabled):active,
 .qn-stop-button:not(:disabled):active { transform: scale(0.94); }
 
-.qn-stop-button svg { border-radius: 3px; }
+.qn-stop-button svg { border-radius: 2.5px; }
 
 .qn-image-thumbnail {
   display: inline-flex;

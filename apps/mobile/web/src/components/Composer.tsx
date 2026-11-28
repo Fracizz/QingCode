@@ -445,7 +445,7 @@ export function Composer({
             {running && !canSend && !sending && (
               <Button variant="danger" className="qn-stop-button" aria-label={interrupting ? t('正在中断') : t('停止运行')}
                 aria-busy={interrupting} disabled={sending || interrupting} onClick={onInterrupt}>
-                {interrupting ? <LoadingIcon size={15} /> : <Square size={12} fill="currentColor" aria-hidden />}
+                {interrupting ? <LoadingIcon size={14} /> : <Square size={11} fill="currentColor" aria-hidden />}
               </Button>
             )}
             {/* 长按发送键可选「打断后发送」（停止本轮后发送），输入后仍能中断当前轮。 */}
@@ -523,7 +523,7 @@ function SendButton({ running, actualMode, sending, disabled, canSteer, steerHin
           }
           onSend()
         }}>
-        {sending ? <LoadingIcon size={17} /> : <ArrowUp size={20} strokeWidth={2.4} aria-hidden />}
+        {sending ? <LoadingIcon size={16} /> : <ArrowUp size={18} strokeWidth={2.5} aria-hidden />}
       </Button>
       {/* 发送键旁不再放下拉箭头：手机上几乎不用，还挤占输入区；其他发送方式靠长按发送键。 */}
       {open && (
