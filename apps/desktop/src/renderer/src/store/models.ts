@@ -130,8 +130,8 @@ export const useModels = create<ModelsState>((set, get) => ({
     const staleEmpty =
       current !== undefined && current.models.length === 0 && Date.now() - (current.loadedAt ?? 0) > EMPTY_RETRY_MS
     if (!force && (current?.loading || (current && !current.error && !staleEmpty))) return
-    // pi 会话刚启动时的强制刷新必须重新请求（之前的请求可能还在返回启动前的空列表）。
-    if (force && agent !== 'pi' && current?.loading && Date.now() - (current.startedAt ?? 0) < FORCE_MERGE_MS) return
+    // pi/Claude 会话刚启动时的强制刷新必须重新请求（之前的请求可能还在返回启动前的空列表或别名表）。
+    if (force && agent === 'codex' && current?.loading && Date.now() - (current.startedAt ?? 0) < FORCE_MERGE_MS) return
     const pending: ModelList = { models: current?.models ?? [], modalities: current?.modalities, loading: true, error: null, startedAt: Date.now() }
     set((state) => ({
       lists: { ...state.lists, [key]: pending },

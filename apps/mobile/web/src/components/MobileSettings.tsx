@@ -25,8 +25,8 @@ const themes: readonly { value: MobileTheme; label: string }[] = [
 ]
 
 const runningSendOptions = [
-  { value: 'steer', label: t('引导') },
   { value: 'queue', label: t('排队') },
+  { value: 'steer', label: t('引导') },
   { value: 'interrupt', label: t('打断后发送') },
 ] as const
 

@@ -1756,6 +1756,8 @@ export const useApp = create<AppState>((set, get) => {
           return { approvalSubmitting }
         })
       }
+      // Claude 会话开启后才拿得到真实模型表，server 广播后重拉，替换先前的别名列表。
+      if (method === 'qingcode/models/updated') void get().loadModels(targetId, agent, true)
       if (agent === 'claude' && method === 'account/rateLimits/updated') {
         const snapshot = pickClaudeSnapshot(notification)
         if (snapshot) applyClaudeQuota(conn.id, targetId, snapshot)
@@ -2959,6 +2961,8 @@ export const useApp = create<AppState>((set, get) => {
           if (truncated) void reloadActiveConversation(session)
           if (agent === 'codex') void get().refreshRateLimits(targetId)
           else if (agent === 'claude') void readClaudeRateLimits(session)
+          // 打开即预取模型表，弹层打开时不必再等。
+          void get().loadModels(targetId, agent)
           return true
         } catch (err) {
           if (epoch !== desktopEpoch) return false
@@ -4051,12 +4055,15 @@ export const useApp = create<AppState>((set, get) => {
         current !== undefined &&
         current.models.length === 0 &&
         Date.now() - (current.loadedAt ?? 0) > EMPTY_MODELS_RETRY_MS
-      if (current?.loading || (current && !current.error && !force && !staleEmpty)) return
+      // 强制刷新（如 Claude 真实模型表就绪）不与进行中的请求合并：旧请求可能还会返回别名表。
+      if ((current?.loading && !force) || (current && !current.error && !force && !staleEmpty)) return
       const session = get().sessions[key]
       if (!session?.opened) return
-      const isCurrent = () => get().sessions[key]?.transport === session.transport
+      const pending = { models: current?.models ?? [], loading: true, error: null }
+      // 只认最后一次发出的请求，较早返回的旧结果丢弃。
+      const isCurrent = () => get().sessions[key]?.transport === session.transport && get().models[key] === pending
       set((state) => ({
-        models: { ...state.models, [key]: { models: current?.models ?? [], loading: true, error: null } },
+        models: { ...state.models, [key]: pending },
       }))
       try {
         const models = toModelOptions(await listModels(session.rpc))

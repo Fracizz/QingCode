@@ -518,6 +518,8 @@ it('可在发送首条消息前启动 pi，首轮沿用该会话和所选模型'
     return fakeCall(method, params)
   })
   const store = useCodex.getState
+  // 前面用例连接后预取过模型表，清掉缓存，这里要观察启动前后的两次请求。
+  useModels.setState({ lists: {} })
   store().startDraft('pi')
   const onCreated = vi.fn()
   const requests = () => callMock.mock.calls.flatMap(([method, params]) => method === 'codex.send' ? [params.msg] : [])

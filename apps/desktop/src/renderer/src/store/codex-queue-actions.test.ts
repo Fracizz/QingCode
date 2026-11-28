@@ -28,7 +28,8 @@ const chat = { targetId, threadId, agent: 'codex' } as const
 const pending = () => useCodex.getState().pendingSends[pendingSendKey(chat)] ?? []
 // 会话列表刷新与队列无关，断言时略过。
 const calls = () => backend.send.mock.calls.map(([, msg]) => msg).filter((msg) => msg.method !== 'thread/list')
-const methods = () => calls().map((msg) => msg.method)
+// 连接后预取模型表的 model/list 与发送流程无关，断言时略去。
+const methods = () => calls().map((msg) => msg.method).filter((method) => method !== 'model/list')
 
 function receive(agent: AgentKind, msg: unknown) {
   for (const listener of backend.listeners) listener({ agent, targetId, seq: null, msg })

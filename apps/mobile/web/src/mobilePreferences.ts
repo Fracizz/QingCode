@@ -1,4 +1,4 @@
-import { DEFAULT_RUNNING_SEND, parseRunningSend, type RunningSendPreference } from '@qn/codex-client'
+import { RUNNING_SEND_PREFERENCES, type RunningSendPreference } from '@qn/codex-client'
 import { useLayoutEffect } from 'react'
 import { create } from 'zustand'
 import { callDevice } from './client'
@@ -15,7 +15,16 @@ type MobilePreferences = {
 }
 
 const storageKey = 'qn.mobile.preferences'
-const defaults: MobilePreferences = { theme: 'dark', reduceMotion: false, sendKey: 'newline', runningSend: DEFAULT_RUNNING_SEND }
+/**
+ * 手机沿用以前的习惯：运行中点按排队，长按再由用户选引导或打断；电脑版默认引导，两端不共用默认值。
+ * 选择存在 runningSendMode 字段：上一版把电脑版默认值「引导」写进过 runningSend，不能当作用户的选择。
+ */
+const MOBILE_RUNNING_SEND: RunningSendPreference = 'queue'
+const defaults: MobilePreferences = { theme: 'dark', reduceMotion: false, sendKey: 'newline', runningSend: MOBILE_RUNNING_SEND }
+
+export function parseMobileRunningSend(value: unknown): RunningSendPreference {
+  return RUNNING_SEND_PREFERENCES.find((item) => item === value) ?? MOBILE_RUNNING_SEND
+}
 
 /** 旧版存过「石墨灰」（graphite）和「跟随系统」（system）：前者并入灰色，后者回到默认深色。 */
 export function parseTheme(value: unknown): MobileTheme {
@@ -26,12 +35,12 @@ export function parseTheme(value: unknown): MobileTheme {
 function readPreferences(): MobilePreferences {
   if (typeof window === 'undefined') return defaults
   try {
-    const value: Partial<Record<keyof MobilePreferences, unknown>> | null = JSON.parse(window.localStorage.getItem(storageKey) ?? 'null')
+    const value: Partial<Record<keyof MobilePreferences | 'runningSendMode', unknown>> | null = JSON.parse(window.localStorage.getItem(storageKey) ?? 'null')
     return {
       theme: parseTheme(value?.theme),
       reduceMotion: value?.reduceMotion === true,
       sendKey: value?.sendKey === 'send' ? 'send' : defaults.sendKey,
-      runningSend: parseRunningSend(value?.runningSend),
+      runningSend: parseMobileRunningSend(value?.runningSendMode),
     }
   } catch {
     return defaults
@@ -47,7 +56,8 @@ export const useMobilePreferences = create<MobilePreferences & {
     const next = { theme, reduceMotion, sendKey, runningSend, ...values }
     set(next)
     try {
-      window.localStorage.setItem(storageKey, JSON.stringify(next))
+      const { runningSend: runningSendMode, ...rest } = next
+      window.localStorage.setItem(storageKey, JSON.stringify({ ...rest, runningSendMode }))
       return true
     } catch {
       return false

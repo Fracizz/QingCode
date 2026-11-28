@@ -689,12 +689,22 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     try {
       const list = supportedModelList(await read())
       if (!list) return staticModelList()
-      scope.realModels = list
+      this.storeModels(scope, list)
       return list
     } catch (err) {
       this.hub.log(`claude 模型表读取失败，回退别名列表: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
       return staticModelList()
     }
+  }
+
+  /**
+   * 缓存真实模型表并广播：客户端在会话开启前拿到的是别名静态表，收到后重拉 model/list，
+   * 否则界面会一直停在别名列表上。
+   */
+  private storeModels(scope: ClaudeScope, list: Json): void {
+    if (scope.realModels) return
+    scope.realModels = list
+    if (this.opened && scope === this.currentScope()) this.notify({ method: 'qingcode/models/updated', params: {} })
   }
 
   /** 会话已开启后顺手取一次真实表；不等待、不阻断 turn，失败时下次 model/list 会重试。 */
@@ -705,7 +715,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       .call(query)
       .then((infos) => {
         const list = supportedModelList(infos)
-        if (this.opened && list && !scope.realModels) scope.realModels = list
+        if (this.opened && list && !scope.realModels) this.storeModels(scope, list)
       })
       .catch((err: unknown) => {
         this.hub.log(`claude 模型表读取失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志

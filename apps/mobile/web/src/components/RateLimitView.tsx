@@ -32,10 +32,12 @@ import { Badge, Button, Dialog } from './ui'
 
 type QuotaAgent = 'codex' | 'claude'
 
-function ClaudeQuotaDetails({ targetId, snapshot, available }: {
+function ClaudeQuotaDetails({ targetId, snapshot, available, label }: {
   targetId: string
   snapshot?: ClaudeRateLimitSnapshot
   available: boolean
+  /** 嵌在模型弹层时把「额度」标题与刷新按钮并成一行，省出高度，避免被吸底区遮住。 */
+  label?: string
 }) {
   const refreshQuota = useApp((s) => s.refreshClaudeRateLimits)
   const [loading, setLoading] = useState(false)
@@ -62,7 +64,8 @@ function ClaudeQuotaDetails({ targetId, snapshot, available }: {
 
   return (
     <div className="space-y-1 text-sm">
-      <div className="flex justify-end">
+      <div className={`flex items-center ${label ? 'justify-between' : 'justify-end'}`}>
+        {label && <div className="qn-label" style={{ marginBottom: 0 }}>{label}</div>}
         <Button className="px-2 py-1 text-xs" disabled={!available || loading} onClick={() => void refresh()}>
           {loading ? t('刷新中…') : t('刷新')}
         </Button>
@@ -79,8 +82,9 @@ function ClaudeQuotaDetails({ targetId, snapshot, available }: {
           {reset !== null && <p className="text-xs text-qn-muted">{formatReset(reset, now)}</p>}
         </>
       )}
-      {source && <p className="text-xs text-qn-muted">{source}</p>}
-      <p className="text-xs text-qn-muted">{claudeQuotaReportedAt(snapshot) ?? t('暂无上报时间')}</p>
+      <p className="text-xs text-qn-muted">
+        {[source, claudeQuotaReportedAt(snapshot) ?? t('暂无上报时间')].filter(Boolean).join(' · ')}
+      </p>
     </div>
   )
 }
@@ -161,9 +165,8 @@ export function AgentQuota({ targetId, agent, showUsage }: { targetId: string; a
   }
   if (agent !== 'claude') return null
   return (
-    <section className="mb-3 space-y-1 text-sm" aria-label={t('Claude 额度')}>
-      <div className="qn-label">{t('额度')}</div>
-      <ClaudeQuotaDetails targetId={targetId} snapshot={claude} available={claudeAvailable} />
+    <section className="mb-3 text-sm" aria-label={t('Claude 额度')}>
+      <ClaudeQuotaDetails targetId={targetId} snapshot={claude} available={claudeAvailable} label={t('额度')} />
     </section>
   )
 }

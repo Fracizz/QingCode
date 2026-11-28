@@ -75,6 +75,10 @@ it('运行中点按发送键按设置发送，不能引导时显示排队', asyn
   ))
   const send = () => host.querySelector<HTMLButtonElement>('.qn-send-button')!
   try {
+    // 手机默认排队，引导需用户长按选择或在设置里改。
+    await render('补充')
+    expect(send().getAttribute('aria-label')).toBe('排队')
+    await act(() => useMobilePreferences.setState({ runningSend: 'steer' }))
     await render('补充')
     expect(send().getAttribute('aria-label')).toBe('引导')
     await act(() => send().click())

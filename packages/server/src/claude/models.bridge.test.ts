@@ -200,6 +200,8 @@ describe('Claude 模型/强度选择（桥层）', () => {
     ])
     expect(rows[0]?.serviceTiers).toEqual([])
     expect(query?.modelReads).toBe(1)
+    // 拿到真实表后广播一次，客户端据此替换会话开启前缓存的别名列表。
+    expect(notes(h, 'qingcode/models/updated')).toHaveLength(1)
 
     request(h, 'm-cached', 'model/list')
     const cached = ((await response(h, 'm-cached')).result ?? {}) as Json

@@ -116,6 +116,7 @@ import { threadKey } from '../lib/threads'
 import { useDock } from './dock'
 import { useAgentPrefs } from './agentPrefs'
 import { overridesFor, prefsFor, useModels } from './models'
+import { skillsKey, useSkills } from './skills'
 import { EMPTY_PREFS, resolveSelection, triggerLabel } from '../lib/models'
 import { useTargets } from './targets'
 import { useThreadPrefs } from './threadPrefs'
@@ -662,6 +663,10 @@ export const useCodex = create<CodexState>((set, get) => {
         return state === current.state ? current : { ...current, state }
       })
       if (notification.method === 'thread/closed') expireSides(targetId, agent, notification.params.threadId)
+      // Claude 会话开启后才拿得到真实模型表，server 广播后重拉，替换先前的别名列表。
+      if ((notification as { method: string }).method === 'qingcode/models/updated') {
+        void useModels.getState().load(targetId, agent, rpc, true)
+      }
       if (steers.size) {
         confirmLateSteer(notification)
         if (notification.method === 'turn/completed' && notification.params?.threadId) {
@@ -827,6 +832,19 @@ export const useCodex = create<CodexState>((set, get) => {
     return task
   }
 
+  /**
+   * 启动或连接后各 Agent 打开即预取模型表与当前项目的技能，不等用户切到该 Agent 再加载。
+   * 只调用已打开会话上的只读接口，不为此额外启动 Agent（R9）。
+   * pi 的技能要借运行中的会话进程读取，空闲时取不到，交给输入区按需加载。
+   */
+  const prefetchAgentConfig = (targetId: string, agent: AgentKind, session: TargetSession): void => {
+    void useModels.getState().load(targetId, agent, session.rpc)
+    const cwd = get().currentTargetId === targetId ? get().currentCwd : null
+    if (cwd && agent !== 'pi') {
+      void useSkills.getState().load(skillsKey(targetId, agent, cwd, session.openedConfig?.directory), cwd, session.rpc)
+    }
+  }
+
   const probeAgents = async (targetId: string, force = false): Promise<void> => {
     const busy = probing.get(targetId)
     if (busy) {
@@ -855,6 +873,7 @@ export const useCodex = create<CodexState>((set, get) => {
         patchAgent(targetId, agent, { state: 'checking' })
         const ok = await ensureOpen(targetId, agent)
         const after = get().sessions[key]
+        if (ok && after) prefetchAgentConfig(targetId, agent, after)
         patchAgent(
           targetId,
           agent,
