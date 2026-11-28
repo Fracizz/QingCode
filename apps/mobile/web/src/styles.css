@@ -2307,8 +2307,24 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   color: var(--color-qn-muted);
 }
 
-/* 停止图标单独上色：灰色线框在中文旁边容易被看成「口」字。 */
-.qn-turn-interrupted > svg { flex-shrink: 0; color: var(--color-qn-warn); }
+/* 停止标记用淡圆底 + 实心小方块：线框方块在中文旁像「口」字，亮色又太抢眼，这样保持低调但可辨认。 */
+.qn-turn-interrupted-icon {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-qn-muted) 22%, transparent);
+}
+
+.qn-turn-interrupted-icon::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 1.5px;
+  background: var(--color-qn-muted);
+}
 
 /* 回复进度胶囊：须写在 .qn-thinking 之后并提高优先级，否则内边距与文字色会被上面的通用规则覆盖。 */
 .qn-thinking.qn-replying {
@@ -2585,16 +2601,50 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   flex-shrink: 0;
   align-items: center;
   border-radius: 999px;
-  background: var(--color-qn-composer);
+  background: var(--qn-island-bg, var(--color-qn-composer));
   /* 比其他悬浮控件的描边更淡、投影更散，按钮像浮在页面上而不是被框住。 */
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-qn-text) 4%, transparent), 0 6px 28px var(--qn-composer-shadow);
+  box-shadow: var(--qn-island-shadow, 0 0 0 1px color-mix(in srgb, var(--color-qn-text) 4%, transparent), 0 6px 28px var(--qn-composer-shadow));
 }
 .qn-header-island > .qn-header-icon,
 .qn-header-island .qn-header-icon { border-radius: 999px; }
-.qn-header-icon.qn-header-island { background: var(--color-qn-composer); }
-/* 对话页按钮外观收到 40px，触控区仍向外扩到 44px。 */
-.qn-chat-header .qn-header-icon { position: relative; min-width: 40px; min-height: 40px; }
-.qn-chat-header .qn-header-icon::before { position: absolute; inset: -3px; content: ""; }
+.qn-header-icon.qn-header-island { background: var(--qn-island-bg, var(--color-qn-composer)); }
+/* 对话页按钮外观即 44px 触控区；图标统一 22px、2px 线宽，小屏高密度下线条更实、更清晰。 */
+.qn-chat-header .qn-header-icon { position: relative; min-width: 44px; min-height: 44px; }
+.qn-chat-header .qn-header-icon svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2;
+  shape-rendering: geometricPrecision;
+}
+.qn-chat-header .qn-title {
+  font-size: 17px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.qn-chat-header .qn-subtitle { margin-top: 1px; font-size: 12px; }
+.qn-chat-header { -webkit-font-smoothing: antialiased; }
+
+/*
+ * 浅色对话页顶栏：纯白按钮靠多层极淡的大范围投影浮起，不描边；
+ * 消息滚到顶栏下时先轻微模糊再渐隐，避免文字与标题硬叠在一起。
+ */
+:root[data-theme="light"] .qn-chat-header {
+  --qn-island-bg: #ffffff;
+  --qn-island-shadow: 0 0 0 0.5px rgb(0 0 0 / 4%), 0 1px 3px rgb(0 0 0 / 4%), 0 8px 28px rgb(0 0 0 / 7%);
+}
+:root[data-theme="light"] .qn-chat-header .qn-title { color: #111114; }
+:root[data-theme="light"] .qn-chat-header .qn-header-icon { color: #18181b; }
+:root[data-theme="light"] .qn-chat-header .qn-header-icon:active { background: rgb(0 0 0 / 4%); }
+:root[data-theme="light"] .qn-chat-header:has(+ .qn-chat-surface)::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 -20px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  mask-image: linear-gradient(#000 calc(100% - 30px), transparent);
+  content: "";
+  pointer-events: none;
+}
 
 /* 顶栏图标按钮：无边框，保持 44px 触控区。 */
 .qn-header-icon {
@@ -2640,7 +2690,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 }
 .qn-status-dock[data-collapsed] { max-height: 44px; }
 /* 顶栏叠在对话区上方时，胶囊排在右侧按钮组正下方。 */
-.qn-chat-header + .qn-chat-surface .qn-status-dock { top: 62px; right: 16px; }
+.qn-chat-header + .qn-chat-surface .qn-status-dock { top: 64px; right: 16px; }
 .qn-status-dock[data-state="open"] { animation: qn-dock-in var(--qn-motion-medium) var(--qn-ease-emphasized) backwards; }
 /* 滑动消息时大半退到屏幕外并变淡，露出的一截仍可点。 */
 .qn-status-dock[data-tucked] { opacity: 0.45; transform: translateX(34px); }

@@ -1,4 +1,4 @@
-import { ArrowDown, Bot, ChevronDown, CircleStop, ListChecks, PanelLeft } from 'lucide-react'
+import { ArrowDown, Bot, ChevronDown, ListChecks, MessageCirclePlus } from 'lucide-react'
 import { AGENT_CAPABILITIES, branchPoint, canReviseMessage, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, revisionNote, turnOpeningMessages, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
@@ -419,9 +419,9 @@ export function ChatPage() {
         className="qn-chat-header"
         title={threadTitle || project?.name || t('对话')}
         icon={
-          <Button variant="ghost" className="qn-header-icon qn-header-island size-[40px] shrink-0" onClick={() => setSwitching(true)}
+          <Button variant="ghost" className="qn-header-icon qn-header-island size-[44px] shrink-0" onClick={() => setSwitching(true)}
             aria-label={t('切换会话')} aria-haspopup="dialog" aria-expanded={switching}>
-            <PanelLeft size={20} strokeWidth={1.75} aria-hidden />
+            <MenuLinesIcon />
           </Button>
         }
         subtitle={
@@ -436,9 +436,9 @@ export function ChatPage() {
           // 右侧操作收进一个悬浮按钮组，与左侧会话切换按钮呼应，标题区不再被分隔线截断。
           <div className="qn-header-island">
             {/* 常驻新建入口：不必先回到会话列表；无当前项目时由按钮内弹出项目选择。 */}
-            <NewSessionButton project={project} projects={projects} iconOnly className="qn-header-icon h-[40px] w-[46px] shrink-0" />
+            <NewSessionButton project={project} projects={projects} iconOnly icon={MessageCirclePlus} className="qn-header-icon h-[44px] w-[50px] shrink-0" />
             {/* 对话中直接进入项目文件、终端等页面，不必先退回项目列表。 */}
-            {project && <ProjectTools key={project.id} project={project} compact className="qn-header-icon h-[40px] w-[46px] shrink-0"
+            {project && <ProjectTools key={project.id} project={project} compact className="qn-header-icon h-[44px] w-[50px] shrink-0"
               actions={dockActions} />}
           </div>
         }
@@ -653,8 +653,17 @@ ${text}` : text)
   )
 }
 
+/** 会话切换按钮：长短两道横线，比侧栏图标更轻，表达“打开会话列表”。 */
+function MenuLinesIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+      <path d="M4 8h16M4 16h10" />
+    </svg>
+  )
+}
+
 function TurnInterrupted({ announce }: { announce: boolean }) {
-  return <div className="qn-turn-interrupted" role={announce ? 'status' : undefined}><CircleStop size={15} aria-hidden />{t('本轮已中断')}</div>
+  return <div className="qn-turn-interrupted" role={announce ? 'status' : undefined}><span className="qn-turn-interrupted-icon" aria-hidden />{t('本轮已中断')}</div>
 }
 
 /** Claude 会把失败原因同时作为一条普通回复发出；交给错误卡片统一显示，不重复两遍。 */

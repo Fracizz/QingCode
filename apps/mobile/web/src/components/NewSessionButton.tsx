@@ -1,5 +1,5 @@
 import { t, translateMessage } from '@qn/codex-client'
-import { ChevronRight, Plus } from 'lucide-react'
+import { ChevronRight, Plus, type LucideIcon } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { agentLabel, sessionKey } from '../agents'
 import { defaultAgentFor, targetAgents, useApp } from '../store'
@@ -7,10 +7,12 @@ import type { AgentKind, Project } from '../types'
 import { workspaceProject } from '../workspace'
 import { Button, Dialog, Loading, Note } from './ui'
 
-export function NewSessionButton({ project, projects, iconOnly, primary, className, onCreated }: {
+export function NewSessionButton({ project, projects, iconOnly, icon: Icon = Plus, primary, className, onCreated }: {
   project?: Project
   projects?: readonly Project[]
   iconOnly?: boolean
+  /** 图标按钮可换成更贴合场景的图形，如对话页顶栏用气泡加号。 */
+  icon?: LucideIcon
   primary?: boolean
   className?: string
   onCreated?: () => void
@@ -30,7 +32,7 @@ export function NewSessionButton({ project, projects, iconOnly, primary, classNa
           setOpenFor(activeId)
           void useApp.getState().loadAgentSettings()
         }}>
-        <Plus size={iconOnly ? 19 : 17} strokeWidth={1.75} aria-hidden />{!iconOnly && t('新建会话')}
+        <Icon size={iconOnly ? 19 : 17} strokeWidth={1.75} aria-hidden />{!iconOnly && t('新建会话')}
       </Button>
       {openFor && openFor === activeId && (selected ? (
         <AgentPicker key={selected.id} project={selected} onClose={() => setOpenFor(null)}
