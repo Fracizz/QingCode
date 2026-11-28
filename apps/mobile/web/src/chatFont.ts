@@ -1,4 +1,4 @@
-export const DEFAULT_CHAT_FONT = 14
+export const DEFAULT_CHAT_FONT = 16
 export const MIN_CHAT_FONT = 8
 export const MAX_CHAT_FONT = 32
 const storageKey = 'qn.mobile.chatFontSize'

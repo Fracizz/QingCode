@@ -123,6 +123,7 @@ export function ChatPage() {
   const historyScroll = useRef<{ key: string; height: number; top: number } | null>(null)
   const approvalsRef = useRef<HTMLDivElement>(null)
   const following = useRef(true)
+  const contentRef = useRef<HTMLDivElement>(null)
   const [awayFromBottom, setAwayFromBottom] = useState(false)
   const pendingSteerCount = useApp((s) => selectedPendingSteers(s)?.length ?? 0)
   const previousChat = useRef(chatKey)
@@ -238,8 +239,18 @@ export function ChatPage() {
       if (following.current) node.scrollTop = node.scrollHeight
     })
     observer.observe(node)
+    // 内容自己变高（引导说明出现、卡片展开、图片加载）时也贴底，不只在条目变化时。
+    if (contentRef.current) observer.observe(contentRef.current)
     return () => observer.disconnect()
   }, [])
+
+  // 新发出的引导排在对话末尾：发出时直接滚到最新，确保能看到它和等待说明。
+  const steerCount = useRef(pendingSteerCount)
+  useEffect(() => {
+    const grew = pendingSteerCount > steerCount.current
+    steerCount.current = pendingSteerCount
+    if (grew) jumpToLatest()
+  })
 
   function updateScroll() {
     const node = scrollRef.current
@@ -441,7 +452,7 @@ export function ChatPage() {
                 onAction={() => { if (selectedTargetId) void ensureOpen(selectedTargetId, selectedAgent) }} />
             )}
             {!running && items.length === 0 && approvals.length === 0 && !view?.historyCursor && !timeline.length && !interrupted && <Empty>{t('发送消息开始对话。')}</Empty>}
-            <div className="space-y-4">
+            <div ref={contentRef} className="space-y-4">
               {(firstVisible > 0 || view?.historyCursor) && (
                 <Button variant="ghost" className="mx-auto flex" disabled={historyLoading} onClick={() => void showEarlier()}>
                   {historyLoading ? t('正在加载更早消息…') : t('查看更早消息')}

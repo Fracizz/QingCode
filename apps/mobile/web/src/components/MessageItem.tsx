@@ -104,17 +104,29 @@ function PathText({ text, actions }: { text: string; actions: FileActions }) {
         if (!match) return <span key={index}>{segment.text}</span>
         const location = parseFileHref(match.raw, actions.cwd) ?? { path: resolvePath(match.path, actions.cwd) }
         return (
-          <button
-            key={index}
-            type="button"
-            className="qn-path-link"
-            onClick={() => actions.openFile({ ...location, ...(match.line ? { line: match.line } : {}) })}
-          >
+          <PathLink key={index} onOpen={() => actions.openFile({ ...location, ...(match.line ? { line: match.line } : {}) })}>
             {segment.text}
-          </button>
+          </PathLink>
         )
       })}
     </>
+  )
+}
+
+/**
+ * 文件链接用行内元素而不是 button：button 在 WebView 里总是行内块，长路径会整块换到下一行、
+ * 折行后还居中显示。行内 span 跟随正文自然断行，键盘仍可聚焦并用回车或空格打开。
+ */
+function PathLink({ onOpen, children }: { onOpen: () => void; children: ReactNode }) {
+  return (
+    <span role="link" tabIndex={0} className="qn-path-link" onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        onOpen()
+      }}>
+      {children}
+    </span>
   )
 }
 
@@ -130,12 +142,12 @@ function markdownComponents(actions: FileActions | null, streaming: boolean): Co
       if (href.startsWith('#')) return <a href={href} className="text-qn-accent underline">{linked}</a>
       const location = actions ? parseFileHref(href, actions.cwd) : null
       if (!actions || !location) return children
-      return <button type="button" className="qn-path-link" onClick={() => actions.openFile(location)}>{linked}</button>
+      return <PathLink onOpen={() => actions.openFile(location)}>{linked}</PathLink>
     },
     img: ({ src, alt }) => <MessageImage src={src ?? ''} alt={alt || t('图片')} />,
     pre: ({ children }) => <pre className="qn-pre">{children}</pre>,
     code: ({ className, children }) => (
-      <code className={`rounded border border-qn-border bg-qn-field px-1 font-mono text-[length:var(--text-xs)] ${className ?? ''}`}>
+      <code className={`qn-md-code ${className ?? ''}`}>
         {/* 流式输出时文本还在变，等完成后再识别路径，避免链接闪动。 */}
         {actions && !streaming && typeof children === 'string' ? <PathText text={children} actions={actions} /> : children}
       </code>

@@ -7,8 +7,6 @@ import { Button } from './ui'
 
 // 本轮结束到 Claude 接着开下一轮之间会短暂空闲，留一点余量再判定未被接收，避免闪一下警告。
 const STALE_AFTER_MS = 2000
-// Codex 几乎立刻回显；等过这个时长才解释“为什么还没读取”，免得一闪而过。
-const EXPLAIN_AFTER_MS = 3000
 // 等待超过这个时长才显示已等待多久，短等待只显示状态。
 const ELAPSED_AFTER_MS = 10_000
 
@@ -90,9 +88,8 @@ export function PendingSteers({ items, running, agentName, onRestore }: {
           <span>
             {t('引导已发送，等待 {agent} 读取', { agent: agentName })}
             {waited >= ELAPSED_AFTER_MS && <span className="tabular-nums"> · {t('已等待 {time}', { time: formatDuration(waited) })}</span>}
-            {waited >= EXPLAIN_AFTER_MS && (
-              <span className="qn-steer-hint">{t('{agent} 做完当前这一步（一段回复或一次工具调用）后才会读取，不会打断它。', { agent: agentName })}</span>
-            )}
+            {/* 只有 Claude / pi 会留占位（Codex 收到即回显），说明直接显示，不再延迟出现。 */}
+            <span className="qn-steer-hint">{t('{agent} 做完当前这一步（一段回复或一次工具调用）后才会读取，不会打断它。', { agent: agentName })}</span>
           </span>
         </div>
       ) : (

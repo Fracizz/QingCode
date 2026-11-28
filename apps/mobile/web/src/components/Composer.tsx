@@ -446,21 +446,20 @@ export function Composer({
           onCompositionEnd={() => { composing.current = false; setImeActive(false) }}
         />
         <div className="qn-composer-toolbar">
-          {/* 添加图片固定在最左：收起时与输入框同一行，展开后领起工具行。 */}
-          <Button variant="ghost" className="qn-icon-button qn-composer-add" aria-label={t('添加图片')}
-            title={imageUnavailable ?? (images.length >= MAX_IMAGES ? t('一条消息最多 {max} 张图片', { max: MAX_IMAGES }) : undefined)}
-            onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
-            <ImagePlus size={19} strokeWidth={1.75} aria-hidden />
-          </Button>
           <div className="qn-composer-tools">{toolbar}</div>
-          {/* 常用操作靠右、离拇指近：上下文环、发送/停止；低频的访问模式与模型在左，收起时隐藏。 */}
+          {/* 常用操作靠右、离拇指近：上下文环、添加图片、发送/停止；低频的访问模式与模型在左，收起时隐藏。 */}
           <div className="qn-composer-actions">
             {trailing}
+            <Button variant="ghost" className="qn-icon-button" aria-label={t('添加图片')}
+              title={imageUnavailable ?? (images.length >= MAX_IMAGES ? t('一条消息最多 {max} 张图片', { max: MAX_IMAGES }) : undefined)}
+              onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
+              <ImagePlus size={19} strokeWidth={1.75} aria-hidden />
+            </Button>
             {/* 停止与发送共用一个位置（参考 Orca 手机版）：没有可发送内容时是停止键，一输入就换成发送键（排队）。 */}
             {running && !canSend && !sending && (
               <Button variant="danger" className="qn-stop-button" aria-label={interrupting ? t('正在中断') : t('停止运行')}
                 aria-busy={interrupting} disabled={sending || interrupting} onClick={onInterrupt}>
-                {interrupting ? <LoadingIcon size={14} /> : <Square size={10} fill="currentColor" aria-hidden />}
+                {interrupting ? <LoadingIcon size={15} /> : <Square size={12} fill="currentColor" aria-hidden />}
               </Button>
             )}
             {/* 长按发送键可选「打断后发送」（停止本轮后发送），输入后仍能中断当前轮。 */}
@@ -538,7 +537,7 @@ function SendButton({ running, actualMode, sending, disabled, canSteer, steerHin
           }
           onSend()
         }}>
-        {sending ? <LoadingIcon size={16} /> : <ArrowUp size={17} strokeWidth={2.25} aria-hidden />}
+        {sending ? <LoadingIcon size={17} /> : <ArrowUp size={20} strokeWidth={2.4} aria-hidden />}
       </Button>
       {/* 发送键旁不再放下拉箭头：手机上几乎不用，还挤占输入区；其他发送方式靠长按发送键。 */}
       {open && (

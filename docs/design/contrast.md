@@ -79,7 +79,7 @@
 
 | 场景 | 控件 | 形状 |
 |---|---|---|
-| 固定 2–7 项的单选（推理强度、速度 标准/快速、会话范围 本项目/全部） | **分段控件**：手机 `.qn-segment`（按钮带 `role="radio" aria-checked` 或 `aria-pressed`），电脑版 `SegmentedControl` / 模型选择器内的分段按钮 | 等宽网格；外框 12px、内项 8px 同心圆角；选中项品牌色底 + 中性描边 + 加粗 |
+| 固定 2–7 项的单选（推理强度、速度 标准/快速、会话范围 本项目/全部） | **分段控件**：手机 `.qn-segment`（按钮带 `role="radio" aria-checked` 或 `aria-pressed`），电脑版 `SegmentedControl` / 模型选择器内的分段按钮 | 等宽网格；外框 12px、内项 8px 同心圆角；电脑版选中项品牌色底 + 中性描边 + 加粗；手机版轨道为浅灰填充、无外框，选中项是浮起的滑块（`--qn-thumb` 底 + 轻投影）+ 品牌色加粗文字 |
 | 开关型选项 | 分段控件的“关 / 开”两项，或 `Checkbox`；**不用**单个可按下的胶囊 | 同上 |
 | 横向滚动的筛选、标签、已选项 | 胶囊芯片 `.qn-chip`（`rounded-full`） | 高度 ≤ 32px，文字单行 |
 | 带说明的列表选项（模型） | 整行卡片 `qn-row` + `rounded-xl` | 说明文字可换行（`whitespace-normal` + `overflow-wrap:anywhere`），不得溢出到右侧勾选图标 |

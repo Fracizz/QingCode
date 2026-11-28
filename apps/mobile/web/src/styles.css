@@ -71,6 +71,8 @@
   /* 悬浮在对话上的控件（顶栏按钮组、输入框、回到底部）：柔和投影加 1px 边缘，浅色下也分得清边界。 */
   --qn-float-shadow: 0 0 0 1px var(--qn-edge), 0 4px 16px rgb(0 0 0 / 32%);
   --qn-float-radius: 16px;
+  /* 分段控件选中滑块：比轨道亮一档，深色下也能看出浮起。 */
+  --qn-thumb: #3a3b3f;
   /* 动效：时长与曲线同旧版手机规范（mobile/android/design.md「动效」）。 */
   --qn-motion-short: 150ms;
   --qn-motion-medium: 260ms;
@@ -103,6 +105,7 @@
   --color-qn-text: #ececec;
   --color-qn-muted: #b4b4b8;
   --color-qn-dim: #a0a0a5;
+  --qn-thumb: #4b4c50;
 }
 
 :root[data-theme="light"] {
@@ -138,6 +141,7 @@
   --qn-edge: color-mix(in srgb, var(--color-qn-text) 14%, transparent);
   --qn-edge-top: color-mix(in srgb, var(--color-qn-bg) 78%, transparent);
   --qn-float-shadow: 0 0 0 1px color-mix(in srgb, var(--color-qn-text) 6%, transparent), 0 4px 18px rgb(0 0 0 / 8%);
+  --qn-thumb: #ffffff;
 }
 
 html,
@@ -820,17 +824,16 @@ input[type="radio"] {
   max-width: 100%;
   overflow-x: auto;
   white-space: pre;
-  background: var(--color-qn-field);
-  border: 1px solid var(--color-qn-border);
+  background: color-mix(in srgb, var(--color-qn-text) 6%, transparent);
   border-radius: var(--qn-radius);
-  padding: 8px;
+  padding: 10px 12px;
   font-size: 11px;
   line-height: 1.5;
 }
 
 .qn-markdown {
   overflow-wrap: anywhere;
-  line-height: 1.65;
+  line-height: 1.7;
   font-size: 14px;
 }
 
@@ -852,7 +855,7 @@ input[type="radio"] {
 @keyframes qn-caret { to { visibility: hidden; } }
 
 .qn-markdown p {
-  margin: 0 0 8px;
+  margin: 0 0 12px;
 }
 
 .qn-markdown p:last-child {
@@ -896,14 +899,39 @@ input[type="radio"] {
 .qn-markdown ul,
 .qn-markdown ol {
   padding-left: 20px;
-  margin: 4px 0 8px;
+  margin: 4px 0 12px;
 }
+.qn-markdown li + li { margin-top: 4px; }
+.qn-markdown > :last-child { margin-bottom: 0; }
 
 .qn-markdown h1,
 .qn-markdown h2,
 .qn-markdown h3 {
   font-weight: 600;
-  margin: 8px 0 4px;
+  margin: 16px 0 6px;
+  line-height: 1.45;
+}
+.qn-markdown > :is(h1, h2, h3):first-child { margin-top: 0; }
+
+/*
+ * 行内代码：浅灰底、无边框，折行时每段各自带圆角底色；路径类长串允许任意位置断开，
+ * 不再整块换行。代码块里的 code 沿用 .qn-pre 的样式。
+ */
+.qn-md-code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-qn-text) 8%, transparent);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: var(--text-xs);
+  /* 优先整词换行，放不下的长路径才在任意位置断开。 */
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.qn-pre > .qn-md-code {
+  padding: 0;
+  border-radius: 0;
+  background: none;
 }
 
 .qn-markdown table {
@@ -1005,8 +1033,9 @@ input[type="radio"] {
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
+.qn-path-link:focus-visible { border-radius: 3px; outline: 2px solid var(--color-qn-accent); outline-offset: 1px; }
 
 /* 只读查看页：全屏覆盖在对话页之上，返回键先关闭它。 */
 .qn-viewer {
@@ -1595,9 +1624,9 @@ input[type="radio"] {
   grid-auto-flow: column;
   gap: 2px;
   padding: 3px;
-  border: 1px solid var(--color-qn-border-strong);
+  /* 轨道只用浅灰填充、不画外框；选中项是浮起的滑块（见下）。 */
   border-radius: var(--qn-radius);
-  background: var(--color-qn-field);
+  background: color-mix(in srgb, var(--color-qn-text) 7%, transparent);
 }
 
 .qn-segment button {
@@ -1622,8 +1651,8 @@ input[type="radio"] {
 .qn-segment button:active { background: var(--qn-press); }
 
 .qn-segment button:is([aria-pressed="true"], [aria-checked="true"]) {
-  border-color: var(--color-qn-border-strong);
-  background: var(--qn-accent-surface);
+  background: var(--qn-thumb);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%), 0 0 0 1px var(--qn-edge);
   color: var(--color-qn-accent);
   font-weight: 600;
 }
@@ -1670,24 +1699,31 @@ input[type="radio"] {
 }
 
 /*
- * 收起态：添加图片、输入框、发送/停止排成一行，工具行打散进同一行；
+ * 收起态：输入框、添加图片、发送/停止排成一行，工具行打散进同一行；
  * 访问模式只在非默认档位时保留图标（data-pinned），模型等低频设置聚焦输入后再出现。
  */
 .qn-composer[data-compact] {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  padding: 2px 4px;
+  min-height: 60px;
+  padding: 6px 6px 6px 4px;
 }
 .qn-composer[data-compact] .qn-composer-toolbar { display: contents; }
-.qn-composer[data-compact] .qn-composer-add { order: -2; }
 .qn-composer[data-compact] .qn-composer-tools { order: -1; flex: 0 0 auto; }
 .qn-composer[data-compact] .qn-composer-tools > :not([data-pinned], dialog) { display: none; }
 .qn-composer[data-compact] .qn-textarea {
   flex: 1 1 0;
   min-width: 0;
-  min-height: 44px;
-  padding: 11px 6px;
+  min-height: 46px;
+  /* 左侧 10px + 外层 4px，与展开态输入文字的 14px 起点对齐。 */
+  padding: 12px 6px 12px 10px;
+}
+/* 收起态占位文字只占一行，过长省略，不再折出被裁掉的第二行。 */
+.qn-composer[data-compact] .qn-textarea::placeholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .qn-composer[data-compact] .qn-composer-actions { order: 1; margin-inline-start: 0; }
 
@@ -1784,8 +1820,9 @@ input[type="radio"] {
 
 .qn-composer .qn-textarea {
   display: block;
-  min-height: 40px;
-  padding: 10px 14px 4px;
+  /* 展开态默认留出约两行的书写区，不必一输入就挤在一行里。 */
+  min-height: 52px;
+  padding: 12px 14px 4px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1900,7 +1937,7 @@ input[type="radio"] {
   margin-inline-start: auto;
 }
 
-/* 触控区保持 44px，可见圆只画 34px（背景裁到内容区），避免按钮贴着输入框边缘、显得过重。 */
+/* 触控区 44px，可见圆 40px（背景裁到内容区）：发送与停止是输入框里唯一的主操作，做成醒目的品牌色实心圆。 */
 .qn-send-button,
 .qn-stop-button {
   flex-shrink: 0;
@@ -1908,27 +1945,33 @@ input[type="radio"] {
   min-width: 44px;
   height: 44px;
   min-height: 44px;
-  padding: 5px;
+  padding: 2px;
   border-radius: 999px;
   background-clip: content-box;
 }
 
 .qn-send-button.qn-button-primary:disabled {
   border-color: transparent;
-  background: var(--color-qn-raised);
-  color: var(--color-qn-dim);
+  /* 没有内容时退成淡品牌色，位置和形状不变，一输入就点亮。 */
+  background: color-mix(in srgb, var(--color-qn-accent) 28%, var(--color-qn-composer));
+  color: var(--color-qn-composer);
   opacity: 1;
 }
 
-/* 扁平停止键：只用浅红实底，不再叠描边环。 */
+/* 停止键与发送键同色同形，只换成圆角方块图标：同一位置始终是“主操作”，不用警示红打扰阅读。 */
 .qn-stop-button.qn-button-danger {
   border-color: transparent;
-  background: color-mix(in srgb, var(--color-qn-danger) 18%, var(--color-qn-composer));
+  background: var(--color-qn-accent);
   background-clip: content-box;
+  color: var(--color-qn-primary-text);
   box-shadow: none;
 }
+.qn-send-button,
+.qn-stop-button { transition: transform var(--qn-motion-short) ease, background-color var(--qn-motion-short) ease; }
+.qn-send-button:not(:disabled):active,
+.qn-stop-button:not(:disabled):active { transform: scale(0.94); }
 
-.qn-stop-button svg { border-radius: 2px; }
+.qn-stop-button svg { border-radius: 3px; }
 
 .qn-image-thumbnail {
   display: inline-flex;
@@ -2029,7 +2072,9 @@ input[type="radio"] {
 .qn-sheet-quote {
   display: -webkit-box;
   margin: -2px 0 14px;
-  padding: 10px 12px;
+  /* 上下留白用透明边框而不是内边距：溢出只裁到内边距边缘，用 padding 会露出半截第 4 行。 */
+  padding: 0 12px;
+  border-block: 10px solid transparent;
   border-radius: var(--qn-radius);
   /* 用文字色叠一层薄底：深浅主题下都比面板略有区分，不额外加边框。 */
   background: color-mix(in srgb, var(--color-qn-text) 5%, transparent);
@@ -2618,27 +2663,31 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 .qn-chat-surface .qn-markdown,
 .qn-chat-surface .qn-user-bubble,
 .qn-chat-surface .qn-composer .qn-textarea {
-  font-size: var(--chat-font, 14px);
+  font-size: var(--chat-font, 16px);
 }
 
 .qn-chat-surface .qn-markdown :is(code, pre, table),
 .qn-chat-surface .qn-tool-row,
 .qn-chat-surface .qn-tool-body :is(pre, .qn-mono),
 .qn-chat-surface .qn-diff-preview {
-  font-size: max(8px, calc(var(--chat-font, 14px) - 2px));
+  font-size: max(8px, calc(var(--chat-font, 16px) - 2px));
   line-height: 1.5;
 }
 
 /* 消息区其余文字保持原有层级，按所选字号与默认 14px 的差值一起增减，最小 8px。 */
 .qn-chat-surface .qn-body {
-  --qn-chat-delta: calc(var(--chat-font, 14px) - 14px);
+  --qn-chat-delta: calc(var(--chat-font, 16px) - 16px);
   --text-3xs: max(8px, calc(10px + var(--qn-chat-delta)));
   --text-2xs: max(8px, calc(11px + var(--qn-chat-delta)));
   --text-xs: max(8px, calc(12px + var(--qn-chat-delta)));
   --text-compact: max(8px, calc(13px + var(--qn-chat-delta)));
-  --text-sm: var(--chat-font, 14px);
+  --text-sm: var(--chat-font, 16px);
   font-size: max(8px, calc(16px + var(--qn-chat-delta)));
 }
+
+/* 对话页左右留白 16px，正文不贴边；输入框底栏同步。 */
+.qn-chat-surface > div > .qn-body { padding-inline: 16px; }
+.qn-chat-surface .qn-footer.qn-composer-footer { padding-inline: 16px; }
 
 /* 消息里打开的弹层是操作界面，不随对话字号变化。 */
 .qn-chat-surface .qn-body dialog {
@@ -2783,10 +2832,10 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   flex-shrink: 0;
   margin: 6px 12px 0;
   padding: 0 4px 0 12px;
-  border: 1px solid var(--color-qn-border);
-  /* 与对话输入框同步收小圆角。 */
-  border-radius: 10px;
-  background: var(--color-qn-panel);
+  /* 去掉描边：与输入框同属浮在对话上的面板，用投影和底色区分。 */
+  border-radius: 12px;
+  background: var(--color-qn-composer);
+  box-shadow: var(--qn-float-shadow);
 }
 .qn-queue-details > summary { min-height: 36px; font-size: 12.5px; }
 /* 展开清单后当前步骤已在列表里，摘要行不再重复。 */
@@ -2834,8 +2883,8 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 .qn-usage-host,
 .qn-usage-card {
   border-radius: var(--qn-radius);
-  background: var(--color-qn-card);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 24%), inset 0 1px 0 var(--qn-edge-top), inset 0 0 0 1px var(--qn-edge);
+  background: var(--color-qn-composer);
+  box-shadow: var(--qn-float-shadow);
 }
 
 .qn-usage-host {

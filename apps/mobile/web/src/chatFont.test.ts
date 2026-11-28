@@ -16,7 +16,8 @@ it('双指缩放按距离比调整字号，保留单指滚动并清理监听', (
   touch('touchmove', [0, 20])
   expect(size).toBe('8px')
   touch('touchmove', [0, 200])
-  expect(size).toBe('28px')
+  // 默认 16px，两指距离翻倍到 32px（上限）。
+  expect(size).toBe('32px')
   touch('touchcancel', [])
   close()
   expect(touch('touchstart', [0, 100])).toBe(true)
