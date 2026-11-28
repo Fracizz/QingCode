@@ -7,5 +7,9 @@
     <string name="download_running">正在下载 %1$s</string>
     <string name="download_done">已保存 %1$s</string>
     <string name="download_failed">%1$s 下载失败</string>
+    <string name="download_file_changed">文件已变化，请刷新文件列表后重试</string>
+    <string name="download_pair_again">请重新配对这台电脑，然后重试下载</string>
+    <string name="download_check_connection_storage">请检查网络连接和可用存储空间后重试</string>
+    <string name="download_retry">请打开 QingCode 重试下载</string>
     <string name="download_cancel">取消</string>
 </resources>

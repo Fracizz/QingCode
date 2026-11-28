@@ -1,5 +1,6 @@
 import {
   CLAUDE_WAITING_FOR_QUOTA,
+  accountReadErrorText,
   claudeHasWindows,
   claudeQuotaReportedAt,
   claudeQuotaResetAt,
@@ -15,7 +16,6 @@ import {
   sumUsageTokens,
   t,
   tightestPercent,
-  translateMessage,
   windowLabel,
   type AccountUsage,
   type ClaudeRateLimitSnapshot,
@@ -311,7 +311,7 @@ function CodexQuotaCard({ targetId, available, opened }: { targetId: string; ava
     <UsageCard agent="codex" title={t('额度')} badge={tightest !== null && (
       <SeverityBadge level={level}>{t('最低剩余 {percent}%', { percent: Math.round(remainingQuotaPercent(tightest)) })}</SeverityBadge>
     )}>
-      {error && <p className="qn-usage-error">{translateMessage(error)}</p>}
+      {error && <p className="qn-usage-error">{accountReadErrorText(error)}</p>}
       {snapshot?.primary && <QuotaWindow label={windowLabel(snapshot.primary.windowDurationMins ?? 300)} window={snapshot.primary} now={now} />}
       {snapshot?.secondary && <QuotaWindow label={windowLabel(snapshot.secondary.windowDurationMins ?? 10080)} window={snapshot.secondary} now={now} />}
       {!hasWindows && !error && (
@@ -338,7 +338,7 @@ function CodexUsageCard({ targetId, opened }: { targetId: string; opened: boolea
   const error = useApp((s) => s.rateLimits[targetId]?.usageError ?? null)
   return (
     <UsageCard agent="codex" title={t('总用量')} badge={loading && <span className="qn-usage-note ml-auto">{t('刷新中…')}</span>}>
-      {error && <p className="qn-usage-error">{translateMessage(error)}</p>}
+      {error && <p className="qn-usage-error">{accountReadErrorText(error)}</p>}
       {usage ? <UsageStats usage={usage} /> : !loading && !error && (
         <p className="qn-usage-empty-text">{opened ? t('暂无用量数据') : t('打开 Codex 后可查看')}</p>
       )}

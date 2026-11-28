@@ -1,11 +1,13 @@
 // 浏览器开发模式的端到端冒烟：粘贴导入 → 配对 → 目标/项目/多 Agent 会话 → 流式对话 → 模型覆盖 → 只读查看文件/差异。
 import { describe, expect, it, vi } from 'vitest'
+import { composeAttachmentText, insertImagePlaceholders } from '@qn/codex-client'
 import { ACCESS_PREFS_STORAGE_KEY, accessPreferenceKey } from './accessPrefs'
 import { archivedThreadKey, sessionKey } from './agents'
 import { createGateway, setGateway } from './client'
 import { buildConnectionInfo } from './link'
 import { MOCK_FP, type MockNativePort } from './mock'
 import { toModelOptions } from './models'
+import { UNCONFIRMED_QUEUED_SEND } from './queuedSends'
 import { draftKey, parseConnections, serializeConnections } from './state'
 import { displayedAccessMode, selectedAccessMode, selectedCompactionStarting, selectedQueuedSends, useApp } from './store'
 import { EventStreamController } from './transport'
@@ -426,13 +428,22 @@ describe('模拟网关全链路', () => {
     gitDiff.mockRestore()
     state().closeViewer()
 
-    state().setDraftText('失败仍保留')
+    const photo = { name: '文件名很长的失败场景验收截图-a-really-long-name.png', mime: 'image/png', dataUrl: 'data:image/png;base64,AA==' }
+    const photoDraft = insertImagePlaceholders('失败仍保留', [photo.name]).value
+    state().setDraftText(photoDraft, [photo])
     state().addAnnotation('引用', '备注')
     vi.spyOn(gateway, 'rpc').mockRejectedValueOnce(new Error('模拟网络中断'))
-    await expect(state().send(state().draftText)).resolves.toBe(false)
-    expect(state().draftText).toBe('失败仍保留')
+    await expect(state().send(composeAttachmentText(photoDraft, [photo]), [{ type: 'image', url: photo.dataUrl }])).resolves.toBe(false)
+    expect(state().draftText).toBe(photoDraft)
+    expect(state().draftImages).toEqual([photo])
     expect(state().annotations).toMatchObject([{ quote: '引用', comment: '备注' }])
     expect(state().error).toBe('模拟网络中断')
+    const photoDraftKey = draftKey(edited.id, 'local', 'p-local', 'claude', claudeThread!, edited.fp)
+    await vi.waitFor(async () => {
+      expect(JSON.parse((await gateway.storageGet('chatDrafts')) ?? '{}')[photoDraftKey]).toEqual({
+        text: '失败仍保留', annotations: state().annotations,
+      })
+    })
 
     vi.spyOn(gateway, 'rpc').mockRestore()
     const actualRpc = gateway.rpc.bind(gateway)
@@ -508,6 +519,7 @@ describe('模拟网关全链路', () => {
     await state().openThread(claudeThread!, 'claude')
     expect(state().sessions['claude:local']?.transport).not.toBe(firstTransport)
     expect(state().draftText).toBe('')
+    expect(state().draftImages).toEqual([])
 
     await state().activate(edited.id)
     controller.start()
@@ -515,7 +527,8 @@ describe('模拟网关全链路', () => {
     await state().selectTarget('local')
     await state().selectProject('p-local')
     await state().openThread(claudeThread!, 'claude')
-    expect(state().draftText).toBe('失败仍保留')
+    expect(state().draftText).toBe(photoDraft)
+    expect(state().draftImages).toEqual([photo])
     expect(state().annotations).toMatchObject([{ quote: '引用', comment: '备注' }])
     expect(state().modelPrefs.codex?.model).toBe('gpt-5.5-mini')
 
@@ -972,10 +985,11 @@ describe('模拟网关全链路', () => {
       const firstTurn = view()?.activeTurnId
       expect(firstTurn).toBeTruthy()
       expect(state().sending).toBe(false)
-      state().setDraftText('排队一')
       const png = 'data:image/png;base64,AA=='
+      state().setDraftText('排队一', [{ name: 'img.png', mime: 'image/png', dataUrl: png }])
       await expect(state().send(state().draftText, [{ type: 'image', url: png }])).resolves.toBe(true)
       expect(state().draftText).toBe('')
+      expect(state().draftImages).toEqual([])
       await expect(state().send('移除这条')).resolves.toBe(true)
       await expect(state().send('排队二')).resolves.toBe(true)
       expect(queue().map((message) => message.text)).toEqual(['排队一', '移除这条', '排队二'])
@@ -1249,7 +1263,7 @@ describe('模拟网关全链路', () => {
     }
   })
 
-  it('冷启动从加密存储恢复当前会话、草稿和暂停的发送队列', async () => {
+  it('冷启动恢复会话和草稿，按顺序续发待发项并保留发送结果未确认的项', async () => {
     const gateway = createGateway()
     setGateway(gateway)
     const conn = {
@@ -1259,44 +1273,79 @@ describe('模拟网关全链路', () => {
     const chat = { targetId: 'local', projectId: 'p-local', agent: 'codex', threadId: 't-demo' } as const
     const key = draftKey(conn.id, chat.targetId, chat.projectId, chat.agent, chat.threadId, conn.fp)
     const queueKey = JSON.stringify([conn.id, chat.targetId, chat.agent, chat.threadId])
+    const relayQueueKey = JSON.stringify([conn.id, chat.targetId, 'claude', 'c-demo'])
     const queued = {
       id: 'saved-message', text: '重启前排队的消息', annotations: [], delegate: false, overrides: {},
       attachments: [{ type: 'image', url: 'data:image/png;base64,AA==' }],
     }
+    const relayed = { ...queued, id: 'relayed', text: '已由电脑代发', relayPending: true }
+    const compact = { ...queued, id: 'compact', text: '/compact', compact: true, attachments: [] }
+    const unconfirmed = { ...queued, id: 'unconfirmed', text: '重启前已发出', sending: true }
+    const missingRelay = { ...relayed, id: 'missing-relay', text: '电脑代发记录已丢失' }
     await Promise.all([
       gateway.storageSet('connections', serializeConnections([conn])),
       gateway.storageSet('active', conn.id),
       gateway.storageSet('savedChats', JSON.stringify({ [conn.id]: chat })),
       gateway.storageSet('chatDrafts', JSON.stringify({ [key]: { text: '冷启动草稿', annotations: [] } })),
-      gateway.storageSet('queuedSends', JSON.stringify({ [queueKey]: { fp: conn.fp, items: [queued] } })),
+      gateway.storageSet('queuedSends', JSON.stringify({
+        [queueKey]: { fp: conn.fp, items: [relayed, compact, queued, unconfirmed] },
+        [relayQueueKey]: { fp: conn.fp, items: [missingRelay] },
+      })),
     ])
     const rpc = gateway.rpc.bind(gateway)
+    const state = useApp.getState
+    const sends: string[] = []
     let connected = false
+    let releaseTake!: () => void
+    const take = new Promise<void>((resolve) => { releaseTake = resolve })
     const requests = vi.spyOn(gateway, 'rpc').mockImplementation(async (...args) => {
       const [, method, params] = args
+      if (method === 'mobile.queue.take') {
+        await take
+        return { queues: [{ targetId: chat.targetId, agent: chat.agent, threadId: chat.threadId, sentIds: [relayed.id] }] } as never
+      }
       if (method === 'target.connect') connected = true
       if (!connected && method === 'server.req' && (params as { method?: string }).method === 'codex.open') {
         throw Object.assign(new Error('目标未连接'), { code: 'not_connected' })
       }
+      const msg = (params as { msg?: { method?: string } }).msg
+      if (method === 'codex.send' && msg?.method === 'thread/compact/start') sends.push(msg.method)
+      if (method === 'codex.send' && msg?.method === 'turn/start') {
+        expect(state().sessions['codex:local']?.state.threads[chat.threadId]?.items)
+          .toContainEqual(expect.objectContaining({ type: 'contextCompaction', status: 'completed' }))
+        sends.push(msg.method)
+      }
       return rpc(...args)
     })
-    useApp.getState().init()
-    await vi.waitFor(() => {
-      expect(useApp.getState()).toMatchObject({
-        page: 'chat', selectedThreadId: chat.threadId, activeId: conn.id, draftText: '冷启动草稿',
+    state().init()
+    try {
+      await vi.waitFor(() => expect(requests.mock.calls.some(([, method]) => method === 'mobile.queue.take')).toBe(true))
+      expect(sends).toEqual([])
+      releaseTake()
+      await vi.waitFor(() => {
+        expect(state()).toMatchObject({
+          page: 'chat', selectedThreadId: chat.threadId, activeId: conn.id, draftText: '冷启动草稿',
+        })
+        expect(selectedQueuedSends(state())).toMatchObject([
+          { ...unconfirmed, sending: false, error: UNCONFIRMED_QUEUED_SEND },
+        ])
       })
-    })
-    expect(selectedQueuedSends(useApp.getState())).toEqual([
-      { ...queued, sending: false, error: '已恢复排队消息，等待继续发送' },
-    ])
-    expect(requests.mock.calls.some(([, method, params]) => method === 'codex.send'
-      && (params as { msg?: { method?: string } }).msg?.method === 'turn/start')).toBe(false)
-    expect(requests.mock.calls).not.toContainEqual([
-      conn, 'server.req', expect.objectContaining({ method: 'ping' }),
-    ])
-    expect(requests.mock.calls.filter(([, method]) => method === 'target.connect')).toHaveLength(1)
-    expect(useApp.getState().goBack()).toBe(true)
-    expect(useApp.getState().page).toBe('workspace')
-    await useApp.getState().removeConnection(conn.id)
+      expect(sends).toEqual(['thread/compact/start', 'turn/start'])
+      expect(requests.mock.calls).toContainEqual([
+        conn, 'codex.send', expect.objectContaining({ msg: expect.objectContaining({ method: 'turn/start', params: expect.objectContaining({
+          input: [{ type: 'text', text: queued.text, text_elements: [] }, ...queued.attachments],
+        }) }) }),
+      ])
+      expect(state().queuedSends[relayQueueKey]).toMatchObject([{ id: missingRelay.id, error: UNCONFIRMED_QUEUED_SEND }])
+      expect(requests.mock.calls).not.toContainEqual([
+        conn, 'server.req', expect.objectContaining({ method: 'ping' }),
+      ])
+      expect(requests.mock.calls.filter(([, method]) => method === 'target.connect')).toHaveLength(1)
+      expect(state().goBack()).toBe(true)
+      expect(state().page).toBe('workspace')
+    } finally {
+      releaseTake()
+      await state().removeConnection(conn.id)
+    }
   })
 })

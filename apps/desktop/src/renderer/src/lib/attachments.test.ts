@@ -226,13 +226,17 @@ describe('输入框图片占位', () => {
     expect(insertImagePlaceholders('看图', ['image.png', 'image-2.png']).value).toBe('看图 [image.png] [image-2.png]')
   })
 
-  it('超长文件名完整保留，重名图片仍可单独移除', () => {
-    const stem = 'long-file-name-'.repeat(15) + '截图'
+  it('超长文件名在输入框中间省略，重名图片可单独移除，发送使用全名', () => {
+    const stem = 'long-file-name-'.repeat(15) + '截图终版'
     const name = `${stem}.png`
-    const duplicate = uniqueImageName(name, [name])
+    const duplicate = uniqueImageName(`${'long-file-other-'.repeat(15)}same-截图终版.png`, [name])
     const { value } = insertImagePlaceholders('请看图', [name, duplicate])
-    expect(value).toBe(`请看图 [${stem}.png] [${stem}-2.png]`)
-    expect(removePlaceholder(value, duplicate)).toBe(`请看图 [${name}]`)
+    expect(value).toBe('请看图 [long-fil…me-截图终版.png] [long-fil…-截图终版-2.png]')
+    expect(removePlaceholder(value, duplicate)).toBe('请看图 [long-fil…me-截图终版.png]')
+    const attachments = [name, duplicate].map((name, index) => ({
+      kind: 'image' as const, id: String(index), name, size: 1, dataUrl: 'data:image/png;base64,AA==',
+    }))
+    expect(composeMessageText(value, attachments)).toContain(`请看图 [${name}] [${duplicate}]`)
   })
 
   it('混合粘贴保留文字，只有通过校验的图片才会生成占位', () => {

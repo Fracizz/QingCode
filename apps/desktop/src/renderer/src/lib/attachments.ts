@@ -1,7 +1,8 @@
 // 输入框附件（图片 / 文件）与斜杠菜单的纯逻辑。IO（读文件、压缩、上传）在 lib/attachmentIo.ts。
 
-import { appendImageNote, t } from '@qn/codex-client'
+import { composeAttachmentText, imagePlaceholder, t } from '@qn/codex-client'
 import type { UserInput } from '@qn/codex-client'
+export { imagePlaceholder, insertAtSelection, insertImagePlaceholders, removePlaceholder, stripAttachmentPlaceholders, uniqueImageName } from '@qn/codex-client'
 
 export const MAX_ATTACHMENTS = 50
 /** 图片压缩后上限：随消息以 data URL 发送，太大会拖慢 turn/start 并占满上下文。 */
@@ -81,77 +82,8 @@ export function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path
 }
 
-/** 输入框内的附件（图片 / 文件）名占位，显示为蓝色标签，发送时保留在正文里供模型对应附件。 */
-export function imagePlaceholder(name: string): string {
-  return `[${name}]`
-}
-
-/**
- * 给附件取不重名的名字：截图通常都叫 image.png，重名时占位无法对应到具体附件，
- * 所以依次改成 image-2.png、image-3.png。文件附件同理。
- */
-export function uniqueImageName(name: string, taken: Iterable<string>): string {
-  const used = new Set(taken)
-  const base = name || 'image.png'
-  if (!used.has(base)) return base
-  const dot = base.lastIndexOf('.')
-  const stem = dot > 0 ? base.slice(0, dot) : base
-  const ext = dot > 0 ? base.slice(dot) : ''
-  for (let index = 2; ; index++) {
-    const next = `${stem}-${index}${ext}`
-    if (!used.has(next)) return next
-  }
-}
-
-/** 用 text 替换 [start, end) 选区；与左右正文之间补空格，避免占位和文字粘在一起。返回新值和插入后的光标。 */
-export function insertAtSelection(value: string, start: number, end: number, text: string): { value: string; caret: number } {
-  const left = value.slice(0, start)
-  const right = value.slice(end)
-  const before = left && !/\s$/.test(left) ? ' ' : ''
-  const after = right && !/^\s/.test(right) ? ' ' : ''
-  const inserted = `${before}${text}${after}`
-  return { value: left + inserted + right, caret: left.length + inserted.length }
-}
-
-export function insertImagePlaceholders(
-  value: string,
-  names: string[],
-  selection = { start: value.length, end: value.length },
-  pastedText = '',
-): { value: string; caret: number } {
-  const { start, end } = selection
-  // 剪贴板同时有文件和文字时，先插入文字，再接上图片名。
-  const plain = pastedText.replace(/\r\n?/g, '\n')
-  const nextText = plain ? value.slice(0, start) + plain + value.slice(end) : value
-  const position = start + plain.length
-  if (!names.length) return { value: nextText, caret: position }
-  return insertAtSelection(nextText, position, plain ? position : end, names.map(imagePlaceholder).join(' '))
-}
-
-/** 去掉对应的第一个占位及一个分隔空格，保留原有换行。 */
-export function removePlaceholder(value: string, name: string): string {
-  const token = imagePlaceholder(name)
-  const index = value.indexOf(token)
-  if (index < 0) return value
-  const end = index + token.length
-  if (value[end] === ' ') return value.slice(0, index) + value.slice(end + 1)
-  const start = value[index - 1] === ' ' ? index - 1 : index
-  return value.slice(0, start) + value.slice(end)
-}
-
-/** 去掉这些附件在正文里的占位（发送后恢复未发送的草稿时用）。 */
-export function stripAttachmentPlaceholders(value: string, attachments: readonly Attachment[]): string {
-  for (const item of attachments) value = removePlaceholder(value, item.name)
-  return value
-}
-
-/**
- * 发送用的正文：保留附件占位，让模型知道用户指的是哪张图、哪个文件；
- * 图片再追加编号说明（文件由附件说明给出名字和路径）。正文只有占位时照旧去掉，避免空发标签。
- */
 export function composeMessageText(value: string, attachments: readonly Attachment[]): string {
-  if (!stripAttachmentPlaceholders(value, attachments).trim()) return ''
-  return appendImageNote(value, attachments.flatMap((item) => item.kind === 'image' ? [item.name] : []))
+  return composeAttachmentText(value, attachments, attachments.filter((item) => item.kind === 'image'))
 }
 
 /** 历史消息的内嵌图片只带数据，用格式和序号生成预览标签。 */

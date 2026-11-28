@@ -125,7 +125,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
         {first?.error && (
           <div className="mb-1 flex items-center gap-2 text-xs text-qn-warn">
             <span className="min-w-0 flex-1 wrap-anywhere">{translateMessage(first.error)}</span>
-            <Button variant="ghost" className="shrink-0 px-2 text-xs" disabled={!connected || running || first.sending || first.saving} onClick={() => void retry()}>{t('继续发送')}</Button>
+            <Button variant="ghost" className="shrink-0 px-2 text-xs" disabled={!connected || running || first.relayPending || first.sending || first.saving} onClick={() => void retry()}>{t('继续发送')}</Button>
           </div>
         )}
         <ul className="qn-scroll qn-queue-list" aria-label={t('待发送的消息')}>
@@ -140,7 +140,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
                     className={`shrink-0 ${access.warning ? 'text-qn-danger' : 'text-qn-warn'}`} />
                 )}
                 <p className="min-w-0 flex-1 truncate">{message.compact ? t('压缩会话') : message.text.trim() || t('附件或引用')}</p>
-                {message.sending || message.saving ? <Badge>{message.saving ? t('保存中') : t('发送中')}</Badge> : (
+                {message.relayPending || message.sending || message.saving ? <Badge>{message.saving ? t('保存中') : t('发送中')}</Badge> : (
                   <div className="flex shrink-0 items-center gap-0.5">
                     {steerable(message) && (
                       <Button variant="ghost" className="qn-queue-steer" disabled={!connected}

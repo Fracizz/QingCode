@@ -6,6 +6,8 @@
 
 桌面请求从 renderer 经 MessagePort 到 backend，再连接目标机上的 daemon。本机和 SSH 目标运行同一份 server。手机通过已配对电脑的网关访问目标。
 
+双端功能与交互变化记录在[电脑版与手机版能力对齐](docs/client-capabilities.md)。
+
 | 改动内容 | 代码入口 |
 | --- | --- |
 | backend 与 daemon 之间的帧、请求和事件类型 | `packages/protocol/src`。Codex 官方协议生成物在 `vendor/codex-protocol`，只读。 |

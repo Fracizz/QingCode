@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
+import { PROMPT_SUGGESTION_METHOD } from '../../protocol/src/agents'
 import type { RequestId, ServerNotification, ServerRequest, Thread, Turn, UserInput } from './codex-types'
 import {
   DRAFT_THREAD_ID,
   addOptimisticUser,
   applyNotification,
   applyServerRequest,
+  availablePromptSuggestion,
   approvalResponse,
   clearDraftThread,
   dropOptimisticUsers,
@@ -42,6 +44,58 @@ function reduce(s: ConversationState, notifications: ServerNotification[]): Conv
   return s
 }
 
+it('提示词建议只跟随最近成功的轮次，新消息和旧轮次重放不会恢复它', () => {
+  const threadId = 't'
+  const turn = { id: 'last', status: 'completed', items: [item('agentMessage', 'reply', { text: '已检查' })] }
+  const suggestion = note(PROMPT_SUGGESTION_METHOD, { threadId, turnId: turn.id, suggestion: ' 继续跑测试 ' })
+  const ended = applyNotification(emptyState(), note('turn/completed', { threadId, turn }))
+  const ready = applyNotification(ended, suggestion)
+  expect(ready.threads[threadId]?.promptSuggestion).toEqual({ turnId: turn.id, text: '继续跑测试' })
+  expect(availablePromptSuggestion(ready.threads[threadId], true, false, false)).toBe('继续跑测试')
+  expect(availablePromptSuggestion(ready.threads[threadId], true, true, false)).toBeUndefined()
+  expect(availablePromptSuggestion(ready.threads[threadId], true, false, true)).toBeUndefined()
+  expect(availablePromptSuggestion(ready.threads[threadId], false, false, false)).toBeUndefined()
+  const history = loadThread(ready, { id: threadId, turns: [{ ...turn, id: 'history-id' }] } as unknown as Thread)
+  expect(history.threads[threadId]?.promptSuggestion).toEqual(ready.threads[threadId]?.promptSuggestion)
+
+  const pending = addOptimisticUser(ready, threadId, { kind: 'user', id: 'u', text: '新消息', pending: true })
+  expect(pending.threads[threadId]?.promptSuggestion).toBeUndefined()
+  expect(applyNotification(pending, suggestion)).toBe(pending)
+  const next = reduce(ready, [
+    note('turn/started', { threadId, turn: { id: 'next', status: 'inProgress' } }),
+    note('turn/completed', { threadId, turn: { id: 'next', status: 'completed' } }),
+    suggestion,
+  ])
+  expect(next.threads[threadId]?.promptSuggestion).toBeUndefined()
+  expect(failActiveThreads(ready, '进程已退出').threads[threadId]?.promptSuggestion).toBeUndefined()
+})
+
+it('工具详情保留实时和历史中的状态与文本，并在最终回复后的工具仍可展开', () => {
+  const threadId = 't'
+  const turnId = 'turn'
+  const tool = item('mcpToolCall', 'tool', { tool: 'search', server: 'catalog', status: 'inProgress' })
+  const reply = item('agentMessage', 'reply', { text: '已检查' })
+  const running = reduce(emptyState(), [
+    note('turn/started', { threadId, turn: { id: turnId, status: 'inProgress', items: [] } }),
+    note('item/completed', { threadId, turnId, item: reply }),
+    note('item/started', { threadId, turnId, item: tool }),
+  ])
+  expect(itemOf(running, 'tool', threadId)).toMatchObject({ status: 'inProgress', toolDetails: { name: 'catalog · search', result: '' } })
+  const finished = { ...tool, status: 'completed', result: { content: [
+    { type: 'text', text: '查询结果' }, { type: 'image', data: 'image-payload' },
+  ] } }
+  const turn = { id: turnId, status: 'completed', items: [reply, finished] }
+  const live = reduce(running, [
+    note('item/completed', { threadId, turnId, item: finished }),
+    note('turn/completed', { threadId, turn }),
+  ])
+  const historical = loadThread(emptyState(), { id: threadId, turns: [turn] } as unknown as Thread)
+  const view = live.threads[threadId]!
+  expect(itemOf(live, 'tool', threadId)).toMatchObject({ status: 'completed', toolDetails: { result: '查询结果' } })
+  expect(itemOf(live, 'tool', threadId)).toEqual(itemOf(historical, 'tool', threadId))
+  expect(groupTurns(view.items, view.turns, false)).toMatchObject([{ key: 'reply' }, { key: 'tool' }])
+})
+
 describe('按需读取会话历史', () => {
   it('最近页保留实时条目和审批，前插早期页时去重且保持当前轮次', () => {
     const active = { id: 'active', status: 'inProgress', items: [] } as unknown as Turn
@@ -69,8 +123,8 @@ function threadOf(s: ConversationState, id = 't1') {
   return thread
 }
 
-function itemOf(s: ConversationState, id: string): ItemView {
-  const found = threadOf(s).items.find((entry) => entry.id === id)
+function itemOf(s: ConversationState, id: string, threadId?: string): ItemView {
+  const found = threadOf(s, threadId).items.find((entry) => entry.id === id)
   if (!found) throw new Error(`missing item ${id}`)
   return found
 }

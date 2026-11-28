@@ -8,6 +8,39 @@ import { useCodex } from '../store/codex'
 import { Composer } from './Composer'
 import { TooltipProvider } from './primitives'
 
+it('空草稿用 Tab 填入提示词建议，发送仍走原来的操作', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const onSend = vi.fn()
+  const boundary = createRef<HTMLDivElement>()
+  const suggestion = '继续跑测试'
+  function Harness() {
+    const [value, onChange] = useState('')
+    return <Composer agent="claude" suggestionBoundaryRef={boundary} value={value} onChange={onChange}
+      promptSuggestion={suggestion} onSend={onSend} onInterrupt={vi.fn()} running={false} sending={false}
+      error={null} onClearError={vi.fn()} />
+  }
+  try {
+    await act(() => root.render(<TooltipProvider><Harness /></TooltipProvider>))
+    const textarea = host.querySelector('textarea')!
+    const option = '[aria-label="填入建议：继续跑测试"]'
+    expect(host.querySelector(option)).not.toBeNull()
+    expect(textarea.value).toBe('')
+
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    await act(() => { textarea.dispatchEvent(tab) })
+    expect(tab.defaultPrevented).toBe(true)
+    expect(textarea.value).toBe(suggestion)
+    expect(host.querySelector(option)).toBeNull()
+    expect(onSend).not.toHaveBeenCalled()
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
 it('原生命令写进输入框、打开菜单时刷新；计划模式常驻标识并可退出', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
@@ -32,7 +65,7 @@ it('原生命令写进输入框、打开菜单时刷新；计划模式常驻标�
         onSend={vi.fn()} onInterrupt={() => {}} running={false} sending={false} error={null} onClearError={() => {}}
         slash={{
           items: [{ id: 'native:review', kind: 'native', name: 'review', description: '评审', argumentHint: '<文件>' }],
-          skills: [], onSkillsChange: vi.fn(), onCommand, onOpen,
+          skills: [], knownSkills: [], onSkillsChange: vi.fn(), onCommand, onOpen,
         }} />
     )
   }
@@ -74,10 +107,11 @@ it('运行中按设置发送，另一组快捷键临时换方式，不能引导�
   document.body.append(host)
   const root = createRoot(host)
   const onSend = vi.fn()
+  const onInterrupt = vi.fn()
   const render = (value: string, patch: { steerBlocked?: boolean; running?: boolean } = {}) => act(() => root.render(
     <TooltipProvider>
       <Composer suggestionBoundaryRef={createRef<HTMLDivElement>()} agent="codex" value={value} onChange={() => {}}
-        onSend={onSend} onInterrupt={() => {}} running sending={false} error={null} onClearError={() => {}} {...patch} />
+        onSend={onSend} onInterrupt={onInterrupt} running sending={false} error={null} onClearError={() => {}} {...patch} />
     </TooltipProvider>,
   ))
   const enter = (options: KeyboardEventInit = {}) => act(() => {
@@ -85,7 +119,13 @@ it('运行中按设置发送，另一组快捷键临时换方式，不能引导�
   })
   const button = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
   try {
+    await render('')
+    expect(button('引导')).toBeNull()
+    await act(() => button('停止运行')!.click())
+    expect(onInterrupt).toHaveBeenCalledOnce()
+
     await render('补充')
+    expect(button('停止运行')).not.toBeNull()
     expect(button('引导')).not.toBeNull()
     await enter()
     await enter({ ctrlKey: true })

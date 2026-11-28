@@ -3,7 +3,7 @@ const ATTACHMENT_NOTE = '附件文件（请按需读取）：'
 // i18n-ignore: 写进发给模型的正文，也用于解析历史消息
 const IMAGE_NOTE = '附图编号（按本条消息中图片的先后顺序）：'
 const SKILL_PREFIX = /^\/([\w.:-]+)(?:\s+|$)/
-const IMAGE_LINE = /^(\d+)\. \[([^\]\n]+)\]$/
+const IMAGE_LINE = /^(\d+)\. \[(.+)\]$/
 
 /**
  * 图片随消息单独发送，模型看不到文件名；正文里引用了 `[名字]` 时追加编号说明，

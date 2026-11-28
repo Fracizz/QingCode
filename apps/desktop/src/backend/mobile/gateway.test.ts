@@ -320,9 +320,14 @@ describe('手机网关纯逻辑', () => {
     expect(send('qingcode/backgroundTasks/list', { threadId: 't' }).ok).toBe(true)
     expect(send('qingcode/backgroundTasks/stop', { threadId: 't', taskId: 'build' }).ok).toBe(true)
     expect(send('qingcode/commands/list', { threadId: 't' }).ok).toBe(true)
+    expect(send('qingcode/mcp/status', { threadId: 't' }).ok).toBe(true)
+    expect(send('mcpServerStatus/list', { threadId: 't', detail: 'toolsAndAuthOnly' }).ok).toBe(true)
     for (const [method, params] of [
       ['qingcode/backgroundTasks/list', undefined],
       ['qingcode/commands/list', { threadId: '' }],
+      ['qingcode/mcp/status', {}],
+      ['mcpServerStatus/list', { detail: 'toolsAndAuthOnly' }],
+      ['mcpServerStatus/list', { threadId: 't', detail: 'full' }],
       ['qingcode/backgroundTasks/stop', { threadId: 't' }],
       ['qingcode/backgroundTasks/stop', { threadId: 't', taskId: 7 }],
     ] as const) {

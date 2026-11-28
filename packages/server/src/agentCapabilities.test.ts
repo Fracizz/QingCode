@@ -21,6 +21,7 @@ const METHODS: Partial<Record<keyof AgentCapabilities, string>> = {
   backgroundTasks: 'qingcode/backgroundTasks/list',
   commandList: 'qingcode/commands/list',
   rewindFiles: 'qingcode/files/rewind',
+  mcpStatus: 'qingcode/mcp/status',
 }
 
 async function errorCodes(create: (hub: AgentHostHub) => AgentHost): Promise<Map<string, unknown>> {

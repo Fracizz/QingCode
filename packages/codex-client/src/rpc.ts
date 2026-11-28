@@ -7,6 +7,8 @@ import type {
   GetAccountTokenUsageParams,
   GetAccountTokenUsageResponse,
   GetAccountResponse,
+  ListMcpServerStatusParams,
+  ListMcpServerStatusResponse,
   ModelListParams,
   ModelListResponse,
   RequestId,
@@ -69,6 +71,7 @@ export type ClientRequestMap = {
   'turn/interrupt': { params: TurnInterruptParams; result: TurnInterruptResponse }
   'turn/steer': { params: TurnSteerParams; result: TurnSteerResponse }
   'model/list': { params: ModelListParams; result: ModelListResponse }
+  'mcpServerStatus/list': { params: ListMcpServerStatusParams; result: ListMcpServerStatusResponse }
   'skills/list': { params: SkillsListParams; result: SkillsListResponse }
   'account/read': { params: GetAccountParams; result: GetAccountResponse }
   'account/rateLimits/read': {
@@ -84,6 +87,7 @@ export type ClientRequestMap = {
   'qingcode/backgroundTasks/list': { params: { threadId: string }; result: { tasks?: unknown } }
   'qingcode/backgroundTasks/stop': { params: { threadId: string; taskId: string }; result: unknown }
   'qingcode/commands/list': { params: { threadId: string }; result: { commands?: unknown } }
+  'qingcode/mcp/status': { params: { threadId: string }; result: { available: boolean; servers?: unknown } }
   'qingcode/files/rewind': { params: { threadId: string; turnId: string; dryRun: boolean }; result: unknown }
 }
 

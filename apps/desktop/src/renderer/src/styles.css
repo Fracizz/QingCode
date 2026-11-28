@@ -34,6 +34,7 @@
   --color-qn-dim: #8a8a8a;
   --color-qn-brand: #4ecdb5;
   --color-qn-accent: #4f8cff;
+  --color-qn-skill: #68dfc6;
   /* 输入框内图片标签与正文同色，避免蓝字在输入区显得突兀；悬停下划线提示可点击。 */
   --color-qn-composer-attachment: var(--color-qn-text);
   --color-qn-ok: #6fcf8f;
@@ -156,6 +157,7 @@ html[data-theme="gray"] {
   --color-qn-text: #ececec;
   --color-qn-prose: #e8e8e8;
   --color-qn-bubble: #424347;
+  --color-qn-skill: #78e8d0;
   --color-qn-muted: #b4b4b8;
   --color-qn-dim: #a0a0a5;
   --color-qn-inset: rgb(0 0 0 / 0.16);
@@ -191,6 +193,7 @@ html[data-theme="light"] {
   --color-qn-dim: #6b6b6b;
   --color-qn-brand: #0e8f78;
   --color-qn-accent: #2563eb;
+  --color-qn-skill: #00584b;
   --color-qn-ok: #18864b;
   --color-qn-warn: #9a5b00;
   --color-qn-danger: #d1242f;
@@ -576,6 +579,15 @@ body.qn-resizing webview {
   }
 }
 
+.qn-user-skill {
+  padding: 2px 3px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-qn-skill) 16%, transparent);
+  color: var(--color-qn-skill);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 .qn-pre {
   margin: 0;
   overflow-x: auto;
@@ -756,14 +768,10 @@ body.qn-resizing webview {
   }
 }
 
-/* 命令运行中：终端图标的光标缓慢闪烁，提示符轻微呼吸，节奏放慢避免抢眼。 */
+/* 命令运行中仅闪烁光标，避免小图标的轮廓随动效变化。 */
 @media (prefers-reduced-motion: no-preference) {
   .qn-terminal-cursor {
     animation: qn-terminal-cursor 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-  }
-
-  .qn-terminal-prompt {
-    animation: qn-terminal-prompt 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   }
 }
 
@@ -774,15 +782,5 @@ body.qn-resizing webview {
 
   50% {
     opacity: 0.15;
-  }
-}
-
-@keyframes qn-terminal-prompt {
-  0%, 100% {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0.6;
   }
 }

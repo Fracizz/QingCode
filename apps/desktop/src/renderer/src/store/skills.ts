@@ -2,9 +2,9 @@ import { create } from 'zustand'
 import { listSkills, t, translateMessage, type CodexRpcLike } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { sessionKey } from '../lib/agents'
-import type { SlashItem } from '../lib/attachments'
+import type { SkillRef, SlashItem } from '../lib/attachments'
 
-type SkillList = { items: SlashItem[]; loading: boolean; error: string | null }
+type SkillList = { items: (SlashItem & SkillRef)[]; loading: boolean; error: string | null }
 
 type SkillsState = {
   /** 按 agent + 目标 + cwd 缓存：不同项目的项目级技能不同。 */
@@ -30,7 +30,7 @@ export const useSkills = create<SkillsState>((set, get) => ({
       ? { lists: { ...state.lists, [key]: result } } : state)
     try {
       const skills = await listSkills(rpc, cwd)
-      const items: SlashItem[] = skills.map((skill) => ({
+      const items: SkillList['items'] = skills.map((skill) => ({
         id: `skill:${skill.name}`,
         kind: 'skill',
         name: skill.name,

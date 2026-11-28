@@ -1,6 +1,8 @@
 # Agent 能力矩阵与通用层
 
-> 状态：2026-11-27。记录 QingCode 对 Codex、Claude、pi 已经接入的能力。接入方式与红线见 [Agent 适配规范](agent-adapters.md)，冲突时以适配规范为准。
+> 状态：2026-11-28。记录 QingCode 对 Codex、Claude、pi 已经接入的能力。接入方式与红线见 [Agent 适配规范](agent-adapters.md)，冲突时以适配规范为准。
+
+客户端入口与平台差异见[电脑版与手机版能力对齐](client-capabilities.md)。
 
 ## 1. 通用层
 
@@ -33,11 +35,11 @@
 | 归档 / 恢复 | ✓ | ✓ | ✓ | Claude、pi 由 daemon 记录 |
 | 永久删除（仅桌面） | ✓ | ✓ | ✗ | Claude：SDK `deleteSession`；pi RPC 文档没有删除命令 |
 | 重命名 | ✓ | ✓ | ✓ | Claude：SDK `renameSession`；pi：`set_session_name`，会启动会话进程 |
-| 分支（fork） | ✓ | ✓ | ✓ | 手机端只有整会话分支与排队消息分支 |
-| 编辑重发（仅桌面） | ◐ | ✓ | ◐ | Codex 原会话回退（`thread/revert`）；Claude、pi 从上一轮分支出新会话再发送，原会话保留 |
+| 分支（fork） | ✓ | ✓ | ✓ | |
+| 编辑重发 | ◐ | ✓ | ◐ | Codex 原会话回退（`thread/revert`）。Claude、pi 从上一轮分支出新会话再发送，原会话保留 |
 | 文件 checkpoint 回滚（仅桌面） | ◐ | ✗ | ✗ | Claude：SDK `rewindFiles`，只覆盖 Write、Edit、NotebookEdit，对话不回退 |
 | 流式正文、思考 | ✓ | ✓ | ✓ | |
-| 工具卡片 | ◐ | ◐ | ◐ | 命令、改文件、子代理、压缩有专用展示，其余只显示名称 |
+| 工具卡片 | ◐ | ◐ | ◐ | 命令、改文件、子代理、压缩有专用展示。动态工具及 MCP 调用可展开查看状态和文本结果。桌面主聊、侧聊和手机共用工作过程分组 |
 | 文件 diff | ◐ | ✓ | ◐ | Claude、pi 由工具参数合成，没有真实行号 |
 | 计划 / TODO | ◐ | ✓ | — | 两端共用 `turn/plan/updated`。Claude 由任务工具合成，部分模型默认没有这些工具 |
 | 中断 | ✓ | ✓ | ✓ | Claude 只中断当前轮、保留后台任务（侧聊除外）；pi 先清队列 |
@@ -46,13 +48,15 @@
 | 审批 | ✓ | ✓ | — | pi 不经审批直接执行工具，界面如实标注 |
 | Agent 提问 | ✓ | ✓ | ✓ | pi：扩展对话框 `select` / `confirm` / `input` / `editor` |
 | MCP elicitation | ✓ | ✓ | — | 表单转问答卡片；无字段与网址请求只有允许、拒绝 |
-| MCP 状态与管理 | ✗ | ✗ | — | 随 CLI 配置生效 |
+| MCP 状态 | ◐ | ✓ | — | 桌面和手机按目标 daemon 返回的能力显示。Codex 用 `mcpServerStatus/list` 按会话读取，Claude 用已启动 query 的 `mcpServerStatus()`。显示状态及可见工具数 |
+| MCP 配置与管理 | ✗ | ✗ | — | 随 CLI 配置生效 |
 | 访问模式 | ✓ | ✓ | — | 请求批准、替我批准、完全访问 |
 | plan 模式 | ✓ | ✗ | — | Codex 对应接口是实验性的 |
 | 模型、推理强度 | ✓ | ✓ | ◐ | pi 没有运行中的进程且无缓存时列表为空 |
 | 图片、@ 文件 | ✓ | ✓ | ◐ | pi 不接收 http 图片 |
 | 技能 | ✓ | ✓ | ✓ | pi：`get_commands` 的 skill 项，需要运行中的会话进程 |
 | 原生斜杠命令列表 | ✓ | ◐ | ✓ | Claude、pi 读运行中会话的命令并入本地命令表；Codex 只有本地命令表 |
+| 下一条提示词建议 | ✓ | — | — | Claude 会话用 SDK 的 [`promptSuggestions`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkpromptsuggestionmessage)。主聊、持久分支侧聊和手机可填入空草稿。生成建议计入 Claude 用量。 |
 | 子代理 | ✓ | ✓ | ✗ | Claude 内部工具归到子代理卡片；daemon 重启后历史不含这些活动 |
 | 后台任务 | ✓ | ✗ | ✗ | Claude：列表与逐个停止，运行期间保留会话进程；Codex 对应接口是实验性的 |
 | 手动压缩 | ✓ | ✓ | ✓ | |

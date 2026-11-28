@@ -1,17 +1,18 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, MessagesSquare, PanelRightClose, Quote, X } from 'lucide-react'
+import { ChevronDown, MessagesSquare, PanelRightClose, Plug, Quote, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ItemView } from '@qn/codex-client'
-import { planApproval, t, turnSteerBlock } from '@qn/codex-client'
+import { availablePromptSuggestion, planApproval, t, turnSteerBlock } from '@qn/codex-client'
 import { agentLabel, DEFAULT_AGENT, sessionKey } from '../lib/agents'
 import { annotationExcerpt, type Annotation } from '../lib/annotations'
 import { isAtBottom } from '../lib/diff'
 import { SIDE_CHAT_DEFAULT_WIDTH, sideChatLayout } from '../lib/layout'
-import { hasPendingSubmission, needsTurnProgress, streamingReplyId, turnTimeline } from '../lib/turnGroups'
+import { groupTurns, hasPendingSubmission, needsTurnProgress, streamingReplyId } from '../lib/turnGroups'
 import { currentSideApprovals, currentSideChat, pendingSendKey, currentChatKey, useCodex } from '../store/codex'
 import { ApprovalCard } from './ApprovalCard'
 import { Composer } from './Composer'
-import { MessageItem, TurnProgress, TurnStopped } from './MessageItem'
+import { MessageItem, ToolGroup, TurnProgress, TurnStopped, WorkGroup } from './MessageItem'
+import { McpStatusDialog } from './McpStatusDialog'
 import { ResizeHandle } from './ResizeHandle'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
@@ -47,13 +48,15 @@ export function SideChat() {
   const [preferredWidth, setPreferredWidth] = useState(SIDE_CHAT_DEFAULT_WIDTH)
   const [availableWidth, setAvailableWidth] = useState(SIDE_CHAT_DEFAULT_WIDTH + 48)
   const [confirmEnd, setConfirmEnd] = useState(false)
+  const [mcpOpen, setMcpOpen] = useState(false)
   const { docked, min, max, width } = sideChatLayout(preferredWidth, availableWidth)
 
   // 只订阅侧聊所在会话里用到的字段，其他会话和无关字段的流式增量不触发重渲染。
   const sessionId = sideOpen && sideTargetId && sideAgent ? sessionKey(sideTargetId, sideAgent) : null
-  const { openError, rpc, view } = useCodex(useShallow((s) => {
+  const { opened, openError, rpc, mcpStatus, view } = useCodex(useShallow((s) => {
     const session = sessionId ? s.sessions[sessionId] : undefined
-    return { openError: session?.openError, rpc: session?.rpc, view: sideThreadId ? session?.state.threads[sideThreadId] : undefined }
+    return { opened: session?.opened, openError: session?.openError, rpc: session?.rpc, mcpStatus: session?.openedConfig?.mcpStatus,
+      view: sideThreadId ? session?.state.threads[sideThreadId] : undefined }
   }))
   const chatKey = sideTargetId && sideAgent && sideThreadId && pendingSendKey({ targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId })
   const sendingMessage = useCodex((s) => s.sendingMessage?.key === chatKey ? s.sendingMessage : null)
@@ -61,9 +64,9 @@ export function SideChat() {
   const sendingQueued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.[0]?.sending))
   const preview = sendingMessage?.preview
   const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? []), preview] : view?.items ?? [], [preview, view?.items])
-  const timeline = useMemo(() => turnTimeline(items, view?.turns), [items, view?.turns])
   const approvals = useCodex(currentSideApprovals)
   const running = !side?.expired && view?.status === 'running'
+  const timeline = useMemo(() => groupTurns(items, view?.turns, running, { includeSubagents: true }), [items, view?.turns, running])
   const streamingId = running ? streamingReplyId(view) : undefined
   const interrupted = !running && view?.activity === 'interrupted'
   const showProgress = approvals.length === 0 && !openError
@@ -83,6 +86,7 @@ export function SideChat() {
   useLayoutEffect(() => {
     pinned.current = true
     setConfirmEnd(false)
+    setMcpOpen(false)
   }, [ownerKey, sideOpen, sideThreadId])
   useLayoutEffect(() => {
     const scroll = scrollRef.current
@@ -132,6 +136,9 @@ export function SideChat() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {opened && mcpStatus && sideThreadId && !side.expired && (
+            <IconButton label={t('MCP 服务状态')} tooltipSide="bottom" onClick={() => setMcpOpen(true)}><Plug size={15} /></IconButton>
+          )}
           <IconButton label={t('收起侧边对话')} tooltipSide="bottom" onClick={closeSideChat}>
             <PanelRightClose size={16} />
           </IconButton>
@@ -145,6 +152,9 @@ export function SideChat() {
           )}
         </div>
       </header>
+      {opened && mcpOpen && mcpStatus && rpc && sideThreadId && !side.expired && (
+        <McpStatusDialog threadId={sideThreadId} agent={agent} rpc={rpc} onClose={() => setMcpOpen(false)} />
+      )}
       {openError && (
         <div className="px-4 pt-2"><ErrorNote message={openError} /></div>
       )}
@@ -176,15 +186,21 @@ export function SideChat() {
         )}
         <div className="space-y-4">
           <SubagentRpcContext.Provider key={chatKey || undefined} value={rpc ?? null}>
-            {timeline.map((entry) => entry.kind === 'stopped' ? (
-              <TurnStopped key={entry.key} durationMs={entry.durationMs} />
-            ) : (
-              <MessageItem
-                key={`${sideThreadId}:${entry.key}`}
-                item={entry.item}
-                showStreamingDots={entry.item.id === streamingId}
-              />
-            ))}
+            {timeline.map((entry, index) => {
+              const key = `${sideThreadId}:${entry.key}`
+              switch (entry.kind) {
+                case 'stopped': return <TurnStopped key={key} durationMs={entry.durationMs} />
+                case 'tools': return <ToolGroup key={key} items={entry.items} />
+                case 'work':
+                  return <WorkGroup key={key} durationMs={entry.durationMs} entries={entry.entries}
+                    replyCompletedAtMs={entry.reply?.completedAtMs} />
+                case 'item': {
+                  const previous = timeline[index - 1]
+                  return <MessageItem key={key} item={entry.item} showStreamingDots={entry.item.id === streamingId}
+                    replyTimeInSummary={previous?.kind === 'work' && previous.reply?.id === entry.item.id} />
+                }
+              }
+            })}
           </SubagentRpcContext.Provider>
           {showProgress && <TurnProgress activity={running ? view.activity : undefined} />}
           {sideThreadId && approvals.map((approval) => (
@@ -216,6 +232,8 @@ export function SideChat() {
         </div>
         <Composer
           key={ownerKey}
+          promptSuggestion={availablePromptSuggestion(view, !!opened && !!side.forked && !side.expired && !side.ending,
+            (queueLength ?? 0) > 0, approvals.length > 0)}
           suggestionBoundaryRef={scrollRef}
           compact
           autoFocus

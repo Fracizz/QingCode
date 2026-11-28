@@ -133,7 +133,7 @@ type TargetSession = {
   state: ConversationState
   threadsAwaitingResume: ReadonlySet<string>
   opened: boolean
-  openedConfig: { directory: string | undefined; accessModes: boolean; ephemeralNoTools?: boolean } | null
+  openedConfig: { directory: string | undefined; accessModes: boolean; ephemeralNoTools?: boolean; mcpStatus?: boolean } | null
   opening: boolean
   openError: string | null
   openFailure: unknown
@@ -810,7 +810,8 @@ export const useCodex = create<CodexState>((set, get) => {
         patchSession(key, (value) => ({
           ...value,
           opened: true,
-          openedConfig: { directory, accessModes: capabilities?.accessModes === true, ephemeralNoTools: capabilities?.ephemeralNoTools === true },
+          openedConfig: { directory, accessModes: capabilities?.accessModes === true,
+            ephemeralNoTools: capabilities?.ephemeralNoTools === true, mcpStatus: capabilities?.mcpStatus === true },
           opening: false,
           openError: null,
           openFailure: null,

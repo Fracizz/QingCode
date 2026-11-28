@@ -57,3 +57,51 @@ it('侧聊运行时可点结束，有排队消息时先确认', async () => {
     vi.unstubAllGlobals()
   }
 })
+
+it('持久分支侧聊折叠工作过程，队列优先于下一条建议', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const initial = useCodex.getState()
+  const chat = { targetId: 'local', agent: 'claude', threadId: 'branch' } as const
+  const key = sessionKey(chat.targetId, chat.agent)
+  const transport = new BackendCodexTransport(chat.targetId, chat.agent)
+  const rpc = new CodexRpc(transport)
+  useCodex.setState({
+    currentTargetId: chat.targetId, currentAgent: chat.agent, currentThreadId: 'parent', currentCwd: '/work',
+    sessions: { [key]: {
+      key, targetId: chat.targetId, agent: chat.agent, rpc, transport,
+      state: { threads: { branch: {
+        id: 'branch', status: 'idle', activeTurnId: null, pendingApprovals: [],
+        turns: [{ id: 'turn', itemIds: ['command', 'reply'], outcome: 'completed', startedAtMs: null, durationMs: null }],
+        items: [
+          { kind: 'command', id: 'command', command: 'node --version', output: 'v22', status: 'completed' },
+          { kind: 'agent', id: 'reply', text: '已检查版本。', streaming: false },
+        ],
+        promptSuggestion: { turnId: 'turn', text: '继续检查配置' },
+      } } },
+      threadsAwaitingResume: new Set(), opened: true, openedConfig: null, opening: false,
+      openError: null, openFailure: null, agentVersion: null, lastSeq: null,
+    } },
+    pendingSends: { [pendingSendKey(chat)]: [{ id: 1, text: '排队消息', overrides: {}, input: [] }] },
+  })
+  useCodex.getState().openSideChat()
+  const [sideKey, side] = Object.entries(useCodex.getState().sideChats)[0]!
+  useCodex.setState({ sideChats: { [sideKey]: { ...side, threadId: chat.threadId, forked: true } } })
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  try {
+    await act(() => root.render(<TooltipProvider><SideChat /></TooltipProvider>))
+    expect(host.querySelector('summary')?.textContent).toBe('工作过程')
+    expect(host.textContent).not.toContain('node --version')
+    expect(host.textContent).not.toContain('继续检查配置')
+    await act(() => useCodex.setState({ pendingSends: {} }))
+    expect(host.textContent).toContain('继续检查配置')
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    useCodex.setState(initial, true)
+    rpc.dispose()
+    transport.dispose()
+    vi.unstubAllGlobals()
+  }
+})

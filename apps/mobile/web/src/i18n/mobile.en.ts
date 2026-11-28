@@ -138,6 +138,9 @@ export default {
 
   // 应用设置与更新
   '应用设置': 'App settings',
+  'QingCode Next 正在启动': 'QingCode Next is starting',
+  '正在启动': 'Starting',
+  '准备就绪': 'Ready',
   '外观': 'Appearance',
   '设备': 'Device',
   '关于与更新': 'About & updates',
@@ -670,12 +673,7 @@ export default {
   '正在压缩会话': 'Compacting session',
   '查看会话用量': 'View session usage',
   '查看上下文，{label}': 'View context, {label}',
-  '会话用量': 'Session usage',
-  '上下文用量': 'Context usage',
-  '压缩会总结较早的对话，让后续回复使用更短的上下文。账号已用额度不会恢复。': 'Compaction summarizes earlier messages so later replies use a shorter context. Used account quota is not restored.',
-  '最近上报的单轮用量': 'Latest reported turn usage',
   '上下文': 'Context',
-  '上下文占用': 'Context used',
   '正在压缩会话…': 'Compacting session…',
   '压缩会话': 'Compact session',
   '连接电脑后可压缩会话': 'Connect to the computer to compact',

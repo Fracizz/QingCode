@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import {
   t,
-  translateMessage,
+  accountReadErrorText,
   claudeQuotaReportedAt,
   claudeQuotaResetAt,
   claudeQuotaSource,
@@ -176,7 +176,7 @@ function Body({
           <ResetCredits targetId={targetId} entry={entry} opened={opened} now={now} />
         </>
       )}
-      {entry?.error && <div className="mt-2 text-ui-sm text-qn-danger">{translateMessage(entry.error)}</div>}
+      {entry?.error && <div className="mt-2 text-ui-sm text-qn-danger">{accountReadErrorText(entry.error)}</div>}
 
       <div className="mt-3 flex items-center justify-between border-t border-qn-border pt-2 text-ui-sm text-qn-muted">
         <span>{agent === 'claude' ? reportedAt ?? t('暂无上报时间') : updatedAtText(entry?.updatedAt, now)}</span>

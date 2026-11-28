@@ -46,6 +46,7 @@ final class BackgroundDownloads {
     volatile long written;
     volatile String state = "running";
     volatile String error;
+    volatile int failureHint;
     volatile String savedName;
     volatile boolean cancelled;
 
@@ -165,6 +166,7 @@ final class BackgroundDownloads {
         task.state = "cancelled";
       } else {
         task.error = describe(error);
+        task.failureHint = failureHint(error);
         task.state = "failed";
       }
     } finally {
@@ -284,6 +286,20 @@ final class BackgroundDownloads {
     if (PinnedHttps.isFingerprintFailure(error)) return PinnedHttps.FINGERPRINT_HINT;
     if (error instanceof IOException) return "网络中断或存储写入失败，请检查后重新下载";
     return "下载失败";
+  }
+
+  /** 通知栏按错误类别取原生资源，应用内仍可查看网关返回的具体原因。 */
+  private static int failureHint(Exception error) {
+    if (error instanceof BridgeException bridge) {
+      return switch (bridge.code) {
+        case "conflict" -> R.string.download_file_changed;
+        case "unauthorized" -> R.string.download_pair_again;
+        default -> R.string.download_retry;
+      };
+    }
+    if (PinnedHttps.isFingerprintFailure(error)) return R.string.download_pair_again;
+    if (error instanceof IOException) return R.string.download_check_connection_storage;
+    return R.string.download_retry;
   }
 
   private static JSONObject snapshot(Task task) throws JSONException {

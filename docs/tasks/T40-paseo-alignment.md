@@ -72,3 +72,15 @@
 ## 验收
 
 各部分带就近单测。运行改动目录的 `vitest`、相关包类型检查；手机 Web 改动运行 `pnpm --filter @qn/mobile build:web`。报告列出改动文件、验证结果、未完成项与假设。
+
+### 2026-11-28 · 10.87 实测记录
+
+| Agent | 实测模型 | 已通过 | 待验 |
+|---|---|---|---|
+| Codex 0.172.0 | Magpie `com/deepseek-v4-flash` | 流式回复、引导送达与回显、中断、事件回放、再次发送、历史重开、MCP 状态 | 本次未收到计划事件。Windows 沙箱报告就绪，但测试进程执行命令时在 `CreateProcessAsUserW` 阶段失败 |
+| pi 1.6.1 | Magpie `com/deepseek-v4-flash` | 读取测试文件、流式回复、引导送达与回显、中断、事件回放、再次发送、历史重开、原生命令列表 | 验收机现有扩展不含 TODO 或子代理适配目标 |
+| Claude 2.1.332 | Magpie `com/deepseek-v4-flash`，与 pi 使用同一 Anthropic Messages 接口和密钥 | 桥启动、读取测试文件、流式回复、中断、事件回放、再次发送、历史重开、MCP 状态查询（测试配置中无服务） | 测试轮次未收到提示词建议，后台任务待验 |
+
+Claude 的 Magpie 配置通过隔离验收进程的环境传递。10.87 原有的 Claude 登录和默认配置保持原样。
+
+Windows Electron 启动冒烟通过。桌面主聊、侧聊与手机 Web 的建议、工作过程及工具详情有回放与界面验证。Android 设备配对与锁屏恢复仍待真机。

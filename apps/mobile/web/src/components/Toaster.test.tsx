@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
+import { addEnglishMessages, setLocale } from '@qn/codex-client'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import mobile from '../i18n/mobile.en'
 import { useApp } from '../store'
 import { clearToasts, toast } from '../toast'
 import { Toaster } from './Toaster'
@@ -43,6 +45,27 @@ it('接管全局 notice / error 悬浮显示，到时自动关闭，可点关闭
     clearToasts()
     useApp.setState(initial, true)
     vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('英文界面翻译跨进程提示与悬浮提示按钮', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  addEnglishMessages(mobile)
+  setLocale('en')
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  try {
+    await act(() => root.render(<Toaster />))
+    await act(() => { toast('连接失败', { tone: 'error', duration: 0, actionLabel: '重试', onAction: vi.fn() }) })
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Connection failed')
+    expect(host.querySelector('.qn-note-action')?.textContent).toBe('Retry')
+    expect(host.querySelector('.qn-note-close')?.getAttribute('aria-label')).toBe('Dismiss')
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    clearToasts()
+    setLocale('zh')
     vi.unstubAllGlobals()
   }
 })

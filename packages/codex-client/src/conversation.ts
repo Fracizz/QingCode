@@ -15,6 +15,7 @@ import type {
   UserInput,
 } from './codex-types'
 import { t, translateMessage } from '../../protocol/src/i18n'
+import { PROMPT_SUGGESTION_METHOD } from '../../protocol/src/agents'
 import type { ThreadHistoryCursor, ThreadHistoryPage } from './api'
 import { parseBackgroundTasks, type BackgroundTaskView } from './agentControls'
 import { parsePlan, type PlanView } from './plan'
@@ -48,6 +49,8 @@ export type ThreadView = {
   plan?: PlanView
   /** 轮次外仍在运行的后台任务（全量替换）。 */
   backgroundTasks?: BackgroundTaskView[]
+  /** Agent 为最近完成的轮次生成的下一条提示词。 */
+  promptSuggestion?: { turnId: string; text: string }
 }
 
 export type TurnMeta = {
@@ -56,6 +59,16 @@ export type TurnMeta = {
   startedAtMs: number | null
   durationMs: number | null
   itemIds: string[]
+}
+
+/** 排队或等待审批时，输入框优先服务已提交的内容。 */
+export function availablePromptSuggestion(
+  thread: ThreadView | undefined,
+  ready: boolean,
+  queued: boolean,
+  awaitingApproval: boolean,
+): string | undefined {
+  if (ready && !queued && !awaitingApproval && thread?.status === 'idle') return thread.promptSuggestion?.text
 }
 
 export type ItemView =
@@ -83,7 +96,8 @@ export type ItemView =
   | SubagentItemView
   | { kind: 'backgroundTask'; id: string; status: 'completed' | 'failed' | 'stopped' | 'event' | 'message'; summary: string; result: string }
   /** plan 仅退出计划模式的工具条目带有：待批准的完整计划。 */
-  | { kind: 'other'; id: string; type: string; summary: string; status?: string; plan?: string }
+  | { kind: 'other'; id: string; type: string; summary: string; status?: string; plan?: string;
+    toolDetails?: { name: string; result: string } }
   /** 本机插入的提示（如中途切换模型），不来自 Agent；anchor 为它所在那条用户消息的 clientId。 */
   | { kind: 'notice'; id: string; text: string; anchor?: string }
 
@@ -187,7 +201,7 @@ export function emptyState(): ConversationState {
 
 export function failActiveThreads(state: ConversationState, error: string): ConversationState {
   const active = (thread: ThreadView) => thread.status === 'running' || thread.pendingApprovals.length > 0
-  const affected = Object.values(state.threads).filter((thread) => active(thread) || thread.backgroundTasks?.length)
+  const affected = Object.values(state.threads).filter((thread) => active(thread) || thread.backgroundTasks?.length || thread.promptSuggestion)
   if (!affected.length) return state
   const threads = { ...state.threads }
   for (const thread of affected) {
@@ -196,6 +210,7 @@ export function failActiveThreads(state: ConversationState, error: string): Conv
     } : { ...thread }
     // 后台任务随 Agent 进程结束，进程没了就不会再发清空通知。
     delete next.backgroundTasks
+    delete next.promptSuggestion
     threads[thread.id] = next
   }
   return { threads }
@@ -313,8 +328,12 @@ export function addOptimisticUser(
   item: Extract<ItemView, { kind: 'user' }>,
 ): ConversationState {
   if (!threadId) return s
-  return withThread(s, threadId, (thread) => thread.items.some((entry) => entry.id === item.id)
-    ? thread : { ...thread, items: [...thread.items, item] })
+  return withThread(s, threadId, (thread) => {
+    if (thread.items.some((entry) => entry.id === item.id)) return thread
+    const next = { ...thread, items: [...thread.items, item] }
+    delete next.promptSuggestion
+    return next
+  })
 }
 
 /** 新会话建好后把草稿里的占位搬进真实 thread，气泡位置不跳动。 */
@@ -667,6 +686,18 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
       if (subagent) return subagent
       const plan = planExitText(item)
       if (plan !== undefined) return { kind: 'other', id, type, summary: scalarText(item.tool), status, plan }
+      if (type === 'dynamicToolCall' || type === 'mcpToolCall') {
+        const server = scalarText(item.server)
+        const tool = scalarText(item.tool)
+        const result = scalarText(asRecord(item.error)?.message) ||
+          arrayOf(item.contentItems ?? asRecord(item.result)?.content)
+            .map((value) => scalarText(asRecord(value)?.text)).filter(Boolean).join('\n')
+        return {
+          kind: 'other', id, type, summary: tool, status: item.success === false ? 'failed' : status,
+          toolDetails: { name: server && tool ? `${server} · ${tool}` : tool || type, result: result.slice(0, 20_000) +
+            (result.length > 20_000 ? '\n…' : '') },
+        }
+      }
       const summary =
         scalarText(item.text) ||
         scalarText(item.review) ||
@@ -745,7 +776,12 @@ function mergeItemView(existing: ItemView, candidate: ItemView): ItemView {
   }
   if (existing.kind === 'other' && candidate.kind === 'other') {
     const plan = candidate.plan || existing.plan
-    return { ...candidate, summary: longer(existing.summary, candidate.summary), ...(plan !== undefined ? { plan } : {}) }
+    const toolDetails = candidate.toolDetails && {
+      ...candidate.toolDetails,
+      result: candidate.toolDetails.result || existing.toolDetails?.result || '',
+    }
+    return { ...candidate, summary: longer(existing.summary, candidate.summary),
+      ...(plan !== undefined ? { plan } : {}), ...(toolDetails ? { toolDetails } : {}) }
   }
   return candidate
 }
@@ -943,6 +979,7 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   // 只看最后一轮：历史里早先失败、之后又成功的轮次不该让整个会话显示为失败。
   let lastTurnError: string | undefined
   let lastTurnOutcome: ThreadOutcome | undefined
+  let lastTurnId = ''
   for (const turnValue of arrayOf(raw.turns)) {
     const turn = asRecord(turnValue)
     lastTurnOutcome = isThreadOutcome(turn?.status) ? turn.status : undefined
@@ -954,6 +991,7 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
     }
     if (!turn) continue
     const turnId = idValue(turn.id)
+    lastTurnId = turnId
     historyPlan = parsePlan(turn.plan, turnId) ?? historyPlan
     const itemIds = appendItems(arrayOf(turn.items), turnStreaming, optionalNumber(turn.startedAt))
     if (turnId) {
@@ -1006,6 +1044,15 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
     next.status = 'error'
     next.error = lastTurnError
   } else if (status === 'error') next.error = previous?.error ?? 'Thread error'
+  const suggestion = previous?.promptSuggestion
+  if (next.status === 'idle' && lastTurnOutcome === 'completed' && suggestion) {
+    // Claude 的历史轮次 ID 和实时 ID 不同，用 SDK 保留的条目 ID 识别同一轮。
+    const suggestedTurn = turns.get(suggestion.turnId)
+    const lastItem = suggestedTurn?.itemIds.at(-1)
+    if (lastTurnId === suggestion.turnId || (lastItem && turns.get(lastTurnId)?.itemIds.includes(lastItem))) {
+      next.promptSuggestion = suggestion
+    }
+  }
   return { threads: { ...s.threads, [id]: next } }
 }
 
@@ -1029,6 +1076,7 @@ export function loadRecentThreadHistory(
     if (changed.length) next.items = mergeSubagentHistory(recent.items, changed, before?.items ?? [])
     // 读历史期间收到的清单比历史新。
     if (live.plan && live.plan !== before?.plan) next.plan = live.plan
+    if (live.promptSuggestion && live.promptSuggestion !== before?.promptSuggestion) next.promptSuggestion = live.promptSuggestion
     if (live !== before &&(live.status !== before?.status || live.activeTurnId !== before?.activeTurnId ||
         live.activity !== before?.activity || live.error !== before?.error)) {
       const { status, activeTurnId, activity, error } = live
@@ -1112,12 +1160,27 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
       if (!tasks.length && !ownThread(s, id)) return s
       return withThread(s, id, (thread) => ({ ...thread, backgroundTasks: tasks }))
     }
+    case PROMPT_SUGGESTION_METHOD: {
+      const id = threadIdFrom(params)
+      const turnId = turnIdFrom(params)
+      const text = scalarText(params.suggestion).trim()
+      if (!turnId || !text) return s
+      return withThread(s, id, (thread) => {
+        const latest = thread.turns?.at(-1)
+        const lastItem = thread.items.at(-1)
+        if (thread.status !== 'idle' || latest?.id !== turnId || latest.outcome !== 'completed' ||
+          (lastItem?.kind === 'user' && lastItem.pending)) return thread
+        return { ...thread, promptSuggestion: { turnId, text } }
+      })
+    }
     case 'thread/closed': {
       const id = threadIdFrom(params)
-      if (!id || !ownThread(s, id)?.backgroundTasks) return s
+      const current = ownThread(s, id)
+      if (!current?.backgroundTasks && !current?.promptSuggestion) return s
       return withThread(s, id, (thread) => {
         const next = { ...thread }
         delete next.backgroundTasks
+        delete next.promptSuggestion
         return next
       })
     }
@@ -1136,6 +1199,7 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
           activity: current.activity === 'pending' || current.activity === 'input' ? current.activity : 'running',
           activeTurnId: turnId || current.activeTurnId,
         }
+        delete next.promptSuggestion
         return mergeTurnItems(next, params.turn, true)
       })
     }
@@ -1155,6 +1219,7 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
         // 旧轮次的中断结果可能迟到，此时只合并历史，保留当前轮的运行状态和审批。
         if (current.status === 'running' && current.activeTurnId && completedId !== current.activeTurnId) return next
         next = finalizeItems(next)
+        if (failed || next.promptSuggestion?.turnId !== next.turns?.at(-1)?.id) delete next.promptSuggestion
         next = {
           ...next,
           status: failed ? 'error' : 'idle',

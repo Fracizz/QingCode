@@ -107,7 +107,7 @@ export function App() {
 
   return (
     <div className="qn-app">
-      {/* 工作台三个标签页都铺顶部氛围光（同 rust 版 .dashboard::before）。 */}
+      {/* 连接页和工作台共用随连接状态变化的顶部光效。 */}
       {(page === 'connections' || workspace) && <div className="qn-glow" data-state={glow} aria-hidden />}
       {connectionWarning && page !== 'form' && (
         <div className="qn-app-banner shrink-0 border-b border-qn-border bg-qn-panel px-3 pt-2" role="status">

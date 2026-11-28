@@ -33,7 +33,7 @@ it('用户消息把技能写在正文开头，附件显示成标签', async () =
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.createElement('div')
   const root = createRoot(host)
-  const tags = () => [...host.querySelectorAll('.qn-user-skill')].map((tag) => tag.textContent?.trim())
+  const tags = () => [...host.querySelectorAll('.qn-user-skill')].map((tag) => tag.textContent)
   const body = () => host.querySelector('.qn-user-bubble > .whitespace-pre-wrap')?.textContent
   try {
     // Claude 回显与历史：技能写在正文开头，附件说明在末尾。
@@ -42,7 +42,11 @@ it('用户消息把技能写在正文开头，附件显示成标签', async () =
     expect(tags()).toEqual(['/commit-push'])
     expect(body()).toBe('/commit-push all 打包')
     expect(host.querySelector('[title="/work/src/a.ts"]')?.textContent?.trim()).toBe('a.ts')
-    // 发送中的气泡：技能来自 skill 输入项；只发技能时气泡里只有技能名。
+    // 来自 skill 输入项的标签之间及标签与正文之间各保留一个空格。
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'm', text: '继续检查', skills: ['pdf', 'review'] }} />))
+    expect(tags()).toEqual(['/pdf', '/review'])
+    expect(body()).toBe('/pdf /review 继续检查')
+    // 只发技能时气泡里只有技能名。
     await act(() => root.render(<MessageItem item={{ kind: 'user', id: 's', text: '', skills: ['pdf'] }} />))
     expect(tags()).toEqual(['/pdf'])
     expect(body()).toBe('/pdf')

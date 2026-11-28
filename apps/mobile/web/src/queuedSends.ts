@@ -15,12 +15,16 @@ export type QueuedSend = ChatDraft & {
   compact?: boolean
   saving?: boolean
   sending?: boolean
+  /** 交给电脑的请求可能已送达，收回时要先核对代发结果。 */
+  relayPending?: true
   error?: string
 }
 
 export const QUEUE_STORAGE_KEY = 'queuedSends'
 // i18n-ignore: 随发送队列持久化并参与比较，展示时用 translateMessage 翻译
 export const UNCONFIRMED_QUEUED_SEND = '上次发送结果未确认，请核对对话后再继续'
+// i18n-ignore: 兼容旧版持久化的恢复提示
+const LEGACY_RESTORED_QUEUE = '已恢复排队消息，等待继续发送'
 
 type Queues = Record<string, QueuedSend[]>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -80,15 +84,23 @@ export function relayRequest(
     : { method: 'mobile.turn.start', params: { targetId, agent, msg, ...access } }
 }
 
-/** 收回代发队列：去掉网关已发出的消息，暂停原因落到队首。known 为 false 表示电脑已丢失这组队列。 */
-export function applyRelayResult(list: QueuedSend[], sentIds: readonly string[], error: string | undefined, known = true): QueuedSend[] {
+/** 去掉电脑已发出的消息，收到暂停原因时记到剩余队首。 */
+export function applyRelayResult(list: QueuedSend[], sentIds: readonly string[], error?: string): QueuedSend[] {
   const sent = new Set(sentIds)
-  const rest = list.filter((item) => !sent.has(item.id))
-  if (rest.length === 0) return rest.length === list.length ? list : rest
-  // 电脑重启后无法确认哪些已发出，暂停等用户核对，避免重复发送。
-  const head = known ? error : UNCONFIRMED_QUEUED_SEND
-  if (rest[0]!.error === head && rest.length === list.length) return list
-  return [{ ...rest[0]!, sending: false, error: head }, ...rest.slice(1)]
+  const rest = sent.size ? list.filter((item) => !sent.has(item.id)) : list
+  const first = rest[0]
+  if (!first || !error || first.error) return rest.length === list.length ? list : rest
+  return [{ ...first, error }, ...rest.slice(1)]
+}
+
+/** 电脑丢失代发记录时，逐条标记可能已发出的消息，避免重复提交。 */
+export function releaseRelayedSends(list: QueuedSend[], known: boolean): QueuedSend[] {
+  if (!list.some((item) => item.relayPending)) return list
+  return list.map((item) => {
+    if (!item.relayPending) return item
+    const { relayPending: _relayPending, ...rest } = item
+    return known ? rest : { ...rest, error: UNCONFIRMED_QUEUED_SEND }
+  })
 }
 
 export function serializeQueues(queues: Queues, connections: readonly Connection[]): string {
@@ -116,16 +128,16 @@ export function restoreQueues(raw: string | null, connections: readonly Connecti
       && typeof item.id === 'string' && typeof item.text === 'string' && Array.isArray(item.annotations)
       && Array.isArray(item.attachments) && isRecord(item.overrides) && typeof item.delegate === 'boolean')
     if (!items.length) continue
-    // 重开后无法确认中途发送的结果，保留原文供核对并等待明确操作。
-    queues[key] = items.map((item, index) => {
+    // 普通待发项继续排队。正在直发的消息没有可供收回的回执，需要保留原文供核对。
+    queues[key] = items.map((item) => {
       const accessMode = accessOptions[agent].find((option) => option.mode === item.accessMode)?.mode
       return {
         ...item,
         accessMode,
         sending: false,
+        relayPending: item.relayPending === true ? true : undefined,
         error: item.sending ? UNCONFIRMED_QUEUED_SEND
-          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
-          : typeof item.error === 'string' ? item.error : index === 0 ? '已恢复排队消息，等待继续发送' : undefined,
+          : typeof item.error === 'string' && item.error !== LEGACY_RESTORED_QUEUE ? item.error : undefined,
       }
     })
   }

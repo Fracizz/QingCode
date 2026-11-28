@@ -23,15 +23,16 @@ it('无用量数据也能打开压缩入口，点压缩会话直接发送请求�
   }
 
   try {
-    await act(() => root.render(<ContextUsage tokenUsage={null} compact={{ busy: false, blockedReason: null, onCompact }} />))
+    await act(() => root.render(<ContextUsage agent="codex" tokenUsage={null} compact={{ busy: false, blockedReason: null, onCompact }} />))
     await click('查看上下文，暂无上下文用量')
     expect(onCompact).not.toHaveBeenCalled()
+    expect(host.querySelector('dialog')?.textContent).toContain('发送消息后')
     await click('压缩会话')
     expect(onCompact).toHaveBeenCalledTimes(1)
     expect(host.querySelector('dialog')).toBeNull()
 
     const tokenUsage = { last: { totalTokens: 128 }, modelContextWindow: null, estimated: true, estimatedCostUsd: 0.012 }
-    await act(() => root.render(<ContextUsage tokenUsage={tokenUsage} />))
+    await act(() => root.render(<ContextUsage agent="claude" tokenUsage={tokenUsage} />))
     await click('查看会话用量')
     const usage = host.querySelector('[aria-label="会话用量"]')
     expect(usage?.textContent).toContain('128 tokens')
@@ -43,13 +44,23 @@ it('无用量数据也能打开压缩入口，点压缩会话直接发送请求�
 
     for (const [percent, color] of [[0, 'text-qn-muted'], [80, 'text-qn-warn'], [100, 'text-qn-danger']] as const) {
       const usageWithWindow = { last: { totalTokens: percent }, modelContextWindow: 100, estimated: percent === 100 }
-      await act(() => root.render(<ContextUsage tokenUsage={usageWithWindow} />))
+      await act(() => root.render(<ContextUsage agent="codex" tokenUsage={usageWithWindow} />))
       const ring = host.querySelector('[data-testid="context-ring"]')
       expect(ring?.getAttribute('width')).toBe('26')
       expect(ring?.querySelectorAll('circle')[1]?.getAttribute('stroke-dasharray')).toBe(`${percent} 100`)
       expect(ring?.parentElement?.classList.contains(color)).toBe(true)
       expect(button(`查看上下文，上下文已用 ${percent}%`)?.textContent).toBe(String(percent))
     }
+
+    await act(() => root.render(<ContextUsage agent="pi" tokenUsage={{
+      last: { totalTokens: 8_000 }, total: { totalTokens: 1_250, inputTokens: 1_200, outputTokens: 50 },
+      modelContextWindow: 10_000, estimated: true,
+    }} />))
+    const panel = host.querySelector('dialog')
+    expect(panel?.querySelector('progress')?.value).toBe(80)
+    expect(panel?.textContent).toContain('剩余2,000')
+    expect(panel?.textContent).toContain('最近一轮用量1,250 tokens')
+    expect(panel?.textContent).toContain('按文件分批处理')
   } finally {
     await act(() => root.unmount())
     host.remove()

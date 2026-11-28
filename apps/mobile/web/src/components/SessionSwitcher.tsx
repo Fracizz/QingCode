@@ -60,9 +60,9 @@ export function SessionSwitcher({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog title={t('切换会话')} onClose={close} placement="full">
-      <div className="qn-segment mb-3" aria-label={t('会话范围')}>
-        <Button aria-pressed={scope === 'project'} onClick={() => setScope('project')}>{t('本项目')}</Button>
-        <Button aria-pressed={scope === 'all'} onClick={() => setScope('all')}>{t('全部')}</Button>
+      <div className="qn-segment mb-3" role="group" aria-label={t('会话范围')}>
+        <button type="button" aria-pressed={scope === 'project'} onClick={() => setScope('project')}>{t('本项目')}</button>
+        <button type="button" aria-pressed={scope === 'all'} onClick={() => setScope('all')}>{t('全部')}</button>
       </div>
       {scope === 'project' && currentProject && <NewSessionButton project={currentProject} className="w-full" onCreated={onClose} />}
       <WorkspaceSearch label={t('搜索会话')} query={query} onChange={setQuery} />

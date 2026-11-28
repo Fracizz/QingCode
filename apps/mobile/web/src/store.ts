@@ -52,6 +52,8 @@ import {
   steerOutcome,
   steerTurn,
   stopBackgroundTask,
+  stripAttachmentPlaceholders,
+  supportsMcpStatus,
   userAnswerResponse,
   type ApprovalView,
   AGENT_CAPABILITIES,
@@ -107,6 +109,7 @@ import {
   type MobileAgentSettings,
 } from './agents'
 import { callDevice, getGateway, isMockGateway } from './client'
+import type { DraftImage } from './composerLogic'
 import { isImagePath, normalizePath, pathStyle, type FileLocation } from './fileLinks'
 import {
   draftFromInfo,
@@ -168,7 +171,7 @@ import {
   MobileCodexTransport,
   openSeq,
 } from './transport'
-import { applyRelayResult, mobileTurnFits, queuedInput, QUEUE_STORAGE_KEY, relayRequest, restoreQueues, serializeQueues, UNCONFIRMED_QUEUED_SEND, type MobileTurnAccess, type QueuedSend } from './queuedSends'
+import { applyRelayResult, mobileTurnFits, queuedInput, QUEUE_STORAGE_KEY, releaseRelayedSends, relayRequest, restoreQueues, serializeQueues, UNCONFIRMED_QUEUED_SEND, type MobileTurnAccess, type QueuedSend } from './queuedSends'
 import { deliverTerminalEvent } from './terminalEvents'
 import { echoedSteerIds, withoutPendingSteers, withPendingSteer, type PendingSteer, type SteerRecord } from './pendingSteers'
 import type {
@@ -271,6 +274,7 @@ export type AgentSession = {
   opened: boolean
   linkInterrupted?: boolean
   accessSupported?: boolean
+  mcpStatusSupported?: boolean
   activeTurnAccess?: Record<string, { turnId: string; mode: SessionAccessMode }>
   opening: boolean
   openError: string | null
@@ -358,6 +362,7 @@ type AppState = {
   viewer: ViewerState | null
   annotations: Annotation[]
   draftText: string
+  draftImages: readonly DraftImage[]
   approvalSubmitting: Record<string, boolean>
   sending: boolean
   compactingThreads: Record<string, true>
@@ -419,7 +424,7 @@ type AppState = {
    * 只能分支的（Claude、pi）从上一轮分出新会话发送，原会话保留。文本不变时就是原样重发。
    */
   sendRevision: (itemId: string, text: string, attachments: UserInput[]) => Promise<boolean>
-  setDraftText: (text: string) => void
+  setDraftText: (text: string, images?: readonly DraftImage[]) => void
   setAccessMode: (mode: SessionAccessSelection) => void
   /** 读取当前会话轮次外仍在运行的后台任务（打开会话或重连后）。 */
   refreshBackgroundTasks: () => Promise<void>
@@ -669,6 +674,8 @@ export function onServerEvt(listener: ServerEvtListener): () => void {
   return () => { serverEvtListeners.delete(listener) }
 }
 
+type ComposerDraft = ChatDraft & { images?: readonly DraftImage[] }
+
 export const useApp = create<AppState>((set, get) => {
   let desktopEpoch = 0
   let agentSettingsRequest = 0
@@ -679,7 +686,9 @@ export const useApp = create<AppState>((set, get) => {
     if (get().openingThread !== openingThread) set({ openingThread })
     return navigation
   }
-  let drafts: Record<string, ChatDraft> = {}
+  let drafts: Record<string, ComposerDraft> = {}
+  const photoDraftKeys = new Set<string>()
+  const noImages: readonly DraftImage[] = []
   let savedChats: Record<string, SavedChat> = {}
   let pendingRestore: SavedChat | null = null
   let restoreTask: Promise<void> | null = null
@@ -766,14 +775,33 @@ export const useApp = create<AppState>((set, get) => {
     const approvalSubmitting = Object.fromEntries([...(flights ?? [])]
       .filter(([, threadId]) => threadId === state.selectedThreadId)
       .map(([requestId]) => [String(requestId), true]))
-    set({ draftText: value?.text ?? '', annotations: value?.annotations ?? [], approvalSubmitting })
+    set({ draftText: value?.text ?? '', draftImages: value?.images ?? noImages, annotations: value?.annotations ?? [], approvalSubmitting })
   }
 
-  const saveDraft = (key: string, draft: ChatDraft): void => {
-    if (draft.text || draft.annotations.length) drafts[key] = draft
+  const persistDrafts = (): void => {
+    // 图片只留在进程内，重启恢复的文字也应去掉这些图片的标签。
+    const stored = Object.fromEntries(Object.entries(drafts).flatMap(([key, { text, annotations, images }]) => {
+      const body = images?.length ? stripAttachmentPlaceholders(text, images) : text
+      return body || annotations.length ? [[key, { text: body, annotations }]] : []
+    }))
+    saveRecord(STORAGE_DRAFTS, stored)
+  }
+
+  const saveDraft = (key: string, draft: ComposerDraft): void => {
+    if (draft.text || draft.annotations.length || draft.images?.length) drafts[key] = draft
     else delete drafts[key]
-    saveRecord(STORAGE_DRAFTS, drafts)
-    if (currentDraftKey() === key) set({ draftText: draft.text, annotations: draft.annotations })
+    photoDraftKeys.delete(key)
+    if (draft.images?.length) photoDraftKeys.add(key)
+    if (photoDraftKeys.size > 12) {
+      const oldest = photoDraftKeys.values().next().value!
+      const { text, annotations, images } = drafts[oldest]!
+      const body = stripAttachmentPlaceholders(text, images ?? noImages)
+      if (body || annotations.length) drafts[oldest] = { text: body, annotations }
+      else delete drafts[oldest]
+      photoDraftKeys.delete(oldest)
+    }
+    persistDrafts()
+    if (currentDraftKey() === key) set({ draftText: draft.text, draftImages: draft.images ?? noImages, annotations: draft.annotations })
   }
 
   const saveActiveChat = (): void => {
@@ -988,11 +1016,13 @@ export const useApp = create<AppState>((set, get) => {
     delete savedChats[id]
     delete desktopModelPrefs[id]
     for (const key of Object.keys(drafts)) {
-      if (key.startsWith(`[${JSON.stringify(id)},`)) delete drafts[key]
+      if (!key.startsWith(`[${JSON.stringify(id)},`)) continue
+      delete drafts[key]
+      photoDraftKeys.delete(key)
     }
     saveRecord(STORAGE_SAVED_CHATS, savedChats)
     saveRecord(STORAGE_DESKTOP_MODEL_PREFS, desktopModelPrefs)
-    saveRecord(STORAGE_DRAFTS, drafts)
+    persistDrafts()
     clearArchivedThreads(id)
     clearDesktopAccessPrefs(id)
     discardDesktopQueue(id)
@@ -1383,12 +1413,13 @@ export const useApp = create<AppState>((set, get) => {
     const next = state.queuedSends[key]?.[0]
     const session = state.sessions[sessionKey(targetId, agent)]
     const view = session?.state.threads[threadId]
-    if (remoteQueues.has(key) || handingOff.has(key)) return
+    if (state.activeId !== desktopId || !next || (!retry && next.error)) return
     if (takeBackTask) {
-      void takeBackTask.then(() => flushQueue(address, retry))
+      void takeBackTask.then(() => flushQueue(address, retry), () => undefined)
       return
     }
-    if (state.activeId !== desktopId || !next || next.sending || next.saving || submitting.has(key) || state.compactingThreads[key]
+    if (remoteQueues.has(key) || handingOff.has(key)) return
+    if (next.relayPending || next.sending || next.saving || submitting.has(key) || state.compactingThreads[key]
       || editingQueue.has(next.id) || savingQueue.has(next.id)
       || isArchived(desktopId, targetId, { agent, id: threadId })) return
     if (!session?.opened || session.linkInterrupted || !state.eventsConnected || reconnectTask || !view || !canSendInBackground()) return
@@ -1401,7 +1432,11 @@ export const useApp = create<AppState>((set, get) => {
       if (retry) updateQueue(key, (list) => list.map((item) => item.id === next.id ? { ...item, error: undefined } : item))
       return
     }
-    if (!retry && (view.status !== 'idle' || next.error)) return
+    if (!retry && (view.status !== 'idle' || view.activity === 'interrupted')) {
+      // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
+      pauseQueue(key, '上一轮未完成，队列已暂停')
+      return
+    }
 
     const epoch = desktopEpoch
     const streamEpoch = eventStreamEpoch
@@ -1480,7 +1515,7 @@ export const useApp = create<AppState>((set, get) => {
     const list = state.queuedSends[key]
     if (!conn || conn.id !== address.desktopId || !state.agentSettings?.backgroundQueue || !state.eventsConnected) return
     if (remoteQueues.has(key) || handingOff.has(key) || submitting.has(key) || takeBackTask || !list?.length || list[0]!.error) return
-    if (list.some((item) => item.sending || item.saving || editingQueue.has(item.id) || savingQueue.has(item.id))) return
+    if (list.some((item) => item.relayPending || item.sending || item.saving || editingQueue.has(item.id) || savingQueue.has(item.id))) return
     const { targetId, agent, threadId } = address
     // 计划模式的队列留在手机：批准后要按切回的档位发送，电脑代发拿不到这次切换。
     if (mobileTurnAccess(state, agent, accessPreference(state, address) ?? list[0]!.accessMode).accessMode === 'plan') return
@@ -1494,26 +1529,31 @@ export const useApp = create<AppState>((set, get) => {
     if (!running && (view.status !== 'idle' || view.activity === 'interrupted')) return
     const epoch = desktopEpoch
     handingOff.add(key)
-    let handed = 0
     try {
       for (const item of list) {
         // 电脑代发只支持消息；压缩及其后的内容留到手机回到前台再处理。
-        if (item.compact) break
+        if (item.compact || item.error) break
         const access = mobileTurnAccess(get(), agent, accessPreference(get(), address) ?? item.accessMode)
         const request = relayRequest(targetId, threadId, agent, item, access, !!session.accessSupported, makeId())
+        // 请求发出前先落盘，WebView 被杀或回包丢失时也知道要向电脑核对。
+        const markPending = (relayPending: true | undefined) => updateQueue(key, (items) => items.map((entry) =>
+          entry.id === item.id ? { ...entry, relayPending } : entry))
+        try {
+          await markPending(true)
+        } catch {
+          void markPending(undefined)
+          break
+        }
+        if (epoch !== desktopEpoch) return
+        remoteQueues.add(key)
         await getGateway().rpc(conn, 'mobile.queue.put', { targetId, agent, threadId, id: item.id, running, request })
         if (epoch !== desktopEpoch) return
-        handed += 1
-        remoteQueues.add(key)
       }
     } catch {
-      // 交接失败的消息留在手机本地，回到前台后按原规则继续；已交出的部分由电脑发送。
+      // 未交接的消息留在手机，已尝试交接的等收回时核对。
     } finally {
       handingOff.delete(key)
-      if (handed === 0) {
-        remoteQueues.delete(key)
-        scheduleSteerCheck(address)
-      }
+      if (!remoteQueues.has(key)) scheduleSteerCheck(address)
     }
   }
 
@@ -1572,6 +1612,10 @@ export const useApp = create<AppState>((set, get) => {
     const task = (async () => {
       // 先等进行中的交接结束，否则收回后还可能再交出一条。
       while (handingOff.size > 0) await new Promise((resolve) => setTimeout(resolve, 50))
+      if (epoch !== desktopEpoch) return
+      for (const [key, items] of Object.entries(get().queuedSends)) {
+        if (items.some((item) => item.relayPending)) remoteQueues.add(key)
+      }
       const owned = [...remoteQueues].filter((key) => key.startsWith(`[${JSON.stringify(conn.id)},`))
       let queues: unknown[] = []
       try {
@@ -1591,12 +1635,13 @@ export const useApp = create<AppState>((set, get) => {
         const sentIds = Array.isArray(entry.sentIds) ? entry.sentIds.filter((id): id is string => typeof id === 'string') : []
         known.add(key)
         if (sentIds.length) stale.push(address)
-        await updateQueue(key, (list) => applyRelayResult(list, sentIds, typeof entry.error === 'string' ? entry.error : undefined))
+        const error = typeof entry.error === 'string' ? entry.error : undefined
+        await updateQueue(key, (list) => releaseRelayedSends(applyRelayResult(list, sentIds, error), true))
       }
       // 交出过但电脑已没有记录（电脑端重启）：无法确认发送情况，暂停等用户核对。
       for (const key of owned) {
         if (!known.has(key)) {
-          await updateQueue(key, (list) => applyRelayResult(list, [], undefined, false))
+          await updateQueue(key, (list) => releaseRelayedSends(list, false))
           const [desktopId, targetId, agent, threadId] = JSON.parse(key) as [string, string, AgentKind, string]
           stale.push({ desktopId, targetId, agent, threadId })
         }
@@ -2189,6 +2234,7 @@ export const useApp = create<AppState>((set, get) => {
     viewer: null,
     annotations: [],
     draftText: '',
+    draftImages: noImages,
     approvalSubmitting: {},
     sending: false,
     compactingThreads: {},
@@ -2221,7 +2267,7 @@ export const useApp = create<AppState>((set, get) => {
         void takeBackQueues().then(() => {
           if (!desktopId || get().activeId !== desktopId) return
           for (const address of pendingQueueAddresses(desktopId)) void flushQueue(address)
-        })
+        }, () => undefined)
       }
       // 记录进入后台的时间；离开超过阈值再回来时核对当前会话状态。
       let hiddenAt: number | null = null
@@ -2271,7 +2317,7 @@ export const useApp = create<AppState>((set, get) => {
           }
           set({ eventsConnected: true, eventsError: null })
           // 首次连上：收回上次（可能在应用被杀前）交给电脑的队列。
-          if (!reconnected && !inBackground()) void takeBackQueues()
+          if (!reconnected && !inBackground()) resumeQueues()
           if (reconnected && get().page === 'targets') void get().loadTargets()
           const conn = activeConnection(get())
           if (conn && pendingRestore) void restoreSavedChat(conn)
@@ -2657,6 +2703,7 @@ export const useApp = create<AppState>((set, get) => {
           eventsError: null,
           sending: false,
           draftText: '',
+          draftImages: noImages,
           annotations: [],
           approvalSubmitting: {},
         })
@@ -2728,6 +2775,7 @@ export const useApp = create<AppState>((set, get) => {
         directory: null,
         sending: false,
         draftText: '',
+        draftImages: noImages,
         annotations: [],
         approvalSubmitting: {},
         viewer: null,
@@ -3091,6 +3139,7 @@ export const useApp = create<AppState>((set, get) => {
             ...value,
             opened: true,
             accessSupported,
+            mcpStatusSupported: supportsMcpStatus(opened),
             opening: false,
             openError: null,
             lastSeq,
@@ -3151,6 +3200,7 @@ export const useApp = create<AppState>((set, get) => {
           let info = attachResult(attached)
           const restarted = info.lastSeq !== null && info.lastSeq < cursor
           let accessSupported = (!restarted && session.accessSupported) || supportsMobileAccess(attached)
+          let mcpStatusSupported = !restarted && session.mcpStatusSupported
           if (restarted) {
             session.transport.resetSequence()
             session.resumedCodexThreads.clear()
@@ -3163,6 +3213,7 @@ export const useApp = create<AppState>((set, get) => {
                 params: { agent: session.agent },
               })
               accessSupported ||= supportsMobileAccess(opened)
+              mcpStatusSupported = supportsMcpStatus(opened)
               if (!isCurrent()) return
             }
             attached = await attachSession(conn, session, 0)
@@ -3173,6 +3224,7 @@ export const useApp = create<AppState>((set, get) => {
             ...value,
             opened: true,
             accessSupported: accessSupported || supportsMobileAccess(attached) || (restarted ? undefined : session.accessSupported),
+            mcpStatusSupported,
             openError: null,
             lastSeq: restarted ? info.lastSeq : maxSeq(value.lastSeq, info.lastSeq),
           }), session)
@@ -3378,11 +3430,15 @@ export const useApp = create<AppState>((set, get) => {
       }
       if (hasFreshHistory) {
         showConversation()
+        void flushQueue(openingThread)
         return true
       }
       set({ error: null })
       const loadHistory = async (): Promise<boolean> => {
         if (!(await waitForEvents(conn.id, shouldLoad))) return false
+        // 应用重开时先收回代发，再读历史，避免把代发期间的旧空闲状态当成可发送。
+        if (get().queuedSends[sendKey(openingThread)]?.length) await takeBackTask?.catch(() => undefined)
+        if (!shouldLoad()) return false
         const ready = await get().ensureOpen(targetId, picked)
         if (!isCurrent() || archived()) return false
         const session = get().sessions[key]
@@ -3426,6 +3482,7 @@ export const useApp = create<AppState>((set, get) => {
         reconcilePlanExit(openingThread)
         scheduleSteerCheck(openingThread)
         showConversation()
+        void flushQueue(openingThread)
         // 清单只挂在发生变化的轮次上，首页没有时到更早的页里找。
         if (AGENT_CAPABILITIES[picked].historyPlan && earlier && !get().sessions[key]?.state.threads[id]?.plan) {
           const isSameSession = () => get().sessions[key]?.transport === session.transport
@@ -3580,9 +3637,9 @@ export const useApp = create<AppState>((set, get) => {
       return 'native'
     },
 
-    setDraftText: (text) => {
+    setDraftText: (text, images = get().draftImages) => {
       const key = currentDraftKey()
-      if (key) saveDraft(key, { text, annotations: get().annotations })
+      if (key) saveDraft(key, { text, images, annotations: get().annotations })
     },
 
     setAccessMode: (mode) => {
@@ -3843,7 +3900,8 @@ export const useApp = create<AppState>((set, get) => {
         return false
       }
       if (!keepDraft && queueingDrafts.has(key)) return false
-      const draft = { text, annotations }
+      const images = initial.draftImages
+      const draft = { text: images.length ? initial.draftText : text, annotations, images }
       const epoch = desktopEpoch
       const navigation = navigationEpoch
       const sessionId = sessionKey(targetId, agent)
@@ -3860,7 +3918,7 @@ export const useApp = create<AppState>((set, get) => {
         set({ error: t('当前模型不支持此图片附件，或附件类型无效') })
         return false
       }
-      const message = { ...draft, attachments, delegate }
+      const message = { text, annotations, attachments, delegate }
       const input = queuedInput(agent, message)
       const overrides = overridesFor(agent, models, prefs)
       const accessSelection = selectedAccessPreference(initial)
@@ -3876,8 +3934,16 @@ export const useApp = create<AppState>((set, get) => {
       const clearSentDraft = (sentDraftKey: string) => {
         if (keepDraft) return
         const current = drafts[sentDraftKey]
-        if (current?.text === draft.text && current.annotations === draft.annotations) {
+        if (!current) return
+        if (current.text === draft.text && current.annotations === draft.annotations && (!images.length || current.images === images)) {
           saveDraft(sentDraftKey, { text: '', annotations: [] })
+        } else if (images.length && current.images?.some((image) => images.includes(image))) {
+          const sent = current.images.filter((image) => images.includes(image))
+          saveDraft(sentDraftKey, {
+            text: stripAttachmentPlaceholders(current.text, sent),
+            annotations: current.annotations,
+            images: current.images.filter((image) => !images.includes(image)),
+          })
         }
       }
       // 发送（含排队）时把实际使用的选择固定到会话上，之后改默认不会再影响它。
@@ -4034,14 +4100,14 @@ export const useApp = create<AppState>((set, get) => {
       if (!address) return
       const key = sendKey(address)
       const item = get().queuedSends[key]?.find((entry) => entry.id === id)
-      if (item && !item.sending && !item.saving && !editingQueue.has(id) && !savingQueue.has(id)) void dropQueuedSend(key, id)
+      if (item && !item.relayPending && !item.sending && !item.saving && !editingQueue.has(id) && !savingQueue.has(id)) void dropQueuedSend(key, id)
     },
 
     beginQueuedEdit: (id) => {
       const address = selectedSendAddress(get())
       if (!address) return null
       const item = get().queuedSends[sendKey(address)]?.find((entry) => entry.id === id)
-      if (!item || item.compact || item.sending || item.saving || savingQueue.has(id) || editingQueue.has(id)) return null
+      if (!item || item.compact || item.relayPending || item.sending || item.saving || savingQueue.has(id) || editingQueue.has(id)) return null
       editingQueue.add(id)
       return (resume = true) => {
         if (editingQueue.delete(id) && resume) void flushQueue(address)
@@ -4080,7 +4146,7 @@ export const useApp = create<AppState>((set, get) => {
       const session = state.sessions[sessionKey(targetId, agent)]
       const view = session?.state.threads[threadId]
       const item = state.queuedSends[key]?.find((entry) => entry.id === id)
-      if (!session?.opened || !item || item.compact || item.sending || item.saving
+      if (!session?.opened || !item || item.compact || item.relayPending || item.sending || item.saving
         || submitting.has(key) || editingQueue.has(id) || savingQueue.has(id)) return false
       const input = queuedInput(agent, item)
       const plan = planSteer({ agent, view, input, compactionStarting: !!state.compactingThreads[key] })
@@ -4156,7 +4222,7 @@ export const useApp = create<AppState>((set, get) => {
       const view = session?.state.threads[threadId]
       const item = state.queuedSends[key]?.find((entry) => entry.id === id)
       // 队列交给电脑代发期间不能再从手机发送，否则同一条会发两次。
-      if (!session?.opened || session.linkInterrupted || view?.status !== 'running' || !item || item.compact || item.sending || item.saving
+      if (!session?.opened || session.linkInterrupted || view?.status !== 'running' || !item || item.compact || item.relayPending || item.sending || item.saving
         || submitting.has(key) || editingQueue.has(id) || savingQueue.has(id) || state.compactingThreads[key]
         || remoteQueues.has(key) || handingOff.has(key) || takeBackTask) return false
       const turnId = view.activeTurnId
@@ -4247,7 +4313,7 @@ export const useApp = create<AppState>((set, get) => {
       const key = sendKey(address)
       const session = state.sessions[sessionKey(targetId, agent)]
       const item = state.queuedSends[key]?.find((entry) => entry.id === id)
-      if (!session?.opened || !item || item.compact || item.sending || item.saving || submitting.has(key)
+      if (!session?.opened || !item || item.compact || item.relayPending || item.sending || item.saving || submitting.has(key)
         || editingQueue.has(id) || savingQueue.has(id) || state.compactingThreads[key]) return false
       if (queueLimited(address)) {
         set({ error: t('当前额度已用完，排队消息已保留') })
@@ -4354,7 +4420,7 @@ export const useApp = create<AppState>((set, get) => {
       if (!address) return
       const key = sendKey(address)
       const first = get().queuedSends[key]?.[0]
-      if (!first?.error || first.sending || first.saving || editingQueue.has(first.id) || savingQueue.has(first.id)
+      if (!first?.error || first.relayPending || first.sending || first.saving || editingQueue.has(first.id) || savingQueue.has(first.id)
         || submitting.has(key) || !get().eventsConnected) return
       const epoch = desktopEpoch
       const navigation = navigationEpoch
@@ -4622,22 +4688,22 @@ export const useApp = create<AppState>((set, get) => {
       const value = quote.trim()
       const key = currentDraftKey()
       if (!value || !key) return
-      const { draftText, annotations } = get()
-      saveDraft(key, { text: draftText, annotations: [...annotations, { id: makeId(), quote: value, comment }] })
+      const { draftText, draftImages, annotations } = get()
+      saveDraft(key, { text: draftText, images: draftImages, annotations: [...annotations, { id: makeId(), quote: value, comment }] })
     },
 
     updateAnnotation: (id, comment) => {
       const key = currentDraftKey()
       if (!key) return
-      const { draftText, annotations } = get()
-      saveDraft(key, { text: draftText, annotations: annotations.map((item) => (item.id === id ? { ...item, comment } : item)) })
+      const { draftText, draftImages, annotations } = get()
+      saveDraft(key, { text: draftText, images: draftImages, annotations: annotations.map((item) => (item.id === id ? { ...item, comment } : item)) })
     },
 
     removeAnnotation: (id) => {
       const key = currentDraftKey()
       if (!key) return
-      const { draftText, annotations } = get()
-      saveDraft(key, { text: draftText, annotations: annotations.filter((item) => item.id !== id) })
+      const { draftText, draftImages, annotations } = get()
+      saveDraft(key, { text: draftText, images: draftImages, annotations: annotations.filter((item) => item.id !== id) })
     },
 
     handleGatewayEvent: (event) => {

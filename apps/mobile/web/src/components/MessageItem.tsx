@@ -529,7 +529,7 @@ function UserMessage({ item, onQuote, onResend, resendNote }: {
         {/* 技能与正文连在一起，和输入框里的 /名字 写法一致；只发技能时气泡仍在，长按操作不丢。 */}
         {hasBody && <div className={`whitespace-pre-wrap break-words${long && !expanded ? ' line-clamp-8' : ''}`}>
           {skills.map((name, index) => (
-            <Fragment key={name}>{index > 0 && ' '}<span className="qn-user-skill font-medium text-qn-accent">/{name}</span></Fragment>
+            <Fragment key={name}>{index > 0 && ' '}<span className="qn-user-skill">/{name}</span></Fragment>
           ))}
           {skills.length > 0 && parsed.text && ' '}{parsed.text}
         </div>}
@@ -699,6 +699,26 @@ export function MessageItem({
           }>
             <div className="qn-tool-body qn-markdown min-w-0 wrap-anywhere"><Markdown text={item.plan} streaming={false} /></div>
             <MessageActions text={item.plan} onQuote={onQuote} />
+          </LazyDetails>
+        )
+      }
+      if (item.toolDetails) {
+        const status = toolStatus(item)
+        return (
+          <LazyDetails className="qn-tool" summary={
+            <summary className="qn-tool-row">
+              <ListChecks size={14} className="shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 truncate">{item.toolDetails.name}</span>
+              <ToolStatusIcon status={status} />
+              <ChevronRight size={14} className="qn-tool-chevron shrink-0 text-qn-dim" aria-hidden />
+            </summary>
+          }>
+            <div className="qn-tool-body">
+              <pre className="qn-pre qn-scroll qn-limit-body whitespace-pre-wrap break-words">
+                {item.toolDetails.result || (status === 'running' ? t('等待输出…') : t('无输出'))}
+              </pre>
+              {item.toolDetails.result && <MessageActions text={item.toolDetails.result} onQuote={onQuote} />}
+            </div>
           </LazyDetails>
         )
       }

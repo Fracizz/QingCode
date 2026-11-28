@@ -230,6 +230,9 @@ function CommandDetails({ item, running }: { item: Extract<ItemView, { kind: 'co
   const truncated = lineCount(item.output) > 200
   return (
     <>
+      {item.command && <div className="qn-scroll mb-1 max-h-36 overflow-auto whitespace-pre-wrap break-words font-mono text-ui-sm text-qn-text">
+        {item.command}
+      </div>}
       {item.cwd && <div className="mb-1 font-mono text-ui-sm text-qn-dim">{item.cwd}</div>}
       {output ? (
         <pre className="qn-scroll max-h-72 overflow-auto whitespace-pre rounded-lg border border-qn-border bg-qn-code px-3 py-2 font-mono text-ui-sm leading-5 text-qn-text/85">
@@ -433,6 +436,18 @@ function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, o
           </ToolRow>
         )
       }
+      if (item.toolDetails) {
+        const status = item.status ?? ''
+        const label = isRunning(status) ? t('进行中') : statusTone(status) === 'danger' ? t('失败') : t('已完成')
+        return (
+          <ToolRow icon={<ListChecks size={14} aria-hidden />} summary={item.toolDetails.name}
+            trailing={<Badge tone={statusTone(status)}>{label}</Badge>}>
+            <pre className="qn-scroll max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-qn-code px-3 py-2 font-mono text-ui-sm text-qn-text">
+              {item.toolDetails.result || (isRunning(status) ? t('等待输出…') : t('无输出'))}
+            </pre>
+          </ToolRow>
+        )
+      }
       return (
         <ToolRow icon={<FileText size={14} />} summary={item.type}>
           <div className="qn-scroll max-h-72 overflow-y-auto whitespace-pre-wrap break-words text-ui text-qn-muted">{item.summary}</div>
@@ -590,7 +605,7 @@ function UserMessage({ item, onEdit, editNote, onRewind }: {
       ) : (skills.length > 0 || parsed.text.trim()) && (
         <div className="max-w-[80%] whitespace-pre-wrap wrap-anywhere rounded-lg border border-qn-fg/[0.06] bg-qn-bubble px-4 py-2.5 text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-text">
           {skills.map((name, index) => (
-            <Fragment key={name}>{index > 0 && ' '}<span className="font-medium text-qn-brand">/{name}</span></Fragment>
+            <Fragment key={name}>{index > 0 && ' '}<span className="qn-user-skill">/{name}</span></Fragment>
           ))}
           {skills.length > 0 && parsed.text && ' '}{parsed.text}
         </div>

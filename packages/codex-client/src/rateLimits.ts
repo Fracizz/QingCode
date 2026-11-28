@@ -1,5 +1,5 @@
 // 额度展示的纯逻辑：桌面端与手机端共用，输入允许是线上 JSON 的任意形状。
-import { getLocale, t } from '../../protocol/src/i18n'
+import { getLocale, t, translateMessage } from '../../protocol/src/i18n'
 import type { RateLimitSnapshot, RateLimitWindow } from './codex-types'
 
 export type RateLimitSeverity = 'ok' | 'warn' | 'danger'
@@ -12,6 +12,14 @@ export type ClaudeRateLimitSnapshot = RateLimitSnapshot & {
 
 export const WARN_PERCENT = 80
 export const DANGER_PERCENT = 95
+
+/** Codex 的额度和总用量接口会返回英文认证提示，展示时补充目标机上的登录步骤。 */
+export function accountReadErrorText(message: string): string {
+  const reason = /^chatgpt authentication required to read (rate limits|token usage)\.?$/i.exec(message.trim())?.[1]?.toLowerCase()
+  if (reason === 'rate limits') return t('请在运行 Codex 的设备上执行 codex login，使用 ChatGPT 账号登录后查看额度。')
+  if (reason === 'token usage') return t('请在运行 Codex 的设备上执行 codex login，使用 ChatGPT 账号登录后查看总用量。')
+  return translateMessage(message)
+}
 
 type JsonRecord = Record<string, unknown>
 type Credits = NonNullable<RateLimitSnapshot['credits']>

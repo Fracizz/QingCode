@@ -1,5 +1,5 @@
-import { ArrowDown, Bot, ChevronDown, ListChecks, MessageCirclePlus } from 'lucide-react'
-import { AGENT_CAPABILITIES, branchPoint, canReviseMessage, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, revisionNote, turnOpeningMessages, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
+import { ArrowDown, Bot, ChevronDown, ListChecks, MessageCirclePlus, Plug } from 'lucide-react'
+import { AGENT_CAPABILITIES, availablePromptSuggestion, branchPoint, canReviseMessage, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, revisionNote, turnOpeningMessages, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { bindChatPinch } from '../chatFont'
@@ -18,6 +18,7 @@ import { Composer } from './Composer'
 import { ContextUsage } from './ContextUsage'
 import { FileActionsContext, MessageItem, ToolGroup, WorkGroup, type FileActions } from './MessageItem'
 import { ModelPicker } from './ModelSheet'
+import { McpStatusDialog } from './McpStatusDialog'
 import { NewSessionButton } from './NewSessionButton'
 import { ProjectTools } from './ProjectTools'
 import { PendingSteers } from './PendingSteers'
@@ -64,6 +65,7 @@ export function ChatPage() {
   const sending = useApp((s) => s.sending)
   const annotations = useApp((s) => s.annotations)
   const draftText = useApp((s) => s.draftText)
+  const draftImages = useApp((s) => s.draftImages)
   const setDraftText = useApp((s) => s.setDraftText)
   const eventsConnected = useApp((s) => s.eventsConnected)
   const needsRepair = useApp((s) => (activeId ? s.needsRepair[activeId] : undefined))
@@ -88,6 +90,7 @@ export function ChatPage() {
   const [stopRequest, setStopRequest] = useState<{ chatKey: string; turnId: string } | null>(null)
   const [switching, setSwitching] = useState(false)
   const [dockSheet, setDockSheet] = useState<{ key: string; sheet: DockSheet } | null>(null)
+  const [mcpOpen, setMcpOpen] = useState<string | null>(null)
   const [commandDialog, setCommandDialog] = useState<{ key: string; id: ChatCommandId } | null>(null)
   const [contextPanel, setContextPanel] = useState<{ key: string; panel: 'usage' } | null>(null)
   const [commandFeedback, setCommandFeedback] = useState<{ key: string; message: string } | null>(null)
@@ -326,10 +329,12 @@ export function ChatPage() {
   }
 
   const changeDockSheet = useCallback((sheet: DockSheet | null) => setDockSheet(sheet ? { key: chatKey, sheet } : null), [chatKey])
+  const mcpRpc = selectedThreadId && eventsConnected && session?.opened && session.mcpStatusSupported ? session.rpc : null
   // 状态胶囊收回后，历史子代理与任务清单仍可从顶栏“⋯”菜单查看。
   const dockActions = [
     ...(subagents.length ? [{ icon: Bot, label: `${t('子代理')} · ${subagents.length}`, onClick: () => changeDockSheet('subagents') }] : []),
     ...(view?.plan?.steps.length ? [{ icon: ListChecks, label: planLabel(view.plan), onClick: () => changeDockSheet('plan') }] : []),
+    ...(mcpRpc ? [{ icon: Plug, label: t('MCP 服务状态'), onClick: () => setMcpOpen(chatKey) }] : []),
   ]
   const latestReply = items.findLast((item) => item.kind === 'agent' && !item.streaming && item.text.trim())
   const commandReason = (id: ChatCommandId) => {
@@ -440,6 +445,8 @@ export function ChatPage() {
             {/* 对话中直接进入项目文件、终端等页面，不必先退回项目列表。 */}
             {project && <ProjectTools key={project.id} project={project} compact className="qn-header-icon h-[44px] w-[50px] shrink-0"
               actions={dockActions} />}
+            {!project && mcpRpc && <Button variant="ghost" className="qn-header-icon size-[44px]"
+              aria-label={t('MCP 服务状态')} onClick={() => setMcpOpen(chatKey)}><Plug size={20} aria-hidden /></Button>}
           </div>
         }
       />
@@ -559,8 +566,10 @@ ${text}` : text)
         <QueuedMessages key={`queue:${chatKey}`} running={running} canSteer={canSteer} />
         <Composer
           key={chatKey}
+          promptSuggestion={availablePromptSuggestion(view, eventsConnected, queuedCount > 0, approvals.length > 0)}
           draftKey={chatKey}
           text={draftText}
+          images={draftImages}
           onChangeText={setDraftText}
           onSend={async (text, images, mode) => {
             const sent = await send(text, images, false, mode)
@@ -610,7 +619,7 @@ ${text}` : text)
             </>
           }
           trailing={
-            <ContextUsage key={`context:${chatKey}`} tokenUsage={view?.tokenUsage}
+            <ContextUsage key={`context:${chatKey}`} tokenUsage={view?.tokenUsage} agent={selectedAgent}
               panel={contextPanel?.key === chatKey ? contextPanel.panel : null}
               onPanelChange={(panel) => setContextPanel(panel ? { key: chatKey, panel } : null)}
               compact={selectedThreadId ? {
@@ -623,6 +632,8 @@ ${text}` : text)
         />
       </div>
       {switching && <SessionSwitcher onClose={() => setSwitching(false)} />}
+      {mcpRpc && selectedThreadId && mcpOpen === chatKey && <McpStatusDialog key={chatKey} threadId={selectedThreadId}
+        agent={selectedAgent} rpc={mcpRpc} onClose={() => setMcpOpen(null)} />}
       {activeCommand === 'help' && <Dialog title={t('对话命令')} onClose={closeCommand}>
         <ul className="space-y-2">{chatCommands.filter(({ id }) => !MOBILE_HIDDEN_COMMANDS.includes(id)).map(({ id, name, description }) => (
           <li key={name}><span className="font-medium">/{name}</span> <span className="text-sm text-qn-muted">{commandReason(id) ?? description}</span></li>

@@ -4,9 +4,9 @@
  */
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import type { ElicitationRequest, ElicitationResult, Options, PermissionMode, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { ElicitationRequest, ElicitationResult, McpServerStatus, Options, PermissionMode, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ThreadStatus } from '../../../../vendor/codex-protocol/ts/v2/ThreadStatus'
-import { classifyJsonRpc, type JsonRpcId } from '@qn/protocol'
+import { AGENT_CAPABILITIES, classifyJsonRpc, PROMPT_SUGGESTION_METHOD, type JsonRpcId } from '@qn/protocol'
 import {
   AgentHostError,
   agentConfigEnv,
@@ -76,6 +76,7 @@ export interface QueryLike extends AsyncIterable<unknown> {
   // 以下为流式输入模式下的控制接口；测试替身可以不实现。
   supportedModels?(): Promise<unknown[]>
   supportedCommands?(): Promise<unknown[]>
+  mcpServerStatus?(): Promise<McpServerStatus[]>
   setModel?(model?: string): Promise<void>
   setPermissionMode?(mode: PermissionMode): Promise<void>
   applyFlagSettings?(settings: Record<string, unknown>): Promise<void>
@@ -103,6 +104,8 @@ interface BridgeSession {
   query: QueryLike | null
   input: AsyncQueue<SDKUserMessage> | null
   turnId: string | null
+  /** SDK 的建议没有 turnId，按同一流中紧邻的成功结果补上。 */
+  promptSuggestionTurnId: string | null
   /** 当前轮次写进 SDK 历史的消息 UUID，读历史时据此认出本轮内容。 */
   liveMessageIds: Set<string>
   turnMessageIds: Map<string, string>
@@ -679,6 +682,21 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
         return this.listCommands(scope.sessions.get(threadId)?.query ?? null)
       }
+      case 'qingcode/mcp/status': {
+        const threadId = scalarText(params.threadId)
+        if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
+        const query = scope.sessions.get(threadId)?.query
+        if (!query?.mcpServerStatus) return { available: false, servers: [] }
+        try {
+          const statuses = await query.mcpServerStatus()
+          return { available: true, servers: statuses.map(({ name, status, tools }) => ({
+            name, status, ...(Array.isArray(tools) ? { toolCount: tools.length } : {}),
+          })) }
+        } catch (error) {
+          this.hub.log(`claude MCP 状态读取失败: ${redact(describe(error))}`) // i18n-ignore: 仅进日志
+          throw new BridgeRpcError(-32603, '无法读取 MCP 服务状态')
+        }
+      }
       case 'qingcode/files/rewind':
         return this.rewindFiles(scope, params, cwd)
       default:
@@ -966,6 +984,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       const agentTurnId = session.turnId as string | null
       if (agentTurnId) return appendTo(agentTurnId)
       session.turnId = turnId
+      session.promptSuggestionTurnId = null
       if (!compact) {
         session.turnMessageIds.set(turnId, messageId)
         session.turnStartIds.set(turnId, messageId)
@@ -1034,6 +1053,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       ...queryOverrides(settings),
       cwd: session.meta.cwd,
       includePartialMessages: true,
+      promptSuggestions: AGENT_CAPABILITIES.claude.promptSuggestions && !session.meta.ephemeral,
       // SDK 省略 systemPrompt 时发送空系统提示，须显式选预设才能与用户终端里的 claude 行为一致。
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       // 修改前备份文件，供 qingcode/files/rewind 使用；临时会话不落盘，也不建检查点。
@@ -1102,6 +1122,15 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 
   private onSdkMessage(session: BridgeSession, message: unknown): void {
     const record = asRecord(message)
+    if (record?.type === 'prompt_suggestion') {
+      const { promptSuggestionTurnId: turnId, meta } = session
+      const suggestion = scalarText(record.suggestion).trim()
+      if (turnId && !session.turnId && !session.preparingTurn && record.session_id === meta.id && suggestion) {
+        session.promptSuggestionTurnId = null
+        this.notify({ method: PROMPT_SUGGESTION_METHOD, params: { threadId: meta.id, turnId, suggestion } })
+      }
+      return
+    }
     // 新 SDK 是顶层 rate_limit_event；旧 CLI 也可能把它塞进 system 消息。
     if (record?.type === 'rate_limit_event' || record?.subtype === 'rate_limit_event') {
       this.onRateLimitEvent(session.scope, record.rate_limit_info)
@@ -1153,6 +1182,9 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       this.probeContextWindow(session)
     }
     if (record?.type === 'result') {
+      session.promptSuggestionTurnId = !session.meta.ephemeral && !session.compaction &&
+        session.interruptedTurnId !== session.turnId && record.subtype === 'success' && record.is_error !== true
+        ? session.turnId : null
       const learned = resultModelWindow(record)
       if (learned) this.contextWindows.record(session.meta.id, learned.model, learned.window)
       const userMessageIds = record.user_message_uuids
@@ -1201,6 +1233,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private startAgentTurn(session: BridgeSession): string {
     const turnId = randomUUID()
     session.turnId = turnId
+    session.promptSuggestionTurnId = null
     session.compaction = false
     session.state = nextTurnState(session.state)
     session.liveMessageIds = new Set()
@@ -1486,6 +1519,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 
   /** 随 CLI 进程一起失效的状态。 */
   private resetProcessState(session: BridgeSession): void {
+    session.promptSuggestionTurnId = null
     session.pendingSteers.clear()
     session.queuedAppends.clear()
     session.stoppedSteers.clear()
@@ -1512,6 +1546,7 @@ function makeSession(
     query: null,
     input: null,
     turnId: null,
+    promptSuggestionTurnId: null,
     liveMessageIds: new Set(),
     turnMessageIds: new Map(),
     turnStartIds: new Map(),

@@ -6,6 +6,7 @@ import { applyNotification, CodexRpc, type ItemView, type ThreadView } from '@qn
 import { sessionKey } from '../lib/agents'
 import { BackendCodexTransport } from '../lib/codexTransport'
 import { currentChatKey, useCodex } from '../store/codex'
+import { skillsKey, useSkills } from '../store/skills'
 import { ChatPanel } from './ChatPanel'
 import { TooltipProvider } from './primitives'
 import { RenderBoundary } from './RenderBoundary'
@@ -275,6 +276,59 @@ it.each([null, 'existing-thread'])('发送纯文本后仍可继续输入（会�
   }
 })
 
+it('手输已加载的技能会发送 skill 输入，未知名称和路径保留在正文里', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const initialState = useCodex.getState()
+  const initialSkills = useSkills.getState()
+  const send = vi.fn<typeof initialState.send>().mockResolvedValue(true)
+  const targetId = 'local'
+  const cwd = '/work'
+  const agent = 'codex'
+  const key = sessionKey(targetId, agent)
+  const transport = new BackendCodexTransport(targetId, agent)
+  const rpc = new CodexRpc(transport)
+  const skill = { id: 'skill:review', kind: 'skill' as const, name: 'review', description: '检查', path: '/skills/review/SKILL.md' }
+  const view: ThreadView = { id: 'thread', status: 'running', activeTurnId: 'turn', pendingApprovals: [], items: [] }
+  useCodex.setState({
+    currentTargetId: targetId, currentAgent: agent, currentCwd: cwd, currentThreadId: view.id, send,
+    sessions: { [key]: {
+      key, targetId, agent, rpc, transport, state: { threads: { [view.id]: view } },
+      threadsAwaitingResume: new Set(), opened: false, openedConfig: null,
+      opening: false, openError: null, openFailure: null, agentVersion: null, lastSeq: null,
+    } },
+  })
+  useSkills.setState({ lists: { [skillsKey(targetId, agent, cwd)]: { items: [skill], loading: false, error: null } } })
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const body = '检查 /tmp/review 和 /reviewer'
+  try {
+    await act(() => root.render(<TooltipProvider><ChatPanel onConnect={() => {}} onAddTarget={() => {}} /></TooltipProvider>))
+    const area = host.querySelector('textarea')!
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(area, `/review ${body}`)
+      area.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    })
+    const button = host.querySelector<HTMLButtonElement>('button[aria-label="引导"]')
+    expect(button).not.toBeNull()
+    await act(() => button!.click())
+    expect(send).toHaveBeenCalledExactlyOnceWith(body, expect.objectContaining({
+      mode: 'steer', input: [
+        { type: 'skill', name: skill.name, path: skill.path },
+        { type: 'text', text: body, text_elements: [] },
+      ],
+    }))
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    rpc.dispose()
+    transport.dispose()
+    useCodex.setState(initialState, true)
+    useSkills.setState(initialSkills, true)
+    vi.unstubAllGlobals()
+  }
+})
+
 it.each(['paste', 'drop', 'picker'])('图片占位可以预览且随附件单独发送（%s）', async (source) => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
@@ -325,7 +379,7 @@ it.each(['paste', 'drop', 'picker'])('图片占位可以预览且随附件单独
     const dialog = host.querySelector<HTMLDialogElement>('dialog[aria-label="图片预览 image.png"]')!
     const showModal = vi.fn()
     Object.assign(dialog, { showModal })
-    const token = host.querySelector<HTMLElement>('[role="button"][aria-label="预览 [image.png]"]')!
+    const token = host.querySelector<HTMLElement>('[role="button"][aria-label="预览 image.png"]')!
     await act(() => token.click())
     await act(() => token.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
     expect(showModal).toHaveBeenCalledTimes(2)

@@ -33,8 +33,8 @@ const running = (status: string) => /progress|running|started/i.test(status)
 
 export function isGroupRunning(items: ItemView[]): boolean {
   return items.some((item) =>
-    item.kind === 'command' || item.kind === 'fileChange'
-      ? running(item.status)
+    item.kind === 'command' || item.kind === 'fileChange' || item.kind === 'other'
+      ? running(item.status ?? '')
       : item.kind === 'reasoning'
         ? item.streaming === true
         : false,
@@ -58,6 +58,7 @@ export function summarizeTools(items: ItemView[]): string {
       thoughts++
     } else {
       others++
+      if (item.kind === 'other' && item.status && /fail|error|denied|declined/i.test(item.status)) failed++
     }
   }
   const parts: string[] = []

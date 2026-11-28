@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref, type RefObject } from 'react'
 import {
-  accessOptions, alternateSendMode, exactChatCommand, hasSkillToken, insertSkillToken, isSlashDraft, resolveAccessMode,
+  accessOptions, AGENT_CAPABILITIES, alternateSendMode, attachmentTextPattern, exactChatCommand, hasSkillToken, insertSkillToken, isSlashDraft, resolveAccessMode,
   runningSendMode, t, takeSkillTokens, translateMessage,
 } from '@qn/codex-client'
 import { ArrowUp, CircleAlert, FileText, ImageOff, ListTodo, Paperclip, Shield, ShieldAlert, ShieldOff, Square, Wand2, X } from 'lucide-react'
@@ -74,8 +74,10 @@ type SlashProps = {
   /** 斜杠菜单候选（内置命令 + 技能）；不传则不启用斜杠菜单。 */
   items: SlashItem[]
   loading?: boolean
-  /** 一条消息可以同时挂多个技能，按选择顺序发送。 */
+  /** 从菜单选中的技能，按选择顺序记录。 */
   skills: SkillRef[]
+  /** 发送时也识别当前项目里已加载的技能。 */
+  knownSkills: readonly SkillRef[]
   onSkillsChange: (skills: SkillRef[]) => void
   onCommand: (id: string) => void
   /** 菜单每次打开时调用，用于刷新随会话变化的原生命令。 */
@@ -83,7 +85,7 @@ type SlashProps = {
 }
 
 /**
- * 输入框（参考 Codex）：圆角卡片里是附件托盘 + 自动增高的文本框，底部一行左侧放附件按钮/上下文工具、右侧放模型选择/上下文占用/发送。
+ * 输入框底部左侧放会话设置，右侧放上下文用量、附件和发送操作。
  * 支持粘贴/拖入图片与文件；行首输入 `/` 弹出命令与技能菜单，输入 `@` 搜索并引用项目文件。卡片下方一行放环境信息。
  */
 export function Composer({
@@ -109,10 +111,12 @@ export function Composer({
   placeholder,
   autoFocus,
   leading,
+  model,
   trailing,
   footer,
   attach,
   slash,
+  promptSuggestion,
   suggestionBoundaryRef,
 }: {
   onSend: (text: string, mode: SendMode) => void | Promise<boolean>
@@ -140,10 +144,12 @@ export function Composer({
   placeholder?: string
   autoFocus?: boolean
   leading?: ReactNode
+  model?: ReactNode
   trailing?: ReactNode
   footer?: ReactNode
   attach?: AttachmentProps
   slash?: SlashProps
+  promptSuggestion?: string
   suggestionBoundaryRef: RefObject<HTMLDivElement | null>
 }) {
   const sendKey = useSetting((settings) => settings.general.sendKey)
@@ -162,10 +168,9 @@ export function Composer({
   // 图片和文件占位都高亮成蓝色标签；只有图片标签可点击预览。
   const { imageTextPattern, imageTokens } = useMemo(() => {
     const items = attach?.attachments ?? []
-    const tokens = items.map((item) => imagePlaceholder(item.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     return {
-      imageTextPattern: tokens.length ? new RegExp(`(${tokens.join('|')})`) : null,
-      imageTokens: new Set(items.flatMap((item) => item.kind === 'image' ? [imagePlaceholder(item.name)] : [])),
+      imageTextPattern: attachmentTextPattern(items.map((item) => imagePlaceholder(item.name))),
+      imageTokens: new Map(items.flatMap((item) => item.kind === 'image' ? [[imagePlaceholder(item.name), item.name] as const] : [])),
     }
   }, [attach?.attachments])
   const imageTextParts = !imeActive && imageTextPattern ? value.split(imageTextPattern) : []
@@ -287,9 +292,9 @@ export function Composer({
   const otherShortcut = sendKey === 'ctrlEnter' ? 'Ctrl+Shift+Enter' : 'Ctrl+Enter'
   const busy = running || compacting
   const slashDraft = useMemo(() => {
-    const { text, skills } = takeSkillTokens(value, slash?.skills ?? [])
+    const { text, skills } = takeSkillTokens(value, slash?.knownSkills ?? [])
     return isSlashDraft(agent, text, skills.length)
-  }, [agent, value, slash?.skills])
+  }, [agent, value, slash?.knownSkills])
   // 按钮与提示显示消息实际的去向，引导不可用时会转入排队。
   const actualMode = (mode: SendMode): SendMode =>
     compactionStarting || (mode === 'steer' && (steerBlocked || compacting || slashDraft)) ? 'queue' : mode
@@ -304,7 +309,19 @@ export function Composer({
     ? t('{action}（{shortcut}）· {hint}', { action: primary.label, shortcut, hint: primary.hint }) +
       (running && alternate !== primary ? `${t('；')}${otherShortcut} ${alternate.label}` : '')
     : t('发送（{shortcut}）· 换行（{newline}）', { shortcut, newline: newlineShortcut })
-  const canSend = !disabled && !sending && !blocked && (value.trim() !== '' || hasAttachments || annotationCount > 0)
+  const hasDraft = value.trim() !== '' || hasAttachments || annotationCount > 0
+  const canSend = !disabled && !sending && !blocked && hasDraft
+  const stopInPrimarySlot = running && !hasDraft && !blocked
+  const suggestedText = AGENT_CAPABILITIES[agent].promptSuggestions && !value && !busy && !sending && !disabled &&
+    !imeActive && !blocked && !hasAttachments && annotationCount === 0 && accessMode !== 'plan' ? promptSuggestion : undefined
+
+  const acceptPromptSuggestion = () => {
+    if (!suggestedText) return
+    pendingCaret.current = suggestedText.length
+    onChange(suggestedText)
+    setCaret(suggestedText.length)
+    areaRef.current?.focus()
+  }
 
   const submit = (mode: SendMode = running ? defaultMode : 'queue') => {
     const command = slash && exactChatCommand(value)
@@ -397,6 +414,11 @@ export function Composer({
         setDismissed(true)
         return
       }
+    }
+    if (suggestedText && event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault()
+      if (!event.repeat) acceptPromptSuggestion()
+      return
     }
     if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
       // 设置 → 通用 → 发送快捷键：Enter 发送，或 Ctrl+Enter 发送（此时 Enter 换行）。
@@ -533,7 +555,8 @@ export function Composer({
                     key={index}
                     role="button"
                     tabIndex={0}
-                    aria-label={t('预览 {name}', { name: part })}
+                    aria-label={t('预览 {name}', { name: imageTokens.get(part)! })}
+                    title={imageTokens.get(part)}
                     aria-haspopup="dialog"
                     className="pointer-events-auto relative z-10 cursor-zoom-in text-qn-composer-attachment hover:underline focus-visible:outline-2 focus-visible:outline-qn-outline-hover"
                     onClick={() => imagePreviewTriggers.current.get(part)?.click()}
@@ -566,7 +589,7 @@ export function Composer({
               autoFocus={autoFocus}
               aria-label={placeholder ?? agentPlaceholder(agent)}
               placeholder={
-                placeholder ?? (disabled
+                suggestedText ? undefined : placeholder ?? (disabled
                   ? t('请先连接目标')
                   : slash
                     ? targetId && root
@@ -598,80 +621,88 @@ export function Composer({
               }}
               onBlur={endComposition}
             />
+            {suggestedText && (
+              <div className="pointer-events-none absolute inset-x-4 top-3.5 flex">
+                <button type="button" onClick={acceptPromptSuggestion}
+                  aria-label={t('填入建议：{text}', { text: suggestedText })}
+                  className="pointer-events-auto inline-flex min-w-0 items-center gap-2 rounded-sm text-left text-[length:var(--qn-composer-font-size,15px)] leading-[1.7] text-qn-muted hover:text-qn-text focus-visible:outline focus-visible:outline-qn-outline-hover"
+                >
+                  <span className="min-w-0 truncate">{suggestedText}</span>
+                  <kbd className="shrink-0 rounded-sm border border-qn-border px-1 text-ui-xs" aria-hidden>Tab</kbd>
+                </button>
+              </div>
+            )}
           </div>
-          <div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1 whitespace-nowrap">
-            {attach && (
-              <>
-                <Tip label={imageSupport.allowed ? t('添加图片或文件（也可粘贴、拖入）') : t('{reason}，只能添加文件', { reason: translateMessage(imageSupport.reason ?? '') })}>
+          <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1 whitespace-nowrap">
+            <div className="flex min-w-0 grow basis-48 items-center gap-1.5 empty:hidden">
+              {leading}
+              {accessAddress && accessMode === 'plan' && !untrusted && !noApprovals && (
+                // 计划模式改变发送效果，常驻标识并提供退出入口。
+                <span role="status" className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-qn-accent bg-qn-accent/12 pl-2.5 pr-1 text-ui-sm text-qn-text">
+                  <ListTodo size={13} className="shrink-0 text-qn-accent" aria-hidden />
+                  {t('计划模式')}
                   <button
                     type="button"
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover"
-                    aria-label={t('添加附件')}
-                    disabled={disabled}
-                    onClick={() => fileRef.current?.click()}
+                    className="inline-flex size-5 items-center justify-center rounded-sm text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover disabled:opacity-40"
+                    aria-label={t('退出计划模式')}
+                    disabled={Boolean(disabled || sending || compactionStarting)}
+                    onClick={() => setAccessMode(accessAddress, draftRevision, planReturn)}
                   >
-                    <Paperclip size={16} />
+                    <X size={12} aria-hidden />
                   </button>
-                </Tip>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  multiple
-                  hidden
-                  onChange={(event) => {
-                    const files = [...(event.target.files ?? [])]
-                    event.target.value = ''
-                    if (files.length) addFilesAtCaret(files)
-                  }}
-                />
-              </>
-            )}
-            {leading}
-            {accessAddress && accessMode === 'plan' && !untrusted && !noApprovals && (
-              // 计划模式改变发送效果，常驻标识并提供退出入口。
-              <span role="status" className="inline-flex h-7 items-center gap-1 rounded-md border border-qn-accent bg-qn-accent/12 pl-2.5 pr-1 text-ui-sm text-qn-text">
-                <ListTodo size={13} className="shrink-0 text-qn-accent" aria-hidden />
-                {t('计划模式')}
-                <button
-                  type="button"
-                  className="inline-flex size-5 items-center justify-center rounded-sm text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover disabled:opacity-40"
-                  aria-label={t('退出计划模式')}
+                </span>
+              )}
+              {accessAddress && !noApprovals && (
+                <AccessModePicker
+                  key={`${accessKey(accessAddress)}:${threadId === null ? draftRevision : ''}`}
+                  agent={agent}
+                  mode={accessMode}
+                  inheritedMode={inheritedMode}
+                  supported={accessSupported}
+                  lockedReason={untrusted ? t('项目未信任') : undefined}
+                  // 运行中也可修改：访问模式在每轮 turn/start 时读取，当前这一轮不受影响。
                   disabled={Boolean(disabled || sending || compactionStarting)}
-                  onClick={() => setAccessMode(accessAddress, draftRevision, planReturn)}
-                >
-                  <X size={12} aria-hidden />
-                </button>
-              </span>
-            )}
-            <div className="flex-1" />
-            {accessAddress && !noApprovals && (
-              <AccessModePicker
-                key={`${accessKey(accessAddress)}:${threadId === null ? draftRevision : ''}`}
-                agent={agent}
-                mode={accessMode}
-                inheritedMode={inheritedMode}
-                supported={accessSupported}
-                lockedReason={untrusted ? t('项目未信任') : undefined}
-                // 运行中也可修改：访问模式在每轮 turn/start 时读取，当前这一轮不受影响。
-                disabled={Boolean(disabled || sending || compactionStarting)}
-                deferred={running || sendingPending}
-                onChange={(mode) => setAccessMode(accessAddress, draftRevision, mode)}
-              />
-            )}
-            {trailing}
-            <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-1">
+                  deferred={running || sendingPending}
+                  onChange={(mode) => setAccessMode(accessAddress, draftRevision, mode)}
+                />
+              )}
+              {model}
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              {trailing}
+              {attach && (
+                <>
+                  <Tip label={imageSupport.allowed ? t('添加图片或文件（也可粘贴、拖入）') : t('{reason}，只能添加文件', { reason: translateMessage(imageSupport.reason ?? '') })}>
+                    <IconButton label={t('添加附件')} tooltip={false} disabled={disabled} onClick={() => fileRef.current?.click()}>
+                      <Paperclip size={18} strokeWidth={1.75} absoluteStrokeWidth aria-hidden />
+                    </IconButton>
+                  </Tip>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    multiple
+                    hidden
+                    onChange={(event) => {
+                      const files = [...(event.target.files ?? [])]
+                      event.target.value = ''
+                      if (files.length) addFilesAtCaret(files)
+                    }}
+                  />
+                </>
+              )}
               {running && (
-                // 无描边的圆形幽灵按钮，与实心发送钮并排；悬停时用浅底提示可点击。
                 <IconButton
                   label={t('停止运行')}
-                  className="rounded-full text-qn-text hover:bg-qn-fg/10"
+                  className={cn('rounded-full focus-visible:ring-inset', stopInPrimarySlot
+                    ? 'bg-qn-text text-qn-bg hover:bg-qn-text/90 hover:text-qn-bg'
+                    : 'text-qn-muted hover:text-qn-text')}
                   disabled={sending || compactionStarting}
                   onClick={onInterrupt}
                 >
                   <Square size={11} fill="currentColor" strokeWidth={0} className="rounded-[2px]" />
                 </IconButton>
               )}
-              <Tip label={blocked ? translateMessage(blocked) : sendHint}>
+              {!stopInPrimarySlot && <Tip label={blocked ? translateMessage(blocked) : sendHint}>
                 <span className="inline-flex">
                   <button
                     type="button"
@@ -684,11 +715,11 @@ export function Composer({
                     aria-label={busy ? primary.label : t('发送')}
                     onClick={() => submit()}
                   >
-                    <ArrowUp size={16} strokeWidth={2.2} />
+                    <ArrowUp size={18} strokeWidth={2.2} aria-hidden />
                     {busy && <span>{primary.label}</span>}
                   </button>
                 </span>
-              </Tip>
+              </Tip>}
             </div>
           </div>
         </div>

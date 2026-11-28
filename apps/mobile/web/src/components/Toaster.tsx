@@ -33,7 +33,7 @@ export function Toaster() {
           <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{translateMessage(item.message)}</span>
           {item.actionLabel && item.onAction && (
             <button type="button" className="qn-note-action" onClick={() => { item.onAction?.(); dismissToast(item.id) }}>
-              {item.actionLabel}
+              {translateMessage(item.actionLabel)}
             </button>
           )}
           <button type="button" className="qn-note-close" aria-label={t('关闭提示')} onClick={() => dismissToast(item.id)}>

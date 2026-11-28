@@ -100,7 +100,10 @@ export function turnTimeline(items: readonly ItemView[], turns: readonly TurnMet
 }
 
 /** 按用户消息切轮；进行中的那一轮保持展开，方便看实时进度。 */
-export function groupTurns(items: readonly ItemView[], turns: readonly TurnMeta[] | undefined, running: boolean): TurnEntry[] {
+export function groupTurns(
+  items: readonly ItemView[], turns: readonly TurnMeta[] | undefined, running: boolean,
+  { includeSubagents = false }: { includeSubagents?: boolean } = {},
+): TurnEntry[] {
   // 多轮共用一个条目索引，避免长会话的每个折叠组都扫描整份历史。
   const turnsByItem = new Map<string, TurnMeta[]>()
   for (const turn of turns ?? []) {
@@ -146,18 +149,19 @@ export function groupTurns(items: readonly ItemView[], turns: readonly TurnMeta[
   }
   // 主对话在页头集中展示子代理，保留它们在时间线中的位置以定位停止提示。
   const liveItems = new Set(running ? turns?.findLast((turn) => turn.outcome === undefined)?.itemIds : [])
+  const flushSegment = () => flush(itemsInSegment.some((item) => liveItems.has(item.id)))
   for (const entry of turnTimeline(items, turns)) {
     if (entry.kind === 'stopped') {
       flush(false)
       out.push(entry)
-    } else if (entry.item.kind !== 'subagent') {
+    } else if (includeSubagents || entry.item.kind !== 'subagent') {
       if (entry.item.kind === 'notice') {
-        flush(false)
+        flushSegment()
         out.push(entry)
         continue
       }
       if (entry.item.kind === 'backgroundTask') {
-        flush(itemsInSegment.some((item) => liveItems.has(item.id)))
+        flushSegment()
         out.push(entry)
         continue
       }
@@ -166,12 +170,12 @@ export function groupTurns(items: readonly ItemView[], turns: readonly TurnMeta[
         const insideUserTurn = user?.kind === 'user' && turns?.some((turn) =>
           turn.itemIds.includes(user.id) && turn.itemIds.includes(entry.item.id))
         if (!insideUserTurn) {
-          flush(false)
+          flushSegment()
           out.push(entry)
           continue
         }
       }
-      if (entry.item.kind === 'user') flush(false)
+      if (entry.item.kind === 'user' && itemsInSegment.length > 0) flushSegment()
       itemsInSegment.push(entry.item)
     }
   }

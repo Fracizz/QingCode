@@ -1,6 +1,7 @@
 export * from './accessModes'
 export * from './accountUsage'
 export * from './agentControls'
+export * from './attachmentText'
 export * from './api'
 export * from './chatCommands'
 export * from './contextUsage'

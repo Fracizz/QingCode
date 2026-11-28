@@ -1,5 +1,5 @@
 import { t } from '@qn/codex-client'
-import { useState } from 'react'
+import { useState, type Ref } from 'react'
 import { Dialog } from './ui'
 import { ZoomableImage } from './ZoomableImage'
 
@@ -9,15 +9,16 @@ type ImageThumbnailProps = {
   className: string
   loading?: 'lazy'
   externalHref?: string
+  buttonRef?: Ref<HTMLButtonElement>
 }
 
-export function ImageThumbnail({ src, alt, className, loading, externalHref }: ImageThumbnailProps) {
+export function ImageThumbnail({ src, alt, className, loading, externalHref, buttonRef }: ImageThumbnailProps) {
   const [open, setOpen] = useState(false)
   const close = () => setOpen(false)
 
   return (
     <>
-      <button type="button" className="qn-image-thumbnail" aria-label={t('查看图片：{alt}', { alt })} aria-haspopup="dialog"
+      <button ref={buttonRef} type="button" className="qn-image-thumbnail" aria-label={t('查看图片：{alt}', { alt })} aria-haspopup="dialog"
         onClick={() => setOpen(true)}>
         <img src={src} alt={alt} className={className} loading={loading} decoding="async" />
       </button>

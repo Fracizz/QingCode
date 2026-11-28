@@ -1,6 +1,6 @@
 # QingCode Next — 路线图
 
-> 2026-11-27 整理，`next` @ `6e1da69e`。产品定位与后续方向见[产品方向](product-direction.md)，Agent 能力见[能力矩阵](agent-capabilities.md)。已完成的任务卡已从 `docs/tasks/` 移除，需要时到 Git 历史查看（整理前的最后版本为 `6e1da69e`）。
+> 2026-11-27 整理，`next` @ `6e1da69e`。产品定位与后续方向见[产品方向](product-direction.md)，当前能力见 [Agent 能力矩阵](agent-capabilities.md)和[电脑版与手机版能力对齐](client-capabilities.md)。已完成的任务卡已从 `docs/tasks/` 移除，需要时到 Git 历史查看（整理前的最后版本为 `6e1da69e`）。
 
 ## 1. 已交付（MVP 之后）
 

@@ -1,9 +1,10 @@
 import {
-  chatCommandQuery, exactChatCommand, hasSkillToken, insertSkillToken, isSlashDraft, matchingChatCommands, runningSendMode,
-  splitSkillTokens, t, takeSkillTokens, translateMessage, type ChatCommandId, type SlashCommandView, type UserInput,
+  AGENT_CAPABILITIES, attachmentTextPattern, chatCommandQuery, composeAttachmentText, exactChatCommand, hasSkillToken, imagePlaceholder,
+  insertImagePlaceholders, insertSkillToken, isSlashDraft, matchingChatCommands, removePlaceholder, runningSendMode, splitSkillTokens, t,
+  takeSkillTokens, translateMessage, uniqueImageName, type ChatCommandId, type SlashCommandView, type UserInput,
 } from '@qn/codex-client'
 import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, ListTodo, Square, Wand2, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
 import { attachmentBytes, IMAGE_BYTES, insertFileMention, isDraftImage, MAX_IMAGES, mentionAt, type DraftImage } from '../composerLogic'
 import { useMobilePreferences } from '../mobilePreferences'
@@ -20,7 +21,8 @@ import { toast } from '../toast'
 export type ComposerProps = {
   draftKey: string
   text: string
-  onChangeText: (text: string) => void
+  images?: readonly DraftImage[]
+  onChangeText: (text: string, images?: readonly DraftImage[]) => void
   onSend: (text: string, attachments: UserInput[], mode: SendMode) => Promise<boolean>
   /** 用于判断斜杠命令；缺省按 Codex。 */
   agent?: AgentKind
@@ -39,6 +41,7 @@ export type ComposerProps = {
   onConfirmQuote: (quote: string, comment: string) => void
   onCancelQuote: () => void
   placeholder?: string
+  promptSuggestion?: string
   /** 左侧低频设置（访问模式、模型与推理强度）。 */
   toolbar?: ReactNode
   /** 右侧紧挨添加图片和发送键的常看信息（如上下文占用环）。 */
@@ -63,12 +66,10 @@ type SlashEntry = { kind: 'command'; id: ChatCommandId; name: string; descriptio
 const slashEntryKey = (entry: SlashEntry): string =>
   `${entry.kind}:${entry.kind === 'command' ? entry.name : entry.kind === 'native' ? entry.command.name : entry.skill.name}`
 
-// 相册选择保留在当前应用进程中，避免将大段图片数据写进加密草稿。
-const photoDrafts = new Map<string, DraftImage[]>()
-const NO_IMAGES: DraftImage[] = []
 // 选过的技能（名字→路径）同样只留在内存草稿里，发送时按正文里仍在的 /名字 取用。
 const skillDrafts = new Map<string, SkillItem[]>()
 const NO_SKILLS: SkillItem[] = []
+const NO_IMAGES: readonly DraftImage[] = []
 // 技能名可含 : . _（如 plugin:skill），比对话命令的查询更宽；/ 在开头或空白后即可，一条消息能挂多个技能。
 const SKILL_QUERY = /(?:^|\s)\/([\p{L}\p{N}_.:-]*)$/u
 
@@ -78,24 +79,17 @@ function rememberSkills(key: string, skills: SkillItem[]) {
   if (skillDrafts.size > 12) skillDrafts.delete(skillDrafts.keys().next().value ?? '')
 }
 
-function rememberImages(key: string, images: DraftImage[]) {
-  photoDrafts.delete(key)
-  if (images.length > 0) photoDrafts.set(key, images)
-  if (photoDrafts.size > 12) photoDrafts.delete(photoDrafts.keys().next().value ?? '')
-}
-
 export function Composer({
-  draftKey, text, onChangeText, onSend, onInterrupt, interrupting, running, sending, compacting, disabled, imageUnavailable,
+  draftKey, text, images = NO_IMAGES, onChangeText, onSend, onInterrupt, interrupting, running, sending, compacting, disabled, imageUnavailable,
   project, annotations, onUpdateAnnotation, onRemoveAnnotation, quoteDraft, onConfirmQuote,
   onCancelQuote, placeholder = t('和 Codex 一起工作'), toolbar, trailing, canSteer, steerHint, commands, skills, agent = 'codex',
-  nativeCommands, onCommandMenuOpen, planMode,
+  nativeCommands, onCommandMenuOpen, planMode, promptSuggestion,
 }: ComposerProps) {
   const sendKey = useMobilePreferences((state) => state.sendKey)
   const imageCompression = useMobilePreferences((state) => state.imageCompression)
   const defaultMode = runningSendMode(useMobilePreferences((state) => state.runningSend))
   const [comment, setComment] = useState('')
   const [showAnnotations, setShowAnnotations] = useState(false)
-  const [images, setImages] = useState(() => photoDrafts.get(draftKey) ?? NO_IMAGES)
   const [pickedSkills, setPickedSkills] = useState(() => skillDrafts.get(draftKey) ?? NO_SKILLS)
   const [picking, setPicking] = useState(false)
   const [caret, setCaret] = useState<number | null>(null)
@@ -106,6 +100,12 @@ export function Composer({
   const [fileStatus, setFileStatus] = useState('')
   const textarea = useRef<HTMLTextAreaElement>(null)
   const mirror = useRef<HTMLDivElement>(null)
+  const imagePreviewTriggers = useRef(new Map<string, HTMLButtonElement>())
+  const pendingCaret = useRef<number | null>(null)
+  const { imageTokens, imagePattern } = useMemo(() => {
+    const imageTokens = new Map(images.map((image) => [imagePlaceholder(image.name), image.name]))
+    return { imageTokens, imagePattern: attachmentTextPattern(imageTokens.keys()) }
+  }, [images])
   const composing = useRef(false)
   const mounted = useRef(true)
   const mention = project && caret !== null ? mentionAt(text, caret) : null
@@ -147,7 +147,14 @@ export function Composer({
     input.style.height = 'auto'
     // 上限交给 CSS 的 max-height（约 8 行、且不超过可视高度 35%），超出后内部滚动。
     input.style.height = `${input.scrollHeight}px`
-    if (mirror.current) mirror.current.scrollTop = input.scrollTop
+    if (pendingCaret.current !== null) {
+      input.setSelectionRange(pendingCaret.current, pendingCaret.current)
+      pendingCaret.current = null
+    }
+    if (mirror.current) {
+      mirror.current.style.insetInlineEnd = `${input.offsetWidth - input.clientWidth}px`
+      mirror.current.scrollTop = input.scrollTop
+    }
   })
   useEffect(() => {
     if (!project || query === undefined) return
@@ -171,11 +178,6 @@ export function Composer({
     if (mounted.current) setPickedSkills(next)
   }
 
-  function updateImages(next: DraftImage[]) {
-    rememberImages(draftKey, next)
-    if (mounted.current) setImages(next)
-  }
-
   async function pickImages() {
     if (disabled || imageUnavailable || picking || images.length >= MAX_IMAGES) return
     setPicking(true)
@@ -194,7 +196,22 @@ export function Composer({
         toast(t('图片超过可用空间，请选择较小的图片'), { tone: 'warn' })
         return
       }
-      updateImages(next)
+      const added = next.slice(images.length)
+      if (added.length) {
+        const input = textarea.current
+        const value = input?.value ?? text
+        const taken = new Set(images.map((image) => image.name))
+        for (const [, name] of value.matchAll(/\[([^\]\n]+)\]/g)) if (name) taken.add(name)
+        const selected = added.map((image) => {
+          const name = uniqueImageName(image.name, taken)
+          taken.add(name)
+          return { ...image, name }
+        })
+        const inserted = insertImagePlaceholders(value, selected.map((image) => image.name),
+          input ? { start: input.selectionStart, end: input.selectionEnd } : undefined)
+        pendingCaret.current = inserted.caret
+        onChangeText(inserted.value, [...images, ...selected])
+      }
       if (overLimit > 0) {
         toast(t('一条消息最多 {max} 张图片，已忽略多出的 {count} 张', { max: MAX_IMAGES, count: overLimit }), { tone: 'warn' })
       }
@@ -215,9 +232,14 @@ export function Composer({
   const canSend = (!disabled && !sending && !picking &&
     (!imageUnavailable || images.length === 0) && Boolean(text.trim() || images.length || annotations.length))
   const busy = running || !!compacting
+  const suggestedText = AGENT_CAPABILITIES[agent].promptSuggestions && !text && !busy && !sending && !disabled &&
+    !imeActive && !picking && !images.length && !annotations.length && !quoteDraft && !planMode ? promptSuggestion : undefined
   // 手动敲出完整的 /技能名 与从菜单选中等效；选过的排在前面，技能列表还没加载时仍认得。
   const knownSkills = [...pickedSkills, ...(skills ?? [])]
-  const tokenParts = splitSkillTokens(text, knownSkills)
+  const tokenParts = (imagePattern ? text.split(imagePattern) : [text]).flatMap((part, index) => index % 2
+    ? [{ text: part, kind: 'image' }]
+    : splitSkillTokens(part, knownSkills).map(({ text, skill }) => ({ text, kind: skill ? 'skill' : 'text' })))
+  const highlightTokens = !imeActive && tokenParts.some((part) => part.kind !== 'text')
   // 按钮与占位文字显示消息实际的去向，引导不可用时会转入排队。
   const draft = takeSkillTokens(text, knownSkills)
   const slashDraft = isSlashDraft(agent, draft.text, draft.skills.length)
@@ -239,10 +261,8 @@ export function Composer({
       ...used.map((skill): UserInput => ({ type: 'skill', name: skill.name, path: skill.path })),
       ...images.map((image): UserInput => ({ type: 'image', url: image.dataUrl })),
     ]
-    if (await onSend(body, attachments, mode)) {
-      updateImages([])
-      updateSkills([])
-    }
+    const message = images.length ? composeAttachmentText(body, images) : body
+    if (await onSend(message, attachments, mode)) updateSkills([])
   }
 
   function chooseSlash(entry: SlashEntry) {
@@ -293,10 +313,22 @@ export function Composer({
       setCaret(null)
       return
     }
+    if (suggestedText && event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault()
+      if (!event.repeat) acceptPromptSuggestion()
+      return
+    }
     if (event.key !== 'Enter' || event.shiftKey || event.altKey) return
     if (!event.ctrlKey && !event.metaKey && sendKey !== 'send') return
     event.preventDefault()
     if (!event.repeat) void submit()
+  }
+
+  function acceptPromptSuggestion() {
+    if (!suggestedText) return
+    onChangeText(suggestedText)
+    setCaret(suggestedText.length)
+    textarea.current?.focus()
   }
 
   function confirmQuote() {
@@ -408,11 +440,16 @@ export function Composer({
         {/* 附件放进输入框内：方形缩略图 + 右上角移除角标，与常见聊天应用一致。 */}
         {images.length > 0 && (
           <ul className="qn-composer-images" aria-label={t('图片附件')}>
-            {images.map((image, index) => (
-              <li className="qn-composer-image" key={`${image.name}:${index}`}>
-                <ImageThumbnail src={image.dataUrl} alt={image.name} className="qn-composer-image-img" />
+            {images.map((image) => (
+              <li className="qn-composer-image" key={image.name}>
+                <ImageThumbnail src={image.dataUrl} alt={image.name} className="qn-composer-image-img" buttonRef={(button) => {
+                  const token = imagePlaceholder(image.name)
+                  if (button) imagePreviewTriggers.current.set(token, button)
+                  else imagePreviewTriggers.current.delete(token)
+                }} />
                 <button type="button" className="qn-composer-image-remove" disabled={sending || picking}
-                  onClick={() => updateImages(images.filter((_, at) => at !== index))} aria-label={t('移除 {name}', { name: image.name })}>
+                  onClick={() => onChangeText(removePlaceholder(text, image.name), images.filter((item) => item !== image))}
+                  aria-label={t('移除 {name}', { name: image.name })}>
                   <X size={12} strokeWidth={2.5} aria-hidden />
                 </button>
               </li>
@@ -428,7 +465,7 @@ export function Composer({
             disabled={disabled}
             aria-label={t('消息')}
             enterKeyHint={sendKey === 'send' ? 'send' : 'enter'}
-            placeholder={!busy ? placeholder : actualMode === 'steer' ? t('输入补充内容，发送后引导当前一轮')
+            placeholder={suggestedText ? undefined : !busy ? placeholder : actualMode === 'steer' ? t('输入补充内容，发送后引导当前一轮')
               : actualMode === 'immediate' ? t('输入下一条，发送后打断本轮') : t('输入下一条，发送后排队')}
             onChange={(event) => { onChangeText(event.target.value); setCaret(event.target.selectionStart) }}
             onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
@@ -438,12 +475,33 @@ export function Composer({
             onCompositionStart={() => { composing.current = true; setImeActive(true) }}
             onCompositionEnd={() => { composing.current = false; setImeActive(false) }}
           />
-          {/* textarea 不能给部分文字上色：叠一层同排版的副本代为显示文字，技能标记在副本里上色。 */}
-          {tokenParts.some((part) => part.skill) && (
-            <div ref={mirror} className="qn-textarea qn-composer-mirror" aria-hidden>
-              {tokenParts.map((part, index) => part.skill
-                ? <mark key={index} className="qn-composer-skill">{part.text}</mark> : part.text)}
-              {text.endsWith('\n') && '​'}
+          {/* 普通文字与技能仍由 textarea 编辑，镜像层只让图片标签接收点击。 */}
+          {highlightTokens && (
+            <div ref={mirror} className="qn-textarea qn-composer-mirror">
+              {tokenParts.map((part, index) => part.kind === 'image' ? (
+                <span key={index} role="button" tabIndex={0} className="qn-composer-attachment"
+                  aria-label={t('查看图片：{alt}', { alt: imageTokens.get(part.text)! })} aria-haspopup="dialog"
+                  onClick={() => imagePreviewTriggers.current.get(part.text)?.click()}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    imagePreviewTriggers.current.get(part.text)?.click()
+                  }}>{part.text}</span>
+              ) : part.kind === 'skill'
+                ? <mark key={index} className="qn-composer-skill" aria-hidden>{part.text}</mark>
+                : <span key={index} aria-hidden>{part.text}</span>)}
+              {text.endsWith('\n') && <span aria-hidden>{'\u200b'}</span>}
+            </div>
+          )}
+          {suggestedText && (
+            <div className="pointer-events-none absolute inset-x-4 top-1.5 flex">
+              <button type="button" onClick={acceptPromptSuggestion}
+                aria-label={t('填入建议：{text}', { text: suggestedText })}
+                className="pointer-events-auto flex min-h-11 min-w-0 items-center gap-2 rounded-sm text-left text-[length:var(--chat-font,16px)] leading-5 text-qn-muted focus-visible:outline focus-visible:outline-qn-outline-hover"
+              >
+                <span className="line-clamp-2 min-w-0 wrap-anywhere">{suggestedText}</span>
+                <span className="shrink-0 rounded-sm border border-qn-border px-1 text-xs" aria-hidden>{t('填入')}</span>
+              </button>
             </div>
           )}
         </div>
@@ -455,8 +513,7 @@ export function Composer({
             <Button variant="ghost" className="qn-icon-button" aria-label={t('添加图片')}
               title={imageUnavailable ?? (images.length >= MAX_IMAGES ? t('一条消息最多 {max} 张图片', { max: MAX_IMAGES }) : undefined)}
               onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
-              {/* 22px 配合固定线宽：19px 缩放后线条落在半像素上，细节发虚。 */}
-              <ImagePlus size={22} strokeWidth={1.75} absoluteStrokeWidth aria-hidden />
+              <ImagePlus size={20} strokeWidth={1.75} absoluteStrokeWidth aria-hidden />
             </Button>
             {/* 停止与发送共用一个位置（参考 Orca 手机版）：没有可发送内容时是停止键，一输入就换成发送键（排队）。 */}
             {running && !canSend && !sending && (

@@ -96,6 +96,7 @@ const MOBILE_QINGCODE_METHODS = new Map<string, readonly string[]>([
   ['qingcode/backgroundTasks/list', ['threadId']],
   ['qingcode/backgroundTasks/stop', ['threadId', 'taskId']],
   ['qingcode/commands/list', ['threadId']],
+  ['qingcode/mcp/status', ['threadId']],
 ])
 
 const FORWARDED_EVENTS = new Set(['target.state', 'codex.recv', 'server.evt', 'settings.access'])
@@ -133,6 +134,10 @@ export function checkRpcWhitelist(method: unknown, params: unknown): RpcWhitelis
   }
   if (method === 'codex.send' && isRecord(params) && isRecord(params.msg)) {
     const { method: inner, params: args } = params.msg
+    if (inner === 'mcpServerStatus/list' &&
+      (!isRecord(args) || typeof args.threadId !== 'string' || !args.threadId || args.detail !== 'toolsAndAuthOnly')) {
+      return { ok: false, code: 'invalid_params', message: '只支持读取当前会话的 MCP 状态' }
+    }
     if (typeof inner === 'string' && inner.startsWith('qingcode/')) {
       const required = MOBILE_QINGCODE_METHODS.get(inner)
       if (!required) return { ok: false, code: 'forbidden', message: '该方法不在手机网关白名单内' }

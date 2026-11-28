@@ -3,7 +3,7 @@
  * → approval → turn/completed → interrupt，同时验证 seq/回放与 agent host 的中继规则。
  */
 import type { Options, PermissionMode, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { ServerMessage } from '@qn/protocol'
+import { PROMPT_SUGGESTION_METHOD, type ServerMessage } from '@qn/protocol'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -13,6 +13,7 @@ import { AsyncQueue, ClaudeBridge, type ClaudeBridgeOptions, type ClaudeDeps, ty
 import type { Json } from './v2'
 
 class FakeQuery implements QueryLike {
+  mcpServerStatus?: QueryLike['mcpServerStatus']
   readonly messages = new AsyncQueue<unknown>()
   readonly permissionChanges: PermissionMode[] = []
   interrupted = 0
@@ -48,6 +49,34 @@ class FakeQuery implements QueryLike {
     this.messages.close()
   }
 }
+
+it('MCP 状态只从运行中的 query 读取，不返回服务配置', async () => {
+  const h = harness()
+  try {
+    await h.bridge.open({})
+    request(h, 'start', 'thread/start', { cwd: '/work' })
+    const thread = (await response(h, 'start')).result as { thread: { id: string } }
+    const threadId = thread.thread.id
+    request(h, 'before', 'qingcode/mcp/status', { threadId })
+    expect((await response(h, 'before')).result).toEqual({ available: false, servers: [] })
+    expect(h.queries).toHaveLength(0)
+
+    request(h, 'send', 'turn/start', { threadId, input: [{ type: 'text', text: '检查 MCP' }] })
+    await response(h, 'send')
+    const status = vi.fn(async () => [{
+      name: 'catalog', status: 'connected' as const, tools: [{ name: 'find' }], source: 'project',
+    }])
+    h.queries[0]!.mcpServerStatus = status
+    request(h, 'after', 'qingcode/mcp/status', { threadId })
+    expect((await response(h, 'after')).result).toEqual({
+      available: true, servers: [{ name: 'catalog', status: 'connected', toolCount: 1 }],
+    })
+    expect(status).toHaveBeenCalledOnce()
+    expect(h.queries).toHaveLength(1)
+  } finally {
+    h.bridge.shutdown()
+  }
+})
 
 interface Harness {
   bridge: ClaudeBridge
@@ -152,6 +181,42 @@ function note(h: Harness, method: string): Json {
 }
 
 describe('ClaudeBridge 端到端（假 query 工厂）', () => {
+  it('只在成功结果之后转发一条属于同一会话的提示词建议', async () => {
+    const h = harness()
+    const threadId = 'old-1'
+    const input = [{ type: 'text', text: '开始检查' }]
+    const suggestion = { type: 'prompt_suggestion', suggestion: '继续跑测试', session_id: threadId }
+    try {
+      await h.bridge.open({})
+      request(h, 'send', 'turn/start', { threadId, input })
+      const { turn: { id: turnId } } = (await response(h, 'send')).result as { turn: { id: string } }
+      const query = h.queries[0]!
+      expect(query.options?.promptSuggestions).toBe(true)
+      query.emit(suggestion)
+      query.emit({ type: 'result', subtype: 'success' })
+      query.emit({ ...suggestion, session_id: 'another-thread' })
+      query.emit({ ...suggestion, suggestion: '  ' })
+      query.emit(suggestion)
+      query.emit(suggestion)
+      await until(() => hasNote(h, PROMPT_SUGGESTION_METHOD))
+
+      request(h, 'next', 'turn/start', { threadId, input })
+      await response(h, 'next')
+      query.emit(suggestion)
+      query.emit({ type: 'result', subtype: 'error_during_execution' })
+      query.emit(suggestion)
+      await until(() => h.bridge.status().activeTurns === 0)
+
+      const done = h.recv.find(({ msg }) => msg.method === 'turn/completed')!
+      const suggestions = h.recv.filter(({ msg }) => msg.method === PROMPT_SUGGESTION_METHOD)
+      expect(suggestions).toHaveLength(1)
+      expect(suggestions[0]!.seq).toBeGreaterThan(done.seq)
+      expect(suggestions[0]!.msg.params).toEqual({ threadId, turnId, suggestion: suggestion.suggestion })
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
   it('归档记在目标机状态目录：列表排除、archived=true 只列归档、重启后保留并广播通知', async () => {
     const stateDir = mkdtempSync(path.join(tmpdir(), 'qn-claude-archive-'))
     const sessionInfos = [

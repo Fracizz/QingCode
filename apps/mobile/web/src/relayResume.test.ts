@@ -28,7 +28,11 @@ it('锁屏期间电脑代发的消息，即使事件丢失，回到前台也显�
   vi.spyOn(gateway, 'rpc').mockImplementation(async (...args) => {
     const [, method, params] = args
     if (method === 'mobile.queue.put') {
-      relayed.push(params as typeof relayed[number])
+      const item = params as typeof relayed[number]
+      const key = JSON.stringify([conn.id, 'local', 'codex', 't-demo'])
+      const persisted = JSON.parse(await gateway.storageGet('queuedSends') ?? '{}')
+      expect(persisted[key]?.items).toContainEqual(expect.objectContaining({ id: item.id, relayPending: true }))
+      relayed.push(item)
       return { ok: true } as never
     }
     if (method === 'mobile.queue.take') {

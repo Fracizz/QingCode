@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { archivedThreadKey } from './agents'
-import { applyRelayResult, mobileTurnFits, queuedInput, relayRequest, restoreQueues, serializeQueues, UNCONFIRMED_QUEUED_SEND, type QueuedSend } from './queuedSends'
+import { applyRelayResult, mobileTurnFits, queuedInput, releaseRelayedSends, relayRequest, restoreQueues, serializeQueues, UNCONFIRMED_QUEUED_SEND, type QueuedSend } from './queuedSends'
 import type { Connection } from './types'
 
 const conn: Connection = {
@@ -15,11 +15,20 @@ const item: QueuedSend = {
 }
 
 describe('手机发送队列', () => {
-  it('重开时保留未发送项及附件，明确标记已发出但未确认的项', () => {
-    const raw = serializeQueues({ [key]: [item, { ...item, id: 'in-flight', sending: true, accessMode: 'auto' }] }, [conn])
-    const [first, inFlight] = restoreQueues(raw, [conn], {})[key] ?? []
-    expect(first).toMatchObject({ ...item, sending: false, error: '已恢复排队消息，等待继续发送' })
-    expect(inFlight).toMatchObject({ id: 'in-flight', accessMode: 'auto', sending: false, error: expect.stringContaining('未确认') })
+  it('重开时只恢复实际暂停原因和未确认的发送，清掉旧版通用恢复提示', () => {
+    const raw = serializeQueues({ [key]: [
+      { ...item, error: '已恢复排队消息，等待继续发送' },
+      { ...item, id: 'waiting' },
+      { ...item, id: 'in-flight', sending: true, accessMode: 'auto' },
+      { ...item, id: 'paused', error: '上一轮未完成，队列已暂停' },
+      { ...item, id: 'relay', relayPending: true },
+    ] }, [conn])
+    const [first, waiting, inFlight, paused, relay] = restoreQueues(raw, [conn], {})[key] ?? []
+    expect(first).toMatchObject({ ...item, sending: false, error: undefined })
+    expect(waiting?.error).toBeUndefined()
+    expect(inFlight).toMatchObject({ id: 'in-flight', accessMode: 'auto', sending: false, error: UNCONFIRMED_QUEUED_SEND })
+    expect(paused?.error).toBe('上一轮未完成，队列已暂停')
+    expect(relay).toMatchObject({ relayPending: true, error: undefined })
     expect(restoreQueues(raw, [{ ...conn, fp: 'cd'.repeat(32) }], {})).toEqual({})
     const archived = archivedThreadKey(conn.id, 'local', { id: 'thread', agent: 'codex' })
     expect(restoreQueues(raw, [conn], { [archived]: true })).toEqual({})
@@ -53,10 +62,12 @@ describe('锁屏交给电脑代发', () => {
     expect(applyRelayResult(list, ['first'], undefined).map((entry) => entry.id)).toEqual(['second', 'third'])
     expect(applyRelayResult(list, ['first', 'second'], '上一轮未完成，队列已暂停')[0])
       .toMatchObject({ id: 'third', error: '上一轮未完成，队列已暂停' })
-    // 应用重开后队首带着恢复提示，电脑仍在正常代发时清除提示继续发送。
-    const restored = [{ ...item, error: '已恢复排队消息，等待继续发送' }]
-    expect(applyRelayResult(restored, [], undefined)[0]?.error).toBeUndefined()
-    expect(applyRelayResult(list, [], undefined, false)[0]?.error).toBe(UNCONFIRMED_QUEUED_SEND)
+    const relayed = [{ ...item, relayPending: true } as const, ...list.slice(1)]
+    expect(releaseRelayedSends(relayed, true)).toEqual(list)
+    expect(releaseRelayedSends(relayed, false)).toEqual([{ ...item, error: UNCONFIRMED_QUEUED_SEND }, ...list.slice(1)])
+    const paused = [{ ...item, error: UNCONFIRMED_QUEUED_SEND }]
+    expect(applyRelayResult(paused, [])).toBe(paused)
+    expect(applyRelayResult(paused, [], '上一轮未完成，队列已暂停')).toBe(paused)
     expect(applyRelayResult(list, ['first', 'second', 'third'], undefined)).toEqual([])
     expect(applyRelayResult(list, [], undefined)).toBe(list)
   })

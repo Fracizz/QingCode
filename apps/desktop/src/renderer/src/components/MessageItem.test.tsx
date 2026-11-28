@@ -73,6 +73,31 @@ it('对话更新操作回调时复用历史回复的 Markdown，正文变化时�
   }
 })
 
+it('用户消息用圆角标签显示技能，并用一个空格隔开标签与正文', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const render = (text: string, skills?: string[]) => act(() => root.render(
+    <MessageItem item={{ kind: 'user', id: 'user', text, skills }} />,
+  ))
+  const labels = () => [...host.querySelectorAll('.qn-user-skill')].map((label) => label.textContent)
+  const body = () => host.querySelector('.bg-qn-bubble')?.textContent
+  try {
+    await render('/commit-push all')
+    expect(labels()).toEqual(['/commit-push'])
+    expect(body()).toBe('/commit-push all')
+    await render('继续检查', ['pdf', 'review'])
+    expect(labels()).toEqual(['/pdf', '/review'])
+    expect(body()).toBe('/pdf /review 继续检查')
+    await render('', ['pdf'])
+    expect(labels()).toEqual(['/pdf'])
+    expect(body()).toBe('/pdf')
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
+
 it('收到无效的发送时间时仍显示用户消息', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.createElement('div')
@@ -268,7 +293,7 @@ it('处理提示用加载圆环，命令组用闪烁的终端图标，停止后�
       <TurnStopped durationMs={0} />
     </>))
     expect(host.innerHTML).not.toContain(reference)
-    expect(host.querySelector('summary svg rect')).not.toBeNull()
+    expect(host.querySelectorAll('summary > svg:first-child path')).toHaveLength(2)
     expect(host.querySelector('.qn-terminal-cursor')).toBeNull()
     expect(host.querySelector('[role="status"]')?.textContent).toBe('你已停止，已用时 0秒')
     await act(() => root.render(<TurnStopped durationMs={null} />))

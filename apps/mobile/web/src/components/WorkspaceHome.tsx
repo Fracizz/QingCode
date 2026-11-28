@@ -557,7 +557,7 @@ export function WorkspaceHome() {
           {/* 新建会话从各项目分组标题的 + 进入，顶部不再放全局入口。 */}
           {isSessions && <div className="qn-list-label flex-wrap items-center">
             <span>{t('全部会话')}&nbsp;&nbsp;{threadCount}</span>
-            {desktopId && <div className="qn-segment" role="group" aria-label={t('项目排序')}>
+            {desktopId && <div className="qn-segment qn-workspace-sort" role="group" aria-label={t('项目排序')}>
               <button type="button" aria-pressed={!activityPriority}
                 onClick={() => { if (activityPriority) setWorkspaceActivityPriority(desktopId, false) }}>{t('固定顺序')}</button>
               <button type="button" aria-pressed={!!activityPriority}

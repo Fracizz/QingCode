@@ -5,9 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <title>QingCode Next</title>
+    <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="qn-splash" class="qn-splash" role="status" aria-label="QingCode Next 正在启动">
+      <!-- 与桌面进场页使用同一个品牌标志，底块、圆环和光标分别入场。 -->
+      <svg class="qn-splash-logo" viewBox="0 0 512 512" aria-hidden="true">
+        <rect class="qn-splash-tile" width="512" height="512" rx="112" />
+        <path class="qn-splash-ring" d="M256 391.58A145 145 0 1 1 376.08 309H310.24A90 90 0 1 0 256 336.33Z" />
+        <rect class="qn-splash-cursor" x="276" y="329" width="150" height="52" rx="11" />
+      </svg>
+      <div class="qn-splash-title">QingCode<span>Next</span></div>
+      <div class="qn-splash-bar" aria-hidden="true"><span></span></div>
+      <div class="qn-splash-status">正在启动</div>
+    </div>
+    <div id="root" inert></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

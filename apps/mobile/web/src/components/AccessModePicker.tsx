@@ -41,10 +41,10 @@ export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, su
   return (
     <>
       <Button variant="ghost" className="qn-access-chip"
-        data-tone={current.warning ? undefined : effectiveMode === 'plan' ? 'accent' : effectiveMode !== 'default' ? 'warn' : undefined}
+        data-tone={current.warning ? 'danger' : effectiveMode === 'plan' ? 'accent' : effectiveMode !== 'default' ? 'warn' : undefined}
         aria-label={t('访问模式：{label}', { label })} aria-haspopup="dialog" aria-expanded={open}
         title={label} disabled={disabled} onClick={() => setOpen(true)}>
-        <Icon size={18} strokeWidth={1.75} className="shrink-0" aria-hidden />
+        <Icon size={20} strokeWidth={1.75} absoluteStrokeWidth className="shrink-0" aria-hidden />
       </Button>
       {open && (
         <Dialog title={pending ? t('启用{label}？', { label: pending.label }) : t('访问模式')} onClose={close}>
@@ -103,7 +103,7 @@ export function NoApprovalNotice() {
     <>
       <Button variant="ghost" className="qn-access-chip" data-tone="danger"
         aria-label={label} aria-haspopup="dialog" aria-expanded={open} title={label} onClick={() => setOpen(true)}>
-        <ShieldOff size={18} strokeWidth={1.75} className="shrink-0" aria-hidden />
+        <ShieldOff size={20} strokeWidth={1.75} absoluteStrokeWidth className="shrink-0" aria-hidden />
       </Button>
       {open && (
         <Dialog title={t('访问模式')} onClose={() => setOpen(false)}>

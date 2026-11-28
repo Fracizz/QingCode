@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  backgroundTaskTypeLabel, listBackgroundTasks, listSlashCommands, mergeSlashCommands, parseBackgroundTasks,
-  rewindFiles, stopBackgroundTask,
+  backgroundTaskTypeLabel, listBackgroundTasks, listMcpStatus, listSlashCommands, mergeSlashCommands, parseBackgroundTasks,
+  rewindFiles, stopBackgroundTask, supportsMcpStatus,
 } from './agentControls'
 import type { CodexRpcLike } from './api'
 import {
@@ -18,6 +18,19 @@ const rpcWith = (result: unknown) => {
   const request = vi.fn(async (_method: string, _params: unknown) => result)
   return { request, rpc: { request } as unknown as CodexRpcLike }
 }
+
+it('MCP 状态由目标能力控制，区分会话未启动和确实没有服务', async () => {
+  expect(supportsMcpStatus({ capabilities: { mcpStatus: true } })).toBe(true)
+  expect(supportsMcpStatus({ capabilities: { commandList: true } })).toBe(false)
+  expect(await listMcpStatus(rpcWith({ available: false }).rpc, 'claude', 't')).toBeNull()
+  expect(await listMcpStatus(rpcWith({ available: true, servers: [] }).rpc, 'claude', 't')).toEqual([])
+  const request = rpcWith({ data: [{ name: 'catalog', runtimeStatus: null, authStatus: 'notLoggedIn',
+    tools: { read: {} }, environmentId: 'local' }], nextCursor: null })
+  expect(await listMcpStatus(request.rpc, 'codex', 't')).toEqual([
+    { name: 'catalog', status: 'authenticationRequired', toolCount: 1, environmentId: 'local' },
+  ])
+  expect(request.request).toHaveBeenCalledWith('mcpServerStatus/list', { threadId: 't', detail: 'toolsAndAuthOnly', cursor: null })
+})
 
 describe('后台任务', () => {
   it('解析时丢弃缺少 ID 的条目', () => {

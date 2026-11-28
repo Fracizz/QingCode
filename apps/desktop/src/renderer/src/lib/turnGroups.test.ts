@@ -104,6 +104,15 @@ describe('groupTurns', () => {
     expect(kinds(entries)).toEqual(['u', 'tools:2'])
   })
 
+  it('同一轮的引导消息和模型提示不会折叠仍在运行的过程', () => {
+    const items: ItemView[] = [
+      user('u'), cmd('c1'), agent('partial1'), { kind: 'user', id: 'steer', text: '继续', steering: 'currentTurn' },
+      cmd('c2'), agent('partial2'), { kind: 'notice', id: 'notice', text: '模型已切换' }, cmd('c3'),
+    ]
+    const turns: TurnMeta[] = [{ id: 'running', startedAtMs: 1, durationMs: null, itemIds: items.map((item) => item.id) }]
+    expect(kinds(groupTurns(items, turns, true))).toEqual(items.map((item) => item.id))
+  })
+
   it('没有工具步骤时不折叠', () => {
     expect(kinds(groupTurns([user('u'), agent('a')], undefined, false))).toEqual(['u', 'a'])
   })

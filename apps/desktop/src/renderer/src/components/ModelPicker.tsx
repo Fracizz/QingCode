@@ -23,7 +23,7 @@ import { PopoverContent, PopoverRoot, PopoverTrigger, Tip } from './primitives'
 import { SearchField } from './SearchField'
 import { EmptyState, ErrorNote, IconButton, Spinner } from './ui'
 
-const triggerClass = 'inline-flex h-8 max-w-[16rem] items-center gap-1 rounded-lg px-2 text-ui text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover data-[state=open]:bg-qn-hover data-[state=open]:text-qn-text'
+const triggerClass = 'inline-flex h-8 min-w-0 max-w-[16rem] items-center gap-1 rounded-lg bg-qn-fg/[0.06] px-2 text-ui text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover data-[state=open]:bg-qn-hover'
 
 /**
  * 输入框里的模型选择器（参考 Codex）：搜索模型 → 选模型 → 推理强度分段 → 速度（Fast）开关。
@@ -94,7 +94,8 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
         disabled={piDraft.disabled}
         onClick={piDraft.start}
       >
-        {piDraft.starting ? <><LoadingIcon size={13} /> {t('正在启动 pi…')}</> : t('启动 pi 以选择模型')}
+        {piDraft.starting && <LoadingIcon size={13} className="shrink-0" />}
+        <span className="truncate">{piDraft.starting ? t('正在启动 pi…') : t('启动 pi 以选择模型')}</span>
       </button>
     )
   }

@@ -1,5 +1,6 @@
 import {
   CLAUDE_WAITING_FOR_QUOTA,
+  accountReadErrorText,
   claudeQuotaReportedAt,
   claudeQuotaResetAt,
   claudeQuotaSource,
@@ -24,7 +25,6 @@ import {
   type ResetCredit,
   getLocale,
   t,
-  translateMessage,
 } from '@qn/codex-client'
 import { useEffect, useState } from 'react'
 import { agentLabel, enabledAgents, sessionKey } from '../agents'
@@ -245,7 +245,7 @@ export function RateLimitDetails({ targetId, available, showUsage, label }: {
           {loading ? t('刷新中…') : t('刷新')}
         </Button>
       </div>
-      {error && <p className="text-xs text-qn-danger">{translateMessage(error)}</p>}
+      {error && <p className="text-xs text-qn-danger">{accountReadErrorText(error)}</p>}
       {/* 额度窗口与上限提示收进一张卡片，与下方重置卡、总用量同一层级。 */}
       {(windows || empty || reached) && (
         <div className="qn-surface qn-quota-card">
@@ -379,7 +379,7 @@ function AccountUsageSummary({ targetId, available }: { targetId: string; availa
         <h3 className="qn-quota-title">{t('总用量')}</h3>
         {loading && <span>{t('刷新中…')}</span>}
       </div>
-      {error && <p className="text-xs text-qn-danger">{translateMessage(error)}</p>}
+      {error && <p className="text-xs text-qn-danger">{accountReadErrorText(error)}</p>}
       {usage ? <div className="qn-surface qn-quota-card"><UsageStats usage={usage} /></div> : !loading && !error && (
         <p className="qn-quota-sub px-1">{ready ? t('暂无用量数据') : t('打开 Codex 后可查看')}</p>
       )}

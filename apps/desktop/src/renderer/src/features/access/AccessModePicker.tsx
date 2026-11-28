@@ -29,7 +29,7 @@ export function AccessModePicker({
   const current = available.find((option) => option.mode === effectiveMode)
   const pending = available.find((option) => option.mode === confirm)
   if (!current) return null
-  // 完全访问用「盾牌划掉」表示没有沙箱限制，只放图标、不加底色，与手机端一致。
+  // 完全访问用划掉的盾牌和警示色提示没有沙箱限制。
   const Icon = current.warning ? ShieldOff : effectiveMode === 'plan' ? ListTodo : Shield
   const label = lockedReason
     ? t('{mode}（{reason}）', { mode: current.label, reason: lockedReason })
@@ -50,12 +50,12 @@ export function AccessModePicker({
               aria-label={tip}
               disabled={disabled || Boolean(lockedReason)}
               className={cn(
-                'inline-flex size-8 shrink-0 items-center justify-center rounded-lg outline-none enabled:hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
-                current.warning ? 'text-qn-muted' : effectiveMode === 'plan' ? 'bg-qn-accent/12 text-qn-accent'
-                  : effectiveMode !== 'default' ? 'bg-qn-warn/10 text-qn-warn' : 'text-qn-muted',
+                'inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-qn-fg/[0.06] outline-none enabled:hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover data-[state=open]:bg-qn-hover',
+                current.warning ? 'text-qn-danger' : effectiveMode === 'plan' ? 'text-qn-accent'
+                  : effectiveMode !== 'default' ? 'text-qn-warn' : 'text-qn-muted',
               )}
             >
-              <Icon size={15} />
+              <Icon size={18} strokeWidth={1.75} absoluteStrokeWidth aria-hidden />
             </button>
           </MenuTrigger>
         </Tip>

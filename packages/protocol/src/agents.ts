@@ -31,23 +31,29 @@ export type AgentCapabilities = {
   planMode: boolean
   /** 历史轮次带计划清单，打开会话时可到更早的页里补读最新一份。 */
   historyPlan: boolean
+  /** 在轮次后提供原生的下一条提示词建议。 */
+  promptSuggestions: boolean
+  /** 读取当前会话的 MCP 服务状态。 */
+  mcpStatus: boolean
 }
+
+export const PROMPT_SUGGESTION_METHOD = 'qingcode/promptSuggestion/updated'
 
 export const AGENT_CAPABILITIES: Readonly<Record<AgentKind, Readonly<AgentCapabilities>>> = {
   codex: {
     approvals: true, rateLimits: true, accessModes: true, agentConfigDir: true, ephemeralNoTools: false,
     rename: true, delete: true, fork: true, archive: true, revert: true, compact: true, steer: true, skills: true,
-    backgroundTasks: false, commandList: false, rewindFiles: false, planMode: false, historyPlan: false,
+    backgroundTasks: false, commandList: false, rewindFiles: false, planMode: false, historyPlan: false, promptSuggestions: false, mcpStatus: true,
   },
   claude: {
     approvals: true, rateLimits: true, accessModes: true, agentConfigDir: true, ephemeralNoTools: false,
     rename: true, delete: true, fork: true, archive: true, revert: false, compact: true, steer: true, skills: true,
-    backgroundTasks: true, commandList: true, rewindFiles: true, planMode: true, historyPlan: true,
+    backgroundTasks: true, commandList: true, rewindFiles: true, planMode: true, historyPlan: true, promptSuggestions: true, mcpStatus: true,
   },
   pi: {
     approvals: false, rateLimits: false, accessModes: false, agentConfigDir: false, ephemeralNoTools: true,
     rename: true, delete: false, fork: true, archive: true, revert: false, compact: true, steer: true, skills: true,
-    backgroundTasks: false, commandList: true, rewindFiles: false, planMode: false, historyPlan: false,
+    backgroundTasks: false, commandList: true, rewindFiles: false, planMode: false, historyPlan: false, promptSuggestions: false, mcpStatus: false,
   },
 }
 

@@ -2,8 +2,8 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragE
 import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { CodexRpcLike, ItemView, ThreadView } from '@qn/codex-client'
-import { AGENT_CAPABILITIES, branchPoint, chatCommands, chatCommandUnavailable, claudeQuotaBlocked, collectSubagents, contextUsage, DRAFT_THREAD_ID,
-  estimatedTurnUsage, formatTokens, includeWorkSummary, mergeSlashCommands, planApproval, sessionAccessOptions, t, takeSkillTokens, translateMessage,
+import { AGENT_CAPABILITIES, availablePromptSuggestion, branchPoint, chatCommands, chatCommandUnavailable, claudeQuotaBlocked, collectSubagents, DRAFT_THREAD_ID,
+  includeWorkSummary, mergeSlashCommands, planApproval, sessionAccessOptions, t, takeSkillTokens, translateMessage,
   canReviseMessage, revisionNote, turnOpeningMessages, turnSteerBlock, type ChatCommandId } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { buildAnnotatedMessage, sideChatExcerpt, type Annotation } from '../lib/annotations'
@@ -48,6 +48,7 @@ import { AnnotationBar } from './AnnotationBar'
 import { ApprovalCard } from './ApprovalCard'
 import { BackgroundTasksPanel } from './BackgroundTasksPanel'
 import { Composer } from './Composer'
+import { ContextUsageDetails } from './ContextUsageDetails'
 import { LoadingIcon } from './LoadingIcon'
 import { MessageItem, ToolGroup, TurnProgress, TurnStopped, WorkGroup } from './MessageItem'
 import { ContextRing, ModelPicker } from './ModelPicker'
@@ -203,6 +204,9 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
       directory: session?.openedConfig?.directory, rpc: session?.rpc,
     }
   }))
+  const skillKey = currentTargetId ? skillsKey(currentTargetId, currentAgent, currentCwd, directory) : null
+  const skillList = useSkills((s) => skillKey ? s.lists[skillKey] : undefined)
+  const knownSkills = useMemo(() => [...skills, ...(skillList?.items ?? [])], [skills, skillList?.items])
   // 草稿态没有 threadId，发送中的用户消息先放在草稿线程里，避免对话区空白。
   const visibleThreadId = currentThreadId ?? DRAFT_THREAD_ID
   const chatKey = currentTargetId ? pendingSendKey({ targetId: currentTargetId, agent: currentAgent, threadId: visibleThreadId }) : null
@@ -351,8 +355,8 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   }
 
   const submit = async (text: string, mode: SendMode): Promise<boolean> => {
-    // 技能以 /名字 写在正文里，发送时拆成 skill 输入；手动删掉标记的技能不再发送。
-    const { text: body, skills: used } = takeSkillTokens(text, skills)
+    // 手输的已知技能也随消息发送。已选技能优先，保留当时选中的同名技能路径。
+    const { text: body, skills: used } = takeSkillTokens(text, knownSkills)
     const message = buildAnnotatedMessage(annotations, composeMessageText(body, attachments))
     const input = buildUserInput(message, attachments, used)
     const newDraft = currentThreadId === null
@@ -569,8 +573,6 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const isDraft = !currentThreadId
   const preparingPi = startingPiDraft === draftKey
 
-  const skillKey = currentTargetId ? skillsKey(currentTargetId, currentAgent, currentCwd, directory) : null
-  const skillList = useSkills((s) => skillKey ? s.lists[skillKey] : undefined)
   const loadSkills = useSkills((s) => s.load)
   const skillRpc = opened ? rpc : undefined
   const refreshBridgeSkills = currentAgent !== 'codex' && !running
@@ -593,8 +595,6 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const localTitle = useThreadPrefs((s) => currentTargetId && currentThreadId
     ? s.byTarget[currentTargetId]?.names[threadKey(currentAgent, currentThreadId)]
     : undefined)
-  const usage = contextUsage(view?.tokenUsage)
-  const turnUsage = estimatedTurnUsage(view?.tokenUsage)
   const latestReply = items.findLast((item) => item.kind === 'agent' && !item.streaming && item.text.trim())
   const quotaBlocked = currentAgent === 'claude' ? claudeQuotaBlocked(quota) : !!(quota?.rateLimitReachedType || quota?.spendControlReached)
   const compactBlocked = !currentThreadId || !opened || !view || openingThread ? t('请先打开会话')
@@ -864,6 +864,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
       )}
       <Composer
         key={draftKey}
+        promptSuggestion={availablePromptSuggestion(view, !!opened && !openError, queued, approvals.length > 0)}
         suggestionBoundaryRef={scrollRef}
         contentWidthClassName={contentWidthClassName}
         onSend={submit}
@@ -891,30 +892,28 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
           items: slashItems,
           loading: skillList?.loading,
           skills,
+          knownSkills,
           onSkillsChange: setSkills,
           onCommand: runCommand,
           onOpen: refreshCommands,
         }}
         leading={<AgentPicker targetId={currentTargetId} agent={currentAgent} locked={!isDraft || sending || preparingPi} />}
-        trailing={
-          currentTargetId && (
-            <>
-              <ContextRing tokenUsage={view?.tokenUsage} onClick={currentThreadId ? () => showCommand('context') : undefined} />
-              <ModelPicker
-                targetId={currentTargetId}
-                agent={currentAgent}
-                threadId={currentThreadId}
-                open={activeCommand === 'model'}
-                onOpenChange={(open) => open ? showCommand('model') : closeCommand()}
-                piDraft={currentAgent === 'pi' && isDraft ? {
-                  start: () => void preparePiDraft(),
-                  starting: preparingPi,
-                  disabled: sending || preparingPi || readingImages > 0 || attachmentsUploading,
-                } : undefined}
-              />
-            </>
-          )
-        }
+        model={currentTargetId && (
+          <ModelPicker
+            targetId={currentTargetId}
+            agent={currentAgent}
+            threadId={currentThreadId}
+            open={activeCommand === 'model'}
+            onOpenChange={(open) => open ? showCommand('model') : closeCommand()}
+            piDraft={currentAgent === 'pi' && isDraft ? {
+              start: () => void preparePiDraft(),
+              starting: preparingPi,
+              disabled: sending || preparingPi || readingImages > 0 || attachmentsUploading,
+            } : undefined}
+          />
+        )}
+        trailing={currentTargetId && <ContextRing tokenUsage={view?.tokenUsage}
+          onClick={currentThreadId ? () => showCommand('context') : undefined} />}
         footer={
           <>
             <span className="flex min-w-0 items-center gap-1.5">
@@ -943,19 +942,18 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
       {activeCommand === 'status' && currentTargetId && <Modal title={t('账号额度')} onClose={closeCommand}>
         <RateLimitDetails targetId={currentTargetId} agent={currentAgent} />
       </Modal>}
-      {activeCommand === 'context' && <Modal title={t('会话用量')} onClose={closeCommand}>
-        <div className="space-y-2">
-          {usage && <p>{t('上下文已用 {percent}% · {used} / {window} tokens', {
-            percent: usage.percent, used: formatTokens(usage.used), window: formatTokens(usage.window),
-          })}</p>}
-          {turnUsage && <p>{t('最近上报的单轮用量 {tokens} tokens', { tokens: formatTokens(turnUsage.tokens) })}</p>}
-          {!usage && !turnUsage && <p className="text-qn-muted">{t('暂无会话用量')}</p>}
-          {currentThreadId && <>
-            <button type="button" className="qn-button" disabled={!!compactBlocked} onClick={() => void confirmCommand('compact')}>{compactWillQueue ? t('排队压缩') : t('压缩会话')}</button>
-            <p className="text-qn-muted">{compactBlocked ?? (compactWillQueue ? t('当前一轮和已排队的内容处理完后开始压缩。')
+      {activeCommand === 'context' && <Modal title={t('会话用量')} onClose={closeCommand}
+        footer={currentThreadId && (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-ui-xs leading-4 text-qn-muted">{compactBlocked ?? (compactWillQueue ? t('当前一轮和已排队的内容处理完后开始压缩。')
               : t('压缩会总结较早的对话，让后续回复使用更短的上下文。账号已用额度不会恢复。'))}</p>
-          </>}
-        </div>
+            <button type="button" className="qn-button shrink-0" disabled={!!compactBlocked}
+              onClick={() => void confirmCommand('compact')}>
+              {compacting ? t('正在压缩会话…') : compactWillQueue ? t('排队压缩') : t('压缩会话')}
+            </button>
+          </div>
+        )}>
+        <ContextUsageDetails tokenUsage={view?.tokenUsage} agent={currentAgent} />
       </Modal>}
       {activeCommand === 'permissions' && <Modal title={t('会话访问权限')} onClose={closeCommand}>
         <p>{access?.label ?? t('pi 不经审批直接执行工具')}</p>

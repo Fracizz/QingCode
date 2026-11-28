@@ -3,11 +3,47 @@ import type { UserInput } from '@qn/codex-client'
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import { createGateway, GatewayClient, setGateway } from '../client'
+import type { DraftImage } from '../composerLogic'
 import { useMobilePreferences } from '../mobilePreferences'
 import type { SendMode } from '../store'
 import { Composer } from './Composer'
 
 const skill = { name: 'pdf', description: '处理 PDF', scope: '用户', path: '/skills/pdf/SKILL.md' }
+
+it('只有空草稿显示建议，点按后填入可编辑的消息', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const onSend = vi.fn().mockResolvedValue(true)
+  function Harness() {
+    const [text, onChangeText] = useState('我的草稿')
+    return <Composer draftKey="prompt-suggestion-test" agent="claude" text={text} onChangeText={onChangeText}
+      promptSuggestion="继续跑测试" onSend={onSend} onInterrupt={vi.fn()} running={false} sending={false}
+      annotations={[]} onUpdateAnnotation={vi.fn()} onRemoveAnnotation={vi.fn()}
+      quoteDraft={null} onConfirmQuote={vi.fn()} onCancelQuote={vi.fn()} canSteer={false} />
+  }
+  const option = () => host.querySelector<HTMLButtonElement>('[aria-label="填入建议：继续跑测试"]')
+  try {
+    await act(() => root.render(<Harness />))
+    const textarea = host.querySelector('textarea')!
+    expect(textarea.value).toBe('我的草稿')
+    expect(option()).toBeNull()
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(() => option()!.click())
+    expect(textarea.value).toBe('继续跑测试')
+    expect(document.activeElement).toBe(textarea)
+    expect(option()).toBeNull()
+    expect(onSend).not.toHaveBeenCalled()
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
 
 it('输入 / 列出技能，选中后以 /名字 留在输入框里，发送时拆成 skill 输入', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -106,6 +142,70 @@ it('运行中点按发送键按设置发送，不能引导时显示排队', asyn
     await act(() => root.unmount())
     useMobilePreferences.setState(initial)
     host.remove()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('选图在光标处插入可预览的省略标签，移除与发送都对应原图', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const gateway = createGateway() as GatewayClient
+  setGateway(gateway)
+  const name = '12345678-很长的截图文件名称-abcdefg.png'
+  const first = { name, mime: 'image/png', dataUrl: 'data:image/png;base64,AA==' }
+  const second = { name: '短图.png', mime: 'image/png', dataUrl: 'data:image/png;base64,AQ==' }
+  const device = vi.spyOn(gateway, 'device').mockResolvedValue({ images: [first, second], skipped: 0 })
+  const dialogPrototype = HTMLDialogElement.prototype
+  const dialogMethods = Object.getOwnPropertyDescriptors(dialogPrototype)
+  Object.defineProperties(dialogPrototype, {
+    showModal: { configurable: true, value(this: HTMLDialogElement) { this.open = true } },
+    close: { configurable: true, value(this: HTMLDialogElement) { this.open = false } },
+  })
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const onSend = vi.fn<(text: string, attachments: UserInput[], mode: SendMode) => Promise<boolean>>().mockResolvedValue(false)
+  function Harness() {
+    const [text, setText] = useState('看这里')
+    const [images, setImages] = useState<readonly DraftImage[]>([])
+    return <Composer draftKey="images-test" text={text} images={images} onChangeText={(next, photos) => {
+      setText(next)
+      if (photos) setImages(photos)
+    }} onSend={onSend} onInterrupt={() => {}} running={false} sending={false} annotations={[]}
+      onUpdateAnnotation={() => {}} onRemoveAnnotation={() => {}} quoteDraft={null} onConfirmQuote={() => {}}
+      onCancelQuote={() => {}} canSteer={false} />
+  }
+
+  try {
+    await act(() => root.render(<Harness />))
+    const area = host.querySelector('textarea')!
+    await act(async () => {
+      area.setSelectionRange(1, 1)
+      host.querySelector<HTMLButtonElement>('[aria-label="添加图片"]')!.click()
+    })
+    const label = host.querySelector<HTMLElement>('.qn-composer-attachment')!
+    expect(label.textContent).toBe('[12345678…abcdefg.png]')
+    expect(area.value).toBe('看 [12345678…abcdefg.png] [短图.png] 这里')
+    expect(area.selectionStart).toBe(area.value.indexOf('这里'))
+    await act(() => label.click())
+    const dialog = host.querySelector('dialog[open]')!
+    expect(dialog.getAttribute('aria-label')).toBe(name)
+    expect(dialog.querySelector('img')?.src).toBe(first.dataUrl)
+    await act(() => dialog.querySelector<HTMLButtonElement>('[aria-label="关闭"]')!.click())
+
+    await act(() => host.querySelector<HTMLButtonElement>('[aria-label="移除 短图.png"]')!.click())
+    expect(area.value).toBe('看 [12345678…abcdefg.png] 这里')
+    await act(() => host.querySelector<HTMLButtonElement>('.qn-send-button')!.click())
+    expect(onSend).toHaveBeenCalledWith(`看 [${name}] 这里\n\n附图编号（按本条消息中图片的先后顺序）：\n1. [${name}]`,
+      [{ type: 'image', url: first.dataUrl }], 'queue')
+    expect(host.querySelectorAll('.qn-composer-attachment')).toHaveLength(1)
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    device.mockRestore()
+    for (const name of ['showModal', 'close'] as const) {
+      if (dialogMethods[name]) Object.defineProperty(dialogPrototype, name, dialogMethods[name])
+      else Reflect.deleteProperty(dialogPrototype, name)
+    }
+    setGateway(null)
     vi.unstubAllGlobals()
   }
 })

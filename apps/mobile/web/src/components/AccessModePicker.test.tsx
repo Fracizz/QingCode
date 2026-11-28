@@ -46,9 +46,9 @@ it('三档切换：替我批准立即生效，完全访问需要再次确认', a
     await act(() => root.render(<AccessModePicker agent="codex" mode="fullAccess" effectiveMode="fullAccess" inheritedMode="default" supported disabled={false} onChange={change} />))
     // 输入框里只显示图标，档位文字通过无障碍标签和弹窗提供。
     expect(host.querySelector('.qn-access-chip')?.textContent).toBe('')
-    // 完全访问只用划掉的盾牌表示，不再整块标红。
+    // 完全访问用警示色盾牌，按钮仍复用工具栏的浅底。
     const chip = host.querySelector('[aria-label="访问模式：完全访问"]')
-    expect(chip?.hasAttribute('data-tone')).toBe(false)
+    expect(chip?.getAttribute('data-tone')).toBe('danger')
     expect(chip?.querySelector('svg.lucide-shield-off')).toBeTruthy()
     change.mockClear()
     await click('访问模式：完全访问')

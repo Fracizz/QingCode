@@ -3,9 +3,12 @@ import { readLocalePreference } from '@qn/codex-client'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { setNativeLocale } from './native'
-import './styles.css'
+import { startSplash } from './startupSplash'
 
 setNativeLocale(readLocalePreference())
 
 const container = document.getElementById('root')
-if (container) createRoot(container).render(<App />)
+if (container) {
+  startSplash(container)
+  createRoot(container).render(<App />)
+}

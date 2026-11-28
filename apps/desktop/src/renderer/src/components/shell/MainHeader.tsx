@@ -1,6 +1,6 @@
 import { t, sessionStatus } from '@qn/codex-client'
-import { Check, FileText, FolderGit2, ListTree, MessageCircleMore, MoreHorizontal, PanelRightOpen, RotateCw, SquarePen, Terminal } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { Check, FileText, FolderGit2, ListTree, MessageCircleMore, MoreHorizontal, PanelRightOpen, Plug, RotateCw, SquarePen, Terminal } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { useFiles } from '../../features/files'
 import { useTerminalDock } from '../../features/terminal/dockState'
 import { useDock } from '../../store/dock'
@@ -12,6 +12,7 @@ import { useProjects } from '../../store/projects'
 import { useThreadPrefs } from '../../store/threadPrefs'
 import { useUi } from '../../store/ui'
 import { AgentIcon } from '../AgentIcon'
+import { McpStatusDialog } from '../McpStatusDialog'
 import { Menu, MenuContent, MenuGroup, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Tip } from '../primitives'
 import { IconButton } from '../ui'
 import { SessionStatusBadge } from './SessionStatusBadge'
@@ -30,6 +31,12 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
   const cwd = useCodex((s) => s.currentCwd)
   const agent = useCodex((s) => s.currentAgent)
   const threadId = useCodex((s) => s.currentThreadId)
+  const mcpRpc = useCodex((s) => {
+    const session = targetId ? s.sessions[sessionKey(targetId, agent)] : undefined
+    return session?.opened && session.openedConfig?.mcpStatus ? session.rpc : null
+  })
+  const [mcpOpen, setMcpOpen] = useState<string | null>(null)
+  const mcpKey = targetId && threadId ? JSON.stringify([targetId, agent, threadId]) : null
   const side = useCodex(currentSideChat)
   const sideStatus = useCodex((s) => {
     if (!side || side.open) return null
@@ -151,6 +158,9 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
           <MenuItem icon={<RotateCw size={14} />} onSelect={() => void refreshThreads()}>
             {t('刷新会话列表')}
           </MenuItem>
+          {mcpRpc && mcpKey && <MenuItem icon={<Plug size={14} />} onSelect={() => setMcpOpen(mcpKey)}>
+            {t('MCP 服务状态')}
+          </MenuItem>}
           <MenuSeparator />
           <MenuGroup aria-label={t('聊天宽度')}>
             <MenuLabel>{t('聊天宽度')}</MenuLabel>
@@ -168,6 +178,8 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
           </MenuGroup>
         </MenuContent>
       </Menu>
+      {mcpRpc && threadId && mcpKey === mcpOpen && <McpStatusDialog key={mcpKey} threadId={threadId} agent={agent}
+        rpc={mcpRpc} onClose={() => setMcpOpen(null)} />}
     </div>
   )
 }

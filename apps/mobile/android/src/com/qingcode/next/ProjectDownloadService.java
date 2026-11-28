@@ -119,7 +119,10 @@ public final class ProjectDownloadService extends Service implements BackgroundD
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
     } else {
       builder.setContentTitle(format(R.string.download_failed, task.request.name));
-      if (task.error != null) builder.setContentText(task.error);
+      if (task.failureHint != 0) {
+        String hint = NativeLocale.string(this, task.failureHint);
+        builder.setContentText(hint).setStyle(new Notification.BigTextStyle().bigText(hint));
+      }
       builder.setContentIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
         PendingIntent.FLAG_IMMUTABLE));
     }
