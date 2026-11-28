@@ -64,6 +64,24 @@ describe('查看子代理详情', () => {
     ])
   })
 
+  it('Claude 子代理内部调用列在委派条目之后', () => {
+    const item = describeSubagentItem({
+      type: 'dynamicToolCall', namespace: 'claude', tool: 'Agent', status: 'inProgress',
+      arguments: { description: '检查变更' },
+      activity: [
+        { id: 'read', tool: 'Read', summary: '/work/a.ts', status: 'completed' },
+        { id: 'run', tool: 'Bash', summary: '', status: 'inProgress' },
+        { id: 'edit', tool: 'Edit', summary: '/work/a.ts', status: 'failed' },
+      ],
+    }, 'agent')
+    expect(collectSubagents(item ? [item] : [])[0]?.activity).toEqual([
+      expect.objectContaining({ id: 'agent', status: '调用中' }),
+      { id: 'read', title: 'Read', status: '调用已返回', detail: '/work/a.ts' },
+      { id: 'run', title: 'Bash', status: '调用中' },
+      { id: 'edit', title: 'Edit', status: '调用失败', detail: '/work/a.ts' },
+    ])
+  })
+
   it('将同一子会话的活动合并，实时状态只关联当前父会话', () => {
     const items = [
       describeSubagentItem({ type: 'collabAgentToolCall', tool: 'spawnAgent', status: 'completed', prompt: '检查变更',

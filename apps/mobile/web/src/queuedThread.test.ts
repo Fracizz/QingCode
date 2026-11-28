@@ -84,6 +84,14 @@ it('在空白会话或历史分支发送指定排队消息，原会话继续运�
     expect(rpc.mock.calls.some(([, method, params]) =>
       method === 'codex.send' && (params as { msg?: { method?: string } })?.msg?.method === 'turn/interrupt')).toBe(false)
 
+    // 从某条回复分叉：只保留到该轮，并切到新会话。
+    await expect(advance(state().openThread('t-demo', 'codex'), 35)).resolves.toBe(true)
+    await expect(advance(state().forkConversation('turn-history-t-demo'), 85)).resolves.toBe(true)
+    expect([startedId, continuedId, 't-demo']).not.toContain(state().selectedThreadId)
+    expect(texts(state().selectedThreadId!)).toEqual(['你好'])
+    expect(rpc.mock.calls.filter(([, method, params]) =>
+      method === 'codex.send' && (params as { msg?: { method?: string } })?.msg?.method === 'thread/fork')).toHaveLength(2)
+
     await expect(advance(state().openThread('c-demo', 'claude'))).resolves.toBe(true)
     await expect(advance(state().send('Claude 原会话'), 25)).resolves.toBe(true)
     await expect(advance(state().send('Claude 排队消息'), 30)).resolves.toBe(true)

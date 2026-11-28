@@ -88,6 +88,16 @@ const SERVER_REQ_METHODS = new Set([
   'fs.read',
 ])
 
+/**
+ * codex.send 里手机可用的 qingcode/* 扩展方法及其必填参数；未列出的一律拒绝。
+ * qingcode/files/rewind 会改写目标机文件，只在电脑上提供。
+ */
+const MOBILE_QINGCODE_METHODS = new Map<string, readonly string[]>([
+  ['qingcode/backgroundTasks/list', ['threadId']],
+  ['qingcode/backgroundTasks/stop', ['threadId', 'taskId']],
+  ['qingcode/commands/list', ['threadId']],
+])
+
 const FORWARDED_EVENTS = new Set(['target.state', 'codex.recv', 'server.evt', 'settings.access'])
 
 class HttpGatewayError extends Error {
@@ -119,6 +129,16 @@ export function checkRpcWhitelist(method: unknown, params: unknown): RpcWhitelis
     }
     if (!SERVER_REQ_METHODS.has(params.method)) {
       return { ok: false, code: 'forbidden', message: '该 server.req 方法不在手机网关白名单内' }
+    }
+  }
+  if (method === 'codex.send' && isRecord(params) && isRecord(params.msg)) {
+    const { method: inner, params: args } = params.msg
+    if (typeof inner === 'string' && inner.startsWith('qingcode/')) {
+      const required = MOBILE_QINGCODE_METHODS.get(inner)
+      if (!required) return { ok: false, code: 'forbidden', message: '该方法不在手机网关白名单内' }
+      if (!isRecord(args) || required.some((key) => typeof args[key] !== 'string' || !args[key])) {
+        return { ok: false, code: 'invalid_params', message: '缺少会话或任务 ID' }
+      }
     }
   }
   return { ok: true }
@@ -620,6 +640,10 @@ export class MobileGateway {
         : MOBILE_TERMINAL_METHODS.has(method)
           ? await this.terminals.run(invoke, device.id, method, params)
           : await invoke(method, params)
+      // 电脑端隐藏的项目手机端同样不显示；按 id 访问文件、终端仍走未过滤的内部列表。
+      if (method === 'projects.list' && Array.isArray(result)) {
+        return this.sendJson(res, 200, result.filter((item) => !(isRecord(item) && item.hidden === true)))
+      }
       if (method === 'server.req' && isRecord(params) && isRecord(result)) {
         const supported = params.method === 'codex.open' && isRecord(result.capabilities)
           ? result.capabilities.accessModes

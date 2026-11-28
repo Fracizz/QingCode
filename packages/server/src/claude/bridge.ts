@@ -22,9 +22,12 @@ import { VERSION } from '../version'
 import { nativeAgentCwd } from '../workspace/paths'
 import { buildApprovalRequest, permissionResult } from './approval'
 import { lastReplyModel, parseClaudeSteer, sessionInfoToMeta, sessionMessagesToThread, threadListResponse, type ClaudeSteerHistory } from './history'
+import { backgroundTaskList, rewindResponse, slashCommandList, type BackgroundTask, type RewindResponse } from './controls'
 import { HistoryPageCache, listHistoryItems, listHistoryTurns } from './historyPages'
 import { BridgeRpcError } from './errors'
-import { emptyMapState, mapSdkMessage, type MapState } from './items'
+import { emptyMapState, finishPendingItems, mapSdkMessage, nextTurnState, type MapState } from './items'
+import { sidechainItemId, withActivity } from './sidechain'
+import { withdrawMessages } from './withdraw'
 import {
   DEFAULT_MODEL,
   NO_OVERRIDES,
@@ -74,6 +77,8 @@ export interface QueryLike extends AsyncIterable<unknown> {
   setPermissionMode?(mode: PermissionMode): Promise<void>
   applyFlagSettings?(settings: Record<string, unknown>): Promise<void>
   getContextUsage?(opts?: { detail?: 'summary' | 'full' }): Promise<unknown>
+  stopTask?(taskId: string): Promise<void>
+  rewindFiles?(userMessageId: string, options?: { dryRun?: boolean }): Promise<unknown>
 }
 
 /** 可注入的 SDK 门面：真机走动态 import，测试注入假的 query 工厂。 */
@@ -96,7 +101,22 @@ interface BridgeSession {
   input: AsyncQueue<SDKUserMessage> | null
   turnId: string | null
   turnMessageIds: Map<string, string>
+  /** 轮次 → 开启它的用户消息 UUID，即该轮开始前的文件检查点。 */
+  turnStartIds: Map<string, string>
   pendingSteers: Map<string, { item: V2Item; turnId: string }>
+  /** 轮次进行中经 turn/start 追加、SDK 尚未确认处理的消息 UUID。 */
+  queuedAppends: Set<string>
+  /** 用户按停止时尚未处理的消息 UUID → 当时被停止的轮次。 */
+  stoppedSteers: Map<string, string | null>
+  /** Claude 自行开始且没有并入用户输入的轮次；只有它能由会话空闲状态收尾。 */
+  agentTurnId: string | null
+  /** 为排队引导预先开启、还没有任何输出的轮次。 */
+  queuedTurnId: string | null
+  /** 用户请求停止过的轮次。 */
+  interruptedTurnId: string | null
+  /** 当前 CLI 进程里仍在运行的后台任务，不含 ambient 监听任务。 */
+  backgroundTasks: BackgroundTask[]
+  rewinding: boolean
   steerHistory: Map<string, ClaudeSteerHistory>
   compaction: boolean
   preparingTurn: boolean
@@ -269,6 +289,14 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     return { initialize: this.initializeResult, agentVersion: resolved.version }
   }
 
+  get backgroundTasks(): number {
+    let count = 0
+    for (const scope of this.scopes.values()) {
+      for (const session of scope.sessions.values()) count += session.backgroundTasks.length
+    }
+    return count
+  }
+
   protected agentStatus(): { running: boolean; pid?: number } {
     return { running: this.opened }
   }
@@ -290,7 +318,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       scope.historyPages.clear()
       for (const session of scope.sessions.values()) {
         if (session.idleTimer) clearTimeout(session.idleTimer)
-        closeQuery(session)
+        this.closeQuery(session)
       }
     }
     for (const pending of this.approvals.values()) {
@@ -452,7 +480,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         if (!session) return { status: 'notLoaded' }
         if (!session.meta.ephemeral) throw new BridgeRpcError(-32602, '仅可结束临时会话')
         if (session.turnId || session.preparingTurn) throw new BridgeRpcError(-32602, '请先停止当前轮次')
-        closeQuery(session)
+        this.closeQuery(session)
         this.forgetTemporary(session)
         return { status: 'unsubscribed' }
       }
@@ -520,9 +548,16 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         const load = async () => {
           const messages = await this.sessionReader(scope).getSessionMessages(threadId, { dir: session.meta.cwd })
           session.historyModel = lastReplyModel(messages)
-          return sessionMessagesToThread(session.meta,
+          const history = sessionMessagesToThread(session.meta,
             messages.filter((message) => !session.pendingSteers.has(scalarText(asRecord(message)?.uuid))),
-            {}, session.state.taskNotifications.deliveryIds, session.steerHistory).turns
+            {}, session.state.taskNotifications.deliveryIds, session.steerHistory)
+          // 续用的会话从历史认回已有任务，之后只带 ID 的 TaskUpdate 才能对上。
+          if (!session.turnId && session.state.plan.tasks.size === 0) session.state = { ...session.state, plan: history.plan }
+          // 历史轮次 ID 按下标生成，压缩后会错位；记下发给客户端时对应的消息，回滚按它定位。
+          for (const point of history.forkPoints) {
+            if (point.promptMessageId) session.turnStartIds.set(point.turnId, point.promptMessageId)
+          }
+          return withActivity(history.turns, session.state.sidechains)
         }
         // 没有本进程的显式覆盖时，回报历史里最近一次回复的模型，客户端据此恢复该会话的选择。
         const configOf = () => {
@@ -540,7 +575,11 @@ export class ClaudeBridge extends JsonRpcAgentHost {
           : load())
         // 正在运行的条目由事件流补齐，避免和 SDK 已经写入历史的内容重复。
         const active = session.turnId
-        const turns = active ? [...saved, buildTurn(active, [], 'inProgress')] : saved
+        const plan = session.state.turnPlan
+        const turns = active ? [...saved, {
+          ...buildTurn(active, [], 'inProgress'),
+          ...(plan ? { plan: { explanation: null, plan } } : {}),
+        }] : saved
         if (method === 'thread/turns/list') return listHistoryTurns(threadId, turns, params)
         if (method === 'thread/items/list') return listHistoryItems(threadId, turns, params)
         return { thread: { ...buildThread(session.meta, turns, configOf()), status: this.threadStatus(scope, threadId) } }
@@ -593,10 +632,32 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         const threadId = scalarText(params.threadId)
         const session = scope.sessions.get(threadId)
         if (!session?.query) throw new BridgeRpcError(-32602, '没有运行中的 turn')
-        await session.query.interrupt()
+        await this.interrupt(session, session.query)
         this.hub.log(`claude turn 已请求中断 (thread=${threadId})`) // i18n-ignore: 仅进日志
         return {}
       }
+      case 'qingcode/backgroundTasks/list': {
+        const threadId = scalarText(params.threadId)
+        if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
+        // 只读本进程的记录，不为此读历史或启动会话（R9）。
+        return { tasks: scope.sessions.get(threadId)?.backgroundTasks ?? [] }
+      }
+      case 'qingcode/backgroundTasks/stop': {
+        const threadId = scalarText(params.threadId)
+        const taskId = scalarText(params.taskId)
+        if (!threadId || !taskId) throw new BridgeRpcError(-32602, 'threadId 与 taskId 不能为空')
+        const query = scope.sessions.get(threadId)?.query
+        if (!query?.stopTask) throw new BridgeRpcError(-32602, '该会话没有运行中的后台任务')
+        await query.stopTask(taskId)
+        return {}
+      }
+      case 'qingcode/commands/list': {
+        const threadId = scalarText(params.threadId)
+        if (!threadId) throw new BridgeRpcError(-32602, 'threadId 不能为空')
+        return this.listCommands(scope.sessions.get(threadId)?.query ?? null)
+      }
+      case 'qingcode/files/rewind':
+        return this.rewindFiles(scope, params, cwd)
       default:
         throw new BridgeRpcError(-32601, `不支持的 v2 方法: ${method}`)
     }
@@ -668,6 +729,65 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     return { data }
   }
 
+  /** 只读用户已开启的会话进程，没有则为空，不为列命令启动会话（R9）。 */
+  private async listCommands(query: QueryLike | null): Promise<Json> {
+    try {
+      return { commands: slashCommandList(await query?.supportedCommands?.() ?? []) }
+    } catch (err) {
+      this.hub.log(`claude 命令列表读取失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
+      return { commands: [] }
+    }
+  }
+
+  /**
+   * 把文件回到某一轮开始前。会话进程不在时按原会话恢复，只发控制请求，不推送任何输入。
+   * dryRun 为 false 会改写工作区文件，须由客户端在用户确认后传入。
+   */
+  private async rewindFiles(scope: ClaudeScope, params: Json, cwd?: string): Promise<RewindResponse> {
+    const threadId = scalarText(params.threadId)
+    const turnId = scalarText(params.turnId)
+    const dryRun = params.dryRun
+    if (!threadId || !turnId || typeof dryRun !== 'boolean') {
+      throw new BridgeRpcError(-32602, 'threadId、turnId 与 dryRun 不能为空')
+    }
+    const session = await this.sessionFor(scope, threadId, cwd)
+    if (session.meta.ephemeral) throw new BridgeRpcError(-32602, '临时会话不支持回滚文件')
+    const assertIdle = () => {
+      if (session.turnId || session.preparingTurn) throw new BridgeRpcError(-32602, '请先停止当前轮次')
+    }
+    assertIdle()
+    if (session.rewinding) throw new BridgeRpcError(-32602, '正在回滚文件，请稍后重试')
+    session.rewinding = true
+    try {
+      let messageId = session.turnStartIds.get(turnId)
+      if (!messageId) {
+        const messages = await this.sessionReader(scope).getSessionMessages(threadId, { dir: session.meta.cwd })
+        // 过滤条件与历史读取一致，轮次 ID 才能对上。
+        const point = sessionMessagesToThread(session.meta,
+          messages.filter((message) => !session.pendingSteers.has(scalarText(asRecord(message)?.uuid))), {},
+          session.state.taskNotifications.deliveryIds, session.steerHistory)
+          .forkPoints.find((candidate) => candidate.turnId === turnId)
+        if (!point) throw new BridgeRpcError(-32602, '在 Claude 历史中找不到所选轮次')
+        messageId = point.promptMessageId
+        if (!messageId) return rewindResponse({ canRewind: false, error: '该轮没有可回滚的用户消息' })
+      }
+      // 读历史期间 Claude 可能自行开始了一轮。
+      assertIdle()
+      this.ensureQuery(session, session.settings, session.permissionMode)
+      const query = session.query
+      if (!query?.rewindFiles) throw new BridgeRpcError(-32603, 'Claude SDK 不支持回滚文件')
+      try {
+        return rewindResponse(await query.rewindFiles(messageId, { dryRun }))
+      } catch (err) {
+        this.hub.log(`claude 回滚文件失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
+        return rewindResponse({ canRewind: false, error: describe(err) })
+      }
+    } finally {
+      session.rewinding = false
+      this.touch(session)
+    }
+  }
+
   private async applySettings(session: BridgeSession, next: ClaudeSettings): Promise<void> {
     const query = session.query
     if (!query) return
@@ -702,7 +822,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     if (mode === 'bypassPermissions' && !session.allowsBypass) {
       // SDK 要求启动时显式允许 bypass，保留默认启动行为并按用户选择恢复历史会话。
       if (session.meta.ephemeral) throw new BridgeRpcError(-32602, '临时会话启动后无法启用跳过审批')
-      closeQuery(session)
+      this.closeQuery(session)
       return
     }
     if (!query.setPermissionMode) throw new BridgeRpcError(-32603, 'Claude SDK 不支持在线切换权限模式')
@@ -720,7 +840,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     if (!reader.deleteSession) throw new BridgeRpcError(-32601, 'Claude 不支持删除会话')
     // 先关掉仍在运行的 query，避免删除后又把会话写回磁盘。
     if (session.idleTimer) clearTimeout(session.idleTimer)
-    closeQuery(session)
+    this.closeQuery(session)
     await reader.deleteSession(threadId, { dir: session.meta.cwd })
     scope.historyPages.clear(threadId)
     scope.sessions.delete(threadId)
@@ -789,17 +909,21 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     compact = false,
   ): Promise<Json> {
     if (session.preparingTurn) throw new BridgeRpcError(-32602, '正在准备一轮对话，请稍后重试')
+    if (session.rewinding) throw new BridgeRpcError(-32602, '正在回滚文件，请稍后重试')
     const messageId = clientId ?? randomUUID()
     const userItem = userMessageContentItem(messageId, content.echo, clientId)
-    if (session.turnId) {
+    // v2 规定追加输入到进行中的 turn 时忽略覆盖项，输入直接推入同一 query 的队列。
+    const appendTo = (activeTurnId: string): Json => {
       if (compact || session.compaction) throw new BridgeRpcError(-32602, '请先等待当前一轮结束')
-      // v2 规定追加输入到进行中的 turn 时忽略覆盖项，输入直接推入同一 query 的队列。
       this.pushInput(session, content.blocks, messageId)
+      session.queuedAppends.add(messageId)
+      if (session.agentTurnId === activeTurnId) session.agentTurnId = null
       session.state.items[messageId] = userItem
       session.state.order.push(messageId)
-      this.notify(itemCompleted({ threadId: session.meta.id, turnId: session.turnId, cwd: session.meta.cwd }, userItem))
-      return { turn: buildTurn(session.turnId, [], 'inProgress') }
+      this.notify(itemCompleted({ threadId: session.meta.id, turnId: activeTurnId, cwd: session.meta.cwd }, userItem))
+      return { turn: buildTurn(activeTurnId, [], 'inProgress') }
     }
+    if (session.turnId) return appendTo(session.turnId)
     const turnId = randomUUID()
     const items = compact ? [] : [userItem]
     const turn = buildTurn(turnId, items, 'inProgress')
@@ -809,10 +933,16 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     try {
       await this.setPermissionMode(session, permissionMode)
       if (session.query && session.input) await this.applySettings(session, next)
+      // 上面等待期间 Claude 可能已自行开始一轮，覆盖它会让那一轮永远不结束。
+      const agentTurnId = session.turnId as string | null
+      if (agentTurnId) return appendTo(agentTurnId)
       session.turnId = turnId
-      if (!compact) session.turnMessageIds.set(turnId, messageId)
+      if (!compact) {
+        session.turnMessageIds.set(turnId, messageId)
+        session.turnStartIds.set(turnId, messageId)
+      }
       session.compaction = compact
-      session.state = emptyMapState(session.state.taskNotifications, session.state.contextWindow ?? null)
+      session.state = nextTurnState(session.state)
       for (const item of items) {
         session.state.items[scalarText(item.id)] = item
         session.state.order.push(scalarText(item.id))
@@ -833,7 +963,8 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       started = true
       this.pushInput(session, content.blocks, messageId)
     } catch (err) {
-      session.turnId = null
+      // 准备阶段失败时，session.turnId 可能属于 Claude 自行开始的轮次，只清自己的。
+      if (session.turnId === turnId) session.turnId = null
       // 没有发出开始通知时，完成通知会影响其他并行轮次的计数。
       if (started) {
         this.notify({
@@ -873,6 +1004,13 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       ...queryOverrides(settings),
       cwd: session.meta.cwd,
       includePartialMessages: true,
+      // SDK 省略 systemPrompt 时发送空系统提示，须显式选预设才能与用户终端里的 claude 行为一致。
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
+      // 修改前备份文件，供 qingcode/files/rewind 使用；临时会话不落盘，也不建检查点。
+      ...(session.meta.ephemeral ? {} : { enableFileCheckpointing: true }),
+      // SDK 约定：声明后停止只中断当前轮，保留后台任务，客户端须能逐个停止（qingcode/backgroundTasks/stop）。
+      // 临时会话（侧聊）没有任务列表界面，不声明，停止时一并结束后台任务。
+      ...(session.meta.ephemeral ? {} : { perTaskStopAffordance: true }),
       permissionMode,
       ...(permissionMode === 'bypassPermissions' ? { allowDangerouslySkipPermissions: true } : {}),
       persistSession: !session.meta.ephemeral,
@@ -885,7 +1023,11 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         }),
       onElicitation: (request, extra) => this.onElicitation(session, request, extra.signal),
       pathToClaudeCodeExecutable: this.claude?.path ?? '',
-      env: agentConfigEnv(envStrings(), 'CLAUDE_CONFIG_DIR', session.scope.directory),
+      env: {
+        ...agentConfigEnv(envStrings(), 'CLAUDE_CONFIG_DIR', session.scope.directory),
+        // 官方环境变量（code.claude.com/docs/en/env-vars）：推送 session_state_changed，用于收尾自发轮次。
+        CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1',
+      },
       stderr: (data: string) => this.hub.log(`claude stderr: ${redact(data)}`),
       // 首次用 sessionId 固定 UUID；空闲关闭后用 resume 重新拉起，保留会话历史。
       ...(session.queryCreated
@@ -919,7 +1061,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         session.input?.close()
         session.query = null
         session.input = null
-        session.pendingSteers.clear()
+        this.resetProcessState(session)
         // CLI 提前退出且没有 result 消息时兜底结束 turn，避免 activeTurns 永远不归零。
         if (session.turnId) this.finishTurn(session, 'failed', 'claude 进程提前结束')
         if (session.meta.ephemeral) this.forgetTemporary(session)
@@ -933,11 +1075,32 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     if (record?.type === 'rate_limit_event' || record?.subtype === 'rate_limit_event') {
       this.onRateLimitEvent(session.scope, record.rate_limit_info)
     }
-    if (session.pendingSteers.size > 0 && record && !record.parent_tool_use_id &&
+    if (record?.type === 'system' && record.subtype === 'session_state_changed') {
+      if (record.state === 'idle') this.finishIdleAgentTurn(session)
+      return
+    }
+    // Claude 自己切换访问模式（如确认计划后退出 plan）时同步，下一轮按用户所选模式重新设置。
+    if (record?.type === 'system' && record.subtype === 'status' && typeof record.permissionMode === 'string') {
+      session.permissionMode = record.permissionMode as PermissionMode
+    }
+    if (record && !record.parent_tool_use_id &&
       (record.type === 'assistant' || record.type === 'stream_event' || record.type === 'result')) {
-      this.confirmSteers(session, record)
+      session.queuedTurnId = null
+      if (session.pendingSteers.size > 0 || session.stoppedSteers.size > 0 || session.queuedAppends.size > 0) {
+        this.confirmSteers(session, record)
+      }
+    }
+    const backgroundTasks = record ? backgroundTaskList(record) : null
+    if (backgroundTasks !== null) {
+      this.setBackgroundTasks(session, backgroundTasks)
+      this.touch(session)
     }
     if (record?.type === 'result' && !session.turnId) return
+    // 后台任务结束后 Claude 会不经用户输入自行续跑，建一个轮次承接输出。
+    if (record && !session.turnId && isMainAgentOutput(record)) {
+      const turnId = this.startAgentTurn(session)
+      if (consumedIds(record).length === 0) session.agentTurnId = turnId
+    }
     const ctx = {
       threadId: session.meta.id,
       turnId: session.turnId ?? '',
@@ -969,7 +1132,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       session.scope.historyPages.clear(session.meta.id)
       // Claude 已排好的下一轮优先于客户端自己的发送队列。
       if (session.pendingSteers.size > 0 && (finite(record.queued_turn_count) ?? 0) > 0) {
-        this.startSteeredTurn(session)
+        session.queuedTurnId = this.startAgentTurn(session)
       }
       this.touch(session)
     }
@@ -998,11 +1161,12 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     }, () => undefined)
   }
 
-  private startSteeredTurn(session: BridgeSession): string {
+  /** 开启一个不由 turn/start 发起的轮次：排队的引导，或 Claude 自行续跑。 */
+  private startAgentTurn(session: BridgeSession): string {
     const turnId = randomUUID()
     session.turnId = turnId
     session.compaction = false
-    session.state = emptyMapState(session.state.taskNotifications, session.state.contextWindow ?? null)
+    session.state = nextTurnState(session.state)
     this.notify({ method: 'turn/started', params: {
       threadId: session.meta.id,
       turn: buildTurn(turnId, [], 'inProgress'),
@@ -1013,15 +1177,20 @@ export class ClaudeBridge extends JsonRpcAgentHost {
 
   private confirmSteers(session: BridgeSession, record: Json): void {
     // SDK 用 UUID 确认实际处理了哪些输入，顺序沿用提交顺序。
-    const ids = Array.isArray(record.user_message_uuids)
-      ? new Set(record.user_message_uuids) : new Set([record.user_message_uuid])
+    const ids = new Set(consumedIds(record))
+    for (const id of ids) session.queuedAppends.delete(id)
     const pendingCount = session.pendingSteers.size
     for (const [id, pending] of session.pendingSteers) {
       if (!ids.has(id)) continue
-      const turnId = session.turnId ?? this.startSteeredTurn(session)
-      const startsTurn = !session.turnMessageIds.has(turnId)
-      if (startsTurn) session.turnMessageIds.set(turnId, id)
+      const turnId = session.turnId ?? this.startAgentTurn(session)
       const placement = turnId === pending.turnId ? 'currentTurn' : 'nextTurn'
+      // 引导进自行续跑的轮次时，该轮没有开场消息，引导也不算开启轮次。
+      const startsTurn = placement === 'nextTurn' && !session.turnMessageIds.has(turnId)
+      if (startsTurn) {
+        session.turnMessageIds.set(turnId, id)
+        session.turnStartIds.set(turnId, id)
+      }
+      if (session.agentTurnId === turnId) session.agentTurnId = null
       session.steerHistory.set(id, { placement, startsTurn })
       const item = { ...pending.item, steering: placement }
       session.pendingSteers.delete(id)
@@ -1032,14 +1201,66 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     if (!session.meta.ephemeral && session.pendingSteers.size < pendingCount) {
       this.steerHistory.write(session.meta.id, session.steerHistory, session.scope.directory)
     }
+    this.interruptStoppedSteers(session, record, [...ids])
   }
 
-  /** 消费循环异常（如 CLI 崩溃）时兜底结束当前 turn，下次 turn/start 会重建 query。 */
-  private finishTurn(session: BridgeSession, status: string, error: string): void {
+  /** 先撤回还没开始处理的消息再中断；撤不回的记下来，CLI 开始处理时二次中断。 */
+  private async interrupt(session: BridgeSession, query: QueryLike): Promise<void> {
+    // 先记录再撤回：排队的下一轮消息可能早于撤回和 interrupt 返回到达。
+    const stopped = [...session.pendingSteers.keys(), ...session.queuedAppends]
+    for (const id of stopped) session.stoppedSteers.set(id, session.turnId)
+    session.interruptedTurnId = session.turnId
+    if (stopped.length > 0) {
+      const withdrawn = await withdrawMessages(query, stopped, (err) => {
+        this.hub.log(`claude 撤回排队消息失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
+      })
+      for (const id of withdrawn) {
+        session.stoppedSteers.delete(id)
+        session.pendingSteers.delete(id)
+        session.queuedAppends.delete(id)
+      }
+    }
+    try {
+      await query.interrupt()
+    } catch (err) {
+      for (const id of stopped) session.stoppedSteers.delete(id)
+      throw err
+    }
+    // 这一轮只为等排队引导而开，引导全部撤回后不会再有 result。
+    if (session.turnId && session.turnId === session.queuedTurnId && session.pendingSteers.size === 0) {
+      this.finishTurn(session, 'interrupted')
+    }
+  }
+
+  /** 会话整体空闲说明自发轮次已经结束。用户发起的轮次不处理：上一轮的空闲状态可能晚于新消息到达。 */
+  private finishIdleAgentTurn(session: BridgeSession): void {
+    if (!session.turnId || session.turnId !== session.agentTurnId) return
+    this.finishTurn(session, session.interruptedTurnId === session.turnId ? 'interrupted' : 'completed')
+  }
+
+  /**
+   * interrupt 不撤回排队消息，撤回也可能失败，CLI 开始处理它们时再中断一次。
+   * 同一批里混有停止后的新消息时放行，避免误停用户的新输入。
+   */
+  private interruptStoppedSteers(session: BridgeSession, record: Json, ids: unknown[]): void {
+    const consumed = ids.filter((id): id is string => typeof id === 'string')
+    const late = record.type !== 'result' && consumed.length > 0 && consumed.every((id) =>
+      session.stoppedSteers.has(id) && session.stoppedSteers.get(id) !== session.turnId)
+    for (const id of consumed) session.stoppedSteers.delete(id)
+    if (!late) return
+    void session.query?.interrupt().catch((err: unknown) => {
+      this.hub.log(`claude 中断排队引导失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
+    })
+  }
+
+  /** 没有 result 消息时兜底结束当前 turn：CLI 崩溃、空闲收尾、撤回后无事可做。 */
+  private finishTurn(session: BridgeSession, status: string, error?: string): void {
     const turnId = session.turnId
     if (!turnId) return
     session.turnId = null
     session.scope.historyPages.clear(session.meta.id)
+    const ctx = { threadId: session.meta.id, turnId, cwd: session.meta.cwd }
+    for (const note of finishPendingItems(ctx, session.state, status === 'failed')) this.notify(note)
     const items = session.state.order.map((id) => session.state.items[id]).filter(isRecord)
     this.notify({
       method: 'turn/completed',
@@ -1076,7 +1297,9 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   ): Promise<PermissionResult> {
     const requestId = `qn-claude-approval-${++this.requestCounter}`
     const toolItem = extra.toolUseID ? session.state.toolItems[extra.toolUseID] : undefined
-    const itemId = scalarText(toolItem?.id) || `${session.turnId ?? 'turn'}-tool`
+    const itemId = scalarText(toolItem?.id)
+      || (extra.toolUseID ? sidechainItemId(session.state.sidechains, extra.toolUseID) : '')
+      || `${session.turnId ?? 'turn'}-tool`
     // AskUserQuestion 是向用户要答案，不是权限审批：完全访问模式下也必须问，并按问答回填。
     const asking = toolName === ASK_USER_TOOL
     const request = asking
@@ -1183,8 +1406,9 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     if (!this.opened) return
     if (session.meta.ephemeral) {
       // 侧聊不落盘，当前目录下不做空闲关闭。切换后等旧侧聊结束再释放。
-      if (!session.turnId && !session.preparingTurn && session.scope !== this.currentScope()) {
-        closeQuery(session)
+      if (!session.turnId && !session.preparingTurn && !session.backgroundTasks.length
+        && session.scope !== this.currentScope()) {
+        this.closeQuery(session)
         this.forgetTemporary(session)
       }
       return
@@ -1192,8 +1416,9 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     if (session.idleTimer) clearTimeout(session.idleTimer)
     session.idleTimer = setTimeout(() => {
       session.idleTimer = null
-      if (session.turnId || session.preparingTurn) return
-      closeQuery(session)
+      // 关闭 query 会结束 CLI 进程及其后台任务；任务数变化时会重新计时。
+      if (session.turnId || session.preparingTurn || session.rewinding || session.backgroundTasks.length) return
+      this.closeQuery(session)
     }, this.idleTimeoutMs)
     session.idleTimer.unref?.()
   }
@@ -1201,6 +1426,35 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private requireDeps(): ClaudeDeps {
     if (!this.deps) throw new AgentHostError('agent_unavailable', 'Claude SDK 尚未加载')
     return this.deps
+  }
+
+  private setBackgroundTasks(session: BridgeSession, tasks: BackgroundTask[]): void {
+    session.backgroundTasks = tasks
+    this.notify({ method: 'qingcode/backgroundTasks/updated', params: { threadId: session.meta.id, tasks } })
+  }
+
+  private closeQuery(session: BridgeSession): void {
+    const query = session.query
+    session.query = null
+    session.input?.close()
+    session.input = null
+    this.resetProcessState(session)
+    try {
+      query?.close()
+    } catch {
+      // 查询可能已结束。
+    }
+  }
+
+  /** 随 CLI 进程一起失效的状态。 */
+  private resetProcessState(session: BridgeSession): void {
+    session.pendingSteers.clear()
+    session.queuedAppends.clear()
+    session.stoppedSteers.clear()
+    if (session.backgroundTasks.length === 0) return
+    // 进程内的后台任务随之结束；桥退出时无需再通知客户端。
+    if (this.opened) this.setBackgroundTasks(session, [])
+    else session.backgroundTasks = []
   }
 
   private notify(note: V2Notification): void {
@@ -1221,7 +1475,15 @@ function makeSession(
     input: null,
     turnId: null,
     turnMessageIds: new Map(),
+    turnStartIds: new Map(),
     pendingSteers: new Map(),
+    queuedAppends: new Set(),
+    stoppedSteers: new Map(),
+    agentTurnId: null,
+    queuedTurnId: null,
+    interruptedTurnId: null,
+    backgroundTasks: [],
+    rewinding: false,
     steerHistory: new Map(),
     compaction: false,
     preparingTurn: false,
@@ -1234,17 +1496,17 @@ function makeSession(
   }
 }
 
-function closeQuery(session: BridgeSession): void {
-  const query = session.query
-  session.query = null
-  session.input?.close()
-  session.input = null
-  session.pendingSteers.clear()
-  try {
-    query?.close()
-  } catch {
-    // 查询可能已结束。
-  }
+/** 主代理开始回复；子代理消息带 parent_tool_use_id，不会以 result 结束。 */
+function isMainAgentOutput(message: Json): boolean {
+  if (message.parent_tool_use_id) return false
+  return message.type === 'assistant'
+    || (message.type === 'stream_event' && asRecord(message.event)?.type === 'message_start')
+}
+
+/** SDK 在回复上标注它处理的用户消息 UUID。 */
+function consumedIds(record: Json): string[] {
+  const ids: unknown[] = Array.isArray(record.user_message_uuids) ? record.user_message_uuids : [record.user_message_uuid]
+  return ids.filter((id): id is string => typeof id === 'string')
 }
 
 function clientMessageId(value: unknown): string | null {

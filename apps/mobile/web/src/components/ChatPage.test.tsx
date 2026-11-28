@@ -381,3 +381,69 @@ it('会话切换常驻顶栏，出现子代理时也可从顶栏查看记录和�
     vi.unstubAllGlobals()
   }
 })
+
+it('已结束轮次的回复可以新建对话继续，进行中的回复不提供', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const initial = useApp.getState()
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const transport = new MobileCodexTransport('local', async () => undefined)
+  const rpc = new CodexRpc(transport)
+  const forkConversation = vi.fn().mockResolvedValue(true)
+  const thread: ThreadView = {
+    id: 'forkable', status: 'running', activeTurnId: 'live', pendingApprovals: [],
+    turns: [
+      { id: 'done', outcome: 'completed', startedAtMs: null, durationMs: null, itemIds: ['ask', 'answer'] },
+      { id: 'live', startedAtMs: null, durationMs: null, itemIds: ['ask-live', 'answer-live'] },
+    ],
+    items: [
+      { kind: 'user', id: 'ask', text: '第一问' },
+      { kind: 'agent', id: 'answer', text: '第一答', streaming: false },
+      { kind: 'user', id: 'ask-live', text: '第二问' },
+      { kind: 'agent', id: 'answer-live', text: '第二答', streaming: false },
+    ],
+  }
+  const session: AgentSession = {
+    key: 'codex:local', agent: 'codex', targetId: 'local', rpc, transport,
+    opened: true, opening: false, openError: null, lastSeq: null,
+    resumedCodexThreads: new Set(), loadedThreads: new Set(), state: { threads: { forkable: thread } },
+  }
+  const buttons = () => [...document.querySelectorAll('button')]
+  const forkButton = () => buttons().find((button) => button.textContent === '新建对话继续')
+  // jsdom 没有实现原生弹窗方法。
+  const dialogMethods = Object.entries({
+    showModal(this: HTMLDialogElement) { this.open = true },
+    close(this: HTMLDialogElement) { this.open = false },
+  }).map(([name, value]) => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, name)
+    Object.defineProperty(HTMLDialogElement.prototype, name, { value, configurable: true })
+    return { name, descriptor }
+  })
+  try {
+    await act(() => {
+      useApp.setState({ selectedTargetId: 'local', selectedAgent: 'codex', selectedThreadId: thread.id,
+        sessions: { [session.key]: session }, forkConversation })
+      root.render(<ChatPage />)
+    })
+    const triggers = () => buttons().filter((button) => button.getAttribute('aria-label') === '消息操作')
+    expect(triggers()).toHaveLength(2)
+    await act(() => triggers()[1]!.click())
+    expect(forkButton()).toBeUndefined()
+    await act(() => { closeTopSheet() })
+    await act(() => triggers()[0]!.click())
+    await act(async () => forkButton()!.click())
+    expect(forkConversation).toHaveBeenCalledExactlyOnceWith('done')
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    clearToasts()
+    useApp.setState(initial)
+    rpc.dispose()
+    vi.unstubAllGlobals()
+    for (const { name, descriptor } of dialogMethods) {
+      if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, name, descriptor)
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, name)
+    }
+  }
+})

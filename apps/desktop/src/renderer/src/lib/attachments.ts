@@ -230,16 +230,21 @@ export function consumeSlashToken(value: string, caret: number): string {
 
 export type SlashItem = {
   id: string
-  kind: 'command' | 'skill'
+  /** command 由本机执行；native 是 Agent 自己的斜杠命令，选中后写进输入框随消息发送。 */
+  kind: 'command' | 'native' | 'skill'
   name: string
   description: string
+  /** 原生命令的参数说明。 */
+  argumentHint?: string
   /** 技能来源（用户级 / 项目级 / 系统），仅展示。 */
   scope?: string
   path?: string
   reason?: string | null
 }
 
-/** 排序：名称前缀匹配 > 名称包含 > 描述包含；同级命令按菜单顺序，技能按名称。 */
+const KIND_ORDER: Record<SlashItem['kind'], number> = { command: 0, native: 1, skill: 2 }
+
+/** 排序：名称前缀匹配 > 名称包含 > 描述包含；同级内置命令、原生命令按菜单顺序，技能按名称。 */
 export function filterSlashItems(items: SlashItem[], query: string): SlashItem[] {
   const q = query.trim().toLowerCase()
   const rank = (item: SlashItem): number => {
@@ -256,8 +261,8 @@ export function filterSlashItems(items: SlashItem[], query: string): SlashItem[]
     .sort(
       (a, b) =>
         a.score - b.score ||
-        (a.item.kind !== b.item.kind ? (a.item.kind === 'command' ? -1 : 1)
-          : a.item.kind === 'skill' ? a.item.name.localeCompare(b.item.name) : 0),
+        KIND_ORDER[a.item.kind] - KIND_ORDER[b.item.kind] ||
+        (a.item.kind === 'skill' ? a.item.name.localeCompare(b.item.name) : 0),
     )
     .map((entry) => entry.item)
 }

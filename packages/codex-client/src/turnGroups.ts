@@ -42,6 +42,7 @@ export function turnTimeline(items: readonly ItemView[], turns: readonly TurnMet
 
   const positions = new Map(items.map((item, index) => [item.id, index]))
   const stops = new Map<number, StoppedTurnEntry[]>()
+  const stopByItem = new Map<string, StoppedTurnEntry>()
   let nextStart = items.length
   for (let index = turns.length - 1; index >= 0; index--) {
     const turn = turns[index]!
@@ -55,11 +56,17 @@ export function turnTimeline(items: readonly ItemView[], turns: readonly TurnMet
     }
     // 尚未有条目的停止轮次放在下一轮之前，未加载条目的历史轮次等翻页后再显示。
     if (turn.outcome === 'interrupted' && (last >= 0 || turn.itemIds.length === 0)) {
-      const position = last >= 0 ? last + 1 : nextStart
-      const entry: StoppedTurnEntry = { kind: 'stopped', key: `stopped-${turn.id}`, durationMs: turn.durationMs }
-      const existing = stops.get(position)
-      if (existing) existing.push(entry)
-      else stops.set(position, [entry])
+      // 同一轮可能同时留有实时记录和历史记录（轮次 ID 不同、条目相同），只提示一次。
+      const same = turn.itemIds.map((id) => stopByItem.get(id)).find(Boolean)
+      if (same) same.durationMs ??= turn.durationMs
+      else {
+        const position = last >= 0 ? last + 1 : nextStart
+        const entry: StoppedTurnEntry = { kind: 'stopped', key: `stopped-${turn.id}`, durationMs: turn.durationMs }
+        for (const id of turn.itemIds) stopByItem.set(id, entry)
+        const existing = stops.get(position)
+        if (existing) existing.push(entry)
+        else stops.set(position, [entry])
+      }
     }
     if (last >= 0) nextStart = first
   }

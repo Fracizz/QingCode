@@ -178,11 +178,21 @@ describe('模拟网关全链路', () => {
 
     const gatewayRpc = gateway.rpc.bind(gateway)
     const cursors: (string | null)[] = []
+    // 打开 Claude 会话后会另外按轮次摘要到更早的页里补读计划清单。
+    const planCursors: (string | null)[] = []
     const paged = vi.spyOn(gateway, 'rpc').mockImplementation((...args) => {
       const [, method, params] = args
-      const request = params as { agent?: string; msg?: { id: string; method: string; params: { cursor: string | null } } }
+      const request = params as { agent?: string; msg?: { id: string; method: string; params: { cursor: string | null; itemsView?: string } } }
       if (method !== 'codex.send' || request.agent !== 'claude' || request.msg?.method !== 'thread/turns/list') return gatewayRpc(...args)
-      const { id, params: { cursor } } = request.msg
+      const { id, params: { cursor, itemsView } } = request.msg
+      if (itemsView === 'notLoaded') {
+        planCursors.push(cursor)
+        state().handleGatewayEvent({ name: 'codex.recv', payload: { targetId: 'local', agent: 'claude', seq: null,
+          msg: { id, result: { data: [{ id: 'first', status: 'completed', items: [],
+            plan: { explanation: null, plan: [{ step: '更早的步骤', status: 'pending' }] } }], nextCursor: null } },
+        } })
+        return Promise.resolve(undefined) as ReturnType<typeof gateway.rpc>
+      }
       cursors.push(cursor)
       const reply = cursor ? 'first' : 'recent'
       state().handleGatewayEvent({ name: 'codex.recv', payload: { targetId: 'local', agent: 'claude', seq: null,
@@ -198,6 +208,9 @@ describe('模拟网关全链路', () => {
       expect(state().sessions['codex:local']?.state.threads['c-demo']).toBeUndefined()
       expect(cursors).toEqual([null])
       expect(transcript()).toEqual(['recent'])
+      expect(planCursors).toEqual(['older'])
+      await vi.waitFor(() => expect(state().sessions['claude:local']?.state.threads['c-demo']?.plan?.steps)
+        .toEqual([{ step: '更早的步骤', status: 'pending' }]))
       const captureScroll = vi.fn()
       await state().loadEarlierHistory(captureScroll)
       expect(captureScroll).toHaveBeenCalledOnce()
@@ -319,7 +332,7 @@ describe('模拟网关全链路', () => {
     expect(state().selectedAgent).toBe('claude')
     expect(selectedAccessMode(state())).toBe('default')
     // 已移除的旧档位被忽略。
-    state().setAccessMode('plan' as never)
+    state().setAccessMode('readOnly' as never)
     expect(selectedAccessMode(state())).toBe('default')
     await state().loadModels('local', 'claude')
     await state().send('审查一下', [], true)
@@ -894,7 +907,11 @@ describe('模拟网关全链路', () => {
       const started = state().compactConversation()
       expect(selectedCompactionStarting(state())).toBe(true)
       await expect(state().compactConversation()).resolves.toBe(false)
-      await expect(state().send('压缩尚未开始')).resolves.toBe(false)
+      // 启动压缩期间的消息排队，等压缩这一轮结束后再发送。
+      await expect(state().send('压缩尚未开始', [], false, 'steer')).resolves.toBe(true)
+      expect(selectedQueuedSends(state())?.map((message) => message.text)).toEqual(['压缩尚未开始'])
+      state().removeQueuedSend(selectedQueuedSends(state())![0]!.id)
+      state().setDraftText('保留草稿')
       await expect(started).resolves.toBe(true)
       expect(thread()?.status).toBe('running')
       await expect(state().compactConversation()).resolves.toBe(false)
@@ -1042,9 +1059,8 @@ describe('模拟网关全链路', () => {
       steering.mockRestore()
 
       await state().openThread('c-demo', 'claude')
-      await expect(state().send('空闲时引导', [], false, 'steer')).resolves.toBe(false)
-      expect(state().error).toBe('当前一轮已结束，请选择排队或发送')
-      await expect(state().send('开始 Claude 对话')).resolves.toBe(true)
+      // 引导时没有运行中的轮次：按普通消息发送。
+      await expect(state().send('开始 Claude 对话', [], false, 'steer')).resolves.toBe(true)
       const claudeView = () => state().sessions['claude:local']?.state.threads['c-demo']
       const claudeTurn = claudeView()?.activeTurnId
       expect(claudeTurn).toBeTruthy()

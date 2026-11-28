@@ -1,8 +1,8 @@
 import {
-  chatCommandQuery, exactChatCommand, hasSkillToken, insertSkillToken, matchingChatCommands, t, takeSkillTokens, translateMessage,
-  type ChatCommandId, type UserInput,
+  chatCommandQuery, exactChatCommand, hasSkillToken, insertSkillToken, isSlashDraft, matchingChatCommands, runningSendMode, t,
+  takeSkillTokens, translateMessage, type ChatCommandId, type SlashCommandView, type UserInput,
 } from '@qn/codex-client'
-import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, Slash, Square, Wand2, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, ListTodo, Slash, Square, Wand2, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
 import { attachmentBytes, IMAGE_BYTES, insertFileMention, isDraftImage, MAX_IMAGES, mentionAt, type DraftImage } from '../composerLogic'
@@ -11,7 +11,8 @@ import { suggestFiles, type ProjectFile } from '../projectApi'
 import { friendlyError, type Annotation } from '../state'
 import type { SendMode } from '../store'
 import { matchingSkills, type SkillItem } from '../skills'
-import type { Project } from '../types'
+import { matchingSlashCommands } from '../slashCommands'
+import type { AgentKind, Project } from '../types'
 import { ImageThumbnail } from './ImageThumbnail'
 import { Button, Dialog, LoadingIcon } from './ui'
 import { toast } from '../toast'
@@ -21,6 +22,8 @@ export type ComposerProps = {
   text: string
   onChangeText: (text: string) => void
   onSend: (text: string, attachments: UserInput[], mode: SendMode) => Promise<boolean>
+  /** 用于判断斜杠命令；缺省按 Codex。 */
+  agent?: AgentKind
   onInterrupt: () => void
   interrupting?: boolean
   running: boolean
@@ -45,10 +48,20 @@ export type ComposerProps = {
   commands?: { run: (id: ChatCommandId) => void; unavailable: (id: ChatCommandId) => string | null; hidden?: readonly ChatCommandId[] }
   /** 输入 / 时与对话命令一起列出的技能；选中后作为 skill 输入随消息发送。 */
   skills?: readonly SkillItem[]
+  /** Agent 原生斜杠命令（已与内置命令、技能去重）；选中后写进输入框随消息发送。 */
+  nativeCommands?: readonly SlashCommandView[]
+  /** 命令菜单打开时刷新原生命令。 */
+  onCommandMenuOpen?: () => void
+  /** 有值表示下一轮按计划模式发送，输入区常驻标识。 */
+  planMode?: { disabled: boolean; onExit: () => void }
 }
 
 type SlashEntry = { kind: 'command'; id: ChatCommandId; name: string; description: string }
+  | { kind: 'native'; command: SlashCommandView }
   | { kind: 'skill'; skill: SkillItem }
+
+const slashEntryKey = (entry: SlashEntry): string =>
+  `${entry.kind}:${entry.kind === 'command' ? entry.name : entry.kind === 'native' ? entry.command.name : entry.skill.name}`
 
 // 相册选择保留在当前应用进程中，避免将大段图片数据写进加密草稿。
 const photoDrafts = new Map<string, DraftImage[]>()
@@ -74,9 +87,11 @@ function rememberImages(key: string, images: DraftImage[]) {
 export function Composer({
   draftKey, text, onChangeText, onSend, onInterrupt, interrupting, running, sending, compacting, disabled, imageUnavailable,
   project, annotations, onUpdateAnnotation, onRemoveAnnotation, quoteDraft, onConfirmQuote,
-  onCancelQuote, placeholder = t('和 Codex 一起工作'), toolbar, trailing, canSteer, steerHint, commands, skills,
+  onCancelQuote, placeholder = t('和 Codex 一起工作'), toolbar, trailing, canSteer, steerHint, commands, skills, agent = 'codex',
+  nativeCommands, onCommandMenuOpen, planMode,
 }: ComposerProps) {
   const sendKey = useMobilePreferences((state) => state.sendKey)
+  const defaultMode = runningSendMode(useMobilePreferences((state) => state.runningSend))
   const [comment, setComment] = useState('')
   const [showAnnotations, setShowAnnotations] = useState(false)
   const [images, setImages] = useState(() => photoDrafts.get(draftKey) ?? NO_IMAGES)
@@ -101,10 +116,18 @@ export function Composer({
     ...(commandQuery === undefined ? [] : matchingChatCommands(commandQuery)
       .filter(({ id }) => !commands?.hidden?.includes(id))
       .map(({ id, name, description }) => ({ kind: 'command' as const, id, name, description }))),
+    ...(commandQuery === undefined || !nativeCommands ? [] : matchingSlashCommands(nativeCommands, commandQuery)
+      .map((command) => ({ kind: 'native' as const, command }))),
     ...(skillQuery === undefined || !skills ? [] : matchingSkills(skills, skillQuery)
       .filter((skill) => !hasSkillToken(text, skill.name))
       .map((skill) => ({ kind: 'skill' as const, skill }))),
   ]
+  const commandMenu = commandQuery !== undefined
+  const openMenu = useRef(onCommandMenuOpen)
+  openMenu.current = onCommandMenuOpen
+  useEffect(() => {
+    if (commandMenu) openMenu.current?.()
+  }, [commandMenu])
 
   useEffect(() => setActiveCommand(0), [slashQuery])
   useEffect(() => {
@@ -176,10 +199,17 @@ export function Composer({
     }
   }
 
-  const canSend = (!disabled && !sending && !compacting && !picking &&
+  const canSend = (!disabled && !sending && !picking &&
     (!imageUnavailable || images.length === 0) && Boolean(text.trim() || images.length || annotations.length))
+  const busy = running || !!compacting
+  // 按钮与占位文字显示消息实际的去向，引导不可用时会转入排队。
+  const draft = takeSkillTokens(text, pickedSkills)
+  const slashDraft = isSlashDraft(agent, draft.text, draft.skills.length)
+  // 压缩刚发起、轮次事件还没到时（compacting 但未运行），任何方式都只能排队。
+  const actualMode: SendMode = (compacting && !running) || (defaultMode === 'steer' && (compacting || !canSteer || slashDraft))
+    ? 'queue' : defaultMode
 
-  async function submit(mode: SendMode = 'queue') {
+  async function submit(mode: SendMode = running ? defaultMode : 'queue') {
     const command = exactChatCommand(text)
     if (commands && !disabled && !composing.current && command && !commands.hidden?.includes(command.id)) {
       chooseCommand(command.id)
@@ -201,11 +231,12 @@ export function Composer({
 
   function chooseSlash(entry: SlashEntry) {
     if (entry.kind === 'command') { chooseCommand(entry.id); return }
-    if (composing.current) return
-    if (skillQuery === undefined) return
-    if (!pickedSkills.some((item) => item.name === entry.skill.name)) updateSkills([...pickedSkills, entry.skill])
-    const end = text.length
-    const next = insertSkillToken(text, end - skillQuery.length - 1, end, entry.skill.name)
+    if (composing.current || slashQuery === undefined) return
+    // 原生命令与技能都以 /名字 留在输入框里，命令可接着写参数；只有技能随消息拆成 skill 输入。
+    const name = entry.kind === 'native' ? entry.command.name : entry.skill.name
+    if (entry.kind === 'skill' && !pickedSkills.some((item) => item.name === name)) updateSkills([...pickedSkills, entry.skill])
+    // 查询词里没有 /，最后一个 / 就是正在输入的片段开头。
+    const next = insertSkillToken(text, text.lastIndexOf('/'), text.length, name)
     onChangeText(next.text)
     setCaret(next.caret)
     requestAnimationFrame(() => {
@@ -325,7 +356,7 @@ export function Composer({
         <div ref={commandList} role="group" aria-label={t('对话命令')}
           className="absolute inset-x-3 bottom-full z-10 mb-1 max-h-64 overflow-y-auto rounded-xl border border-qn-border bg-qn-panel shadow-lg">
           {commandMatches.map((entry, index) => (
-            <button key={entry.kind === 'command' ? `command:${entry.name}` : `skill:${entry.skill.name}`} type="button"
+            <button key={slashEntryKey(entry)} type="button"
               aria-current={index === activeCommand ? true : undefined}
               className={`qn-row qn-slash-row ${index === activeCommand ? 'bg-qn-hover' : ''}`}
               onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSlash(entry)}>
@@ -333,9 +364,13 @@ export function Composer({
                 {entry.kind === 'skill' ? <Wand2 size={14} /> : <Slash size={14} />}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate">{entry.kind === 'command' ? `/${entry.name}` : entry.skill.name}</span>
+                <span className="block truncate">
+                  {entry.kind === 'command' ? `/${entry.name}` : entry.kind === 'native' ? `/${entry.command.name}` : entry.skill.name}
+                  {entry.kind === 'native' && entry.command.argumentHint && <span className="ml-1.5 text-xs text-qn-muted">{entry.command.argumentHint}</span>}
+                </span>
                 <span className="block truncate text-xs text-qn-muted">
-                  {entry.kind === 'command' ? commands?.unavailable(entry.id) ?? entry.description : entry.skill.description || entry.skill.scope}
+                  {entry.kind === 'command' ? commands?.unavailable(entry.id) ?? entry.description
+                    : entry.kind === 'native' ? entry.command.description || t('Agent 命令') : entry.skill.description || entry.skill.scope}
                 </span>
               </span>
             </button>
@@ -344,6 +379,15 @@ export function Composer({
       )}
       {images.length > 0 && imageUnavailable && <div className="mb-2 text-xs text-qn-warn">{imageUnavailable}</div>}
       <div className="qn-composer">
+        {planMode && (
+          <div className="qn-plan-mode" role="status">
+            <ListTodo size={15} aria-hidden />
+            <span className="min-w-0 flex-1 truncate"><span className="font-semibold">{t('计划模式')}</span> · {t('批准计划后才动手')}</span>
+            <Button variant="ghost" aria-label={t('退出计划模式')} disabled={planMode.disabled} onClick={planMode.onExit}>
+              <X size={15} aria-hidden />
+            </Button>
+          </div>
+        )}
         {/* 附件放进输入框内：方形缩略图 + 右上角移除角标，与常见聊天应用一致。 */}
         {images.length > 0 && (
           <ul className="qn-composer-images" aria-label={t('图片附件')}>
@@ -366,7 +410,8 @@ export function Composer({
           disabled={disabled}
           aria-label={t('消息')}
           enterKeyHint={sendKey === 'send' ? 'send' : 'enter'}
-          placeholder={running ? t('输入下一条，发送后排队') : placeholder}
+          placeholder={!busy ? placeholder : actualMode === 'steer' ? t('输入补充内容，发送后引导当前一轮')
+            : actualMode === 'immediate' ? t('输入下一条，发送后打断本轮') : t('输入下一条，发送后排队')}
           onChange={(event) => { onChangeText(event.target.value); setCaret(event.target.selectionStart) }}
           onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
           onBlur={(event) => { if (!commandList.current?.contains(event.relatedTarget)) setCaret(null) }}
@@ -390,10 +435,10 @@ export function Composer({
                 {interrupting ? <LoadingIcon size={14} /> : <Square size={10} fill="currentColor" aria-hidden />}
               </Button>
             )}
-            {/* 长按发送键可选「立即发送」（停止本轮后发送），输入后仍能中断当前轮。 */}
+            {/* 长按发送键可选「打断后发送」（停止本轮后发送），输入后仍能中断当前轮。 */}
             {(!running || canSend || sending) && (
-              <SendButton running={running && !compacting} sending={sending} disabled={!canSend} canSteer={canSteer}
-                steerHint={steerHint} onSend={(mode) => void submit(mode)} />
+              <SendButton running={busy} actualMode={actualMode} sending={sending} disabled={!canSend}
+                canSteer={canSteer && !compacting && !slashDraft} steerHint={steerHint} onSend={(mode) => void submit(mode)} />
             )}
           </div>
         </div>
@@ -405,14 +450,19 @@ export function Composer({
 
 const LONG_PRESS_MS = 450
 
-/** 发送键：空闲时直接发送；运行中点按排队，长按（或右键）打开发送方式。 */
-function SendButton({ running, sending, disabled, canSteer, steerHint = t('补充到当前一轮'), onSend }: {
+const MODE_LABELS: Record<SendMode, string> = { steer: t('引导'), queue: t('排队'), immediate: t('打断后发送') }
+
+/** 发送键：空闲时直接发送；运行中点按走设置里的“运行中发送”，长按（或右键）临时选择发送方式。 */
+function SendButton({ running, actualMode, sending, disabled, canSteer, steerHint = t('补充到当前一轮'), onSend }: {
   running: boolean
+  /** 点按时消息实际的去向，只用于说明文字。 */
+  actualMode: SendMode
   sending: boolean
   disabled: boolean
   canSteer: boolean
   steerHint?: string
-  onSend: (mode: SendMode) => void
+  /** 不传方式表示按设置发送。 */
+  onSend: (mode?: SendMode) => void
 }) {
   const [open, setOpen] = useState(false)
   const timer = useRef<number | undefined>(undefined)
@@ -432,8 +482,8 @@ function SendButton({ running, sending, disabled, canSteer, steerHint = t('补�
   return (
     <>
       <Button variant="primary" className="qn-send-button"
-        aria-label={sending ? t('发送中') : running ? t('排队') : t('发送')}
-        title={running ? t('点按排队，长按选择发送方式') : undefined}
+        aria-label={sending ? t('发送中') : running ? MODE_LABELS[actualMode] : t('发送')}
+        title={running ? t('点按{action}，长按选择发送方式', { action: MODE_LABELS[actualMode] }) : undefined}
         aria-haspopup={running ? 'dialog' : undefined}
         disabled={disabled}
         onPointerDown={() => {
@@ -458,7 +508,7 @@ function SendButton({ running, sending, disabled, canSteer, steerHint = t('补�
             longPressed.current = false
             return
           }
-          onSend('queue')
+          onSend()
         }}>
         {sending ? <LoadingIcon size={16} /> : <ArrowUp size={17} strokeWidth={2.25} aria-hidden />}
       </Button>
@@ -470,10 +520,10 @@ function SendButton({ running, sending, disabled, canSteer, steerHint = t('补�
               <span>{t('排队')}</span><span className="text-xs text-qn-muted">{t('本轮结束后发送')}</span>
             </Button>
             <Button className="justify-between!" disabled={!canSteer} onClick={() => select('steer')}>
-              <span>{t('引导')}</span><span className="text-xs text-qn-muted">{canSteer ? steerHint : t('等待当前轮次就绪')}</span>
+              <span>{t('引导')}</span><span className="text-xs text-qn-muted">{canSteer ? steerHint : t('当前无法引导')}</span>
             </Button>
             <Button className="justify-between!" onClick={() => select('immediate')}>
-              <span>{t('立即发送')}</span><span className="text-xs text-qn-muted">{t('停止本轮后发送')}</span>
+              <span>{t('打断后发送')}</span><span className="text-xs text-qn-muted">{t('停止本轮后发送')}</span>
             </Button>
           </div>
         </Dialog>

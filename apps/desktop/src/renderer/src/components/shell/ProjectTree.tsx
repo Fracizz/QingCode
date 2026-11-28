@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent, type KeyboardEvent } from 'react'
-import { ChevronDown, ChevronsDownUp, ChevronUp, Copy, Ellipsis, FolderPlus, Pencil, Pin, PinOff, ShieldCheck, ShieldOff, SquarePen, Unplug, Wifi, X } from 'lucide-react'
+import { ChevronDown, ChevronsDownUp, ChevronUp, Copy, Ellipsis, EyeOff, FolderPlus, Pencil, Pin, PinOff, ShieldCheck, ShieldOff, SquarePen, Unplug, Wifi, X } from 'lucide-react'
 import { t } from '@qn/codex-client'
 import { useShallow } from 'zustand/react/shallow'
 import { copyText } from '../../lib/clipboard'
@@ -49,7 +49,10 @@ export function ProjectTree({ target, onSelectTarget, mixed, activeSessionPaths 
   const targetId = target.id
   const targetName = targetDisplayName(target)
   const targetState = useTargets((s) => s.states[targetId]?.state ?? 'idle')
-  const { projects, loading, error: projectError } = useProjects((s) => projectListOf(s, targetId))
+  const { projects: allProjects, loading, error: projectError } = useProjects((s) => projectListOf(s, targetId))
+  // 隐藏的项目不进侧栏，排序与拖放都按可见项目计算。
+  const projects = useMemo(() => allProjects.filter((project) => !project.hidden), [allProjects])
+  const hiddenCount = allProjects.length - projects.length
   const selectedId = useProjects((s) => (s.targetId === targetId ? s.selectedId : null))
   const load = useProjects((s) => s.load)
   const select = useProjects((s) => s.select)
@@ -117,7 +120,7 @@ export function ProjectTree({ target, onSelectTarget, mixed, activeSessionPaths 
         </div>
       )}
 
-      {!loading && projects.length === 0 && !projectError && (
+      {!loading && allProjects.length === 0 && !projectError && (
         <button
           type="button"
           className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[length:var(--qn-project-detail-font-size)] leading-tight text-qn-muted hover:bg-qn-hover hover:text-qn-text"
@@ -125,6 +128,12 @@ export function ProjectTree({ target, onSelectTarget, mixed, activeSessionPaths 
         >
           <FolderPlus size={14} /> {mixed ? t('在 {name} 添加项目', { name: targetName }) : t('添加项目')}
         </button>
+      )}
+
+      {!loading && allProjects.length > 0 && projects.length === 0 && (
+        <p className="px-2 py-1 text-[length:var(--qn-project-detail-font-size)] leading-tight text-qn-muted">
+          {mixed ? t('{name} 的 {count} 个项目均已隐藏', { name: targetName, count: hiddenCount }) : t('{count} 个项目均已隐藏', { count: hiddenCount })}
+        </p>
       )}
 
       {orderedProjects.map((project, index) => {
@@ -244,6 +253,7 @@ function ProjectRow({
   const rename = useProjects((s) => s.rename)
   const setTrusted = useProjects((s) => s.setTrusted)
   const remove = useProjects((s) => s.remove)
+  const setHidden = useProjects((s) => s.setHidden)
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(project.name)
@@ -362,6 +372,9 @@ function ProjectRow({
               {project.trusted ? t('取消信任') : t('信任项目')}
             </MenuItem>
             <MenuSeparator />
+            <MenuItem icon={<EyeOff size={14} />} title={t('可在项目管理中恢复显示')} onSelect={() => void setHidden(project, true)}>
+              {t('隐藏项目')}
+            </MenuItem>
             <MenuItem icon={<X size={14} />} title={t('不删除磁盘文件')} onSelect={() => void remove(project.id)}>
               {t('移除项目')}
             </MenuItem>

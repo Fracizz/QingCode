@@ -21,20 +21,33 @@ export type AgentCapabilities = {
   compact: boolean
   steer: boolean
   skills: boolean
+  /** 列出并停止轮次外仍在运行的后台任务。 */
+  backgroundTasks: boolean
+  /** 读取运行中会话的原生斜杠命令。 */
+  commandList: boolean
+  /** 把文件回到某一轮开始前。 */
+  rewindFiles: boolean
+  /** 只规划不执行的访问模式。 */
+  planMode: boolean
+  /** 历史轮次带计划清单，打开会话时可到更早的页里补读最新一份。 */
+  historyPlan: boolean
 }
 
 export const AGENT_CAPABILITIES: Readonly<Record<AgentKind, Readonly<AgentCapabilities>>> = {
   codex: {
     approvals: true, rateLimits: true, accessModes: true, agentConfigDir: true, ephemeralNoTools: false,
     rename: true, delete: true, fork: true, archive: true, revert: true, compact: true, steer: true, skills: true,
+    backgroundTasks: false, commandList: false, rewindFiles: false, planMode: false, historyPlan: false,
   },
   claude: {
     approvals: true, rateLimits: true, accessModes: true, agentConfigDir: true, ephemeralNoTools: false,
     rename: true, delete: true, fork: true, archive: true, revert: false, compact: true, steer: true, skills: true,
+    backgroundTasks: true, commandList: true, rewindFiles: true, planMode: true, historyPlan: true,
   },
   pi: {
     approvals: false, rateLimits: false, accessModes: false, agentConfigDir: false, ephemeralNoTools: true,
     rename: true, delete: false, fork: true, archive: true, revert: false, compact: true, steer: true, skills: true,
+    backgroundTasks: false, commandList: true, rewindFiles: false, planMode: false, historyPlan: false,
   },
 }
 

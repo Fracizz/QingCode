@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Archive, Bell, List, ListTree, Settings, Smartphone, SquarePen, Upload } from 'lucide-react'
+import { Archive, Bell, FolderCog, List, ListTree, Settings, Smartphone, SquarePen, Upload } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { t } from '@qn/codex-client'
 import type { Project } from '../../../../shared/backendApi'
@@ -16,6 +16,7 @@ import { ResizeHandle } from '../ResizeHandle'
 import { targetDisplayName } from '../targetName'
 import { ErrorNote, IconButton } from '../ui'
 import { ArchivedThreadsDialog } from './ArchivedThreadsDialog'
+import { ProjectManagerDialog } from './ProjectManagerDialog'
 import { ProjectTree } from './ProjectTree'
 import { ForceUpdateDialog, TargetConnectError, TargetPicker, TargetSectionHeader, type TargetActions } from './TargetSwitcher'
 
@@ -125,6 +126,7 @@ export function Sidebar({
   const isDraft = useCodex((s) => s.currentThreadId === null)
   const [version, setVersion] = useState('')
   const [archiveOpen, setArchiveOpen] = useState(false)
+  const [managerOpen, setManagerOpen] = useState(false)
 
   useEffect(() => {
     void window.qn?.version().then(setVersion).catch(() => undefined)
@@ -179,6 +181,9 @@ export function Sidebar({
             onClick={toggleLayout}
           >
             {layout === 'grouped' ? <ListTree size={15} aria-hidden /> : <List size={15} aria-hidden />}
+          </IconButton>
+          <IconButton label={t('项目管理')} className="h-7 w-7" onClick={() => setManagerOpen(true)}>
+            <FolderCog size={15} aria-hidden />
           </IconButton>
           <TargetPicker {...targetActions} />
         </div>
@@ -243,6 +248,7 @@ export function Sidebar({
       {archiveOpen && selectedId && (
         <ArchivedThreadsDialog key={selectedId} targetId={selectedId} onClose={() => setArchiveOpen(false)} />
       )}
+      {managerOpen && <ProjectManagerDialog onClose={() => setManagerOpen(false)} />}
       <ForceUpdateDialog />
 
       <div className="px-2 pb-1">

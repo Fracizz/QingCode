@@ -2,11 +2,11 @@ import { t } from '@qn/codex-client'
 import { create } from 'zustand'
 import {
   applyRateLimitsUpdate,
+  createResetCreditRedeemer,
   pickAccount,
   pickClaudeSnapshot,
+  pickResetCredits,
   pickSnapshot,
-  type AccountSummary,
-  type ClaudeRateLimitSnapshot,
 } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { on } from '../lib/backend'
@@ -14,18 +14,11 @@ import { sessionsOf, sessionScope, type RpcLike } from '../lib/codexSessions'
 import { friendlyError } from '../lib/errors'
 import { notificationKind } from '../lib/rateLimitView'
 import { costFromNotification } from '../lib/claudeUsage'
+import type { RateLimitEntry } from '../lib/rateLimitsEntry'
 import { DEFAULT_AGENT, exitedAgentOf, parseSessionKey, sessionKey } from '../lib/agents'
 import { useCodex } from './codex'
 
-export type TargetRateLimits = {
-  snapshot: ClaudeRateLimitSnapshot | null
-  account: AccountSummary | null
-  updatedAt: number | null
-  loading: boolean
-  error: string | null
-  /** Claude 桥的估算费用按会话累计，仅用于展示。 */
-  costByThread: Record<string, number>
-}
+export type TargetRateLimits = RateLimitEntry
 
 type RateLimitsState = {
   /** T13 的目标列表行内提示继续读取这里（Codex）。 */
@@ -36,6 +29,8 @@ type RateLimitsState = {
   init: () => () => void
   setActiveTarget: (targetId: string | null) => void
   refresh: (targetId: string, agent?: AgentKind) => Promise<void>
+  /** 兑换一张 Codex 重置卡，只能在用户确认后调用；creditId 为 null 时由 Codex 选卡。 */
+  consumeResetCredit: (targetId: string, creditId: string | null) => Promise<void>
   handleNotification: (targetId: string, agent: AgentKind, msg: unknown) => void
   reset: (targetId: string, agent?: AgentKind) => void
 }
@@ -58,6 +53,7 @@ let subscribed = false
 
 export const useRateLimits = create<RateLimitsState>((set, get) => {
   const inFlight = new Map<string, Promise<void>>()
+  const redeemResetCredit = createResetCreditRedeemer(() => globalThis.crypto.randomUUID())
 
   const patch = (
     targetId: string,
@@ -125,6 +121,7 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
         const changes: Partial<TargetRateLimits> = { loading: false, error }
         if (snapshot) changes.snapshot = snapshot
         if (accountInfo) changes.account = accountInfo
+        if (limits.status === 'fulfilled') changes.resetCredits = pickResetCredits(limits.value)
         if (snapshot || accountInfo) changes.updatedAt = Date.now()
         patch(targetId, agent, changes)
       } catch (err) {
@@ -137,6 +134,19 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
     })
     inFlight.set(key, task)
     return task
+  }
+
+  const consumeResetCredit = async (targetId: string, creditId: string | null): Promise<void> => {
+    const key = sessionKey(targetId, 'codex')
+    const session = useCodex.getState().sessions[key]
+    if (!session?.opened || get().byAgent[key]?.resetting) return
+    patch(targetId, 'codex', { resetting: true, resetNotice: null })
+    const resetNotice = await redeemResetCredit(session.rpc, targetId, creditId)
+    patch(targetId, 'codex', { resetNotice })
+    // 兑换前发起的读取结果已过时，等它结束后再读一次；读完才恢复按钮。
+    await inFlight.get(key)
+    await refresh(targetId, 'codex')
+    patch(targetId, 'codex', { resetting: false })
   }
 
   return {
@@ -241,6 +251,7 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
     },
 
     refresh,
+    consumeResetCredit,
 
     handleNotification: (targetId, agent, msg) => {
       if (agent === 'pi') return

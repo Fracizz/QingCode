@@ -5,6 +5,7 @@ function text(value: unknown): string {
 }
 
 function taskStatus(value: unknown) {
+  if (value === 'killed') return 'stopped'
   return value === 'completed' || value === 'failed' || value === 'stopped' ? value : undefined
 }
 
@@ -32,25 +33,31 @@ export function userTaskNotification(message: Json) {
   if (!body.startsWith(open) || !body.endsWith(close)) return undefined
   const fields = new Map<string, string>()
   let remaining = body.slice(open.length, -close.length).trim()
+  // 子代理通知末尾附带用量统计，界面不展示。
+  const usage = remaining.endsWith('</usage>') ? remaining.lastIndexOf('<usage>') : -1
+  if (usage >= 0) remaining = remaining.slice(0, usage).trimEnd()
   while (remaining) {
-    const tag = /^<(task-id|tool-use-id|output-file|status|summary|note|result)>/.exec(remaining)?.[1]
+    const tag = /^<(task-id|tool-use-id|output-file|status|summary|note|result|event)>/.exec(remaining)?.[1]
     if (!tag || fields.has(tag)) return undefined
     const endTag = `</${tag}>`
     // 正文是任意 Markdown，可以引用标签。结束位置取最外层的闭合标签。
-    const end = tag === 'result' ? remaining.lastIndexOf(endTag) : remaining.indexOf(endTag)
+    const freeform = tag === 'result' || tag === 'event'
+    const end = freeform ? remaining.lastIndexOf(endTag) : remaining.indexOf(endTag)
     if (end < 0) return undefined
     const raw = remaining.slice(tag.length + 2, end)
-    const value = tag === 'result' && raw.trim() ? raw : raw.trim()
-    if (tag !== 'result' && (value.includes(open) || value.includes(close))) return undefined
+    const value = freeform && raw.trim() ? raw : raw.trim()
+    if (!freeform && (value.includes(open) || value.includes(close))) return undefined
     fields.set(tag, value)
     remaining = remaining.slice(end + endTag.length).trimStart()
-    if (tag === 'result' && remaining) return undefined
+    if (freeform && remaining) return undefined
   }
   const taskId = fields.get('task-id')
-  const status = taskStatus(fields.get('status'))
+  const event = fields.get('event')
+  // 监视任务推送的事件没有结束状态。
+  const status = fields.has('status') ? taskStatus(fields.get('status')) : event === undefined ? undefined : 'event' as const
   const summary = fields.get('summary')
   if (!taskId || !status || !summary) return undefined
-  return { taskId, status, summary, result: fields.get('result') ?? '', runId: text(origin?.runId) }
+  return { taskId, status, summary, result: fields.get('result') ?? event ?? '', runId: text(origin?.runId) }
 }
 
 export type TaskNotification = NonNullable<ReturnType<typeof userTaskNotification>>

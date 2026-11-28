@@ -34,6 +34,7 @@ import { useCodex } from '../store/codex'
 import { RATE_LIMIT_REFRESH_MINUTES, useRateLimits } from '../store/rateLimits'
 import { RefreshIcon } from './LoadingIcon'
 import { ProgressRing } from './ProgressRing'
+import { ResetCredits } from './ResetCredits'
 import { PopoverContent, PopoverRoot, PopoverTrigger } from './primitives'
 
 function percentClass(percent: number): string {
@@ -98,7 +99,7 @@ function Body({
   const refresh = useRateLimits((s) => s.refresh)
 
   return (
-    <div className="w-80 p-3 text-ui">
+    <div className="qn-scroll max-h-[min(560px,calc(100vh-80px))] w-80 overflow-y-auto p-3 text-ui">
       <div className="mb-2 flex items-center justify-between">
         <span className="font-semibold">{`${agentLabel(agent)} ${t('额度')}`}</span>
         <div className="flex items-center gap-1">
@@ -194,6 +195,7 @@ function Body({
                 : t('已达额度上限')}
             </div>
           )}
+          <ResetCredits targetId={targetId} entry={entry} opened={opened} now={now} />
         </>
       )}
       {entry?.error && <div className="mt-2 text-ui-sm text-qn-danger">{translateMessage(entry.error)}</div>}

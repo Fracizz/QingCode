@@ -1,4 +1,6 @@
-import { AGENT_CAPABILITIES, accessOptions, resolveAccessMode, type AccessSelection, t, translateMessage } from '@qn/codex-client'
+import {
+  AGENT_CAPABILITIES, isSlashDraft, resolveAccessMode, sessionAccessOptions, type SessionAccessSelection, t, translateMessage,
+} from '@qn/codex-client'
 import { GitBranch, ListOrdered, MessageSquarePlus, MoreHorizontal, Pencil, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { UNCONFIRMED_QUEUED_SEND } from '../queuedSends'
@@ -93,11 +95,11 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
   const continuing = destination?.mode === 'continue'
   const destinationTitle = continuing ? t('新对话继续') : t('新会话开始')
   const destinationError = moveError ?? (movingMessage?.error === UNCONFIRMED_QUEUED_SEND ? movingMessage.error : null)
-  const accessOption = (selection?: AccessSelection) => {
+  const accessOption = (selection?: SessionAccessSelection) => {
     const mode = resolveAccessMode(agent, globalAccessMode, selection)
-    return mode !== 'default' ? accessOptions[agent].find((option) => option.mode === mode) : undefined
+    return mode !== 'default' ? sessionAccessOptions(agent).find((option) => option.mode === mode) : undefined
   }
-  const accessLabel = (selection?: AccessSelection) => accessOption(selection)?.label
+  const accessLabel = (selection?: SessionAccessSelection) => accessOption(selection)?.label
   const actionMessage = queue.find((item) => item.id === actionsFor)
   const startEdit = (id: string, text: string) => {
     if (unlock.current) return
@@ -136,7 +138,8 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
                 <p className="min-w-0 flex-1 truncate">{message.text.trim() || t('附件或引用')}</p>
                 {message.sending || message.saving ? <Badge>{message.saving ? t('保存中') : t('发送中')}</Badge> : (
                   <div className="flex shrink-0 items-center gap-0.5">
-                    {running && canSteer && (
+                    {running && canSteer && !isSlashDraft(agent, message.text,
+                      message.attachments.filter((item) => item.type === 'skill').length) && (
                       <Button variant="ghost" className="qn-queue-steer" disabled={!connected}
                         title={agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
                         onClick={() => void steer(message.id)}>{t('引导')}</Button>
@@ -195,7 +198,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
             </p>
           ) : <Note message={t('这条消息已离开队列。')} />}
           {movingMessage && accessLabel(accessPreference ?? movingMessage.accessMode) !== accessLabel('inherit') && (
-            <Note message={t('新会话将继承权限总控。')} tone="warn" />
+            <Note message={accessPreference === 'plan' ? t('新会话沿用计划模式。') : t('新会话将继承权限总控。')} tone="warn" />
           )}
           {destinationError && <Note message={destinationError} tone="error" />}
           {!connected && <Note message={t('连接电脑后可发送。')} tone="warn" />}

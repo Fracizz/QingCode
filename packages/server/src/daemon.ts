@@ -308,7 +308,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   }
 
   const hasActiveWork = (): boolean =>
-    allHosts.some((host) => host.activeTurns > 0) || terminalManager().activeCount > 0
+    allHosts.some((host) => host.activeTurns > 0 || !!host.backgroundTasks) || terminalManager().activeCount > 0
 
   const scheduleShutdown = (reason: string, whenIdle = false): void => {
     // 先让 shutdown 的 res 帧送达调用方（ensure --replace 会等这个响应）。

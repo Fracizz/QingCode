@@ -15,9 +15,12 @@ import {
   recentUsageDays,
   sumUsageTokens,
   windowLabel,
+  resetCreditExpiry,
+  unlistedResetCredits,
   type AccountUsage,
   type ClaudeRateLimitSnapshot,
   type RateLimitWindow,
+  type ResetCredit,
   getLocale,
   t,
   translateMessage,
@@ -244,6 +247,7 @@ export function RateLimitDetails({ targetId, available, showUsage }: { targetId:
         <p className="mb-2 text-xs text-qn-danger">{snapshot.rateLimitReachedType
           ? t('已达额度上限（{type}）', { type: snapshot.rateLimitReachedType }) : t('已达额度上限')}</p>
       )}
+      <ResetCreditsSummary targetId={targetId} available={available} now={now} />
       {showUsage && <AccountUsageSummary targetId={targetId} available={available} />}
       <div className="mt-2 border-t border-qn-border pt-2 text-[11px] text-qn-muted">
         {account ? (
@@ -260,6 +264,73 @@ export function RateLimitDetails({ targetId, available, showUsage }: { targetId:
         })}</div>
       </div>
     </div>
+  )
+}
+
+/** Codex 额度重置卡：查看与使用。使用必须经确认框，不做任何自动兑换。 */
+function ResetCreditsSummary({ targetId, available, now }: { targetId: string; available: boolean; now: number }) {
+  const entry = useApp((s) => s.rateLimits[targetId])
+  const ready = useApp((s) => s.eventsConnected && s.sessions[sessionKey(targetId, 'codex')]?.opened === true)
+  const consume = useApp((s) => s.consumeResetCredit)
+  // credit 为 null 表示后端没给明细，由 Codex 选卡。
+  const [confirm, setConfirm] = useState<{ targetId: string; credit: ResetCredit | null } | null>(null)
+  const summary = entry?.resetCredits
+  const notice = entry?.resetNotice
+  const busy = entry?.resetting === true
+  if (!summary && !notice) return null
+  const unlisted = summary ? unlistedResetCredits(summary) : 0
+  const pending = confirm?.targetId === targetId ? confirm : null
+  const disabled = !available || !ready || busy
+
+  const redeemButton = (credit: ResetCredit | null, label: string) => (
+    <Button className="shrink-0 px-3 py-1 text-xs" disabled={disabled || credit?.redeeming === true}
+      onClick={() => setConfirm({ targetId, credit })}>
+      {busy || credit?.redeeming ? t('使用中…') : label}
+    </Button>
+  )
+
+  return (
+    <section className="mt-3 border-t border-qn-border pt-2" aria-label={t('重置卡')}>
+      <div className="flex items-center justify-between text-xs">
+        <span>{t('重置卡')}</span>
+        {summary && <span className="text-qn-muted">{t('可用 {count} 张', { count: summary.availableCount })}</span>}
+      </div>
+      {summary?.credits.map((credit) => (
+        <div key={credit.id} className="mt-2 flex items-center justify-between gap-2">
+          <div className="min-w-0 text-xs">
+            <div className="break-words">{credit.title ?? t('额度重置卡')}</div>
+            {credit.description && <div className="break-words text-qn-muted">{credit.description}</div>}
+            <div className="text-qn-muted">{resetCreditExpiry(credit.expiresAt, now)}</div>
+          </div>
+          {redeemButton(credit, t('使用'))}
+        </div>
+      ))}
+      {summary && unlisted > 0 && (summary.credits.length === 0
+        ? <div className="mt-2 flex justify-end">{redeemButton(null, t('使用一张'))}</div>
+        : <p className="mt-2 text-xs text-qn-muted">{t('另有 {count} 张未列出明细', { count: unlisted })}</p>)}
+      {notice && <p role="status" className={`mt-2 text-xs ${notice.tone === 'ok' ? 'text-qn-ok' : toneText(notice.tone)}`}>{notice.text}</p>}
+      {pending && (
+        <Dialog title={t('使用重置卡？')} onClose={() => setConfirm(null)}>
+          <p className="text-sm">{t('将消耗 1 张重置卡来重置当前账号的 Codex 额度，使用后无法撤销。')}</p>
+          <div className="mt-2 text-xs text-qn-muted">
+            {pending.credit
+              ? <>
+                <div>{pending.credit.title ?? t('额度重置卡')}</div>
+                <div>{resetCreditExpiry(pending.credit.expiresAt, now)}</div>
+              </>
+              : <div>{t('由 Codex 选择下一张可用的卡。')}</div>}
+            {entry?.account?.email && <div className="break-all">{t('账号：{value}', { value: entry.account.email })}</div>}
+          </div>
+          <Button variant="primary" className="mt-3 w-full" disabled={disabled}
+            onClick={() => {
+              setConfirm(null)
+              void consume(targetId, pending.credit?.id ?? null)
+            }}>
+            {t('确认使用')}
+          </Button>
+        </Dialog>
+      )}
+    </section>
   )
 }
 

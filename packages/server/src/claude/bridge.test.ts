@@ -64,6 +64,7 @@ function harness(options: {
   forkSession?: ClaudeDeps['forkSession']
   sessionReader?: ClaudeBridgeOptions['sessionReader']
   stateDir?: string
+  idleTimeoutMs?: number
 } = {}): Harness {
   const sent: Harness['sent'] = []
   const recv: Harness['recv'] = []
@@ -104,7 +105,7 @@ function harness(options: {
       }
       return { path: 'C:/fake/claude.exe', version: '2.1.331' }
     },
-    idleTimeoutMs: 60_000,
+    idleTimeoutMs: options.idleTimeoutMs ?? 60_000,
   })
   return { bridge, sent, recv, events, queries }
 }
@@ -539,6 +540,7 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
     const query = h.queries[0]
     expect(query).toBeDefined()
     expect(query?.options?.includePartialMessages).toBe(true)
+    expect(query?.options?.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' })
     expect(query?.options?.permissionMode).toBe('default')
     expect(query?.options?.pathToClaudeCodeExecutable).toBe('C:/fake/claude.exe')
     expect(query?.options?.sessionId).toBe(threadId)
@@ -988,4 +990,549 @@ it('临时 Claude 查询在收起后可追问，显式结束才释放', async ()
   expect(query.closed).toBe(true)
   expect(note(h, 'thread/closed').params).toEqual({ threadId })
   h.bridge.shutdown()
+})
+
+/** 开一轮对话，返回轮次 id、假 query 和读取通知的辅助函数。 */
+async function startedTurn(h: Harness) {
+  const threadId = 'old-1'
+  const first = '00000000-0000-4000-8000-000000000001'
+  await h.bridge.open({})
+  request(h, 'first', 'turn/start', { threadId, input: [{ type: 'text', text: '开始' }], clientUserMessageId: first })
+  const turnId = ((await response(h, 'first')).result as { turn: { id: string } }).turn.id
+  const notes = (method: string) => h.recv.filter(({ msg }) => msg.method === method).map(({ msg }) => msg.params as Json)
+  return { threadId, first, turnId, query: h.queries[0]!, notes }
+}
+
+const messageStart = (extra: Json = {}) => ({
+  type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'auto-msg' } }, ...extra,
+})
+
+const taskLevel = (...tasks: Json[]) => ({ type: 'system', subtype: 'background_tasks_changed', tasks })
+
+describe('Claude 后台任务与自行续跑', () => {
+  it('后台任务运行期间不做空闲关闭，任务清空后重新计时', async () => {
+    const h = harness({ idleTimeoutMs: 30 })
+    try {
+      const { query } = await startedTurn(h)
+      query.emit(taskLevel({ task_id: 'build' }))
+      query.emit({ type: 'result', subtype: 'success' })
+      await sleep(120)
+      expect(query.closed).toBe(false)
+      expect(h.bridge.backgroundTasks).toBe(1)
+      query.emit(taskLevel())
+      await until(() => query.closed)
+      expect(h.bridge.backgroundTasks).toBe(0)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('仅有 ambient 监听任务时照常空闲关闭', async () => {
+    const h = harness({ idleTimeoutMs: 30 })
+    try {
+      const { query } = await startedTurn(h)
+      query.emit(taskLevel({ task_id: 'watch', ambient: true }))
+      query.emit({ type: 'result', subtype: 'success' })
+      await until(() => query.closed)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('query 结束后清空后台任务计数', async () => {
+    const h = harness()
+    try {
+      const { query } = await startedTurn(h)
+      query.emit(taskLevel({ task_id: 'build' }))
+      await until(() => h.bridge.backgroundTasks === 1)
+      query.messages.close()
+      await until(() => h.bridge.activeTurns === 0)
+      expect(h.bridge.backgroundTasks).toBe(0)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('轮次外的主代理输出建立新轮次，子代理输出不建', async () => {
+    const h = harness()
+    try {
+      const { threadId, turnId, query, notes } = await startedTurn(h)
+      query.emit({ type: 'result', subtype: 'success' })
+      await until(() => h.bridge.activeTurns === 0)
+
+      query.emit(messageStart({ parent_tool_use_id: 'agent-tool' }))
+      query.emit({ type: 'assistant', parent_tool_use_id: 'agent-tool', message: { id: 'child', content: [] } })
+      await sleep(30)
+      expect(notes('turn/started')).toHaveLength(1)
+
+      query.emit(messageStart())
+      query.emit({ type: 'assistant', message: { id: 'auto-msg', content: [{ type: 'text', text: '任务完成了' }] } })
+      await until(() => notes('turn/started').length === 2)
+      const autoId = (notes('turn/started')[1]!.turn as Json).id
+      expect(autoId).not.toBe(turnId)
+      expect(h.bridge.activeTurns).toBe(1)
+      await until(() => notes('item/completed').some((params) => params.turnId === autoId))
+
+      request(h, 'stop', 'turn/interrupt', { threadId })
+      await response(h, 'stop')
+      expect(query.interrupted).toBe(1)
+      query.emit({ type: 'result', subtype: 'error_during_execution' })
+      await until(() => h.bridge.activeTurns === 0)
+      expect(notes('turn/completed')[1]).toMatchObject({ turn: { id: autoId, status: 'interrupted' } })
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('发送准备期间 Claude 自行开始一轮时，输入并入该轮', async () => {
+    const h = harness()
+    try {
+      const { threadId, query, notes } = await startedTurn(h)
+      query.emit({ type: 'result', subtype: 'success' })
+      await until(() => h.bridge.activeTurns === 0)
+      query.setPermissionMode = async () => {
+        query.emit(messageStart())
+        await until(() => notes('turn/started').length === 2)
+      }
+      request(h, 'race', 'turn/start', {
+        threadId, input: [{ type: 'text', text: '追加' }], claudePermissionMode: 'acceptEdits',
+      })
+      const raced = (await response(h, 'race')).result as { turn: Json }
+      expect(notes('turn/started')).toHaveLength(2)
+      expect(raced.turn.id).toBe((notes('turn/started')[1]!.turn as Json).id)
+      expect(h.bridge.activeTurns).toBe(1)
+      query.emit({ type: 'result', subtype: 'success' })
+      await until(() => h.bridge.activeTurns === 0)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('发送准备失败不影响期间自行开始的轮次', async () => {
+    const h = harness()
+    try {
+      const { threadId, query, notes } = await startedTurn(h)
+      query.emit({ type: 'result', subtype: 'success' })
+      await until(() => h.bridge.activeTurns === 0)
+      query.setPermissionMode = async () => {
+        query.emit(messageStart())
+        await until(() => notes('turn/started').length === 2)
+        throw new Error('切换失败')
+      }
+      request(h, 'race', 'turn/start', {
+        threadId, input: [{ type: 'text', text: '追加' }], claudePermissionMode: 'acceptEdits',
+      })
+      expect(await response(h, 'race')).toHaveProperty('error')
+      query.emit({ type: 'result', subtype: 'success' })
+      await until(() => h.bridge.activeTurns === 0)
+      expect(notes('turn/completed')).toHaveLength(2)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('引导自行续跑的轮次时，归属记为当前轮且不算开启轮次', async () => {
+    const h = harness()
+    const steer = '00000000-0000-4000-8000-000000000002'
+    try {
+      const { threadId, query, notes } = await startedTurn(h)
+      query.emit({ type: 'result', subtype: 'success' })
+      query.emit(messageStart())
+      await until(() => notes('turn/started').length === 2)
+      const autoId = (notes('turn/started')[1]!.turn as Json).id as string
+      request(h, 'steer', 'turn/steer', {
+        threadId, expectedTurnId: autoId, input: [{ type: 'text', text: '补充' }], clientUserMessageId: steer,
+      })
+      await response(h, 'steer')
+      query.emit(messageStart({ user_message_uuid: steer }))
+      await until(() => notes('item/completed').some((params) => (params.item as Json).id === steer))
+      expect(notes('item/completed').find((params) => (params.item as Json).id === steer))
+        .toMatchObject({ turnId: autoId, item: { steering: 'currentTurn' } })
+      expect(notes('turn/started')).toHaveLength(2)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+})
+
+describe('Claude 停止时的待处理引导', () => {
+  const steer = '00000000-0000-4000-8000-000000000002'
+  const later = '00000000-0000-4000-8000-000000000003'
+
+  async function steeredThenStopped(h: Harness) {
+    const turn = await startedTurn(h)
+    request(h, 'steer', 'turn/steer', {
+      threadId: turn.threadId, expectedTurnId: turn.turnId,
+      input: [{ type: 'text', text: '补充' }], clientUserMessageId: steer,
+    })
+    await response(h, 'steer')
+    request(h, 'stop', 'turn/interrupt', { threadId: turn.threadId })
+    await response(h, 'stop')
+    return turn
+  }
+
+  it.each([1, 0])('停止后才被取用的引导会再次中断（queued_turn_count=%i）', async (queued) => {
+    const h = harness()
+    try {
+      const { first, query, notes } = await steeredThenStopped(h)
+      query.emit({ type: 'result', subtype: 'error_during_execution', user_message_uuids: [first], queued_turn_count: queued })
+      query.emit(messageStart({ user_message_uuid: steer }))
+      await until(() => query.interrupted === 2)
+      query.emit({ type: 'assistant', user_message_uuid: steer, message: { id: 'auto-msg', content: [] } })
+      query.emit({ type: 'result', subtype: 'error_during_execution', user_message_uuid: steer, queued_turn_count: 0 })
+      await until(() => notes('turn/completed').length === 2)
+      expect(query.interrupted).toBe(2)
+      expect(notes('turn/completed')[1]).toMatchObject({ turn: { status: 'interrupted' } })
+      expect(h.bridge.activeTurns).toBe(0)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('已并入被停止轮次的引导不重复中断', async () => {
+    const h = harness()
+    try {
+      const { first, query } = await steeredThenStopped(h)
+      query.emit(messageStart({ user_message_uuids: [first, steer] }))
+      query.emit({ type: 'result', subtype: 'error_during_execution', user_message_uuids: [first, steer], queued_turn_count: 0 })
+      await until(() => h.bridge.activeTurns === 0)
+      expect(query.interrupted).toBe(1)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('停止后的新消息与旧引导合并成一轮时不中断', async () => {
+    const h = harness()
+    try {
+      const { threadId, first, query, notes } = await steeredThenStopped(h)
+      query.emit({ type: 'result', subtype: 'error_during_execution', user_message_uuids: [first], queued_turn_count: 1 })
+      await until(() => notes('turn/started').length === 2)
+      request(h, 'later', 'turn/start', { threadId, input: [{ type: 'text', text: '新问题' }], clientUserMessageId: later })
+      await response(h, 'later')
+      query.emit(messageStart({ user_message_uuids: [steer, later], user_message_uuid: later }))
+      query.emit({ type: 'result', subtype: 'success', user_message_uuids: [steer, later], queued_turn_count: 0 })
+      await until(() => h.bridge.activeTurns === 0)
+      expect(query.interrupted).toBe(1)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+})
+
+describe('Claude 停止时撤回排队消息', () => {
+  const steer = '00000000-0000-4000-8000-000000000002'
+
+  async function steered(h: Harness, cancel: (uuid: string) => Promise<boolean>) {
+    const turn = await startedTurn(h)
+    const order: string[] = []
+    Object.assign(turn.query, {
+      cancelAsyncMessage: async (uuid: string) => {
+        order.push(`cancel:${uuid}`)
+        return cancel(uuid)
+      },
+    })
+    turn.query.interrupt = async () => {
+      turn.query.interrupted += 1
+      order.push('interrupt')
+    }
+    request(h, 'steer', 'turn/steer', {
+      threadId: turn.threadId, expectedTurnId: turn.turnId,
+      input: [{ type: 'text', text: '补充' }], clientUserMessageId: steer,
+    })
+    await response(h, 'steer')
+    return { ...turn, order }
+  }
+
+  it('先撤回再中断，撤回成功后不再二次中断', async () => {
+    const h = harness()
+    try {
+      const { threadId, first, query, notes, order } = await steered(h, async () => true)
+      request(h, 'stop', 'turn/interrupt', { threadId })
+      expect((await response(h, 'stop')).result).toEqual({})
+      expect(order).toEqual([`cancel:${steer}`, 'interrupt'])
+      query.emit({ type: 'result', subtype: 'error_during_execution', user_message_uuids: [first], queued_turn_count: 0 })
+      await until(() => h.bridge.activeTurns === 0)
+      expect(notes('turn/started')).toHaveLength(1)
+      expect(notes('item/completed').some((params) => (params.item as Json).id === steer)).toBe(false)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it.each([
+    ['返回 false', async () => false],
+    ['抛错', async (): Promise<boolean> => { throw new Error('控制请求失败') }],
+  ])('撤回%s时沿用二次中断', async (_name, cancel) => {
+    const h = harness()
+    try {
+      const { threadId, first, query } = await steered(h, cancel)
+      request(h, 'stop', 'turn/interrupt', { threadId })
+      await response(h, 'stop')
+      query.emit({ type: 'result', subtype: 'error_during_execution', user_message_uuids: [first], queued_turn_count: 1 })
+      query.emit(messageStart({ user_message_uuid: steer }))
+      await until(() => query.interrupted === 2)
+      query.emit({ type: 'result', subtype: 'error_during_execution', user_message_uuid: steer, queued_turn_count: 0 })
+      await until(() => h.bridge.activeTurns === 0)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('撤回轮次中追加的消息，但不撤回开启本轮的消息', async () => {
+    const h = harness()
+    const appended = '00000000-0000-4000-8000-000000000004'
+    try {
+      const { threadId, query, order } = await steered(h, async () => true)
+      request(h, 'append', 'turn/start', { threadId, input: [{ type: 'text', text: '追加' }], clientUserMessageId: appended })
+      await response(h, 'append')
+      request(h, 'stop', 'turn/interrupt', { threadId })
+      await response(h, 'stop')
+      expect(order).toEqual([`cancel:${steer}`, `cancel:${appended}`, 'interrupt'])
+      expect(query.interrupted).toBe(1)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('为排队引导预开的轮次在撤回后直接结束', async () => {
+    const h = harness()
+    try {
+      const { threadId, first, query, notes } = await steered(h, async () => true)
+      query.emit({ type: 'result', subtype: 'success', user_message_uuids: [first], queued_turn_count: 1 })
+      await until(() => notes('turn/started').length === 2)
+      request(h, 'stop', 'turn/interrupt', { threadId })
+      await response(h, 'stop')
+      expect(h.bridge.activeTurns).toBe(0)
+      expect(notes('turn/completed')[1]).toMatchObject({ turn: { status: 'interrupted' } })
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+})
+
+describe('Claude 会话空闲状态', () => {
+  const idle = { type: 'system', subtype: 'session_state_changed', state: 'idle' }
+
+  it('只收尾自行开始的轮次', async () => {
+    const h = harness()
+    try {
+      const { query, notes } = await startedTurn(h)
+      expect(query.options?.env?.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS).toBe('1')
+      query.emit(idle)
+      await sleep(30)
+      expect(h.bridge.activeTurns).toBe(1)
+      query.emit({ type: 'result', subtype: 'success' })
+      query.emit(messageStart())
+      query.emit({ type: 'assistant', message: { id: 'auto-msg', content: [{ type: 'tool_use', id: 't', name: 'Bash', input: {} }] } })
+      query.emit({ ...idle, state: 'running' })
+      await until(() => notes('item/started').length === 1)
+      expect(h.bridge.activeTurns).toBe(1)
+      query.emit(idle)
+      await until(() => h.bridge.activeTurns === 0)
+      expect(notes('turn/completed')[1]).toMatchObject({ turn: { status: 'completed', items: [{ status: 'completed' }] } })
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('自行开始的轮次并入用户输入后不再由空闲状态收尾', async () => {
+    const h = harness()
+    try {
+      const { threadId, query, notes } = await startedTurn(h)
+      query.emit({ type: 'result', subtype: 'success' })
+      query.emit(messageStart())
+      await until(() => notes('turn/started').length === 2)
+      request(h, 'append', 'turn/start', { threadId, input: [{ type: 'text', text: '追加' }] })
+      await response(h, 'append')
+      query.emit(idle)
+      await sleep(30)
+      expect(h.bridge.activeTurns).toBe(1)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+})
+
+describe('Claude 的 qingcode 方法', () => {
+  const call = async (h: Harness, id: string, method: string, params: Json) => {
+    request(h, id, method, params)
+    return (await response(h, id)) as { result?: unknown; error?: { code: number; message: string } }
+  }
+
+  it('推送并列出后台任务、按 ID 停止，进程结束后清空', async () => {
+    const h = harness()
+    try {
+      await h.bridge.open({})
+      expect((await call(h, 'empty', 'qingcode/backgroundTasks/list', { threadId: 'old-1' })).result).toEqual({ tasks: [] })
+      expect(h.queries).toHaveLength(0)
+      const { threadId, query, notes } = await startedTurn(h)
+      const stopped: string[] = []
+      Object.assign(query, { stopTask: async (id: string) => { stopped.push(id) } })
+      query.emit(taskLevel({ task_id: 'build', task_type: 'local_bash', description: '构建' }, { task_id: 'watch', ambient: true }))
+      await until(() => notes('qingcode/backgroundTasks/updated').length === 1)
+      const tasks = [{ id: 'build', type: 'local_bash', description: '构建' }]
+      expect(notes('qingcode/backgroundTasks/updated')[0]).toEqual({ threadId, tasks })
+      expect((await call(h, 'list', 'qingcode/backgroundTasks/list', { threadId })).result).toEqual({ tasks })
+      expect((await call(h, 'stop', 'qingcode/backgroundTasks/stop', { threadId, taskId: 'build' })).result).toEqual({})
+      expect(stopped).toEqual(['build'])
+      query.messages.close()
+      await until(() => notes('qingcode/backgroundTasks/updated').length === 2)
+      expect(notes('qingcode/backgroundTasks/updated')[1]).toEqual({ threadId, tasks: [] })
+      expect((await call(h, 'gone', 'qingcode/backgroundTasks/stop', { threadId, taskId: 'build' })).error?.code).toBe(-32602)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('命令列表只读运行中的会话进程', async () => {
+    const h = harness()
+    try {
+      await h.bridge.open({})
+      expect((await call(h, 'cold', 'qingcode/commands/list', { threadId: 'old-1' })).result).toEqual({ commands: [] })
+      expect(h.queries).toHaveLength(0)
+      const { threadId, query } = await startedTurn(h)
+      query.supportedCommands = async () => [
+        { name: '/compact', description: '压缩', argumentHint: '' },
+        { name: 'review', description: '审查', argumentHint: '<pr>' },
+      ]
+      expect((await call(h, 'warm', 'qingcode/commands/list', { threadId })).result).toEqual({ commands: [
+        { name: 'compact', description: '压缩' }, { name: 'review', description: '审查', argumentHint: '<pr>' },
+      ] })
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('文件回滚拒绝活动轮次，按轮次找到检查点', async () => {
+    const prompt = '00000000-0000-4000-8000-00000000000a'
+    const h = harness({ getSessionMessages: async () => [
+      { uuid: prompt, message: { role: 'user', content: '历史问题' } },
+    ] })
+    try {
+      const { threadId, turnId, first, query } = await startedTurn(h)
+      expect(query.options?.enableFileCheckpointing).toBe(true)
+      const calls: unknown[] = []
+      Object.assign(query, { rewindFiles: async (id: string, options: unknown) => {
+        calls.push([id, options])
+        return { canRewind: true, filesChanged: ['a.ts'], insertions: 2, deletions: 1 }
+      } })
+      const params = { threadId, turnId, dryRun: true }
+      expect((await call(h, 'busy', 'qingcode/files/rewind', params)).error?.message).toBe('请先停止当前轮次')
+      query.emit({ type: 'result', subtype: 'success' })
+      await until(() => h.bridge.activeTurns === 0)
+      expect((await call(h, 'unsure', 'qingcode/files/rewind', { threadId, turnId })).error?.code).toBe(-32602)
+      expect((await call(h, 'live', 'qingcode/files/rewind', params)).result)
+        .toEqual({ canRewind: true, filesChanged: ['a.ts'], insertions: 2, deletions: 1 })
+      await call(h, 'old', 'qingcode/files/rewind', { threadId, turnId: `turn-${threadId}-0`, dryRun: false })
+      expect(calls).toEqual([[first, { dryRun: true }], [prompt, { dryRun: false }]])
+      expect((await call(h, 'unknown', 'qingcode/files/rewind', { ...params, turnId: 'nope' })).error?.code).toBe(-32602)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('进程不在时恢复原会话回滚，不发送任何输入，期间拒绝新消息', async () => {
+    const h = harness({ getSessionMessages: async () => [
+      { uuid: 'prompt', message: { role: 'user', content: '历史问题' } },
+    ] })
+    let finish: (value: unknown) => void = () => undefined
+    const prototype = FakeQuery.prototype as FakeQuery & { rewindFiles?: () => Promise<unknown> }
+    prototype.rewindFiles = () => new Promise((resolve) => { finish = resolve })
+    try {
+      await h.bridge.open({})
+      request(h, 'rewind', 'qingcode/files/rewind', { threadId: 'old-1', turnId: 'turn-old-1-0', dryRun: false })
+      await until(() => h.queries.length === 1)
+      expect(h.queries[0]!.options).toMatchObject({ resume: 'old-1', enableFileCheckpointing: true })
+      expect((await call(h, 'send', 'turn/start', { threadId: 'old-1', input: [{ type: 'text', text: '新问题' }] })).error?.message)
+        .toBe('正在回滚文件，请稍后重试')
+      finish({ canRewind: true, skippedLinks: 2 })
+      expect((await response(h, 'rewind')).result).toEqual({
+        canRewind: true, filesChanged: [], insertions: 0, deletions: 0, error: '有 2 个链接类文件未恢复',
+      })
+      expect(Reflect.get(h.queries[0]!.prompt as object, 'values')).toEqual([])
+    } finally {
+      delete prototype.rewindFiles
+      h.bridge.shutdown()
+    }
+  })
+
+  it('持久会话声明逐任务停止，停止轮次只调用一次中断', async () => {
+    const h = harness()
+    try {
+      const { threadId, query } = await startedTurn(h)
+      expect(query.options?.perTaskStopAffordance).toBe(true)
+      expect((await call(h, 'interrupt', 'turn/interrupt', { threadId })).result).toEqual({})
+      expect(query.interrupted).toBe(1)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('临时会话不建检查点，也不能回滚', async () => {
+    const h = harness()
+    try {
+      await h.bridge.open({})
+      const started = await call(h, 'new', 'thread/start', { cwd: '/work', ephemeral: true })
+      const threadId = (started.result as { thread: Json }).thread.id as string
+      await call(h, 'send', 'turn/start', { threadId, input: [{ type: 'text', text: 'hi' }] })
+      expect(h.queries[0]!.options?.enableFileCheckpointing).toBeUndefined()
+      // 侧聊没有后台任务列表，停止时应一并结束任务。
+      expect(h.queries[0]!.options?.perTaskStopAffordance).toBeUndefined()
+      expect((await call(h, 'rewind', 'qingcode/files/rewind', { threadId, turnId: 't', dryRun: true })).error?.message)
+        .toBe('临时会话不支持回滚文件')
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+})
+
+describe('Claude 计划、子代理与访问模式', () => {
+  it('进行中的轮次重开时带清单，子代理审批归到所属卡片', async () => {
+    const h = harness()
+    try {
+      const { threadId, query, notes } = await startedTurn(h)
+      query.emit({ type: 'assistant', message: { id: 'm1', content: [
+        { type: 'tool_use', id: 'todo', name: 'TodoWrite', input: { todos: [{ content: '一', status: 'pending' }] } },
+        { type: 'tool_use', id: 'agent', name: 'Agent', input: {} },
+      ] } })
+      query.emit({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'todo', content: 'ok' }] } })
+      query.emit({ type: 'assistant', parent_tool_use_id: 'agent', message: { id: 'child', content: [
+        { type: 'tool_use', id: 'child-bash', name: 'Bash', input: { command: 'ls' } },
+      ] } })
+      await until(() => notes('item/started').length === 3)
+      const plan = [{ step: '一', status: 'pending' }]
+      expect(notes('turn/plan/updated')).toEqual([expect.objectContaining({ threadId, plan })])
+      request(h, 'read', 'thread/read', { threadId })
+      const thread = ((await response(h, 'read')).result as { thread: { turns: Json[] } }).thread
+      expect(thread.turns.at(-1)).toMatchObject({ status: 'inProgress', plan: { explanation: null, plan } })
+      const card = notes('item/started').at(-1)!.itemId
+      void query.options?.canUseTool?.('Bash', { command: 'ls' },
+        { signal: new AbortController().signal, toolUseID: 'child-bash' } as never)
+      await until(() => notes('item/commandExecution/requestApproval').length === 1)
+      expect(notes('item/commandExecution/requestApproval')[0]?.itemId).toBe(card)
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
+
+  it('Claude 自行退出 plan 模式后，下一轮按用户所选重新设置', async () => {
+    const h = harness()
+    try {
+      await h.bridge.open({})
+      const send = async (id: string) => {
+        request(h, id, 'turn/start', { threadId: 'old-1', input: [{ type: 'text', text: id }], claudePermissionMode: 'plan' })
+        await response(h, id)
+      }
+      await send('first')
+      const query = h.queries[0]!
+      query.emit({ type: 'system', subtype: 'status', status: null, permissionMode: 'default' })
+      query.emit({ type: 'result', subtype: 'success' })
+      await until(() => h.bridge.activeTurns === 0)
+      await send('second')
+      expect(query.permissionChanges).toEqual(['plan'])
+    } finally {
+      h.bridge.shutdown()
+    }
+  })
 })

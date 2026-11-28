@@ -37,6 +37,8 @@ export interface AgentOpenOptions {
 export interface AgentHost {
   readonly lastSeq: number
   readonly activeTurns: number
+  /** 轮次外仍在运行的后台任务数；不支持后台任务的 agent 省略。 */
+  readonly backgroundTasks?: number
   open(options?: AgentOpenOptions): Promise<CodexOpenResult>
   attach(clientId: number, sinceSeq: number): { lastSeq: number; truncated: boolean }
   handleClientMessage(clientId: number, msg: unknown): void

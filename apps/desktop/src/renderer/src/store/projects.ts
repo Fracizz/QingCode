@@ -49,7 +49,11 @@ type ProjectsState = {
   rename: (project: Project, name: string) => Promise<void>
   pinned: string[]
   togglePin: (id: string) => void
+  /** 隐藏项目：写入后端 projects.json，电脑侧栏与手机端都不显示，记录与会话保留。 */
+  setHidden: (project: Project, hidden: boolean) => Promise<void>
   move: (id: string, anchorId: string, placement: ProjectPlacement) => void
+  /** 把某个目标的普通项目按最近打开时间重排（置顶组保持手动顺序）。 */
+  sortByRecent: (targetId: string) => void
 }
 
 // 项目置顶、排序与展开状态只是本机显示偏好，不进后端。
@@ -339,6 +343,13 @@ export const useProjects = create<ProjectsState>((set, get) => {
       try {
         await call('projects.remove', { id })
         get().setShowAllThreads(id, false)
+        // 删除即不再保留任何记录：清掉本机置顶里的残留 id（手动排序由 load 重算）。
+        patch((state) => {
+          if (!state.pinned.includes(id)) return {}
+          const pinned = state.pinned.filter((item) => item !== id)
+          writeIds(PIN_KEY, pinned)
+          return { pinned }
+        })
         if (targetId) await get().load(targetId)
         if (wasSelected) {
           patch(() => ({ selectedId: null }))
@@ -394,6 +405,34 @@ export const useProjects = create<ProjectsState>((set, get) => {
         )
         return { pinned, byTarget }
       })
+    },
+
+    sortByRecent: (targetId) => {
+      patch((state) => {
+        const projects = projectListOf(state, targetId).projects
+        const sorted = [...projects].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt || a.id.localeCompare(b.id))
+        const order = sorted.map(({ id }) => id)
+        return {
+          ...updateList(state, targetId, (list) => ({ ...list, projects: orderProjects(sorted, state.pinned) })),
+          orderByTarget: rememberOrder(state.orderByTarget, targetId, order),
+        }
+      })
+    },
+
+    setHidden: async (project, hidden) => {
+      if ((project.hidden === true) === hidden) return
+      try {
+        const saved = await call('projects.save', {
+          id: project.id,
+          targetId: project.targetId,
+          name: project.name,
+          path: project.path,
+          hidden,
+        })
+        replaceProject(saved, (value, item) => ({ ...item, hidden: value.hidden === true }))
+      } catch (err) {
+        setError(project.targetId, friendlyError(err, t('更新项目显示状态失败')))
+      }
     },
 
     move: (id, anchorId, placement) => {

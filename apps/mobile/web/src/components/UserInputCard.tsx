@@ -99,10 +99,10 @@ export function UserInputCard({ approval, submitting, offline, onSubmit }: {
         })}
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2" aria-busy={submitting}>
-        <Button variant="primary" className="px-2 text-[13px]" disabled={disabled || !complete} onClick={() => onSubmit(answers)}>
+        <Button variant="primary" className="px-2 text-compact" disabled={disabled || !complete} onClick={() => onSubmit(answers)}>
           {t('提交回答')}
         </Button>
-        <Button className="px-2 text-[13px]" disabled={disabled} onClick={() => onSubmit({})}>
+        <Button className="px-2 text-compact" disabled={disabled} onClick={() => onSubmit({})}>
           {approval.skipLabel ?? t('跳过')}
         </Button>
       </div>

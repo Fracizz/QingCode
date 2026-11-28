@@ -1,4 +1,14 @@
-import type { ItemView } from '@qn/codex-client'
+import type { ItemView, TrackedSteer } from '@qn/codex-client'
+import type { AccessAddress } from './accessPrefs'
+import type { QueuedSend } from './queuedSends'
+
+/** 已提交、还没确认送达的引导（含不显示占位的 Agent）；restoredId 有值表示判定未送达、已放回发送队列。 */
+export type SteerRecord = TrackedSteer & {
+  address: AccessAddress
+  message: Pick<QueuedSend, 'text' | 'annotations' | 'attachments' | 'delegate' | 'overrides'>
+  accepted?: boolean
+  restoredId?: string
+}
 
 /**
  * 已发出但 Agent 还没回显的引导消息。Claude 只在实际消费输入后才回显（常见是本轮结束时），

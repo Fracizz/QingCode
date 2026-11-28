@@ -18,6 +18,9 @@ const METHODS: Partial<Record<keyof AgentCapabilities, string>> = {
   compact: 'thread/compact/start',
   steer: 'turn/steer',
   skills: 'skills/list',
+  backgroundTasks: 'qingcode/backgroundTasks/list',
+  commandList: 'qingcode/commands/list',
+  rewindFiles: 'qingcode/files/rewind',
 }
 
 async function errorCodes(create: (hub: AgentHostHub) => AgentHost): Promise<Map<string, unknown>> {

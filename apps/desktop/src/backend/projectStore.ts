@@ -15,6 +15,7 @@ export type ProjectInput = {
   path: string
   lastOpenedAt?: number
   trusted?: boolean
+  hidden?: boolean
 }
 
 // 远端是 POSIX 路径、本机是 Windows 路径，不能用 node:path 单侧解析。
@@ -46,7 +47,10 @@ function parseProject(x: unknown): Project | null {
     : 0
   // 信任功能上线前保存的项目都由用户主动添加，迁移时视为已信任。
   const trusted = x.trusted !== false
-  return { id, targetId, name, path: rawPath, lastOpenedAt: time, trusted }
+  // 只在隐藏时落盘该字段，旧文件与未隐藏项目保持原样。
+  return x.hidden === true
+    ? { id, targetId, name, path: rawPath, lastOpenedAt: time, trusted, hidden: true }
+    : { id, targetId, name, path: rawPath, lastOpenedAt: time, trusted }
 }
 
 export function sortProjects(projects: readonly Project[]): Project[] {
@@ -97,7 +101,11 @@ export function upsertProject(
     : now
   // 新项目未显式信任时默认不信任；已有项目未传值时保留原状态。
   const trusted = typeof input.trusted === 'boolean' ? input.trusted : existing?.trusted ?? false
-  const next: Project = { id, targetId, name, path, lastOpenedAt, trusted }
+  // 打开项目等保存不传 hidden，沿用原状态，避免把隐藏项目意外恢复。
+  const hidden = typeof input.hidden === 'boolean' ? input.hidden : existing?.hidden === true
+  const next: Project = hidden
+    ? { id, targetId, name, path, lastOpenedAt, trusted, hidden: true }
+    : { id, targetId, name, path, lastOpenedAt, trusted }
   const list = [...projects]
   if (at >= 0) list[at] = next
   else list.push(next)

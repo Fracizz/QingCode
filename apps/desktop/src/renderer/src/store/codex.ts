@@ -1,5 +1,20 @@
 import { create } from 'zustand'
 import {
+  AGENT_CAPABILITIES,
+  applyBackgroundTaskList,
+  applyEarlierPlan,
+  branchPoint,
+  completedPlanExit,
+  listBackgroundTasks,
+  planApproval,
+  readEarlierPlan,
+  rewindFiles,
+  steerOutcome,
+  stopBackgroundTask,
+  turnOpeningMessages,
+  STEER_ECHO_GRACE_MS,
+  type FileRewindResult,
+  type TrackedSteer,
   createDeltaBuffer,
   isStreamDelta,
   CodexRpc,
@@ -21,7 +36,9 @@ import {
   interruptTurnIdOf,
   isActiveThread,
   isOversizeHistoryResponse,
+  isSteerRejected,
   listThreads,
+  planSteer,
   loadRecentThreadHistory,
   loadThread,
   noteTurnConfig,
@@ -47,6 +64,7 @@ import {
   type ConversationState,
   type ItemView,
   type RequestId,
+  type SendMode,
   type ServerNotification,
   type ServerRequest,
   type UserInput,
@@ -78,9 +96,12 @@ import { useRateLimits } from './rateLimits'
 import { adaptTurnInput } from '../features/composer/agentInput'
 import { turnInputSizeProblem } from '../features/composer/images'
 import {
+  branchAccessSelection,
   emptyAccessMemory,
   getAccessMode,
   getAccessSelection,
+  leavePlanMode,
+  planReturnSelection,
   rememberAccessMode,
   resetDraftAccess,
   resetTargetAccess,
@@ -88,7 +109,7 @@ import {
   turnAccessOverride,
   type AccessAddress,
   type AccessMemory,
-  type AccessSelection,
+  type SessionAccessSelection,
 } from '../features/access/accessModel'
 import { configuredAgentOpen } from '../features/access/openConfig'
 import { threadKey } from '../lib/threads'
@@ -120,7 +141,7 @@ type TargetSession = {
   lastSeq: number | null
 }
 
-export type SendMode = 'queue' | 'steer' | 'immediate'
+export type { SendMode }
 
 /** 草稿首条消息已发出、会话 id 还没返回时的侧栏占位。 */
 export type PendingDraftThread = { targetId: string; cwd: string | null; agent: AgentKind; title: string }
@@ -147,6 +168,14 @@ type PendingSend = {
   overrides: TurnOverrides
   sending?: boolean
   error?: string
+}
+
+/** 已提交、还没确认送达的引导；queuedId 有值表示判定未送达、已放回队列。 */
+type SteerRecord = TrackedSteer & {
+  chat: ChatAddress
+  message: Pick<PendingSend, 'text' | 'input' | 'overrides'>
+  accepted?: boolean
+  queuedId?: number
 }
 
 export function pendingSendKey({ targetId, agent, threadId }: ChatAddress): string {
@@ -297,13 +326,19 @@ type CodexState = {
   startDraft: (agent?: AgentKind) => void
   /** 草稿态下切换下一条消息使用的 Agent；已打开会话时 Agent 跟随会话，不可切换。 */
   setDraftAgent: (agent: AgentKind) => void
-  setAccessMode: (address: AccessAddress, draftRevision: number, mode: AccessSelection) => void
+  setAccessMode: (address: AccessAddress, draftRevision: number, mode: SessionAccessSelection) => void
   openThread: (threadId: string, agent?: AgentKind) => Promise<void>
   loadEarlierHistory: (beforeApply: () => void) => Promise<void>
   openingThread: ChatAddress | null
   /** 返回是否成功提交；失败时调用方要把输入框内容还回去。 */
   send: (text: string, options?: SendOptions) => Promise<boolean>
+  /** 修改已发送的消息后重发：支持回退的 Agent 在原会话截断历史，其他支持分支的 Agent 分出新会话。 */
   sendRevision: (chat: ChatAddress, itemId: string, input: UserInput[]) => Promise<boolean>
+  /** 读取轮次外仍在运行的后台任务（重新打开会话或重连后）。 */
+  refreshBackgroundTasks: (chat: ChatAddress) => Promise<void>
+  stopBackgroundTask: (chat: ChatAddress, taskId: string) => Promise<boolean>
+  /** dryRun 为 false 会改写目标机文件，只能在用户确认后调用；失败时抛出。 */
+  rewindFiles: (chat: ChatAddress, turnId: string, dryRun: boolean) => Promise<FileRewindResult>
   sendSide: (text: string, mode: SendMode) => Promise<void>
   removePendingSend: (chat: ChatAddress, id: number) => void
   retryPendingSend: (chat: ChatAddress) => void
@@ -311,7 +346,7 @@ type CodexState = {
   holdPendingSend: (chat: ChatAddress, id: number) => ((resume?: boolean) => void) | null
   /** 修改排队消息正文，附件与技能保留；需先 holdPendingSend。 */
   editPendingSend: (chat: ChatAddress, id: number, text: string) => boolean
-  /** 把排队消息补充到当前一轮（仅 Codex）。 */
+  /** 把排队消息补充到当前一轮；现在不能引导时消息留在队列。 */
   steerPendingSend: (chat: ChatAddress, id: number) => Promise<boolean>
   /** 把排队消息移到新会话发送，并切换到新会话。 */
   sendPendingInNewThread: (chat: ChatAddress, id: number, mode: PendingThreadMode) => Promise<boolean>
@@ -367,15 +402,15 @@ export const useCodex = create<CodexState>((set, get) => {
     }
   }
 
-  /** 回复审批/提问类 server request：只处理当前可见会话里仍未决的请求。 */
-  const replyServerRequest = (chat: ChatAddress, requestId: RequestId, build: (approval: ApprovalView) => unknown): void => {
+  /** 回复审批/提问类 server request：只处理当前可见会话里仍未决的请求；返回是否已提交。 */
+  const replyServerRequest = (chat: ChatAddress, requestId: RequestId, build: (approval: ApprovalView) => unknown): boolean => {
     const state = get()
     const main = isMainChat(state, chat)
     const side = currentSideChat(state)
     const inSide = side?.open && !side.expired && !side.ending && side.targetId === chat.targetId
       && side.agent === chat.agent && side.threadId === chat.threadId
     // 旧卡片可能在切换会话后才触发事件，审批仍须来自当前可见会话。
-    if (openingAnotherChat(state) || (!main && !inSide)) return
+    if (openingAnotherChat(state) || (!main && !inSide)) return false
 
     const report = (error: string | null) => main ? set({ error }) : patchSide(currentChatKey(state), { error })
     const key = sessionKey(chat.targetId, chat.agent)
@@ -383,7 +418,7 @@ export const useCodex = create<CodexState>((set, get) => {
     const approval = session?.state.threads[chat.threadId]?.pendingApprovals.find((item) => item.requestId === requestId)
     if (!session || !approval) {
       report(t('该审批请求已失效'))
-      return
+      return false
     }
     try {
       session.rpc.respond(approval.requestId, build(approval))
@@ -392,9 +427,64 @@ export const useCodex = create<CodexState>((set, get) => {
         state: resolveServerRequest(value.state, approval.requestId),
       }))
       report(null)
+      return true
     } catch (err) {
       report(friendlyError(err, t('提交审批失败')))
+      return false
     }
+  }
+
+  /** 已处理过退出计划模式的条目，避免本端批准后又按完成通知改一次用户的新选择。 */
+  const handledPlanExits = new Set<string>()
+  const exitPlanMode = (chat: ChatAddress) => set((state) => {
+    const access = leavePlanMode(state.access, chat)
+    return access === state.access ? state : { access }
+  })
+
+  const steers = new Map<string, SteerRecord>()
+  const steerKeys = (chat: ChatAddress) => [...steers.values()].filter((record) => pendingSendKey(record.chat) === pendingSendKey(chat))
+
+  const scheduleSteerCheck = (chat: ChatAddress) => {
+    if (steerKeys(chat).length) setTimeout(() => checkSteers(chat), STEER_ECHO_GRACE_MS)
+  }
+
+  const acceptSteer = (record: SteerRecord) => {
+    record.accepted = true
+    // 轮次可能在回执到达前就结束了。
+    scheduleSteerCheck(record.chat)
+  }
+
+  /** 停止时被撤回的引导不会回显：放回队首暂停，等用户确认，不自动重发。 */
+  function checkSteers(chat: ChatAddress): void {
+    const sessionId = sessionKey(chat.targetId, chat.agent)
+    flushDeltas(sessionId)
+    const view = get().sessions[sessionId]?.state.threads[chat.threadId]
+    const lost: SteerRecord[] = []
+    for (const record of steerKeys(chat)) {
+      if (!record.accepted || record.queuedId !== undefined) continue
+      const outcome = steerOutcome(view, record)
+      if (outcome === 'delivered') steers.delete(record.clientId)
+      else if (outcome === 'undelivered') lost.push(record)
+    }
+    if (!lost.length) return
+    const queued = lost.map((record): PendingSend => {
+      record.queuedId = ++nextPendingId
+      if (record.optimistic) removePendingUser(sessionId, [chat.threadId], record.clientId)
+      return { id: record.queuedId, ...record.message, error: t('引导消息未送达，检查后可继续发送') }
+    })
+    updatePending(chat, (list) => [...queued, ...list])
+    set({ notice: t('引导消息未送达，已放回发送队列') })
+  }
+
+  /** 判定未送达之后又收到回显，说明已经送达，撤掉队列里的副本。 */
+  function confirmLateSteer(notification: ServerNotification): void {
+    if (notification.method !== 'item/started' && notification.method !== 'item/completed') return
+    const item = notification.params?.item
+    if (item?.type !== 'userMessage') return
+    const record = steers.get(item.clientId || item.id)
+    if (record?.queuedId === undefined) return
+    steers.delete(record.clientId)
+    updatePending(record.chat, (list) => list.filter((entry) => entry.id !== record.queuedId || entry.sending))
   }
 
   const opening = new Map<string, Promise<boolean>>()
@@ -572,6 +662,18 @@ export const useCodex = create<CodexState>((set, get) => {
         return state === current.state ? current : { ...current, state }
       })
       if (notification.method === 'thread/closed') expireSides(targetId, agent, notification.params.threadId)
+      if (steers.size) {
+        confirmLateSteer(notification)
+        if (notification.method === 'turn/completed' && notification.params?.threadId) {
+          scheduleSteerCheck({ targetId, agent, threadId: notification.params.threadId })
+        }
+      }
+      // 另一端批准了计划时，本端的访问模式选择器同步切回。
+      const planExit = completedPlanExit(notification)
+      if (planExit && !handledPlanExits.has(planExit.itemId)) {
+        handledPlanExits.add(planExit.itemId)
+        exitPlanMode({ targetId, agent, threadId: planExit.threadId })
+      }
       // 归档状态存在目标机上：手机或其他窗口归档/恢复后，这里同步移出或刷新列表。
       if (notification.method === 'thread/archived') removeFromThreadLists({ targetId, agent, threadId: notification.params.threadId })
       if (notification.method === 'thread/unarchived') refreshThreadListsFor(targetId, agent, notification.params.threadId)
@@ -1211,12 +1313,98 @@ export const useCodex = create<CodexState>((set, get) => {
         await interruptTurn(session.rpc, threadId, turnId)
       } catch (err) {
         // 轮次可能在中断请求到达前自然结束。
-        if (mode !== 'end' || !stopped) throw err
+        if (!stopped) throw err
       }
       if (!(await finished)) throw new Error(t('未确认当前一轮已停止，请检查会话后重试'))
     } finally {
       clearTimeout(timer)
       unsubscribe()
+    }
+  }
+
+  /** 不能原地回退的 Agent：从上一轮分出新会话发送修改后的消息，原会话保留。 */
+  async function resendInBranch(
+    chat: ChatAddress, session: TargetSession, itemId: string, input: UserInput[],
+    guard: { isCurrent: () => boolean; isSessionCurrent: () => boolean; report: (error: string | null) => void },
+  ): Promise<boolean> {
+    const { targetId, agent, threadId } = chat
+    const key = pendingSendKey(chat)
+    const cwd = threadCwd(get(), targetId, agent, threadId)
+    const prefs = prefsFor(useModels.getState(), targetId, agent, threadId)
+    const overrides = overridesFor(targetId, agent, threadId)
+    const text = input.find((item) => item.type === 'text')
+    const message = { text: text?.type === 'text' ? text.text : '', input, overrides }
+    const pendingUser = userItemFromInput(globalThis.crypto.randomUUID(), input)
+    const view = () => get().sessions[session.key]?.state.threads[threadId]
+    let branch: ChatAddress | null = null
+    submitting.add(key)
+    try {
+      let point = branchPoint(view(), itemId)
+      // 上一轮还没加载时向前翻页，直到能确定分支位置。
+      while (point?.kind === 'earlier') {
+        const cursor = view()?.historyCursor
+        if (!cursor) break
+        const page = await readThreadHistoryPage(session.rpc, threadId, cursor, guard.isSessionCurrent)
+        patchSession(session.key, (value) => ({ ...value, state: prependThreadHistory(value.state, threadId, page) }))
+        point = branchPoint(view(), itemId)
+      }
+      if (!point || point.kind === 'earlier') throw new Error(t('无法确定上一轮的位置，请重新打开会话后再试'))
+      if (!guard.isCurrent()) return false
+      const { thread } = point.kind === 'turn'
+        ? await forkThread(session.rpc, threadId, point.turnId)
+        : await startThread(session.rpc, cwd ? { cwd } : {})
+      if (!thread?.id || thread.id === threadId) throw new Error(t('未确认新会话已创建，修改后的消息未发送'))
+      branch = { targetId, agent, threadId: thread.id }
+      submitting.add(pendingSendKey(branch))
+      patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }))
+      useModels.getState().rememberThreadPrefs(targetId, agent, thread.id, prefs)
+      const access = branchAccessSelection(get().access, chat, useSettings.getState().settings.general.globalAccessMode)
+      if (access !== 'inherit') {
+        const address = branch
+        set((state) => ({ access: rememberAccessMode(state.access, address, access) }))
+      }
+      // 分支会复制原标题，自动加 (n) 后缀区分；改名失败不影响发送。
+      const title = point.kind === 'turn' ? forkedThreadTitle(get(), targetId, agent, threadId) : null
+      if (title) await setThreadName(session.rpc, thread.id, title).catch(() => undefined)
+      rememberLocalThread(pendingSendKey(branch), targetId, {
+        id: thread.id,
+        title: title || thread.name || message.text.split('\n')[0]?.trim() || t('未命名会话'),
+        preview: thread.preview || message.text,
+        cwd: thread.cwd || cwd || '',
+        updatedAt: Date.now(),
+        agent,
+      })
+      addPendingUser(session.key, thread.id, pendingUser)
+      if (guard.isCurrent()) {
+        set({
+          currentThreadId: thread.id, error: null,
+          notice: point.kind === 'turn' ? t('已从上一轮分出新会话发送，原会话保留') : t('已开新会话发送，原会话保留'),
+        })
+      }
+      await startTurn(session, thread.id, input, overrides, pendingUser)
+      return true
+    } catch (error) {
+      const detail = friendlyError(error, t('发送修订失败'))
+      if (!branch) {
+        guard.report(detail)
+        return false
+      }
+      // 新会话已经建好：消息留在它的队列里，由用户确认后再发。
+      removePendingUser(session.key, [branch.threadId], pendingUser.id)
+      const failed = t('新会话已创建但消息未发送，修改后的消息已放入队列')
+      const id = ++nextPendingId
+      updatePending(branch, (list) => [{ id, ...message, error: failed }, ...list])
+      const address = branch
+      set((state) => failureFor(state, address, t('新会话已创建但消息未发送。{message}', { message: detail })))
+      return false
+    } finally {
+      submitting.delete(key)
+      if (branch) {
+        submitting.delete(pendingSendKey(branch))
+        void flushPending(branch)
+        void get().refreshThreads({ targetId, cwd })
+      }
+      void flushPending(chat)
     }
   }
 
@@ -1567,6 +1755,15 @@ export const useCodex = create<CodexState>((set, get) => {
         })
         set({ currentThreadId: threadId, currentAgent: picked, error: null })
         markThreadUnread(targetId, picked, threadId, false)
+        // 清单只挂在发生变化的轮次上，首页没有时到更早的页里找。
+        if (AGENT_CAPABILITIES[picked].historyPlan && result.earlier && !get().sessions[key]?.state.threads[threadId]?.plan) {
+          const isSameSession = () => get().sessions[key]?.rpc === session.rpc
+          void readEarlierPlan(session.rpc, threadId, result.earlier, isSameSession).then((plan) => {
+            if (plan && isSameSession()) {
+              patchSession(key, (value) => ({ ...value, state: applyEarlierPlan(value.state, threadId, plan) }))
+            }
+          })
+        }
         if (writerConflict) {
           const message = t('会话被另一个 Codex 进程占用，当前可查看历史。释放会话后可再次发送')
           pausePending(chat, message)
@@ -1622,7 +1819,8 @@ export const useCodex = create<CodexState>((set, get) => {
       const key = pendingSendKey(chat)
       const session = state.sessions[sessionKey(targetId, agent)]
       const view = session?.state.threads[threadId]
-      if (agent !== 'codex' || !isMainChat(state, chat) || !input.length || state.sending ||
+      const { revert, fork } = AGENT_CAPABILITIES[agent]
+      if ((!revert && !fork) || !isMainChat(state, chat) || !input.length || state.sending ||
         submitting.has(key) || changingParentThreads.has(key)) return false
       const token = openThreadToken
       const isCurrent = () => token === openThreadToken && isMainChat(get(), chat)
@@ -1651,10 +1849,15 @@ export const useCodex = create<CodexState>((set, get) => {
         report(t('未找到原消息的轮次，请重新打开会话后再试'))
         return false
       }
+      if (!revert && !turnOpeningMessages(view).has(itemId)) {
+        report(t('只能从开启一轮的消息分支重发'))
+        return false
+      }
       report(null)
       // 修订沿用原会话的模型与推理强度。
       useModels.getState().seedFromHistory(targetId, agent, threadId, view.savedConfig)
       useModels.getState().rememberThreadPrefs(targetId, agent, threadId, prefsFor(useModels.getState(), targetId, agent, threadId))
+      if (!revert) return resendInBranch(chat, session, itemId, input, { isCurrent, isSessionCurrent, report })
       const overrides = overridesFor(targetId, agent, threadId)
       const pendingUser = userItemFromInput(globalThis.crypto.randomUUID(), input)
       let reverted = false
@@ -1671,7 +1874,7 @@ export const useCodex = create<CodexState>((set, get) => {
         patchSession(session.key, (value) => {
           const live = value.state.threads[threadId]
           // 清空本地条目与轮次，避免被截掉的历史与新历史合并。
-          const cleared = live ? { ...live, items: [], turns: [] } : undefined
+          const cleared = live ? { ...live, items: [], turns: [], plan: undefined } : undefined
           const base = cleared ? { threads: { ...value.state.threads, [threadId]: cleared } } : value.state
           return { ...value, state: loadRecentThreadHistory(base, history.thread, history.earlier, cleared) }
         })
@@ -1708,6 +1911,7 @@ export const useCodex = create<CodexState>((set, get) => {
       const key = sessionKey(targetId, agent)
       let threadId = options?.threadId ?? context.currentThreadId
       const draftMode = getAccessSelection(context.access, { targetId, agent, threadId: null })
+    const draftReturn = planReturnSelection(context.access, { targetId, agent, threadId: null })
       let chat = threadId ? { targetId, agent, threadId } : null
       let chatKey = chat ? pendingSendKey(chat) : null
       const mode = options?.mode ?? 'queue'
@@ -1734,33 +1938,30 @@ export const useCodex = create<CodexState>((set, get) => {
         report(sizeProblem)
         return false
       }
-      if (chatKey && context.compacting[chatKey]) {
-        report(t('正在启动压缩，请稍后发送'))
-        return false
-      }
       if (chatKey && changingParentThreads.has(chatKey)) {
         report(t('正在更新该会话，请稍后重试'))
         return false
       }
       const initialView = threadId ? context.sessions[key]?.state.threads[threadId] : undefined
-      const expectedTurnId = mode === 'steer' && initialView?.status === 'running' ? initialView.activeTurnId : null
-      if (mode === 'steer' && !expectedTurnId) {
-        report(t('当前一轮已结束，请选择排队或发送'))
-        return false
-      }
+      const compactionStarting = !!(chatKey && context.compacting[chatKey])
+      // 引导不可用时的去向：轮次已结束就按普通消息发送，压缩中、斜杠命令等转入排队。
+      const plan = mode === 'steer' && chat ? planSteer({ agent, view: initialView, input, compactionStarting }) : null
       report(null)
 
-      const enqueue = (address: ChatAddress) => {
-        const item = { id: ++nextPendingId, text, input, overrides }
-        updatePending(address, (list) => [...list, item])
+      const enqueue = (address: ChatAddress, error?: string) => {
+        const item: PendingSend = { id: ++nextPendingId, text, input, overrides, ...(error ? { error } : {}) }
+        // 带错误入队的是打断失败的消息，本来就要优先送出：放到队首并暂停，等用户确认。
+        updatePending(address, (list) => error ? [item, ...list] : [...list, item])
         void flushPending(address)
         return true
       }
 
-      if (mode === 'queue' && chat && chatKey && context.sessions[key]?.openedConfig?.directory === configDirFor(targetId, agent) && (
-        context.sessions[key]?.state.threads[chat.threadId]?.status === 'running' ||
-        context.pendingSends[chatKey]?.length || submitting.has(chatKey)
-      )) return enqueue(chat)
+      if (chat && chatKey && context.sessions[key]?.openedConfig?.directory === configDirFor(targetId, agent)) {
+        const busy = submitting.has(chatKey)
+        const waiting = busy || initialView?.status === 'running' || !!context.pendingSends[chatKey]?.length
+        if (compactionStarting || plan?.route === 'queue' || (plan?.route === 'steer' && busy) ||
+          ((mode === 'queue' || plan?.route === 'send') && waiting)) return enqueue(chat)
+      }
       if (chatKey && submitting.has(chatKey)) {
         report(t('正在发送另一条消息，请稍后重试'))
         return false
@@ -1768,7 +1969,7 @@ export const useCodex = create<CodexState>((set, get) => {
 
       const pendingUser = userItemFromInput(globalThis.crypto.randomUUID(), input)
       // 等上一轮中断时先在界面显示气泡，避免旧轮次的回显替换这条新消息。
-      const preview = mode !== 'queue' && threadId ? pendingUser : undefined
+      const preview = (mode === 'immediate' || plan?.route === 'steer') && threadId ? pendingUser : undefined
       // 新会话要等 Agent 启动和 thread/start 返回才有 id，冷启动可能数秒；先给侧栏一个占位行。
       const draft: PendingDraftThread | undefined = !threadId && !options?.sideKey
         ? { targetId, cwd: context.currentCwd, agent, title: trimmed.split('\n')[0]?.trim() || t('未命名会话') }
@@ -1816,7 +2017,7 @@ export const useCodex = create<CodexState>((set, get) => {
             const value = state.sessions[key]
             const address = { targetId, agent, threadId: createdThreadId }
             return {
-              access: rememberAccessMode(state.access, address, draftMode),
+              access: rememberAccessMode(state.access, address, draftMode, draftReturn),
               sendingMessage: { key: pendingSendKey(address) },
               ...(value ? { sessions: { ...state.sessions, [key]: {
                 ...value,
@@ -1852,28 +2053,59 @@ export const useCodex = create<CodexState>((set, get) => {
           if (!options?.sideKey) refreshThreadListsFor(targetId, agent, createdThreadId, created.thread.cwd || context.currentCwd || undefined)
         }
         if (!threadId) return false
-        const view = get().sessions[key]?.state.threads[threadId]
-        if (expectedTurnId) {
-          if (view?.status !== 'running' || view.activeTurnId !== expectedTurnId) {
-            throw new Error(t('当前一轮已结束或切换，消息已保留'))
+        let view = get().sessions[key]?.state.threads[threadId]
+        if (plan?.route === 'steer') {
+          // 等待连接期间轮次可能已结束或切换，按最新状态再判断一次。
+          const latest = planSteer({ agent, view, input, expectedTurnId: plan.turnId })
+          let rejected = false
+          if (latest.route === 'steer') {
+            // Claude 和 pi 由实际接收消息的轮次回显，避免在旧轮次留下占位。
+            const echoLocally = agent === 'codex'
+            if (echoLocally) commitPreview(threadId)
+            const record: SteerRecord = {
+              chat: { targetId, agent, threadId }, clientId: pendingUser.id, turnId: latest.turnId,
+              message: { text, input, overrides }, optimistic: echoLocally,
+            }
+            steers.set(record.clientId, record)
+            try {
+              await steerTurn(session.rpc, threadId, latest.turnId, adaptTurnInput(agent, input), pendingUser.id)
+              acceptSteer(record)
+              return true
+            } catch (err) {
+              steers.delete(record.clientId)
+              // 只有明确拒绝才改走其他路径；结果未确认时保留草稿，避免重复发送。
+              if (!isSteerRejected(err)) throw err
+              rejected = true
+              rollback()
+            }
+            view = get().sessions[key]?.state.threads[threadId]
           }
-          // Claude 和 pi 由实际接收消息的轮次回显，避免在旧轮次留下占位。
-          if (agent === 'codex') commitPreview(threadId)
-          await steerTurn(session.rpc, threadId, expectedTurnId, adaptTurnInput(agent, input), pendingUser.id)
-          return true
+          if (chat && (view?.status === 'running' || get().pendingSends[pendingSendKey(chat)]?.length)) {
+            rollback()
+            if (rejected) set({ notice: t('当前无法引导，消息已排队') })
+            return enqueue(chat)
+          }
+          // 轮次刚结束，继续按普通消息发送。
         }
         if (view?.status === 'running') {
-          if (mode === 'queue' && chat) {
+          if (mode !== 'immediate' && chat) {
             rollback()
             return enqueue(chat)
           }
-          const turnId = view.activeTurnId
-          if (!turnId) throw new Error(t('暂未收到当前轮次，请稍后重试'))
-          if (chatKey) replacing.add(chatKey)
-          await interruptAndWait(session, threadId, turnId)
-          if (chatKey) replacing.delete(chatKey)
-          if (get().sessions[key]?.state.threads[threadId]?.status === 'running') {
-            throw new Error(t('会话已开始另一轮，请检查后再发送'))
+          try {
+            const turnId = view.activeTurnId
+            if (!turnId) throw new Error(t('暂未收到当前轮次，请稍后重试'))
+            if (chatKey) replacing.add(chatKey)
+            await interruptAndWait(session, threadId, turnId)
+            if (chatKey) replacing.delete(chatKey)
+            if (get().sessions[key]?.state.threads[threadId]?.status === 'running') {
+              throw new Error(t('会话已开始另一轮，请检查后再发送'))
+            }
+          } catch (err) {
+            if (!chat) throw err
+            rollback()
+            report(friendlyError(err, t('中断失败')))
+            return enqueue(chat, t('打断未成功，消息已保留在队列'))
           }
         }
         commitPreview(threadId)
@@ -1935,20 +2167,41 @@ export const useCodex = create<CodexState>((set, get) => {
       const state = get()
       const session = state.sessions[sessionKey(chat.targetId, chat.agent)]
       const view = session?.state.threads[chat.threadId]
-      const turnId = view?.status === 'running' ? view.activeTurnId : null
       const item = state.pendingSends[key]?.find((entry) => entry.id === id)
-      if (!session?.opened || !turnId || !item || item.sending ||
+      if (!session?.opened || !item || item.sending ||
         submitting.has(key) || holdingPending.has(id)) return false
+      const plan = planSteer({ agent: chat.agent, view, input: item.input })
+      if (plan.route !== 'steer') {
+        if (plan.route === 'queue') set({ notice: t('当前无法引导，消息继续排队') })
+        return false
+      }
       submitting.add(key)
       updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: true, error: undefined } : entry))
       const pendingUser = userItemFromInput(globalThis.crypto.randomUUID(), item.input)
-      if (chat.agent === 'codex') addPendingUser(session.key, chat.threadId, pendingUser)
+      const echoLocally = chat.agent === 'codex'
+      if (echoLocally) addPendingUser(session.key, chat.threadId, pendingUser)
+      const record: SteerRecord = {
+        chat, clientId: pendingUser.id, turnId: plan.turnId,
+        message: { text: item.text, input: item.input, overrides: item.overrides }, optimistic: echoLocally,
+      }
+      steers.set(record.clientId, record)
       try {
-        await steerTurn(session.rpc, chat.threadId, turnId, adaptTurnInput(chat.agent, item.input), pendingUser.id)
+        await steerTurn(session.rpc, chat.threadId, plan.turnId, adaptTurnInput(chat.agent, item.input), pendingUser.id)
         updatePending(chat, (list) => list.filter((entry) => entry.id !== id))
+        acceptSteer(record)
         return true
       } catch (err) {
+        steers.delete(record.clientId)
         removePendingUser(session.key, [chat.threadId], pendingUser.id)
+        if (isSteerRejected(err)) {
+          // 被拒绝的消息照常排队；本轮若是被停止或失败结束，暂停等用户确认，不自动续发。
+          const activity = get().sessions[session.key]?.state.threads[chat.threadId]?.activity
+          const stopped = activity === 'interrupted' || activity === 'failed'
+          const error = stopped ? t('上一轮未完成，队列已暂停') : item.error
+          updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: false, error } : entry))
+          set({ notice: t('当前无法引导，消息继续排队') })
+          return false
+        }
         const error = friendlyError(err, t('引导未成功，排队消息已保留'))
         updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: false, error } : entry))
         return false
@@ -2305,6 +2558,8 @@ export const useCodex = create<CodexState>((set, get) => {
           delete compacting[chatKey]
           return { compacting }
         })
+        // 启动压缩期间发送的消息在排队；压缩没能开始时这里接着发送。
+        void flushPending(chat)
       }
     },
 
@@ -2323,7 +2578,69 @@ export const useCodex = create<CodexState>((set, get) => {
     },
 
     respondApproval: (chat, requestId, decision) => {
-      replyServerRequest(chat, requestId, (approval) => approvalResponse(approval, decision))
+      const view = get().sessions[sessionKey(chat.targetId, chat.agent)]?.state.threads[chat.threadId]
+      const approval = view?.pendingApprovals.find((item) => item.requestId === requestId)
+      const plan = approval ? planApproval(view, approval) : null
+      const sent = replyServerRequest(chat, requestId, (approval) => approvalResponse(approval, decision))
+      // 用户批准计划后 Agent 已退出计划模式，服务端不通知客户端，这里同步切回。
+      if (sent && plan && decision !== 'decline') {
+        if (plan.itemId) handledPlanExits.add(plan.itemId)
+        exitPlanMode(chat)
+      }
+    },
+
+    refreshBackgroundTasks: async (chat) => {
+      if (!AGENT_CAPABILITIES[chat.agent].backgroundTasks) return
+      const key = sessionKey(chat.targetId, chat.agent)
+      const session = get().sessions[key]
+      if (!session?.opened) return
+      const before = session.state.threads[chat.threadId]?.backgroundTasks
+      try {
+        const tasks = await listBackgroundTasks(session.rpc, chat.threadId)
+        patchSession(key, (value) => {
+          if (value.rpc !== session.rpc) return value
+          const state = applyBackgroundTaskList(value.state, chat.threadId, tasks, before)
+          return state === value.state ? value : { ...value, state }
+        })
+      } catch {
+        // 旧版目标服务没有这个方法，等实时通知即可。
+      }
+    },
+
+    stopBackgroundTask: async (chat, taskId) => {
+      const session = get().sessions[sessionKey(chat.targetId, chat.agent)]
+      if (!AGENT_CAPABILITIES[chat.agent].backgroundTasks || !session?.opened) return false
+      try {
+        await stopBackgroundTask(session.rpc, chat.threadId, taskId)
+        return true
+      } catch (error) {
+        const message = friendlyError(error, t('停止后台任务失败'))
+        set((state) => failureFor(state, chat, message))
+        // 任务可能刚好结束，重新读一次列表。
+        void get().refreshBackgroundTasks(chat)
+        return false
+      }
+    },
+
+    rewindFiles: async (chat, turnId, dryRun) => {
+      const key = pendingSendKey(chat)
+      const session = get().sessions[sessionKey(chat.targetId, chat.agent)]
+      if (!AGENT_CAPABILITIES[chat.agent].rewindFiles) throw new Error(t('当前会话不支持回滚文件'))
+      if (!session?.opened || session.openedConfig?.directory !== configDirFor(chat.targetId, chat.agent)) {
+        throw new Error(t('连接未就绪或配置目录已切换，请重新打开会话'))
+      }
+      if (session.state.threads[chat.threadId]?.status === 'running' || submitting.has(key)) {
+        throw new Error(t('请先停止当前轮次'))
+      }
+      if (dryRun) return rewindFiles(session.rpc, chat.threadId, turnId, true)
+      // 回滚期间暂不派发排队消息，目标服务会拒绝同时开始新一轮。
+      submitting.add(key)
+      try {
+        return await rewindFiles(session.rpc, chat.threadId, turnId, false)
+      } finally {
+        submitting.delete(key)
+        void flushPending(chat)
+      }
     },
 
     respondUserInput: (chat, requestId, answers) => {

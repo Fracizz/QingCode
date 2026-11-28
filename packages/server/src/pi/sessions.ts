@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { asRecord, scalarText, type Json, type SessionMeta } from '../claude/v2'
+import { piUserText } from './userText'
 
 export interface PiSessionInfo {
   meta: SessionMeta
@@ -89,6 +90,9 @@ export function parseSessionLines(lines: string[]): ParsedSessionHeader | null {
           .filter(Boolean)
           .join(' ')
       }
+      // 只带附件时用文件名当标题。
+      const shown = piUserText(preview)
+      preview = shown.text || shown.files.map((file) => file.split(/[\\/]/).pop()).join(' ')
     }
   }
   if (!header) return null

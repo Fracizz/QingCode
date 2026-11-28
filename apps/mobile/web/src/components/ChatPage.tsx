@@ -1,5 +1,5 @@
 import { ChevronDown, PanelLeft, Square } from 'lucide-react'
-import { accessOptions, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, resolveAccessMode, sessionStatus, sessionStatusLabels, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
+import { AGENT_CAPABILITIES, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { bindChatPinch } from '../chatFont'
@@ -7,11 +7,13 @@ import { toast } from '../toast'
 import { copyText } from '../client'
 import { nearBottom } from '../composerLogic'
 import { prefsFor, resolveSelection } from '../models'
-import { currentCwd, displayedAccessMode, selectedAccessMode, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, useApp } from '../store'
+import { currentCwd, displayedAccessMode, selectedAccessMode, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, selectedPlanReturn, useApp } from '../store'
 import { chatTimeline, replyPhase, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { changeThreadPreference, threadPreferenceKey, useWorkspacePreferences } from '../workspace'
 import { ApprovalCard } from './ApprovalCard'
+import { BackgroundTasks } from './BackgroundTasks'
+import { PlanPanel } from './PlanPanel'
 import { UserInputCard } from './UserInputCard'
 import { AccessModePicker, NoApprovalNotice } from './AccessModePicker'
 import { Composer } from './Composer'
@@ -25,6 +27,7 @@ import { QueuedMessages } from './QueuedMessages'
 import { AgentQuota } from './RateLimitView'
 import { SessionSwitcher } from './SessionSwitcher'
 import { skillsKey, useSkills } from '../skills'
+import { slashCommandsKey, useSlashCommands } from '../slashCommands'
 import { SubagentLauncher } from './SubagentDetails'
 import { Badge, Button, Dialog, Empty, Header, LoadingIcon, Note } from './ui'
 
@@ -52,7 +55,8 @@ export function ChatPage() {
   const inheritedAccessMode = useApp((s) => s.agentSettings || s.legacyAgentSettings
     ? resolveAccessMode(s.selectedAgent, s.agentSettings?.globalAccessMode) : undefined)
   const setAccessMode = useApp((s) => s.setAccessMode)
-  const models = useApp((s) => s.models[key]?.models)
+  const planReturn = useApp(selectedPlanReturn)
+  const models =useApp((s) => s.models[key]?.models)
   const prefsTable = useApp((s) => s.modelPrefs)
   const savedConfig = useApp((s) => selectedThreadId ? s.sessions[key]?.state.threads[selectedThreadId]?.savedConfig : undefined)
   const modelPrefs = useMemo(() => prefsFor(prefsTable, selectedAgent, key, selectedThreadId, models, savedConfig),
@@ -143,6 +147,7 @@ export function ChatPage() {
     : null
   const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
     item.type === 'contextCompaction' && item.status === 'inProgress' && activeItemIds?.includes(item.id))
+  const canSteer = running && turnSteerBlock(selectedAgent, view, compactionStarting) === null
   const timeline = useMemo(() => chatTimeline(withoutErrorEcho(items, view?.error, running), view?.turns, running, activeItemIds),
     [items, view?.error, view?.turns, running, activeItemIds])
   const latestStop = interrupted && view?.turns?.at(-1)?.outcome === 'interrupted' ? view.turns.at(-1)?.id : undefined
@@ -187,6 +192,18 @@ export function ChatPage() {
   useEffect(() => {
     if (skillKey && skillRpc) void loadSkills(skillKey, cwd || null, skillRpc, selectedAgent !== 'codex' && !running)
   }, [skillKey, cwd, skillRpc, loadSkills, selectedAgent, running, loadedThreadId])
+  // Agent 原生斜杠命令由运行中的会话进程提供：会话载入、轮次结束、重连和打开菜单时刷新。
+  const commandKey = selectedThreadId && AGENT_CAPABILITIES[selectedAgent].commandList
+    ? slashCommandsKey(key, selectedThreadId) : null
+  const nativeList = useSlashCommands((s) => commandKey ? s.lists[commandKey] : undefined)
+  const nativeCommands = useMemo(() => mergeSlashCommands(nativeList ?? [], skills?.map((skill) => skill.name)),
+    [nativeList, skills])
+  const refreshCommands = () => {
+    if (commandKey && selectedThreadId && skillRpc && eventsConnected) {
+      void useSlashCommands.getState().load(commandKey, selectedThreadId, skillRpc)
+    }
+  }
+  useEffect(refreshCommands, [commandKey, skillRpc, running, loadedThreadId, eventsConnected])
   const imageUnavailable = resolveSelection(models ?? [], modelPrefs).model?.imageInput === false
     ? t('当前模型不支持图片') : undefined
   const fileActions = useMemo<FileActions>(() => ({
@@ -316,6 +333,25 @@ export function ChatPage() {
     setCommandDialog({ key: chatKey, id })
   }
 
+  function forkAction(itemId: string) {
+    const turn = view?.turns?.find((candidate) => candidate.itemIds.includes(itemId))
+    // 进行中的一轮还没有完整回复，不能作为分叉点。
+    if (!selectedThreadId || !turn || turn.id === view?.activeTurnId) return undefined
+    return () => void forkFromTurn(turn.id)
+  }
+
+  async function forkFromTurn(turnId: string) {
+    if (commandPending) return
+    setCommandPending(true)
+    try {
+      if (await useApp.getState().forkConversation(turnId)) toast(t('已创建聊天分支'))
+    } catch (error) {
+      toast(translateMessage(friendlyError(error, t('创建分支失败'))), { tone: 'error' })
+    } finally {
+      setCommandPending(false)
+    }
+  }
+
   async function confirmCommand(id: 'rename' | 'archive' | 'fork') {
     if (!selectedTargetId || !selectedThreadId || commandReason(id)) return
     const name = commandName.trim()
@@ -420,7 +456,8 @@ export function ChatPage() {
                           showStreamingDots={block.item.id === streamingId}
                           showActions={finalReply}
                           replyTimeInSummary={previous?.kind === 'work' && previous.reply?.id === block.item.id}
-                          onResend={selectedThreadId ? resend : undefined} />
+                          onResend={selectedThreadId ? resend : undefined}
+                          onFork={forkAction(block.item.id)} />
                         : <ToolGroup items={block.items} onQuote={onQuote} />}
                       {trail && <ToolGroup trail items={trail} onQuote={onQuote} />}
                     </div>
@@ -441,7 +478,8 @@ export function ChatPage() {
                       onSubmit={(answers) => void respondUserInput(approval.requestId, answers)} />
                   ) : (
                     <ApprovalCard key={String(approval.requestId)} approval={approval}
-                      agent={selectedAgent} submitting={Boolean(approvalSubmitting[String(approval.requestId)])}
+                      agent={selectedAgent} plan={planApproval(view, approval)?.plan}
+                      submitting={Boolean(approvalSubmitting[String(approval.requestId)])}
                       offline={!eventsConnected}
                       onDecide={(decision) => void respondApproval(approval.requestId, decision)} />
                   ))}
@@ -457,6 +495,8 @@ export function ChatPage() {
             </Button>
           )}
         </div>
+        <PlanPanel key={`plan:${chatKey}`} plan={view?.plan} running={running} />
+        <BackgroundTasks key={`tasks:${chatKey}`} />
         <PendingSteers key={`steer:${chatKey}`} items={items} running={running} agentName={agentLabel(selectedAgent)}
           onRestore={(text) => {
             // 输入框已有内容时追加在后面，不覆盖用户正在写的草稿。
@@ -464,7 +504,7 @@ export function ChatPage() {
             setDraftText(current.trim() ? `${current}
 ${text}` : text)
           }} />
-        <QueuedMessages key={`queue:${chatKey}`} running={running} canSteer={!compacting && !!view?.activeTurnId} />
+        <QueuedMessages key={`queue:${chatKey}`} running={running} canSteer={canSteer} />
         <Composer
           key={chatKey}
           draftKey={chatKey}
@@ -490,10 +530,17 @@ ${text}` : text)
           onConfirmQuote={(text, comment) => { addAnnotation(text, comment); setQuote(null) }}
           onCancelQuote={() => setQuote(null)}
           placeholder={agentPlaceholder(selectedAgent)}
-          canSteer={!!view?.activeTurnId}
+          agent={selectedAgent}
+          canSteer={canSteer}
           steerHint={selectedAgent === 'claude' ? t('本轮结束时可能进入下一轮') : undefined}
           commands={{ run: runCommand, unavailable: commandReason, hidden: MOBILE_HIDDEN_COMMANDS }}
           skills={skills}
+          nativeCommands={nativeCommands}
+          onCommandMenuOpen={refreshCommands}
+          planMode={selectedThreadId && nextAccessMode === 'plan' ? {
+            disabled: !eventsConnected || !session?.opened || sending || compacting,
+            onExit: () => setAccessMode(planReturn),
+          } : undefined}
           toolbar={
             <>
               {selectedAgent === 'pi' && <NoApprovalNotice />}
@@ -532,8 +579,8 @@ ${text}` : text)
         <AgentQuota targetId={selectedTargetId} agent={selectedAgent} showUsage />
       </Dialog>}
       {activeCommand === 'permissions' && <Dialog title={t('会话访问权限')} onClose={closeCommand}>
-        <p className="text-sm">{accessOptions[selectedAgent].find((option) => option.mode === accessMode)?.label ?? t('pi 不经审批直接执行工具')}</p>
-        <p className="text-sm text-qn-muted">{accessOptions[selectedAgent].find((option) => option.mode === accessMode)?.hint}</p>
+        <p className="text-sm">{sessionAccessOptions(selectedAgent).find((option) => option.mode === accessMode)?.label ?? t('pi 不经审批直接执行工具')}</p>
+        <p className="text-sm text-qn-muted">{sessionAccessOptions(selectedAgent).find((option) => option.mode === accessMode)?.hint}</p>
       </Dialog>}
       {(activeCommand === 'rename' || activeCommand === 'archive' || activeCommand === 'fork') && (
         <Dialog title={activeCommand === 'rename' ? t('重命名会话') : activeCommand === 'archive' ? t('归档会话') : t('创建会话分支')} onClose={closeCommand}>

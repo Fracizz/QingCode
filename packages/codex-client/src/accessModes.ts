@@ -1,3 +1,4 @@
+import { AGENT_CAPABILITIES } from '../../protocol/src/agents'
 import { t } from '../../protocol/src/i18n'
 import type { AgentKind } from '../../protocol/src/messages'
 import type { TurnStartParams } from './codex-types'
@@ -6,9 +7,12 @@ import type { TurnStartParams } from './codex-types'
 export type AccessMode = 'default' | 'auto' | 'fullAccess'
 export type AccessSelection = AccessMode | 'inherit'
 export type GlobalAccessMode = AccessMode
+/** 单个会话还能选计划模式（能力 planMode）；总控没有这一档。 */
+export type SessionAccessMode = AccessMode | 'plan'
+export type SessionAccessSelection = SessionAccessMode | 'inherit'
 
-type AccessOption = {
-  mode: AccessMode
+type AccessOption<Mode extends SessionAccessMode = AccessMode> = {
+  mode: Mode
   label: string
   hint: string
   warning?: string
@@ -38,11 +42,22 @@ export const accessOptions: Record<AgentKind, readonly AccessOption[]> = {
   pi: [],
 }
 
+export const planAccessOption: AccessOption<'plan'> = {
+  mode: 'plan', label: t('计划模式'), hint: t('只分析并给出计划，批准后才动手'),
+}
+
+/** 会话访问模式菜单的全部选项：三档之外，支持计划模式的 Agent 多一项。 */
+export function sessionAccessOptions(agent: AgentKind): readonly AccessOption<SessionAccessMode>[] {
+  return AGENT_CAPABILITIES[agent].planMode ? [...accessOptions[agent], planAccessOption] : accessOptions[agent]
+}
+
 export function isGlobalAccessMode(value: unknown): value is GlobalAccessMode {
   return value === 'default' || value === 'auto' || value === 'fullAccess'
 }
 
-export function resolveAccessMode(agent: AgentKind, globalMode: GlobalAccessMode | undefined, selection: AccessSelection = 'inherit'): AccessMode {
+export function resolveAccessMode(agent: AgentKind, globalMode: GlobalAccessMode | undefined, selection?: AccessSelection): AccessMode
+export function resolveAccessMode(agent: AgentKind, globalMode: GlobalAccessMode | undefined, selection?: SessionAccessSelection): SessionAccessMode
+export function resolveAccessMode(agent: AgentKind, globalMode: GlobalAccessMode | undefined, selection: SessionAccessSelection = 'inherit'): SessionAccessMode {
   if (selection !== 'inherit') return selection
   if (agent === 'pi' || !globalMode) return 'default'
   return globalMode
@@ -52,9 +67,10 @@ type CodexAccessOverride = Required<Pick<TurnStartParams, 'approvalPolicy' | 'ap
   qingcodeAccessOverride: true
 }
 
-type ClaudeAccessOverride = { claudePermissionMode: 'auto' | 'bypassPermissions' }
+type ClaudeAccessOverride = { claudePermissionMode: 'auto' | 'bypassPermissions' | 'plan' }
 
 export function turnAccessOverride(agent: AgentKind, mode: unknown): CodexAccessOverride | ClaudeAccessOverride | null {
+  if (mode === 'plan') return AGENT_CAPABILITIES[agent].planMode ? { claudePermissionMode: 'plan' } : null
   if (agent === 'codex' && mode === 'auto') {
     return {
       approvalPolicy: 'on-request',

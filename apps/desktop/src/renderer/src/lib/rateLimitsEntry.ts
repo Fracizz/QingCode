@@ -1,4 +1,4 @@
-import type { ClaudeRateLimitSnapshot, AccountSummary } from '@qn/codex-client'
+import type { ClaudeRateLimitSnapshot, AccountSummary, ResetCreditNotice, ResetCredits } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { DEFAULT_AGENT, sessionKey } from './agents'
 
@@ -9,6 +9,10 @@ export type RateLimitEntry = {
   loading: boolean
   error: string | null
   costByThread: Record<string, number>
+  /** 仅 Codex：重置卡与最近一次兑换结果。 */
+  resetCredits?: ResetCredits | null
+  resetting?: boolean
+  resetNotice?: ResetCreditNotice | null
 }
 
 /** byTarget 是 T13 的 Codex 入口；多 agent 数据统一按会话键存在 byAgent。 */

@@ -44,6 +44,7 @@ import {
   messagesToThread,
   parsePiSteer,
   piThread,
+  userEcho,
   type MapResult,
   type MapState,
   type UserMessageIdentity,
@@ -53,7 +54,7 @@ import { readVersionAsync } from '../versionProbe'
 import { PiRpcProcess, type PiRpcOptions, type RpcRecord } from './rpc'
 import { isPiLevel, parsePiModelKey, piModelList } from './models'
 import { listPiSessions, readPiSessionConfig, sameCwd, type PiSessionConfig, type PiSessionInfo } from './sessions'
-import { piSkills } from './skills'
+import { piCommands, piSkills } from './skills'
 import { resolvePiPrompt } from './turnInput'
 
 export interface PiHostOptions {
@@ -73,6 +74,10 @@ interface PiSession {
   preparingTurn: boolean
   compacting: boolean
   turnId: string | null
+  /** pi 的运行从 agent_start 到 agent_settled，期间可能没有对应的客户端请求。 */
+  runActive: boolean
+  /** 正在停止的轮次，不再接受它的引导。 */
+  stoppingTurnId?: string
   pendingUserItem?: UserMessageIdentity
   pendingSteers: Map<string, { item: V2Item; turnId: string }>
   steering?: Promise<void>
@@ -94,6 +99,10 @@ interface OpenDialog {
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000
+// 停止流程里的各步等待上限：任何一步卡住都不能拖住 abort。
+const STEER_SETTLE_MS = 1_000
+const CLEAR_QUEUE_TIMEOUT_MS = 5_000
+const LEGACY_ABORT_MS = 1_500
 const PENDING_PREFIX = 'qn-pi-pending-'
 
 export function createPiHost(
@@ -250,6 +259,8 @@ export class PiHost extends JsonRpcAgentHost {
         return this.threadRename(params)
       case 'skills/list':
         return this.skillList(params)
+      case 'qingcode/commands/list':
+        return this.commandList(params)
       case 'thread/compact/start':
         return this.compactThread(params)
       case 'turn/start':
@@ -462,6 +473,8 @@ export class PiHost extends JsonRpcAgentHost {
     try {
       const rpc = await this.ensureRpc(session)
       await this.applyModel(session, rpc, params)
+      // 准备期间 pi 可能已自行开跑（扩展触发或排队续跑），此时发 prompt 会被拒绝。
+      if (session.turnId) throw new PiRpcError(-32603, '会话已有准备中或运行中的 turn')
       session.turnId = turnId
       session.pendingUserItem = { id: userItemId, clientId }
       session.state = emptyMapState()
@@ -469,14 +482,20 @@ export class PiHost extends JsonRpcAgentHost {
       session.state.order.push(userItemId)
       this.notify({ method: 'turn/started', params: { threadId, turn } })
       const response = await rpc.command('prompt', prompt as unknown as RpcRecord)
-      if (response.success === false) {
-        this.finishTurn(session, 'failed', scalarText(response.error) || 'pi 拒绝了 prompt')
-      } else if (scalarText(asRecord(response.data)?.disposition) === 'handled') {
-        // disposition=handled 表示没有启动 run，必须自行收尾，否则界面会一直显示运行中。
-        this.finishTurn(session, 'completed', null)
+      // 回执到达前本轮可能已经结束，这时的 turnId 属于另一次运行，不能动。
+      if (session.turnId === turnId) {
+        if (response.success === false) {
+          this.finishTurn(session, 'failed', scalarText(response.error) || 'pi 拒绝了 prompt')
+          // 因 pi 正在运行而被拒时，另建轮次接住它，保证能看到、能停止。
+          if (session.runActive) this.startAutonomousTurn(session)
+        } else if (scalarText(asRecord(response.data)?.disposition) === 'handled') {
+          // handled 表示本次输入没有启动 run，必须自行收尾；扩展命令另行启动的运行则等 agent_settled。
+          if (session.runActive) delete session.pendingUserItem
+          else this.finishTurn(session, 'completed', null)
+        }
       }
     } catch (err) {
-      this.finishTurn(session, 'failed', describe(err))
+      if (session.turnId === turnId) this.finishTurn(session, 'failed', describe(err))
       throw err
     } finally {
       session.preparingTurn = false
@@ -522,6 +541,16 @@ export class PiHost extends JsonRpcAgentHost {
       return { cwd: requested, skills: this.cachedSkills.get(cwd) ?? [], errors: [] }
     }))
     return { data }
+  }
+
+  /** 原生斜杠命令只读该会话运行中的进程（R9），没有时返回空列表。 */
+  private async commandList(params: Json): Promise<Json> {
+    const threadId = scalarText(params.threadId)
+    if (!threadId) throw new PiRpcError(-32602, 'threadId 不能为空')
+    const rpc = this.sessions.get(threadId)?.rpc
+    if (!rpc?.running) return { commands: [] }
+    const response = await rpc.command('get_commands')
+    return { commands: response.success === true ? piCommands(asRecord(response.data)?.commands) : [] }
   }
 
   /** 占用以 pi 自己的统计为准；取不到时保留事件流里的本轮用量。 */
@@ -578,6 +607,7 @@ export class PiHost extends JsonRpcAgentHost {
     session.preparingTurn = true
     try {
       const rpc = await this.ensureRpc(session)
+      if (session.turnId) throw new PiRpcError(-32602, '请先等待当前一轮结束')
       const turnId = randomUUID()
       const item = { type: 'contextCompaction', id: `${turnId}-compact`, status: 'inProgress' }
       session.turnId = turnId
@@ -592,6 +622,8 @@ export class PiHost extends JsonRpcAgentHost {
         if (session.turnId !== turnId) return
         const error = response.success === true ? null : scalarText(response.error) || 'pi 未完成上下文压缩'
         this.finishTurn(session, error ? 'failed' : 'completed', error)
+        // 压缩期间开始的运行在压缩轮结束后接上。
+        if (session.runActive) this.startAutonomousTurn(session)
       }, (error: unknown) => {
         if (session.turnId === turnId) this.finishTurn(session, 'failed', describe(error))
       })
@@ -633,18 +665,55 @@ export class PiHost extends JsonRpcAgentHost {
     if (!session?.rpc || !session.turnId) {
       throw new PiRpcError(-32602, '没有运行中的 turn')
     }
+    const rpc = session.rpc
     const turnId = session.turnId
+    session.stoppingTurnId = turnId
     // 停止本轮等于放弃回答，否则 pi 会一直停在对话框上。
     this.dismissDialogs((open) => open.session === session, true)
-    await session.rpc.command('abort')
+    try {
+      // 在途引导先让 pi 入队，随后一起清掉。
+      await settledWithin(session.steering, STEER_SETTLE_MS)
+      // 官方要求先 clear_queue 再 abort，否则 abort 后会继续执行队列里的消息。
+      const cleared = await this.clearQueue(session, rpc)
+      if (!cleared && session.pendingSteers.size > 0 && !session.meta.ephemeral) {
+        // 旧版 pi 清不掉未送达的引导，只能结束进程；会话已落盘，下次使用时重新载入。
+        await settledWithin(rpc.command('abort'), LEGACY_ABORT_MS)
+        if (session.rpc === rpc) {
+          this.closeRpc(session)
+          this.finishTurn(session, 'interrupted', null)
+        }
+        return {}
+      }
+      await rpc.command('abort')
+    } catch (error) {
+      delete session.stoppingTurnId
+      throw error
+    }
     // abort 会等会话 idle；若 pi 没发 agent_settled，兜底按中断结束本轮。
-    if (session.turnId) {
+    if (session.turnId === turnId) {
       const timer = setTimeout(() => {
-        if (session.turnId === turnId) this.finishTurn(session, 'interrupted', null)
+        if (session.turnId !== turnId) return
+        session.runActive = false
+        this.finishTurn(session, 'interrupted', null)
       }, 1_500)
       timer.unref?.()
     }
     return {}
+  }
+
+  /** 撤掉 pi 里排队的引导和后续消息；返回 false 表示这个版本的 pi 清不掉。 */
+  private async clearQueue(session: PiSession, rpc: PiRpcProcess): Promise<boolean> {
+    try {
+      const response = await rpc.command('clear_queue', {}, CLEAR_QUEUE_TIMEOUT_MS)
+      if (response.success === true) {
+        session.pendingSteers.clear()
+        return true
+      }
+      this.hub.log(`pi 清空队列失败: ${redact(scalarText(response.error))}`) // i18n-ignore: 仅进日志
+    } catch (err) {
+      this.hub.log(`pi 清空队列失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
+    }
+    return false
   }
 
   private async turnSteer(params: Json): Promise<Json> {
@@ -662,7 +731,7 @@ export class PiHost extends JsonRpcAgentHost {
     session.steering = new Promise<void>((resolve) => { release = resolve })
     try {
       await previous
-      if (session.turnId !== turnId || session.rpc !== rpc) {
+      if (session.turnId !== turnId || session.rpc !== rpc || session.stoppingTurnId === turnId) {
         throw new PiRpcError(-32602, '当前轮次已结束或切换，请重新发送')
       }
       const clientId = scalarText(params.clientUserMessageId) || null
@@ -689,7 +758,18 @@ export class PiHost extends JsonRpcAgentHost {
   }
 
   private onPiEvent(session: PiSession, event: RpcRecord): void {
-    if (!session.turnId) return
+    // 只有运行事件能开轮次；空闲时的扩展消息、压缩、队列变化等不算运行。
+    if (event.type === 'agent_start' || event.type === 'turn_start') {
+      session.runActive = true
+      if (!session.turnId) this.startAutonomousTurn(session)
+    } else if (event.type === 'agent_settled') {
+      session.runActive = false
+    }
+    if (!session.turnId) {
+      // 运行开始前 pi 可能先压缩上下文，顺延空闲计时。
+      if (event.type === 'compaction_start' || event.type === 'compaction_end') this.touch(session)
+      return
+    }
     if (session.compacting) {
       if (event.type === 'compaction_end' && event.reason === 'manual' && event.aborted === true) {
         this.finishTurn(session, 'interrupted', null)
@@ -714,19 +794,43 @@ export class PiHost extends JsonRpcAgentHost {
     }
   }
 
+  /** 扩展触发或排队续跑的运行没有对应的客户端请求，为它建立轮次，agent_settled 时照常结束。 */
+  private startAutonomousTurn(session: PiSession): void {
+    // 分叉用的临时进程和尚未拿到 ID 的会话没有可展示轮次的对话。
+    if (this.sessions.get(session.meta.id) !== session || session.meta.id.startsWith(PENDING_PREFIX)) return
+    const turnId = randomUUID()
+    session.turnId = turnId
+    session.state = emptyMapState()
+    delete session.pendingUserItem
+    this.notify({
+      method: 'turn/started',
+      params: { threadId: session.meta.id, turn: buildTurn(turnId, [], 'inProgress') },
+    })
+  }
+
   private onUserMessage(session: PiSession, turnId: string, message: Json): void {
     let identity = session.pendingUserItem
     if (identity) delete session.pendingUserItem
     else {
+      let item: V2Item
       const next = session.pendingSteers.entries().next().value
-      if (!next) return
-      const [id, pending] = next
-      session.pendingSteers.delete(id)
-      const steering = turnId === pending.turnId ? 'currentTurn' : 'nextTurn'
-      const item = { ...pending.item, steering }
-      identity = { id, clientId: scalarText(pending.item.clientId) || null, steering }
-      session.state.items[id] = item
-      session.state.order.push(id)
+      if (next) {
+        const [id, pending] = next
+        session.pendingSteers.delete(id)
+        const steering = turnId === pending.turnId ? 'currentTurn' : 'nextTurn'
+        item = { ...pending.item, steering }
+        identity = { id, clientId: scalarText(pending.item.clientId) || null, steering }
+      } else {
+        // 扩展或排队续跑带来的用户消息；首条沿用 `-user` 后缀，分叉时按它定位轮次。
+        const content = userEcho(message.content)
+        if (content.length === 0) return
+        const first = `${turnId}-user`
+        const id = session.state.items[first] ? `${first}-${++session.state.nextItem}` : first
+        item = userMessageContentItem(id, content, null)
+        identity = { id, clientId: null }
+      }
+      session.state.items[identity.id] = item
+      session.state.order.push(identity.id)
       this.notify(itemCompleted({ threadId: session.meta.id, turnId, cwd: session.meta.cwd }, item))
     }
     // pi 不接收客户端消息 ID，沿用原生用户消息在事件和历史中共有的时间戳。
@@ -748,6 +852,7 @@ export class PiHost extends JsonRpcAgentHost {
     // closeRpc 会先置空 session.rpc，预期关闭不按崩溃处理。
     if (session.rpc !== rpc) return
     session.rpc = null
+    session.runActive = false
     session.pendingSteers.clear()
     this.dismissDialogs((open) => open.rpc === rpc, false)
     if (session.turnId) this.finishTurn(session, 'failed', 'pi 进程提前退出')
@@ -813,6 +918,7 @@ export class PiHost extends JsonRpcAgentHost {
       preparingTurn: false,
       compacting: false,
       turnId: null,
+      runActive: false,
       pendingSteers: new Map(),
       userItemIds: meta.ephemeral ? new Map() : this.steerHistory.read(meta.id),
       state: emptyMapState(),
@@ -843,7 +949,8 @@ export class PiHost extends JsonRpcAgentHost {
     session.rpc = rpc
     delete session.model
     delete session.thinkingLevel
-    rpc.onEvent((event) => this.onPiEvent(session, event))
+    // 已关闭的进程收尾时仍可能发事件，不能让它再开轮次。
+    rpc.onEvent((event) => { if (session.rpc === rpc) this.onPiEvent(session, event) })
     rpc.onDialog((record) => this.onPiDialog(session, rpc, record))
     rpc.onExit((info) => this.onRpcExit(session, rpc, info))
     try {
@@ -871,6 +978,7 @@ export class PiHost extends JsonRpcAgentHost {
     if (!rpc) return
     this.dismissDialogs((open) => open.rpc === rpc, true)
     session.rpc = null
+    session.runActive = false
     session.pendingSteers.clear()
     rpc.close()
   }
@@ -924,7 +1032,7 @@ export class PiHost extends JsonRpcAgentHost {
     if (session.idleTimer) clearTimeout(session.idleTimer)
     session.idleTimer = setTimeout(() => {
       session.idleTimer = null
-      if (session.turnId || session.preparingTurn) return
+      if (session.turnId || session.preparingTurn || session.runActive) return
       this.closeRpc(session)
     }, this.idleTimeoutMs)
     session.idleTimer.unref?.()
@@ -982,6 +1090,19 @@ function rpcErrorOf(err: unknown): { code: number; message: string } {
     code: typeof code === 'number' && code < 0 ? code : -32603,
     message: describe(err),
   }
+}
+
+/** 等任务结束（成败都算），超时就不再等。 */
+async function settledWithin(task: Promise<unknown> | undefined, ms: number): Promise<void> {
+  if (!task) return
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms)
+    timer.unref?.()
+  })
+  const done = task.then(() => undefined, () => undefined)
+  await Promise.race([done, timeout])
+  clearTimeout(timer)
 }
 
 function describe(err: unknown): string {

@@ -1,6 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref, type RefObject } from 'react'
-import { accessOptions, exactChatCommand, hasSkillToken, insertSkillToken, resolveAccessMode, t, translateMessage } from '@qn/codex-client'
-import { ArrowUp, CircleAlert, FileText, ImageOff, Paperclip, Shield, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
+import {
+  accessOptions, alternateSendMode, exactChatCommand, hasSkillToken, insertSkillToken, isSlashDraft, resolveAccessMode,
+  runningSendMode, t, takeSkillTokens, translateMessage,
+} from '@qn/codex-client'
+import { ArrowUp, CircleAlert, FileText, ImageOff, ListTodo, Paperclip, Shield, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
 import {
@@ -14,9 +17,10 @@ import {
   type SkillRef,
   type SlashItem,
 } from '../lib/attachments'
+import { useRunningSend } from '../features/settings/runningSend'
 import { useSetting } from '../features/settings/settingsStore'
 import { AccessModePicker } from '../features/access/AccessModePicker'
-import { accessKey, getAccessSelection, type AccessAddress } from '../features/access/accessModel'
+import { accessKey, getAccessSelection, planReturnSelection, type AccessAddress } from '../features/access/accessModel'
 import { useCwdUntrusted } from '../store/projectTrust'
 import {
   applyMention,
@@ -74,6 +78,8 @@ type SlashProps = {
   skills: SkillRef[]
   onSkillsChange: (skills: SkillRef[]) => void
   onCommand: (id: string) => void
+  /** 菜单每次打开时调用，用于刷新随会话变化的原生命令。 */
+  onOpen?: () => void
 }
 
 /**
@@ -96,6 +102,8 @@ export function Composer({
   annotationCount = 0,
   compact = false,
   compacting = false,
+  compactionStarting = false,
+  steerBlocked = false,
   contentWidthClassName = 'max-w-3xl',
   context,
   placeholder,
@@ -112,6 +120,10 @@ export function Composer({
   running: boolean
   sending: boolean
   compacting?: boolean
+  /** 手动压缩已发起、轮次事件还没到：此时发送一律排队。 */
+  compactionStarting?: boolean
+  /** 当前一轮不能引导（Agent 不支持、压缩或审查中、轮次未就绪），引导按排队处理。 */
+  steerBlocked?: boolean
   disabled?: boolean
   error: string | null
   onClearError: () => void
@@ -166,6 +178,7 @@ export function Composer({
   const draftRevision = useCodex((s) => s.access.draftRevision)
   const accessAddress: AccessAddress | null = !compact && targetId ? { targetId, agent, threadId } : null
   const accessMode = useCodex((s) => accessAddress ? getAccessSelection(s.access, accessAddress) : 'inherit')
+  const planReturn = useCodex((s) => accessAddress ? planReturnSelection(s.access, accessAddress) : 'inherit')
   const inheritedMode = resolveAccessMode(agent, useSetting((settings) => settings.general.globalAccessMode))
   const setAccessMode = useCodex((s) => s.setAccessMode)
   const untrusted = useCwdUntrusted(targetId, root)
@@ -251,6 +264,11 @@ export function Composer({
   }, [suggestionsOpen, suggestionBoundaryRef])
 
   useEffect(() => setActive(0), [query, mentionQuery])
+  const openSlash = useRef(slash?.onOpen)
+  openSlash.current = slash?.onOpen
+  useEffect(() => {
+    if (menuOpen) openSlash.current?.()
+  }, [menuOpen])
 
   const attachments = attach?.attachments ?? []
   const imageSupport = attach?.imageSupport ?? { allowed: true, reason: null }
@@ -263,12 +281,32 @@ export function Composer({
   const blocked = attach?.blockedReason ?? imageBlock
   const shortcut = sendKey === 'ctrlEnter' ? 'Ctrl+Enter' : 'Enter'
   const newlineShortcut = sendKey === 'ctrlEnter' ? 'Enter' : 'Shift+Enter'
-  const sendHint = running
-    ? t('排队（{shortcut}）· 本轮结束后发送', { shortcut })
+  const runningSend = useRunningSend((state) => state.preference)
+  const defaultMode = runningSendMode(runningSend)
+  const otherMode = alternateSendMode(runningSend)
+  const otherShortcut = sendKey === 'ctrlEnter' ? 'Ctrl+Shift+Enter' : 'Ctrl+Enter'
+  const busy = running || compacting
+  const slashDraft = useMemo(() => {
+    const { text, skills } = takeSkillTokens(value, slash?.skills ?? [])
+    return isSlashDraft(agent, text, skills.length)
+  }, [agent, value, slash?.skills])
+  // 按钮与提示显示消息实际的去向，引导不可用时会转入排队。
+  const actualMode = (mode: SendMode): SendMode =>
+    compactionStarting || (mode === 'steer' && (steerBlocked || compacting || slashDraft)) ? 'queue' : mode
+  const modeText: Record<SendMode, { label: string; hint: string }> = {
+    steer: { label: t('引导'), hint: agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮') },
+    queue: { label: t('排队'), hint: t('本轮结束后发送') },
+    immediate: { label: t('打断后发送'), hint: t('停止本轮后发送') },
+  }
+  const primary = modeText[actualMode(defaultMode)]
+  const alternate = modeText[actualMode(otherMode)]
+  const sendHint = busy
+    ? t('{action}（{shortcut}）· {hint}', { action: primary.label, shortcut, hint: primary.hint }) +
+      (running && alternate !== primary ? `${t('；')}${otherShortcut} ${alternate.label}` : '')
     : t('发送（{shortcut}）· 换行（{newline}）', { shortcut, newline: newlineShortcut })
-  const canSend = !disabled && !sending && !compacting && !blocked && (value.trim() !== '' || hasAttachments || annotationCount > 0)
+  const canSend = !disabled && !sending && !blocked && (value.trim() !== '' || hasAttachments || annotationCount > 0)
 
-  const submit = (mode: SendMode = 'queue') => {
+  const submit = (mode: SendMode = running ? defaultMode : 'queue') => {
     const command = slash && exactChatCommand(value)
     if (slash && command && !disabled && !composing.current) {
       onChange('')
@@ -281,13 +319,14 @@ export function Composer({
 
   const choose = (item: SlashItem | undefined) => {
     if (!item || !slash) return
-    if (item.kind === 'skill') {
+    if (item.kind === 'skill' || item.kind === 'native') {
       // 技能以 /名字 留在输入框里，左右各留一个空格；发送时再拆成 skill 输入。
+      // 原生命令同样写进输入框，用户可以接着写参数，随正文发给 Agent。
       const token = slashToken(value, caret)
       if (!token) return
       const next = insertSkillToken(value, token.start, token.end, item.name)
       const picked = { name: item.name, path: item.path ?? '' }
-      if (!slash.skills.some((skill) => skill.name === picked.name)) {
+      if (item.kind === 'skill' && !slash.skills.some((skill) => skill.name === picked.name)) {
         slash.onSkillsChange([...slash.skills, picked])
       }
       pendingCaret.current = next.caret
@@ -359,12 +398,16 @@ export function Composer({
         return
       }
     }
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
       // 设置 → 通用 → 发送快捷键：Enter 发送，或 Ctrl+Enter 发送（此时 Enter 换行）。
       const ctrl = event.ctrlKey || event.metaKey
-      if (sendKey === 'ctrlEnter' ? ctrl : !ctrl) {
+      if (!event.shiftKey && (sendKey === 'ctrlEnter' ? ctrl : !ctrl)) {
         event.preventDefault()
         submit()
+      } else if (running && ctrl && event.shiftKey === (sendKey === 'ctrlEnter')) {
+        // 运行中用另一组组合键临时换一种发送方式。
+        event.preventDefault()
+        submit(otherMode)
       }
     }
   }
@@ -584,6 +627,22 @@ export function Composer({
               </>
             )}
             {leading}
+            {accessAddress && accessMode === 'plan' && !untrusted && !noApprovals && (
+              // 计划模式改变发送效果，常驻标识并提供退出入口。
+              <span role="status" className="inline-flex h-7 items-center gap-1 rounded-full border border-qn-accent bg-qn-accent/12 pl-2.5 pr-1 text-ui-sm text-qn-text">
+                <ListTodo size={13} className="shrink-0 text-qn-accent" aria-hidden />
+                {t('计划模式')}
+                <button
+                  type="button"
+                  className="inline-flex size-5 items-center justify-center rounded-full text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover disabled:opacity-40"
+                  aria-label={t('退出计划模式')}
+                  disabled={Boolean(disabled || sending || compactionStarting)}
+                  onClick={() => setAccessMode(accessAddress, draftRevision, planReturn)}
+                >
+                  <X size={12} aria-hidden />
+                </button>
+              </span>
+            )}
             <div className="flex-1" />
             {accessAddress && !noApprovals && (
               <AccessModePicker
@@ -594,7 +653,7 @@ export function Composer({
                 supported={accessSupported}
                 lockedReason={untrusted ? t('项目未信任') : undefined}
                 // 运行中也可修改：访问模式在每轮 turn/start 时读取，当前这一轮不受影响。
-                disabled={Boolean(disabled || sending)}
+                disabled={Boolean(disabled || sending || compactionStarting)}
                 deferred={running || sendingPending}
                 onChange={(mode) => setAccessMode(accessAddress, draftRevision, mode)}
               />
@@ -606,7 +665,7 @@ export function Composer({
                 <IconButton
                   label={t('停止运行')}
                   className="rounded-full text-qn-text hover:bg-qn-fg/10"
-                  disabled={sending}
+                  disabled={sending || compactionStarting}
                   onClick={onInterrupt}
                 >
                   <Square size={11} fill="currentColor" strokeWidth={0} className="rounded-[2px]" />
@@ -618,15 +677,15 @@ export function Composer({
                     type="button"
                     className={cn(
                       'inline-flex h-8 items-center justify-center gap-1 overflow-hidden rounded-full text-ui-sm font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover',
-                      running ? 'pl-2.5 pr-3' : 'w-8',
+                      busy ? 'pl-2.5 pr-3' : 'w-8',
                       canSend ? 'bg-qn-text text-qn-bg hover:bg-qn-text/90' : 'bg-qn-fg/12 text-qn-dim',
                     )}
                     disabled={!canSend}
-                    aria-label={running ? t('排队') : t('发送')}
+                    aria-label={busy ? primary.label : t('发送')}
                     onClick={() => submit()}
                   >
                     <ArrowUp size={16} strokeWidth={2.2} />
-                    {running && <span>{t('排队')}</span>}
+                    {busy && <span>{primary.label}</span>}
                   </button>
                 </span>
               </Tip>
@@ -748,7 +807,10 @@ function SlashMenu({
             {item.kind === 'skill' ? <Wand2 size={14} /> : <Slash size={14} />}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block wrap-anywhere text-ui leading-5 text-qn-text">/{item.name}</span>
+            <span className="block wrap-anywhere text-ui leading-5 text-qn-text">
+              /{item.name}
+              {item.argumentHint && <span className="ml-1.5 text-ui-sm text-qn-muted">{item.argumentHint}</span>}
+            </span>
             {item.description && (
               <span className="block truncate text-ui-sm leading-4 text-qn-muted group-aria-selected:text-qn-text/85">
                 {item.reason ?? item.description}

@@ -2,7 +2,8 @@
  * Claude Code 终端里执行的本地斜杠命令（/model、/clear 等）不会发给模型，但会以带标签的用户消息写进会话记录：
  * - `<local-command-caveat>`：提示模型忽略本地命令的说明，用户从未输入过；
  * - `<command-name>/model</command-name><command-message>…<command-args>sonnet</command-args>`：用户输入的命令；
- * - `<local-command-stdout>` / `<local-command-stderr>`：命令在终端里的输出。
+ * - `<local-command-stdout>` / `<local-command-stderr>`：命令在终端里的输出；
+ * - `<bash-input>`、`<bash-stdout>` / `<bash-stderr>`：用 `!` 直接执行的终端命令及输出。
  * 历史回放时原样显示会是一串标签，这里还原成用户看到的样子（纯函数）。
  */
 export type LocalCommand =
@@ -36,10 +37,28 @@ function contentText(content: unknown): string | undefined {
   return texts.join('\n')
 }
 
+/** 终端输出按代码块展示；围栏比正文里最长的反引号串更长，避免提前闭合。 */
+function codeBlock(value: string): string {
+  const longest = Math.max(2, ...(value.match(/`+/g) ?? []).map((run) => run.length))
+  const fence = '`'.repeat(longest + 1)
+  return `${fence}\n${value}\n${fence}`
+}
+
+function parseShell(value: string): LocalCommand | undefined {
+  if (value.startsWith('<bash-input>') && value.endsWith('</bash-input>')) {
+    const command = tag('bash-input', value)?.trim()
+    return command ? { kind: 'command', text: `!${command}` } : { kind: 'skip' }
+  }
+  if (!/^<bash-(stdout|stderr)>/.test(value) || !/<\/bash-(stdout|stderr)>$/.test(value)) return undefined
+  const output = stripAnsi([tag('bash-stdout', value), tag('bash-stderr', value)].filter(Boolean).join('\n')).trim()
+  return output ? { kind: 'output', text: codeBlock(output) } : { kind: 'skip' }
+}
+
 export function parseLocalCommand(content: unknown): LocalCommand | undefined {
   const value = contentText(content)?.trim()
   if (!value || !value.startsWith('<')) return undefined
   if (value.startsWith('<local-command-caveat>')) return { kind: 'skip' }
+  if (value.startsWith('<bash-')) return parseShell(value)
   const name = tag('command-name', value)?.trim()
   if (name && value.startsWith('<command-')) {
     const args = tag('command-args', value)?.trim()

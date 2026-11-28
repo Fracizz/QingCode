@@ -38,6 +38,8 @@
 
 禁止：WebSocket 等官方标注 experimental/unsupported 的传输（Codex WebSocket 传输明确 "experimental and unsupported"）；未开启前提下调用 experimental 方法。
 
+**唯一例外**（2026-11-27 经用户批准）：Claude 停止时撤回排队消息，使用 SDK 运行时提供、公开类型未声明的 `Query.cancelAsyncMessage`。类型扩展只放在 `packages/server/src/claude/withdraw.ts`；缺失、返回 false、抛错或超时时退回公开的 `interrupt()` 加二次中断。升级 SDK 时须复核它是否仍然存在。新增任何例外须单独批准。
+
 ## 3. 身份与认证
 
 ### 3.1 客户端身份
@@ -72,6 +74,13 @@ Claude 订阅登录的灰区说明：Anthropic 允许"end user signing in to the
 
 - 引导从桌面或手机对活动轮次发 `turn/steer`。pi 使用官方 `steer` RPC（安装包 `docs/rpc-commands.md`），收到原生用户消息事件后回显。Claude 使用 [Agent SDK 流式输入](https://code.claude.com/docs/en/agent-sdk/typescript#sdkusermessage) 的 `priority: 'next'`，根据 SDK 回显的用户消息 UUID 确认归属。本轮先结束时，Claude 可以在下一轮处理这条补充。
 - 持久会话的引导归属保存在 QingCode daemon 状态目录的 `steering/`，只记录消息标识及轮次归属。临时会话只在内存记录。
+- 运行中发送默认引导，桌面与手机各自保存设置，可改为排队或打断后发送。轮次已结束时按普通消息发送；压缩、审查轮次、斜杠命令、能力不支持或 Agent 拒绝时排队；送达结果未确认时保留草稿，不自动重发；打断失败时消息留在队首并暂停。引导不代答任何审批。
+- 停止要撤掉尚未处理的排队消息。Claude 见 §2 例外；持久会话声明 SDK `perTaskStopAffordance`，停止只中断当前轮，后台任务由用户逐个停止（`stopTask`）。pi 按官方 `docs/rpc-commands.md` 先 `clear_queue` 再 `abort`；旧版清不掉队列且有未送达引导时结束该持久会话进程。撤回而未回显的引导，客户端按未送达处理，不自动重发。
+- 不由用户输入发起的运行要建立轮次：Claude 主代理的轮次外输出（`idle` 兜底见下条），pi 的 `agent_start` / `turn_start`（以 `agent_settled` 结束，见 pi 包内 `docs/json.md`）。
+- Claude 设置官方环境变量 [`CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS`](https://code.claude.com/docs/en/env-vars)，`session_state_changed` 的 `idle` 只结束 Claude 自行开始且未并入用户输入的轮次。
+- 计划清单：Codex 原生 `turn/plan/updated`；Claude 由 `TodoWrite` / `TaskCreate` / `TaskUpdate` / `TaskList` 工具结果合成。历史里的后三者靠结果正文识别，正文格式官方未承诺，升级时复核。这些工具在部分模型上默认关闭，QingCode 不改工具集。
+- Claude 文件回滚用公开的 [`enableFileCheckpointing` / `rewindFiles`](https://code.claude.com/docs/en/agent-sdk/file-checkpointing)：仅桌面，先试运行，用户确认后执行，有活动轮次时拒绝；进程不在时用 `resume` 启动且不发送任何输入。只跟踪 Write、Edit、NotebookEdit，界面须如实说明，对话不回退。
+- 命令列表只读运行中的会话（Claude `supportedCommands()`、pi `get_commands`），不为读取它启动进程（R9）。
 
 - 手动压缩只在用户确认后执行。Codex 用公开的 [`thread/compact/start`](https://developers.openai.com/codex/app-server)，Claude 用 [Agent SDK 的 `/compact`](https://code.claude.com/docs/en/agent-sdk/agent-loop) 且须由 `supportedCommands()` 声明，pi 用官方 RPC `compact`（随安装包提供的 `docs/rpc-commands.md`）。压缩减少上下文占用，已用账号额度不会恢复。
 
@@ -106,7 +115,7 @@ Claude 订阅登录的灰区说明：Anthropic 允许"end user signing in to the
 
 - 可执行文件只做**解析**（参数 → PATH → 常见安装目录），不自动下载、不自动安装、不自动升级。升级只提示用户用其原安装方式（npm / 官方安装器 / brew 等）执行。
 - 可用性探测只允许：`codex --version`、`claude --version`、文件存在性检查。不得为探测而打开会话或发送 prompt（R9）。
-- 子进程：stdio 管道、不经 shell（Windows `.cmd` 例外需转义，已实现）；daemon 退出时结束子进程；空闲会话按 mvp 规则关闭（Claude 30 分钟 `close()`）。
+- 子进程：stdio 管道、不经 shell（Windows `.cmd` 例外需转义，已实现）；daemon 退出时结束子进程；空闲会话按 mvp 规则关闭（Claude 30 分钟 `close()`）；有运行中的后台任务（SDK `background_tasks_changed`，不含 ambient）时不算空闲，会话与 daemon 保持运行。
 - 版本固定：Agent SDK 版本、vendor schema 对应的 codex 版本写在 mvp 与本文 §8；升级时同步更新 schema 生成物与映射表并回归 e2e。
 
 ## 8. 新增或修改适配器检查清单（PR 必填）

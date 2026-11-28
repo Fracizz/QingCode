@@ -227,3 +227,33 @@ it('收起全部会话只影响指定目标，未加载的目标也会改写本�
   expect(JSON.parse(localStorage.getItem('qn.projects.tree.local')!)).toEqual({ projectId: 'a', expandedIds: [] })
   expect(localStorage.getItem('qn.projects.tree.remote')).toBe(saved)
 })
+
+it('隐藏写入后端并保留在列表里，删除项目时清掉置顶残留', async () => {
+  save.mockResolvedValueOnce([project('a', 2), project('b', 1)])
+  const { load, setHidden, togglePin, remove } = useProjects.getState()
+  await load('local')
+  togglePin('a')
+  save.mockResolvedValueOnce({ ...project('a', 2), hidden: true })
+  await setHidden(projectListOf(useProjects.getState(), 'local').projects[0]!, true)
+  expect(save).toHaveBeenLastCalledWith('projects.save', { id: 'a', targetId: 'local', name: 'a', path: '/a', hidden: true })
+  expect(projectListOf(useProjects.getState(), 'local').projects.map(({ id, hidden }) => [id, hidden === true]))
+    .toEqual([['a', true], ['b', false]])
+
+  save.mockResolvedValueOnce(undefined).mockResolvedValueOnce([project('b', 1)])
+  await remove('a')
+  expect(save).toHaveBeenCalledWith('projects.remove', { id: 'a' })
+  expect(projectIds()).toEqual(['b'])
+  expect(useProjects.getState().pinned).toEqual([])
+})
+
+it('按最近打开重排普通项目，置顶项目仍排在前面', async () => {
+  save.mockResolvedValueOnce([project('a', 3), project('b', 2), project('c', 1)])
+  const { load, move, togglePin, sortByRecent } = useProjects.getState()
+  await load('local')
+  move('a', 'c', 'after')
+  togglePin('c')
+  expect(projectIds()).toEqual(['c', 'b', 'a'])
+  sortByRecent('local')
+  expect(projectIds()).toEqual(['c', 'a', 'b'])
+  expect(localStorage.getItem('qn.projects.order.local')).toBe('["a","b","c"]')
+})

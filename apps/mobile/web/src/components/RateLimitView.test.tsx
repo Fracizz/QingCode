@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { pickAccountUsage, pickClaudeSnapshot, pickSnapshot, type ClaudeRateLimitSnapshot } from '@qn/codex-client'
+import { pickAccountUsage, pickClaudeSnapshot, pickResetCredits, pickSnapshot, type ClaudeRateLimitSnapshot } from '@qn/codex-client'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   refreshRateLimits: vi.fn(),
   refreshClaudeRateLimits: vi.fn(),
   refreshAccountUsage: vi.fn(),
+  consumeResetCredit: vi.fn(),
+  eventsConnected: true,
 }))
 
 vi.mock('../store', () => ({
@@ -199,6 +201,38 @@ describe('手机目标额度展示', () => {
       await act(() => button?.click())
       expect(state.refreshRateLimits).toHaveBeenCalledExactlyOnceWith('remote')
       expect(state.refreshAccountUsage).toHaveBeenCalledTimes(2)
+    } finally {
+      await act(() => root.unmount())
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('重置卡只在确认后使用', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    state.sessions['codex:local'] = { opened: true }
+    state.rateLimits.local = {
+      snapshot: null, account: null, updatedAt: null, loading: false, error: null,
+      resetCredits: pickResetCredits({ rateLimitResetCredits: { availableCount: 1, credits: [
+        { id: 'card-1', status: 'available', title: '赠送重置卡', expiresAt: null },
+      ] } }),
+    }
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const click = async (label: string) => {
+      const button = [...host.querySelectorAll('button')].find((item) => item.textContent === label)
+      if (!button) throw new Error(`缺少按钮 ${label}`)
+      await act(() => button.click())
+    }
+    try {
+      await act(() => root.render(<RateLimitDetails targetId="local" available />))
+      expect(host.textContent).toContain('可用 1 张')
+      expect(host.textContent).toContain('赠送重置卡')
+      await click('使用')
+      await click('关闭')
+      expect(state.consumeResetCredit).not.toHaveBeenCalled()
+      await click('使用')
+      await click('确认使用')
+      expect(state.consumeResetCredit).toHaveBeenCalledExactlyOnceWith('local', 'card-1')
     } finally {
       await act(() => root.unmount())
       vi.unstubAllGlobals()

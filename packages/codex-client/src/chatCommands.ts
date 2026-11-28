@@ -25,8 +25,9 @@ export const chatCommands = [
 export type ChatCommand = (typeof chatCommands)[number]
 export type ChatCommandId = ChatCommand['id']
 
+/** 原生命令名可含 `: . _`（如 `skill:名称`、`插件:命令`）；带第二个 `/` 的路径仍不算。 */
 export function chatCommandQuery(text: string): string | undefined {
-  return /^\s*\/([\p{L}\p{N}-]*)$/u.exec(text)?.[1]?.toLowerCase()
+  return /^\s*\/([\p{L}\p{N}_.:-]*)$/u.exec(text)?.[1]?.toLowerCase()
 }
 
 export function exactChatCommand(text: string): ChatCommand | undefined {

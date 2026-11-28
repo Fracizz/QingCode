@@ -213,7 +213,10 @@ beforeAll(async () => {
   router = new BackendRouter()
   router.register('targets.list', () => [LOCAL_TARGET])
   router.register('projects.list', ({ targetId }) => targetId === 'local'
-    ? [{ id: 'test-project', targetId, path: '/project', name: '测试项目', lastOpenedAt: 0, trusted: true }]
+    ? [
+        { id: 'test-project', targetId, path: '/project', name: '测试项目', lastOpenedAt: 0, trusted: true },
+        { id: 'hidden-project', targetId, path: '/hidden', name: '隐藏项目', lastOpenedAt: 0, trusted: true, hidden: true },
+      ]
     : [])
   router.register('server.req', (params) => {
     lastServerReq = params
@@ -309,6 +312,27 @@ describe('手机网关纯逻辑', () => {
     expect(checkRpcWhitelist('mobile.agents', {}).ok).toBe(true)
     expect(checkRpcWhitelist('settings.get', {})).toMatchObject({ ok: false, code: 'forbidden' })
     expect(checkRpcWhitelist('settings.save', {})).toMatchObject({ ok: false, code: 'forbidden' })
+  })
+
+  it('codex.send 里只放行手机用到的 qingcode 方法，并要求会话与任务 ID', () => {
+    const send = (method: string, params?: unknown) =>
+      checkRpcWhitelist('codex.send', { targetId: 'local', agent: 'claude', msg: { id: 'c1', method, params } })
+    expect(send('qingcode/backgroundTasks/list', { threadId: 't' }).ok).toBe(true)
+    expect(send('qingcode/backgroundTasks/stop', { threadId: 't', taskId: 'build' }).ok).toBe(true)
+    expect(send('qingcode/commands/list', { threadId: 't' }).ok).toBe(true)
+    for (const [method, params] of [
+      ['qingcode/backgroundTasks/list', undefined],
+      ['qingcode/commands/list', { threadId: '' }],
+      ['qingcode/backgroundTasks/stop', { threadId: 't' }],
+      ['qingcode/backgroundTasks/stop', { threadId: 't', taskId: 7 }],
+    ] as const) {
+      expect(send(method, params)).toMatchObject({ ok: false, code: 'invalid_params' })
+    }
+    // 文件回滚只在电脑上提供，试运行也不放行；新增的扩展方法默认拒绝。
+    for (const method of ['qingcode/files/rewind', 'qingcode/anything']) {
+      expect(send(method, { threadId: 't', turnId: 'u', dryRun: true })).toMatchObject({ ok: false, code: 'forbidden' })
+    }
+    expect(send('thread/read', { threadId: 't' }).ok).toBe(true)
   })
 
   it('mobile.agents 只返回启用状态与默认 Agent，不含路径与配置目录', () => {
@@ -450,6 +474,11 @@ describe('手机网关 HTTPS 集成', () => {
     expect(targets.status).toBe(200)
     expect(targets.json()).toEqual([LOCAL_TARGET])
 
+    // 电脑端隐藏的项目不下发给手机。
+    const projects = await requestJson('/rpc', 'POST', { method: 'projects.list', params: { targetId: 'local' } }, token)
+    expect(projects.status).toBe(200)
+    expect((projects.json() as { id: string }[]).map(({ id }) => id)).toEqual(['test-project'])
+
     const forbiddenMethod = await requestJson(
       '/rpc',
       'POST',
@@ -558,6 +587,13 @@ describe('手机网关 HTTPS 集成', () => {
       id: expect.any(String), method: 'turn/start',
       params: { threadId: 'thread', input: [], model: 'test-model', clientUserMessageId: 'mobile-user', claudePermissionMode: 'auto' },
     } })
+    // 计划模式只对声明了该能力的 Agent 生效（不支持的在下面的拒绝清单里）。
+    expect((await requestJson('/rpc', 'POST', turnRequest('claude', 'plan'), token)).status).toBe(200)
+    expect(lastCodexSend).toMatchObject({ msg: { params: { claudePermissionMode: 'plan' } } })
+    const rewind = await requestJson('/rpc', 'POST', { method: 'codex.send', params: {
+      targetId: 'local', agent: 'claude', msg: { id: 'rw', method: 'qingcode/files/rewind', params: { threadId: 'thread', turnId: 't', dryRun: false } },
+    } }, token)
+    expect(rewind.status).toBe(403)
     const forwardedTurn = lastCodexSend
     const inheritedTurn = (agent: string, mode: string) => {
       const request = turnRequest(agent, mode)
@@ -566,7 +602,7 @@ describe('手机网关 HTTPS 集成', () => {
     const staleAccess = await requestJson('/rpc', 'POST', inheritedTurn('codex', 'default'), token)
     expect(staleAccess.status).toBe(409)
     expect(lastCodexSend).toBe(forwardedTurn)
-    for (const [agent, mode] of [['pi', 'fullAccess'], ['claude', 'plan'], ['codex', 'readOnly'], ['codex', 'invalid']] as const) {
+    for (const [agent, mode] of [['pi', 'fullAccess'], ['codex', 'plan'], ['codex', 'readOnly'], ['codex', 'invalid']] as const) {
       const rejected = await requestJson('/rpc', 'POST', turnRequest(agent, mode), token)
       expect(rejected.status).toBe(400)
       expect(lastCodexSend).toBe(forwardedTurn)

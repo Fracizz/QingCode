@@ -1,9 +1,9 @@
-import { accessOptions, requestSubagents, supportsSubagentRequests, type AccessMode, type TurnOverrides, type UserInput } from '@qn/codex-client'
+import { accessOptions, requestSubagents, supportsSubagentRequests, type AccessMode, type SessionAccessMode, type TurnOverrides, type UserInput } from '@qn/codex-client'
 import { archivedThreadKey, isAgentKind } from './agents'
 import { buildMobileTurnInput, formatQuotedMessage, parseStoredRecord, type ChatDraft } from './state'
 import type { AgentKind, Connection } from './types'
 
-export type MobileTurnAccess = { accessMode: AccessMode; inheritAccess?: boolean }
+export type MobileTurnAccess = { accessMode: SessionAccessMode; inheritAccess?: boolean }
 
 export type QueuedSend = ChatDraft & {
   id: string

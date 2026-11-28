@@ -29,6 +29,17 @@ import {
   type V2Notification,
 } from './v2'
 import { imageBlockToEcho } from './userInput'
+import { peerMessage, unwrapPasted } from './injected'
+import { applyPlanResult, emptyPlan, trackPlanCall, type PlanStep, type PlanTracker } from './plan'
+import {
+  applySidechainMessage,
+  emptySidechains,
+  isSubagentItem,
+  settleActivity,
+  trackCard,
+  type SubagentCard,
+  type Sidechains,
+} from './sidechain'
 import { sdkTaskNotification, userTaskNotification, type TaskNotification } from './taskNotification'
 
 interface PendingTaskNotification {
@@ -63,6 +74,12 @@ export interface MapState {
   contextWindow?: number | null
   /** 本轮最近一次主代理 API 调用的 token 计数，即当前上下文占用。 */
   contextUsage?: Json | null
+  /** 任务清单，跨轮保留。 */
+  plan: PlanTracker
+  /** 本轮内清单变化后的完整内容；没变化时缺省。 */
+  turnPlan?: PlanStep[]
+  /** 子代理卡片与内部调用归属，跨轮保留。 */
+  sidechains: Sidechains
 }
 
 export interface MapResult {
@@ -91,6 +108,17 @@ export function emptyMapState(taskNotifications?: TaskNotificationState, context
     items: {},
     order: [],
     taskNotifications: taskNotifications ?? { pending: new Map(), deliveryIds: new Map() },
+    plan: emptyPlan(),
+    sidechains: emptySidechains(),
+  }
+}
+
+/** 新一轮的状态：条目清空，跨轮数据沿用。 */
+export function nextTurnState(previous: MapState): MapState {
+  return {
+    ...emptyMapState(previous.taskNotifications, previous.contextWindow ?? null),
+    plan: previous.plan,
+    sidechains: previous.sidechains,
   }
 }
 
@@ -108,6 +136,9 @@ function cloneState(state: MapState): MapState {
     ...(state.blockPhase ? { blockPhase: { ...state.blockPhase } } : {}),
     contextWindow: state.contextWindow ?? null,
     contextUsage: state.contextUsage ?? null,
+    plan: state.plan,
+    ...(state.turnPlan ? { turnPlan: state.turnPlan } : {}),
+    sidechains: state.sidechains,
   }
 }
 
@@ -270,20 +301,63 @@ function mapTaskNotification(
   out.push(itemCompleted({ ...ctx, turnId }, item))
 }
 
+/** 非用户输入的记录用现成的卡片和提示展示；沿用消息 UUID，实时与历史指向同一条目。 */
+function mapInjected(message: Json, ctx: MapContext, state: MapState, out: V2Notification[]): boolean {
+  const peer = peerMessage(message)
+  if (!peer && message.isCompactSummary !== true) return false
+  const id = scalarText(message.uuid) || newItemId(ctx, state, peer ? 'peer' : 'compact')
+  const item: V2Item = peer
+    ? { type: 'backgroundTaskNotification', id, status: 'message', summary: peer.sender, result: peer.body }
+    : { type: 'contextCompaction', id, status: 'completed' }
+  recordItem(state, item)
+  out.push(itemCompleted(ctx, item))
+  return true
+}
+
 /** 仍在 inProgress 的 item 在轮次结束时补 completed，避免界面一直显示运行中。 */
 export function finishPendingItems(ctx: MapContext, state: MapState, failed = false): V2Notification[] {
   const out: V2Notification[] = []
   for (const id of state.order) {
     const item = state.items[id]
     if (!isRecord(item) || item.status !== 'inProgress') continue
-    const completed: V2Item = { ...item, status: failed ? 'failed' : 'completed' }
+    // 退出计划模式没收到结果不能算批准：客户端据 completed 切回原访问档位。
+    const unapproved = item.type === 'dynamicToolCall' && item.tool === 'ExitPlanMode'
+    let completed: V2Item = { ...item, status: failed || unapproved ? 'failed' : 'completed' }
     if (completed.type === 'commandExecution' && completed.exitCode === null) {
       completed.exitCode = failed ? 1 : 0
     }
+    if (isSubagentItem(completed)) completed = saveCard(state, settleActivity(completed, failed ? 'failed' : 'completed'))
     state.items[id] = completed
     out.push(itemCompleted(ctx, completed))
   }
   return out
+}
+
+function saveCard(state: MapState, item: V2Item): V2Item {
+  const saved = trackCard(state.sidechains, scalarText(item.toolUseId), '', item)
+  state.sidechains = saved.chains
+  return saved.item
+}
+
+/** 卡片变化：仍在当前轮次时同步写入本轮条目，按卡片所属轮次发通知。 */
+function emitCard(card: SubagentCard, ctx: MapContext, state: MapState, out: V2Notification[]): void {
+  const id = scalarText(card.item.id)
+  if (Object.hasOwn(state.items, id)) {
+    state.items[id] = card.item
+    state.toolItems[scalarText(card.item.toolUseId)] = card.item
+  }
+  const owner = { ...ctx, turnId: card.turnId }
+  out.push(card.item.status === 'inProgress' ? itemStarted(owner, card.item) : itemCompleted(owner, card.item))
+}
+
+/** 后台子代理结束时收尾它卡片里还没有结果的活动。 */
+function settleBackgroundCard(message: Json, ctx: MapContext, state: MapState, out: V2Notification[]): void {
+  const toolUseId = scalarText(message.tool_use_id)
+  const card = state.sidechains.cards.get(toolUseId)
+  if (!card) return
+  const item = settleActivity(card.item, message.status === 'completed' ? 'completed' : 'failed')
+  if (item === card.item) return
+  emitCard({ turnId: card.turnId, item: saveCard(state, item) }, ctx, state, out)
 }
 
 function mapStreamEvent(message: Json, ctx: MapContext, state: MapState, out: V2Notification[]): void {
@@ -445,7 +519,13 @@ function mapAssistant(message: Json, ctx: MapContext, state: MapState, out: V2No
       const toolId = scalarText(block.id) || `${messageId}:${index}`
       const existing = state.toolItems[toolId]
       const id = existing ? scalarText(existing.id) : newItemId(ctx, state, 'tool')
-      const item = toolUseItem(id, name, block.input, ctx.cwd)
+      let item = toolUseItem(id, name, block.input, ctx.cwd)
+      if (isSubagentItem(item)) {
+        const tracked = trackCard(state.sidechains, toolId, ctx.turnId, item)
+        state.sidechains = tracked.chains
+        item = tracked.item
+      }
+      state.plan = trackPlanCall(state.plan, toolId, name, block.input)
       state.toolItems[toolId] = item
       recordItem(state, item)
       out.push(itemStarted(ctx, item))
@@ -472,7 +552,7 @@ function mapUser(
         const image = imageBlockToEcho(block)
         if (image) echo.push(image)
       } else if (block?.type === 'text' && scalarText(block.text)) {
-        echo.push({ type: 'text', text: scalarText(block.text), text_elements: [] })
+        echo.push({ type: 'text', text: unwrapPasted(scalarText(block.text)), text_elements: [] })
       }
     }
     if (echo.length > 0) {
@@ -481,6 +561,8 @@ function mapUser(
       out.push(itemStarted(ctx, item), itemCompleted(ctx, item))
     }
   }
+  // 结构化结果挂在整条消息上，只有唯一的 tool_result 时才能确定归属。
+  const results = blocks.filter((raw) => asRecord(raw)?.type === 'tool_result').length
   for (const raw of blocks) {
     const block = asRecord(raw)
     if (!block) continue
@@ -491,7 +573,7 @@ function mapUser(
     const output = toolResultText(block.content)
     const existing = state.toolItems[toolId]
     const id = existing ? scalarText(existing.id) : newItemId(ctx, state, 'tool')
-    const item: V2Item = { ...(existing ?? dynamicToolCallItem(id, 'tool', {})), id }
+    let item: V2Item = { ...(existing ?? dynamicToolCallItem(id, 'tool', {})), id }
     if (item.type === 'commandExecution') {
       item.aggregatedOutput = output
       item.exitCode = errored ? 1 : 0
@@ -500,9 +582,21 @@ function mapUser(
       item.success = !errored
     }
     item.status = errored ? 'failed' : 'completed'
+    if (isSubagentItem(item) && item.toolUseId) item = saveCard(state, item)
     state.toolItems[toolId] = item
     recordItem(state, item)
     out.push(itemCompleted(ctx, item))
+    const { tracker, plan } = applyPlanResult(state.plan, toolId, {
+      failed: errored, text: output, structured: results === 1 ? message.tool_use_result : undefined,
+    })
+    state.plan = tracker
+    if (!plan) continue
+    state.turnPlan = plan
+    if (ctx.turnId) {
+      out.push(notification('turn/plan/updated', {
+        threadId: ctx.threadId, turnId: ctx.turnId, explanation: null, plan,
+      }))
+    }
   }
 }
 
@@ -541,10 +635,10 @@ export function mapSdkMessage(
 export function mapHistoryMessage(
   message: unknown, ctx: MapContext, state: MapState,
   taskDeliveryIds?: ReadonlyMap<string, string>,
-): void {
+): V2Notification[] {
   // 已持久化的完整消息没有实时分块索引，只需在相同消息 ID 的块间匹配。
   state.historyBlockKeys ??= new Map()
-  mapMessage(message, ctx, state, { includeUserText: true, taskDeliveryIds })
+  return mapMessage(message, ctx, state, { includeUserText: true, taskDeliveryIds })
 }
 
 function mapMessage(
@@ -556,6 +650,14 @@ function mapMessage(
   const out: V2Notification[] = []
   const msg = asRecord(message)
   if (!msg) return out
+  // 子代理内部消息只进它的卡片，不平铺到主对话，也不参与主对话的流式分块与上下文占用。
+  const parent = scalarText(msg.parent_tool_use_id)
+  if (parent && (msg.type === 'assistant' || msg.type === 'user' || msg.type === 'stream_event')) {
+    const applied = applySidechainMessage(state.sidechains, parent, msg)
+    state.sidechains = applied.chains
+    if (applied.card) emitCard(applied.card, ctx, state, out)
+    return out
+  }
 
   switch (msg.type) {
     case 'stream_event':
@@ -569,11 +671,12 @@ function mapMessage(
       const isOwnPrompt = state.items[scalarText(msg.uuid)]?.type === 'userMessage'
       const task = isOwnPrompt ? undefined : userTaskNotification(msg)
       if (task) mapTaskNotification(task, msg, ctx, state, out, options)
-      else mapUser(msg, ctx, state, out, options)
+      else if (isOwnPrompt || !mapInjected(msg, ctx, state, out)) mapUser(msg, ctx, state, out, options)
       break
     }
     case 'system': {
       if (msg.subtype === 'task_notification') {
+        settleBackgroundCard(msg, ctx, state, out)
         const task = sdkTaskNotification(msg)
         if (task) mapTaskNotification(task, msg, ctx, state, out, options)
         break

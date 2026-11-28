@@ -1,7 +1,7 @@
 import { Children, isValidElement, memo, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, Wand2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, RotateCcw, Wand2 } from 'lucide-react'
 import { backgroundTaskLabel, formatReplyTime, getLocale, localReplyDay, splitMarkdownBlocks, subscribeToReplyDay, t, workSummaryLabel, type ItemView, type ThreadActivity, type UserInput } from '@qn/codex-client'
 import { basename, editUserText, embeddedImageLabel, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
@@ -308,7 +308,7 @@ function StreamingMarkdown({ text, components }: { text: string; components: Com
 }
 
 // 对话实时更新会重建消息操作回调，未变化的正文无需重新解析 Markdown。
-const ReplyMarkdown = memo(function ReplyMarkdown({ text, streaming }: { text: string; streaming: boolean }) {
+export const ReplyMarkdown = memo(function ReplyMarkdown({ text, streaming }: { text: string; streaming: boolean }) {
   const context = useLinkContext()
   const components = useMemo(() => markdownComponents(streaming, context), [streaming, context])
   return (
@@ -359,6 +359,10 @@ type MessageItemProps = {
   replyTimeInSummary?: boolean
   onFork?: (itemId: string) => (() => void) | undefined
   onEdit?: (text: string, input: UserInput[]) => Promise<boolean>
+  /** 重发会分出新会话时的说明；有值时编辑框里常驻显示。 */
+  editNote?: string
+  /** 把文件回到这条消息所在轮次开始前。 */
+  onRewind?: () => void
 }
 
 export const MessageItem = memo(function MessageItem(props: MessageItemProps) {
@@ -366,10 +370,11 @@ export const MessageItem = memo(function MessageItem(props: MessageItemProps) {
   return <div data-chat-item={props.item.id} className="contents"><MessageContent {...props} /></div>
 })
 
-function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, onEdit }: MessageItemProps) {
+function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, onEdit, editNote, onRewind }: MessageItemProps) {
   switch (item.kind) {
     case 'user':
-      return <UserMessage item={item} onEdit={item.pending ? undefined : onEdit} />
+      return <UserMessage item={item} onEdit={item.pending ? undefined : onEdit} editNote={editNote}
+        onRewind={item.pending ? undefined : onRewind} />
     case 'agent':
       return item.text.trim()
         ? <AgentMessage id={item.id} text={item.text} streaming={item.streaming === true}
@@ -418,6 +423,15 @@ function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, o
     case 'other':
       if (item.type === 'contextCompaction') {
         return <p role="status" className="text-ui text-qn-muted">{item.summary}</p>
+      }
+      if (item.plan) {
+        return (
+          <ToolRow icon={<ListChecks size={14} aria-hidden />} summary={t('提交的计划')}>
+            <div className="qn-markdown min-w-0 wrap-anywhere border-l border-qn-border pl-3 text-qn-prose">
+              <ReplyMarkdown text={item.plan} streaming={false} />
+            </div>
+          </ToolRow>
+        )
       }
       return (
         <ToolRow icon={<FileText size={14} />} summary={item.type}>
@@ -471,10 +485,12 @@ export const WorkGroup = memo(function WorkGroup({
 })
 
 /** 用户消息：右侧灰色气泡；图片缩略图与附件/技能标签放在气泡上方。 */
-function UserMessage({ item, onEdit }: {
+function UserMessage({ item, onEdit, editNote, onRewind }: {
   item: Extract<ItemView, { kind: 'user' }>
-  /** 从这条消息开始重来：删除它及之后的历史，再发送修改后的内容。 */
+  /** 从这条消息开始重来：原地回退后发送，或分出新会话发送（editNote 说明）。 */
   onEdit?: (text: string, input: UserInput[]) => Promise<boolean>
+  editNote?: string
+  onRewind?: () => void
 }) {
   const [edit, setEdit] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -567,11 +583,12 @@ function UserMessage({ item, onEdit }: {
               if (event.key === 'Escape' && !event.nativeEvent.isComposing && !saving) setEdit(null)
             }}
           />
+          {editNote && <div className="px-1 text-ui-sm text-qn-muted">{editNote}</div>}
           {editFailed && <div role="status" className="px-1 text-ui-sm text-qn-warn">{t('发送失败，修改已保留')}</div>}
           <div className="mt-2 flex flex-wrap justify-end gap-1.5 text-ui-sm">
             {/* 两个按钮同为 1px 边框，保证高度一致；取消用描边样式与主按钮区分。 */}
             <button type="button" disabled={saving} className="rounded-md border border-qn-outline px-2.5 py-1 text-qn-text hover:border-qn-outline-hover hover:bg-qn-hover disabled:opacity-40" onClick={() => setEdit(null)}>{t('取消')}</button>
-            <button type="submit" disabled={!canSave || saving} className="rounded-md border border-transparent bg-qn-text px-2.5 py-1 text-qn-bg disabled:opacity-40">{saving ? t('提交中…') : t('重新发送')}</button>
+            <button type="submit" disabled={!canSave || saving} className="rounded-md border border-transparent bg-qn-text px-2.5 py-1 text-qn-bg disabled:opacity-40">{saving ? t('提交中…') : editNote ? t('在新分支发送') : t('重新发送')}</button>
           </div>
         </form>
       ) : parsed.text.trim() && (
@@ -579,7 +596,7 @@ function UserMessage({ item, onEdit }: {
           {parsed.text}
         </div>
       )}
-      {edit === null && (timestamp || parsed.text.trim() || onEdit) && (
+      {edit === null && (timestamp || parsed.text.trim() || onEdit || onRewind) && (
         <div className="flex h-6 items-center gap-1 text-ui-sm text-qn-muted">
           {timestamp && <time className="mr-1" dateTime={timestamp.toISOString()}>{timestamp.toLocaleString(getLocale() === 'en' ? 'en-US' : 'zh-CN', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false })}</time>}
           {parsed.text.trim() && (
@@ -596,6 +613,11 @@ function UserMessage({ item, onEdit }: {
               setEdit(parsed.text)
             }}>
               <Pencil size={14} />
+            </IconButton>
+          )}
+          {onRewind && (
+            <IconButton label={t('回滚文件到此轮开始前')} size="sm" onClick={onRewind}>
+              <RotateCcw size={14} />
             </IconButton>
           )}
         </div>

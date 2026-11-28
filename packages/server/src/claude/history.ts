@@ -1,7 +1,9 @@
 /** getSessionMessages / listSessions 的历史 → v2 Thread/turns/items（纯函数）。 */
 import { emptyMapState, mapHistoryMessage } from './items'
+import { isForkNotice, peerMessage } from './injected'
 import { parseLocalCommand } from './localCommand'
 import { userTaskNotification } from './taskNotification'
+import type { PlanStep, PlanTracker } from './plan'
 import type { ThreadStatus } from '../../../../vendor/codex-protocol/ts/v2/ThreadStatus'
 import { isSteerPlacement, type SteerPlacement } from '../steerHistory'
 import {
@@ -22,7 +24,10 @@ export interface HistoryResult {
   thread: Json
   turns: Json[]
   items: V2Item[]
-  forkPoints: { turnId: string; firstMessageId: string; lastMessageId: string }[]
+  /** promptMessageId 是开启该轮的用户消息，由系统记录开启的轮次没有。 */
+  forkPoints: { turnId: string; firstMessageId: string; lastMessageId: string; promptMessageId?: string }[]
+  /** 读完历史后的任务清单，用于让续用的会话认得已有任务。 */
+  plan: PlanTracker
 }
 
 export type ClaudeSteerHistory = { placement: SteerPlacement; startsTurn: boolean }
@@ -75,12 +80,25 @@ function hasUserText(content: unknown): boolean {
   })
 }
 
+const INTERRUPT_MARKERS = new Set(['[Request interrupted by user]', '[Request interrupted by user for tool use]'])
+
+/** Claude Code 中断时以 user 身份写入固定正文的占位记录，SDK 历史接口只能按正文识别。 */
+function isInterruptMarker(message: Record<string, unknown>): boolean {
+  if (message.role !== 'user') return false
+  const blocks = Array.isArray(message.content) ? message.content : [message.content]
+  return blocks.length > 0 && blocks.every((block) =>
+    INTERRUPT_MARKERS.has(typeof block === 'string' ? block : scalarText(asRecord(block)?.text)))
+}
+
 interface OpenTurn {
   id: string
   itemIds: string[]
+  interrupted?: boolean
   error?: string
   firstMessageId: string
   lastMessageId: string
+  promptMessageId?: string
+  plan?: PlanStep[]
 }
 
 /**
@@ -135,6 +153,23 @@ export function sessionMessagesToThread(
     if (!apiMessage) continue
     let role = scalarText(apiMessage.role)
     const messageId = scalarText(entry?.uuid)
+    const parentToolUseId = scalarText(entry?.parent_tool_use_id)
+    if (parentToolUseId) {
+      // 子代理内部消息不开启轮次，也不进主对话。
+      if (current) {
+        mapHistoryMessage({ type: role === 'assistant' ? 'assistant' : 'user', message: apiMessage,
+          parent_tool_use_id: parentToolUseId }, { threadId: meta.id, turnId: current.id, cwd: meta.cwd }, state)
+      }
+      continue
+    }
+    if (isInterruptMarker(apiMessage)) {
+      // 不是用户输入：只记录当前轮次被中断，分叉边界仍包含这条记录。
+      if (current) {
+        current.interrupted = true
+        if (messageId) current.lastMessageId = messageId
+      }
+      continue
+    }
     // 终端里执行的本地斜杠命令：命令显示为用户输入，输出作为该轮的回复，说明性记录直接略过。
     const local = role === 'user' ? parseLocalCommand(apiMessage.content) : undefined
     if (local?.kind === 'skip') continue
@@ -151,10 +186,15 @@ export function sessionMessagesToThread(
       message: apiMessage,
       uuid: entry?.uuid,
       origin: entry?.origin,
+      isCompactSummary: entry?.isCompactSummary,
     }
-    if (!current || (role === 'user' && hasUserText(apiMessage.content) && !userTaskNotification(sdkMessage)
-      && (steer?.startsTurn ?? true))) {
-      current = { id: `turn-${meta.id}-${index}`, itemIds: [], firstMessageId: messageId, lastMessageId: '' }
+    if (isForkNotice(sdkMessage)) continue
+    const injected = Boolean(userTaskNotification(sdkMessage) || peerMessage(sdkMessage) || sdkMessage.isCompactSummary)
+    const prompt = role === 'user' && hasUserText(apiMessage.content) && !injected
+    // 中断之后系统又写入通知或消息时另起一轮，中断提示留在原处。
+    if (!current || (current.interrupted && injected) || (prompt && (steer?.startsTurn ?? true))) {
+      current = { id: `turn-${meta.id}-${index}`, itemIds: [], firstMessageId: messageId, lastMessageId: '',
+        ...(prompt && messageId ? { promptMessageId: messageId } : {}) }
       open.push(current)
     }
     if ((role === 'user' || role === 'assistant') && messageId) current.lastMessageId = messageId
@@ -165,22 +205,27 @@ export function sessionMessagesToThread(
       if (apiError) current.error = apiError
       else delete current.error
     }
-    mapHistoryMessage(sdkMessage, ctx, state, taskDeliveryIds)
+    for (const note of mapHistoryMessage(sdkMessage, ctx, state, taskDeliveryIds)) {
+      if (note.method === 'turn/plan/updated') current.plan = note.params.plan as PlanStep[]
+    }
     const item = state.items[messageId]
     if (steer && item?.type === 'userMessage') item.steering = steer.placement
     for (const id of state.order.slice(before)) current.itemIds.push(id)
   }
   // item 的 completed 状态可能在后续消息里才补齐，turn 对象必须最后一次性生成。
-  const finalTurns: Json[] = open.map((turn) =>
-    buildTurn(
+  const finalTurns: Json[] = open.map((turn) => {
+    const built = buildTurn(
       turn.id,
       turn.itemIds.map((id) => state.items[id]).filter(isRecord),
-      turn.error ? 'failed' : 'completed',
+      turn.interrupted ? 'interrupted' : turn.error ? 'failed' : 'completed',
       turn.error ?? null,
       'history',
-    ),
-  )
+    )
+    // 与实时的 turn/plan/updated 同样的内容，挂在清单发生变化的轮次上。
+    return turn.plan ? { ...built, plan: { explanation: null, plan: turn.plan } } : built
+  })
   const items = state.order.map((id) => state.items[id]).filter(isRecord)
-  const forkPoints = open.map(({ id: turnId, firstMessageId, lastMessageId }) => ({ turnId, firstMessageId, lastMessageId }))
-  return { thread: buildThread(meta, finalTurns, config), turns: finalTurns, items, forkPoints }
+  const forkPoints = open.map(({ id: turnId, firstMessageId, lastMessageId, promptMessageId }) => (
+    { turnId, firstMessageId, lastMessageId, ...(promptMessageId ? { promptMessageId } : {}) }))
+  return { thread: buildThread(meta, finalTurns, config), turns: finalTurns, items, forkPoints, plan: state.plan }
 }

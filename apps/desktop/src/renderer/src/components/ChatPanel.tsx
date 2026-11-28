@@ -2,8 +2,9 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragE
 import { ArrowDown, FolderGit2, ImagePlus, Monitor, Server } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { CodexRpcLike, ItemView, ThreadView } from '@qn/codex-client'
-import { accessOptions, chatCommands, chatCommandUnavailable, claudeQuotaBlocked, collectSubagents, contextUsage, DRAFT_THREAD_ID,
-  estimatedTurnUsage, formatTokens, includeWorkSummary, t, takeSkillTokens, translateMessage, type ChatCommandId } from '@qn/codex-client'
+import { AGENT_CAPABILITIES, branchPoint, chatCommands, chatCommandUnavailable, claudeQuotaBlocked, collectSubagents, contextUsage, DRAFT_THREAD_ID,
+  estimatedTurnUsage, formatTokens, includeWorkSummary, mergeSlashCommands, planApproval, sessionAccessOptions, t, takeSkillTokens, translateMessage,
+  turnOpeningMessages, turnSteerBlock, type ChatCommandId } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { buildAnnotatedMessage, sideChatExcerpt, type Annotation } from '../lib/annotations'
 import { agentLabel, sessionKey } from '../lib/agents'
@@ -35,6 +36,7 @@ import { targetDotClass } from '../lib/targetStatus'
 import { threadKey } from '../lib/threads'
 import { groupTurns, hasPendingSubmission, needsTurnProgress, streamingReplyId } from '../lib/turnGroups'
 import { composerDraftKey, currentThreadApprovals, currentThreads, pendingSendKey, useCodex, type SendMode } from '../store/codex'
+import { commandsKey, useCommands } from '../store/commands'
 import { useDock } from '../store/dock'
 import { useProjects } from '../store/projects'
 import { useRateLimits } from '../store/rateLimits'
@@ -45,11 +47,14 @@ import { useUi } from '../store/ui'
 import { AgentPicker } from './AgentPicker'
 import { AnnotationBar } from './AnnotationBar'
 import { ApprovalCard } from './ApprovalCard'
+import { BackgroundTasksPanel } from './BackgroundTasksPanel'
 import { Composer } from './Composer'
 import { LoadingIcon } from './LoadingIcon'
 import { MessageItem, ToolGroup, TurnProgress, TurnStopped, WorkGroup } from './MessageItem'
 import { ContextRing, ModelPicker } from './ModelPicker'
+import { PlanPanel } from './PlanPanel'
 import { RateLimitDetails } from './RateLimitBadge'
+import { RewindDialog } from './RewindDialog'
 import { SelectionLayer } from './SelectionLayer'
 import { SendQueue } from './SendQueue'
 import { StatusDot } from './StatusDot'
@@ -213,8 +218,17 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const view = useCodex((s) => sessionId ? s.sessions[sessionId]?.state.threads[visibleThreadId] : undefined)
   const preview = sendingMessage?.preview
   const items: ItemView[] = useMemo(() => preview ? [...(view?.items ?? noItems), preview] : view?.items ?? noItems, [preview, view?.items])
-  const revisionChat = currentAgent === 'codex' && currentTargetId && currentThreadId
-    ? { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId } as const : null
+  const { revert, fork, rewindFiles } = AGENT_CAPABILITIES[currentAgent]
+  const messageChat = currentTargetId && currentThreadId
+    ? { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId } : null
+  // 回滚与分支重发只能从开启一轮的消息开始。
+  const turnOpeners = useMemo(() => turnOpeningMessages(view), [view?.items, view?.turns])
+  // 整个会话的第一条消息重发时开新会话，说明文字不同；只对它算一次，避免逐条扫描历史。
+  const startingMessage = useMemo(() => {
+    const first = turnOpeners.keys().next().value
+    return first && branchPoint(view, first)?.kind === 'start' ? first : null
+  }, [turnOpeners, view?.historyCursor])
+  const [rewinding,setRewinding] = useState<{ key: string | null; turnId: string } | null>(null)
   const approvals = useCodex(currentThreadApprovals)
   const running = view?.status === 'running'
   const activeItems = running ? view.turns?.find((turn) => turn.id === view.activeTurnId)?.itemIds : undefined
@@ -566,6 +580,15 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
     if (skillKey && skillRpc) void loadSkills(skillKey, currentCwd, skillRpc, refreshBridgeSkills)
   }, [skillKey, currentCwd, skillRpc, loadSkills, refreshBridgeSkills, loadedThreadId])
 
+  // Agent 原生斜杠命令由运行中的会话进程提供：会话载入、轮次结束和打开菜单时刷新。
+  const commandKey = sessionId && currentThreadId && AGENT_CAPABILITIES[currentAgent].commandList
+    ? commandsKey(sessionId, currentThreadId) : null
+  const nativeCommands = useCommands((s) => commandKey ? s.lists[commandKey] : undefined)
+  const refreshCommands = () => {
+    if (commandKey && currentThreadId && skillRpc) void useCommands.getState().load(commandKey, currentThreadId, skillRpc)
+  }
+  useEffect(refreshCommands, [commandKey, skillRpc, running, loadedThreadId])
+
   const threads = useCodex(currentThreads)
   const localTitle = useThreadPrefs((s) => currentTargetId && currentThreadId
     ? s.byTarget[currentTargetId]?.names[threadKey(currentAgent, currentThreadId)]
@@ -589,6 +612,10 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
     ...chatCommands.map(({ id, name, description }) => ({
       id: name, name, description: id === 'refresh' ? t('刷新会话列表与技能') : description,
       kind: 'command' as const, reason: commandReason(id),
+    })),
+    ...mergeSlashCommands(nativeCommands ?? [], skillList?.items.map((item) => item.name)).map((command) => ({
+      id: `native:${command.name}`, kind: 'native' as const, name: command.name, description: command.description,
+      argumentHint: command.argumentHint, scope: t('Agent 命令'),
     })),
     ...(skillList?.items ?? []),
   ]
@@ -659,7 +686,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const accessMode = useCodex((state) => untrustedCwd ? 'default' : currentTargetId ? getAccessMode(state.access,
     { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId },
     useSettings.getState().settings.general.globalAccessMode) : 'default')
-  const access = accessOptions[currentAgent].find((option) => option.mode === accessMode)
+  const access = sessionAccessOptions(currentAgent).find((option) => option.mode === accessMode)
 
   // 切换草稿后只跟踪当前输入框的读图进度。
   useLayoutEffect(() => {
@@ -754,6 +781,9 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
                   }
                   if (entry.kind === 'stopped') return <TurnStopped key={entry.key} durationMs={entry.durationMs} />
                   const key = `${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`
+                  const turnId = turnOpeners.get(entry.item.id)
+                  // 能回退的 Agent 在原会话改写任意消息；只能分支的从开启一轮的消息分出新会话。
+                  const editable = !!messageChat && !running && entry.item.kind === 'user' && (revert || (fork && !!turnId))
                   const message = (
                     <MessageItem
                       key={key}
@@ -761,9 +791,14 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
                       showStreamingDots={entry.item.id === streamingId}
                       replyTimeInSummary={previous?.kind === 'work' && previous.reply?.id === entry.item.id}
                       onFork={forkFromMessage}
-                      // 只有 Codex 能在原会话里截断历史（thread/revert）；其他 Agent 不提供编辑重发。
-                      onEdit={revisionChat && !running
-                        ? (_text, input) => sendRevision(revisionChat, entry.item.id, input)
+                      onEdit={editable && messageChat
+                        ? (_text, input) => sendRevision(messageChat, entry.item.id, input)
+                        : undefined}
+                      editNote={!editable || revert ? undefined : entry.item.id === startingMessage
+                        ? t('这是第一条消息：将开新会话发送，原会话保留。')
+                        : t('将从上一轮分出新会话发送，原会话保留。')}
+                      onRewind={rewindFiles && !running && turnId && entry.item.kind === 'user'
+                        ? () => setRewinding({ key: chatKey, turnId })
                         : undefined}
                     />
                   )
@@ -776,6 +811,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
                   <ApprovalCard
                     key={String(approval.requestId)}
                     approval={approval}
+                    plan={planApproval(view, approval)?.plan}
                     onDecide={(decision) => respondApproval(
                       { targetId: currentTargetId, agent: currentAgent, threadId: currentThreadId },
                       approval.requestId, decision,
@@ -807,6 +843,11 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
 
       {/* 队列和注释在剩余空间内滚动，避免把消息列表或输入框挤出窗口。 */}
       <div className="qn-scroll min-h-0 overflow-y-auto">
+        <PlanPanel key={`plan:${chatKey}`} plan={view?.plan} running={running} contentWidthClassName={contentWidthClassName} />
+        {currentTargetId && currentThreadId && (
+          <BackgroundTasksPanel key={`tasks:${chatKey}`} targetId={currentTargetId} agent={currentAgent}
+            threadId={currentThreadId} contentWidthClassName={contentWidthClassName} />
+        )}
         <SendQueue
           targetId={currentTargetId}
           agent={currentAgent}
@@ -828,7 +869,9 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
         onInterrupt={() => void interrupt()}
         running={running}
         compacting={compacting}
-        sending={sending || preparingPi || compactionStarting}
+        compactionStarting={compactionStarting}
+        steerBlocked={running && turnSteerBlock(currentAgent, view) !== null}
+        sending={sending || preparingPi}
         disabled={!currentTargetId}
         error={error}
         onClearError={clearError}
@@ -849,6 +892,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
           skills,
           onSkillsChange: setSkills,
           onCommand: runCommand,
+          onOpen: refreshCommands,
         }}
         leading={<AgentPicker targetId={currentTargetId} agent={currentAgent} locked={!isDraft || sending || preparingPi} />}
         trailing={
@@ -941,6 +985,9 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
             </div>
           </form>
         </Modal>
+      )}
+      {rewinding && rewinding.key === chatKey && messageChat && (
+        <RewindDialog chat={messageChat} turnId={rewinding.turnId} onClose={() => setRewinding(null)} />
       )}
       {dragging && (
         <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-outline bg-qn-bg/85 text-ui-md text-qn-text">

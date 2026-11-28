@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { emptyAccessMemory, getAccessMode, rememberAccessMode, resetDraftAccess, turnAccessOverride } from './accessModel'
+import {
+  branchAccessSelection, emptyAccessMemory, getAccessMode, getAccessSelection, leavePlanMode, planReturnSelection,
+  rememberAccessMode, resetDraftAccess, resetTargetAccess, turnAccessOverride,
+} from './accessModel'
 
 describe('会话访问模式', () => {
   const session = { targetId: 'remote', agent: 'codex', threadId: 'first' } as const
@@ -54,7 +57,45 @@ describe('会话访问模式', () => {
     expect(turnAccessOverride('claude', 'auto')).toEqual({ claudePermissionMode: 'auto' })
     expect(turnAccessOverride('claude', 'fullAccess')).toEqual({ claudePermissionMode: 'bypassPermissions' })
     expect(turnAccessOverride('claude', 'default')).toBeNull()
-    expect(turnAccessOverride('claude', 'plan')).toBeNull()
+    expect(turnAccessOverride('claude', 'plan')).toEqual({ claudePermissionMode: 'plan' })
+    expect(turnAccessOverride('codex', 'plan')).toBeNull()
     expect(turnAccessOverride('pi', 'fullAccess')).toBeNull()
+  })
+
+  it('计划模式只给支持的 Agent，批准后切回选它之前的档位', () => {
+    const claude = { ...session, agent: 'claude' } as const
+    expect(rememberAccessMode(emptyAccessMemory, session, 'plan')).toBe(emptyAccessMemory)
+    const auto = rememberAccessMode(emptyAccessMemory, claude, 'auto')
+    const plan = rememberAccessMode(auto, claude, 'plan')
+    expect(getAccessMode(plan, claude, 'fullAccess')).toBe('plan')
+    expect(planReturnSelection(plan, claude)).toBe('auto')
+    // 重复选计划模式不能把返回档位覆盖成计划模式本身。
+    expect(planReturnSelection(rememberAccessMode(plan, claude, 'plan'), claude)).toBe('auto')
+    const left = leavePlanMode(plan, claude)
+    expect(getAccessSelection(left, claude)).toBe('auto')
+    expect(leavePlanMode(left, claude)).toBe(left)
+    expect(getAccessSelection(leavePlanMode(rememberAccessMode(emptyAccessMemory, claude, 'plan'), claude), claude)).toBe('inherit')
+  })
+
+  it('草稿带着返回档位转成会话', () => {
+    const claudeDraft = { ...draft, agent: 'claude' } as const
+    const claude = { ...session, agent: 'claude' } as const
+    const drafted = rememberAccessMode(rememberAccessMode(emptyAccessMemory, claudeDraft, 'fullAccess'), claudeDraft, 'plan')
+    expect(planReturnSelection(drafted, claudeDraft)).toBe('fullAccess')
+    const moved = rememberAccessMode(drafted, claude, getAccessSelection(drafted, claudeDraft),
+      planReturnSelection(drafted, claudeDraft))
+    expect(getAccessSelection(leavePlanMode(moved, claude), claude)).toBe('fullAccess')
+    expect(planReturnSelection(resetTargetAccess(moved, 'remote', 'claude'), claude)).toBe('inherit')
+  })
+
+  it('分支会话不带走提升的权限，但保留比总控更严格的选择', () => {
+    const claude = { ...session, agent: 'claude' } as const
+    const choose = (mode: 'plan' | 'default' | 'auto' | 'fullAccess') => rememberAccessMode(emptyAccessMemory, claude, mode)
+    expect(branchAccessSelection(choose('fullAccess'), claude, 'default')).toBe('inherit')
+    expect(branchAccessSelection(choose('auto'), claude, 'default')).toBe('inherit')
+    expect(branchAccessSelection(choose('plan'), claude, 'fullAccess')).toBe('plan')
+    expect(branchAccessSelection(choose('default'), claude, 'fullAccess')).toBe('default')
+    expect(branchAccessSelection(choose('auto'), claude, 'fullAccess')).toBe('auto')
+    expect(branchAccessSelection(emptyAccessMemory, claude, 'fullAccess')).toBe('inherit')
   })
 })

@@ -107,6 +107,8 @@ export type Project = {
   lastOpenedAt: number
   /** 工作区信任：false 时禁止运行配置，Agent 只能用默认权限。旧数据缺省视为已信任。 */
   trusted: boolean
+  /** 用户在项目管理里隐藏的项目：电脑侧栏与手机端都不显示。缺省为显示。 */
+  hidden?: boolean
 }
 
 export type MobileSettings = {
@@ -243,7 +245,7 @@ export interface BackendMethods {
   }
   'projects.list': { params: { targetId?: string }; result: Project[] }
   'projects.save': {
-    params: { id?: string; targetId: string; name?: string; path: string; trusted?: boolean }
+    params: { id?: string; targetId: string; name?: string; path: string; trusted?: boolean; hidden?: boolean }
     result: Project
   }
   'projects.remove': { params: { id: string }; result: void }

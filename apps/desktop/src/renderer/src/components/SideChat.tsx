@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, MessagesSquare, PanelRightClose, Quote, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ItemView } from '@qn/codex-client'
-import { t } from '@qn/codex-client'
+import { planApproval, t, turnSteerBlock } from '@qn/codex-client'
 import { agentLabel, DEFAULT_AGENT, sessionKey } from '../lib/agents'
 import { annotationExcerpt, type Annotation } from '../lib/annotations'
 import { isAtBottom } from '../lib/diff'
@@ -191,6 +191,7 @@ export function SideChat() {
             <ApprovalCard
               key={String(approval.requestId)}
               approval={approval}
+              plan={planApproval(view, approval)?.plan}
               onDecide={(decision) => respondApproval(
                 { targetId: sideTargetId, agent: sideAgent, threadId: sideThreadId },
                 approval.requestId, decision,
@@ -240,6 +241,7 @@ export function SideChat() {
           }}
           onInterrupt={() => void interruptSide()}
           running={running}
+          steerBlocked={running && turnSteerBlock(agent, view) !== null}
           sending={sending || side.busy}
           disabled={side.expired || side.busy}
           error={sideError ?? null}

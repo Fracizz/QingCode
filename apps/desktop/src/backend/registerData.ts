@@ -47,10 +47,11 @@ export function registerDataMethods(router: BackendRouter): void {
     const id = typeof p.id === 'string' && p.id !== '' ? p.id : undefined
     const name = typeof p.name === 'string' ? p.name : undefined
     const trusted = typeof p.trusted === 'boolean' ? p.trusted : undefined
+    const hidden = typeof p.hidden === 'boolean' ? p.hidden : undefined
     const current = await readProjects(backendConfig.userData)
     const { projects, project } = upsertProject(
       current,
-      { id, targetId, name, path, trusted },
+      { id, targetId, name, path, trusted, hidden },
       createProjectId()
     )
     await writeProjects(backendConfig.userData, projects)

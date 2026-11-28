@@ -282,6 +282,7 @@ export class MockNativePort implements NativePort {
   private readonly terminals = new Map<string, MockTerminal>()
   private readonly turns = new Map<string, MockTurn[]>()
   private readonly claudeRateLimits = new Map<string, JsonRecord>()
+  private readonly resetCredits = ['reset-credit-1', 'reset-credit-2']
   private readonly threads = new Map<AgentKind, JsonRecord[]>([
     [
       'codex',
@@ -776,9 +777,22 @@ export class MockNativePort implements NativePort {
                 credits: { hasCredits: false, unlimited: false, balance: '0' },
               },
             },
+            rateLimitResetCredits: {
+              availableCount: this.resetCredits.length,
+              credits: this.resetCredits.map((creditId) => ({
+                id: creditId, resetType: 'codexRateLimits', status: 'available',
+                grantedAt: nowSec - 86_400, expiresAt: nowSec + 7 * 86_400, title: null, description: null,
+              })),
+            },
           },
         })
         return
+      case 'account/rateLimitResetCredit/consume': {
+        const index = typeof inner.creditId === 'string' ? this.resetCredits.indexOf(inner.creditId) : 0
+        const used = index >= 0 && this.resetCredits.splice(index, 1).length > 0
+        recv({ id, result: { outcome: used ? 'reset' : 'noCredit' } })
+        return
+      }
       case 'account/read':
         recv({
           id,

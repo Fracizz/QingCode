@@ -1,6 +1,10 @@
 @import "tailwindcss";
 
 @theme {
+  /* 小号文字做成变量，对话区按所选字号整体平移。 */
+  --text-3xs: 10px;
+  --text-2xs: 11px;
+  --text-compact: 13px;
   /* 深色配色照搬 rust 分支手机版（mobile/android/web/app.css :root）：纯中性灰表面 + 品牌青强调色。 */
   --color-qn-bg: #181818;
   --color-qn-panel: #222222;
@@ -1793,6 +1797,26 @@ input[type="radio"] {
   color: var(--color-qn-danger);
 }
 
+.qn-access-chip[data-tone="accent"] {
+  color: var(--color-qn-accent);
+}
+
+/* 计划模式改变发送效果：在输入框顶部常驻一行标识和退出入口。 */
+.qn-plan-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 6px 0;
+  padding: 0 0 0 10px;
+  border: 1px solid color-mix(in srgb, var(--color-qn-accent) 35%, transparent);
+  border-radius: 12px;
+  background: var(--qn-accent-surface);
+  color: var(--color-qn-text);
+  font-size: 12.5px;
+}
+.qn-plan-mode > svg { flex-shrink: 0; color: var(--color-qn-accent); }
+.qn-plan-mode .qn-button { min-width: 44px; min-height: 36px; }
+
 /* 回复期间无法切换权限，当前权限提示仍需清晰可见。 */
 .qn-access-chip[data-tone]:disabled {
   opacity: 1;
@@ -2432,6 +2456,35 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   line-height: 1.5;
 }
 
+/* 消息区其余文字保持原有层级，按所选字号与默认 14px 的差值一起增减，最小 8px。 */
+.qn-chat-surface .qn-body {
+  --qn-chat-delta: calc(var(--chat-font, 14px) - 14px);
+  --text-3xs: max(8px, calc(10px + var(--qn-chat-delta)));
+  --text-2xs: max(8px, calc(11px + var(--qn-chat-delta)));
+  --text-xs: max(8px, calc(12px + var(--qn-chat-delta)));
+  --text-compact: max(8px, calc(13px + var(--qn-chat-delta)));
+  --text-sm: var(--chat-font, 14px);
+  font-size: max(8px, calc(16px + var(--qn-chat-delta)));
+}
+
+/* 消息里打开的弹层是操作界面，不随对话字号变化。 */
+.qn-chat-surface .qn-body dialog {
+  --text-3xs: 10px;
+  --text-2xs: 11px;
+  --text-xs: 0.75rem;
+  --text-compact: 13px;
+  --text-sm: 0.875rem;
+  font-size: 16px;
+}
+
+.qn-chat-surface .qn-body .qn-button { font-size: var(--text-sm); }
+.qn-chat-surface .qn-body .qn-badge { font-size: var(--text-2xs); }
+.qn-chat-surface .qn-body :is(.qn-note, .qn-note-action, .qn-note-close, .qn-tool, .qn-tool-group, .qn-file-change, .qn-file-change-path) {
+  font-size: var(--text-xs);
+}
+.qn-chat-surface .qn-body :is(.qn-thinking, .qn-turn-interrupted, .qn-fold-toggle) { font-size: var(--text-compact); }
+.qn-chat-surface .qn-body dialog .qn-button { font-size: 14px; }
+
 /* ===== 全局悬浮提示 ===== */
 .qn-toaster {
   position: fixed;
@@ -2563,6 +2616,8 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   background: var(--color-qn-panel);
 }
 .qn-queue-details > summary { min-height: 36px; font-size: 12.5px; }
+/* 展开清单后当前步骤已在列表里，摘要行不再重复。 */
+.qn-plan[open] .qn-plan-current { visibility: hidden; }
 .qn-queue-list {
   max-height: min(26dvh, 9rem);
   margin: 0;

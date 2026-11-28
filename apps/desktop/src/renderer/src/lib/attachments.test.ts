@@ -127,6 +127,12 @@ describe('斜杠菜单', () => {
     expect(filterSlashItems(items, 'rev').map((i) => i.id)).toEqual(['s1', 's2', 's3'])
     expect(filterSlashItems(items, '').map((i) => i.id)).toEqual(['c1', 's3', 's2', 's1'])
     expect(filterSlashItems(items, 'zzz')).toEqual([])
+    // Agent 原生命令排在内置命令与技能之间，保持服务端给的顺序。
+    const native: SlashItem[] = [
+      { id: 'n2', kind: 'native', name: 'review-pr', description: '' },
+      { id: 'n1', kind: 'native', name: 'agents', description: '' },
+    ]
+    expect(filterSlashItems([...items, ...native], '').map((i) => i.id)).toEqual(['c1', 'n2', 'n1', 's3', 's2', 's1'])
   })
 })
 

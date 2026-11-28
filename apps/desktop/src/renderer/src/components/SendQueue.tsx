@@ -1,7 +1,7 @@
 import type { UserInput } from '@qn/codex-client'
 import { CornerDownRight, FileText, GitBranch, Image as ImageIcon, ListEnd, MessageSquarePlus, PanelRightOpen, Pencil, Wand2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { t, translateMessage } from '@qn/codex-client'
+import { isSlashInput, t, translateMessage, turnSteerBlock } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { isAbsolutePath, joinPath } from '../features/files/fileLinks'
 import { openFile } from '../features/workspace/openers'
@@ -82,7 +82,7 @@ export function SendQueue({
   useEffect(() => () => release.current?.(), [])
   if (!chat || !pending?.length) return null
 
-  const canSteer = running && !!view?.activeTurnId
+  const canSteer = running && turnSteerBlock(agent, view) === null
   const canContinue = canContinueQueued(agent)
   const hasFinishedTurn = !!view?.turns?.some((turn) => turn.outcome)
 
@@ -159,7 +159,7 @@ export function SendQueue({
                       {t('继续发送')}
                     </button>
                   )}
-                  {!item.sending && canSteer && (
+                  {!item.sending && canSteer && !isSlashInput(agent, item.input) && (
                     <button
                       type="button"
                       className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 text-qn-accent hover:underline"

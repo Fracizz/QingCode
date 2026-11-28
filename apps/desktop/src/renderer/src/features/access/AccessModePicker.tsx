@@ -1,16 +1,16 @@
 import { useRef, useState } from 'react'
-import { Check, Shield, ShieldOff } from 'lucide-react'
+import { Check, ListTodo, Shield, ShieldOff } from 'lucide-react'
 import { Menu, MenuContent, MenuItem, MenuTrigger, Tip } from '../../components/primitives'
 import { Modal } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import type { AgentKind } from '../../../../shared/backendApi'
-import { t, accessOptions, type AccessMode, type AccessSelection } from '@qn/codex-client'
+import { t, sessionAccessOptions, type AccessMode, type SessionAccessMode, type SessionAccessSelection } from '@qn/codex-client'
 
 export function AccessModePicker({
   agent, mode, inheritedMode, supported, disabled, deferred = false, lockedReason, onChange,
 }: {
   agent: AgentKind
-  mode: AccessSelection
+  mode: SessionAccessSelection
   inheritedMode: AccessMode
   supported: boolean
   disabled: boolean
@@ -18,19 +18,19 @@ export function AccessModePicker({
   deferred?: boolean
   /** 有值时锁定为默认档位（如项目未信任），提示里说明原因。 */
   lockedReason?: string
-  onChange: (mode: AccessSelection) => void
+  onChange: (mode: SessionAccessSelection) => void
 }) {
-  const [confirm, setConfirm] = useState<AccessMode | null>(null)
+  const [confirm, setConfirm] = useState<SessionAccessMode | null>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const openingConfirmation = useRef(false)
-  const available = accessOptions[agent]
+  const available = sessionAccessOptions(agent)
   if (!available.length) return null
   const effectiveMode = lockedReason ? 'default' : mode === 'inherit' ? inheritedMode : mode
   const current = available.find((option) => option.mode === effectiveMode)
   const pending = available.find((option) => option.mode === confirm)
   if (!current) return null
   // 完全访问用「盾牌划掉」表示没有沙箱限制，只放图标、不加底色，与手机端一致。
-  const Icon = current.warning ? ShieldOff : Shield
+  const Icon = current.warning ? ShieldOff : effectiveMode === 'plan' ? ListTodo : Shield
   const label = lockedReason
     ? t('{mode}（{reason}）', { mode: current.label, reason: lockedReason })
     : mode === 'inherit' ? t('{mode}（跟随总控）', { mode: current.label }) : current.label
@@ -51,7 +51,8 @@ export function AccessModePicker({
               disabled={disabled || Boolean(lockedReason)}
               className={cn(
                 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg outline-none enabled:hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
-                current.warning ? 'text-qn-muted' : effectiveMode !== 'default' ? 'bg-qn-warn/10 text-qn-warn' : 'text-qn-muted',
+                current.warning ? 'text-qn-muted' : effectiveMode === 'plan' ? 'bg-qn-accent/12 text-qn-accent'
+                  : effectiveMode !== 'default' ? 'bg-qn-warn/10 text-qn-warn' : 'text-qn-muted',
               )}
             >
               <Icon size={15} />
@@ -71,7 +72,7 @@ export function AccessModePicker({
         >
           {available.map((option) => {
             // 选中与总控相同的档位即恢复跟随总控，菜单只保留三档。
-            const next: AccessSelection = option.mode === inheritedMode ? 'inherit' : option.mode
+            const next: SessionAccessSelection = option.mode === inheritedMode ? 'inherit' : option.mode
             return (
               <MenuItem
                 key={option.mode}

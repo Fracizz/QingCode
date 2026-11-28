@@ -29,6 +29,7 @@ import {
 } from '../claude/v2'
 import { isSteerPlacement, type SteerPlacement } from '../steerHistory'
 import { unifiedDiff } from '../claude/items'
+import { piUserText } from './userText'
 
 export type JsonRecord = Json
 
@@ -554,18 +555,23 @@ export function piThread(
   }
 }
 
-function userEcho(content: unknown): Json[] {
+function textEcho(source: string): Json[] {
+  const { text, files } = piUserText(source)
+  return [
+    ...(text.trim() ? [{ type: 'text', text, text_elements: [] }] : []),
+    ...files.map((path) => ({ type: 'mention', name: path.split(/[\\/]/).pop() || path, path })),
+  ]
+}
+
+export function userEcho(content: unknown): Json[] {
+  if (typeof content === 'string') return textEcho(content)
   const out: Json[] = []
-  if (typeof content === 'string') {
-    if (content.trim()) out.push({ type: 'text', text: content, text_elements: [] })
-    return out
-  }
   if (!Array.isArray(content)) return out
   for (const raw of content) {
     const block = asRecord(raw)
     if (!block) continue
-    if (block.type === 'text' && scalarText(block.text)) {
-      out.push({ type: 'text', text: scalarText(block.text), text_elements: [] })
+    if (block.type === 'text') {
+      out.push(...textEcho(scalarText(block.text)))
     } else if (block.type === 'image') {
       const mimeType = scalarText(block.mimeType) || 'image/png'
       out.push({ type: 'image', url: `data:${mimeType};base64,${scalarText(block.data)}` })
@@ -596,8 +602,9 @@ export function messagesToThread(
   userItemIds?: ReadonlyMap<string, UserMessageIdentity | null>,
 ): HistoryResult {
   const state = emptyMapState()
-  const open: { id: string; itemIds: string[]; error?: string }[] = []
-  let current: { id: string; itemIds: string[]; error?: string } | null = null
+  type OpenTurn = { id: string; itemIds: string[]; error?: string; interrupted?: boolean }
+  const open: OpenTurn[] = []
+  let current: OpenTurn | null = null
   const ctxFor = (turnId: string): MapContext => ({
     threadId: meta.id,
     turnId,
@@ -621,8 +628,9 @@ export function messagesToThread(
     const message = asRecord(messages[index])
     if (!message) continue
     const role = scalarText(message.role)
-    // 系统消息、bashExecution 等非 v2 展示角色跳过。
-    if (role !== 'user' && role !== 'assistant' && role !== 'toolResult') continue
+    // 系统消息、扩展消息等非 v2 展示角色跳过。
+    const standalone = role === 'compactionSummary' || role === 'bashExecution'
+    if (role !== 'user' && role !== 'assistant' && role !== 'toolResult' && !standalone) continue
     const echo = role === 'user' ? userEcho(message.content) : []
     if (role === 'user' && echo.length === 0) continue
     const timestamp = role === 'user' ? finite(message.timestamp) : null
@@ -638,6 +646,24 @@ export function messagesToThread(
       if (identity?.steering) item.steering = identity.steering
       recordItem(state, item)
       current.itemIds.push(scalarText(item.id))
+      continue
+    }
+    // 压缩与直接执行的命令归入当前轮：分叉按"除首轮外每轮以用户消息开头"定位边界。
+    if (standalone) {
+      const id = `${current.id}-item-${++state.nextItem}`
+      let item: V2Item = { type: 'contextCompaction', id, status: 'completed' }
+      if (role === 'bashExecution') {
+        const exitCode = finite(message.exitCode) ?? (message.cancelled === true ? 1 : 0)
+        item = commandExecutionItem(id, {
+          command: scalarText(message.command),
+          cwd: meta.cwd,
+          status: exitCode === 0 && message.cancelled !== true ? 'completed' : 'failed',
+          output: scalarText(message.output),
+          exitCode,
+        })
+      }
+      recordItem(state, item)
+      current.itemIds.push(id)
       continue
     }
     if (role === 'assistant') {
@@ -662,8 +688,9 @@ export function messagesToThread(
       }
       state.totalUsage = addUsage(state.totalUsage, message.usage)
       // 出错的回复（如上游 429）没有内容块；不记下原因的话历史里只剩用户消息，看不出发生了什么。
-      // pi 自动重试成功后以最后一条为准。
-      if (message.stopReason === 'error' || message.errorMessage) {
+      // pi 自动重试成功后以最后一条为准。用户中断的回复可能带 errorMessage，不算失败。
+      current.interrupted = message.stopReason === 'aborted'
+      if (!current.interrupted && (message.stopReason === 'error' || message.errorMessage)) {
         current.error = scalarText(message.errorMessage) || 'pi assistant 消息出错'
       } else {
         delete current.error
@@ -685,15 +712,22 @@ export function messagesToThread(
     for (const id of state.order.slice(before)) current.itemIds.push(id)
   }
 
-  const turns: Json[] = open.map((turn) =>
-    buildTurn(
+  const turns: Json[] = open.map((turn) => {
+    // 中断时没拿到结果的工具不会再有结果，避免一直显示运行中。
+    if (turn.interrupted) {
+      for (const id of turn.itemIds) {
+        const item = state.items[id]
+        if (item?.status === 'inProgress') state.items[id] = { ...item, status: 'failed' }
+      }
+    }
+    return buildTurn(
       turn.id,
       turn.itemIds.map((id) => state.items[id]).filter(isRecord),
-      turn.error ? 'failed' : 'completed',
+      turn.interrupted ? 'interrupted' : turn.error ? 'failed' : 'completed',
       turn.error ?? null,
       'history',
-    ),
-  )
+    )
+  })
   const items = state.order.map((id) => state.items[id]).filter(isRecord)
   return { thread: piThread(meta, turns), turns, items }
 }

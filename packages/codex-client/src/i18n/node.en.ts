@@ -198,6 +198,7 @@ export default {
   '设备未配对或令牌已失效': 'The device is not paired or its token has expired',
   'RPC 请求格式不正确': 'Invalid RPC request',
   '缺少目标、Agent 或会话 ID': 'Missing target, Agent or session ID',
+  '缺少会话或任务 ID': 'Missing session or task ID',
   '电脑端请求失败': 'The request failed on the computer',
   '发送结果未确认': 'Delivery was not confirmed',
   '设备已被撤销': 'This device has been revoked',
@@ -394,6 +395,14 @@ export default {
   '本地图片内容缺失': 'The local image content is missing',
   'turn/start 需要文本、图片或附件': 'turn/start requires text, an image or an attachment',
   'Claude（仅接近/触发限额时上报）': 'Claude (reported only near or at the limit)',
+  'threadId 与 taskId 不能为空': 'threadId and taskId are required',
+  '该会话没有运行中的后台任务': 'This session has no running background task',
+  'threadId、turnId 与 dryRun 不能为空': 'threadId, turnId and dryRun are required',
+  '临时会话不支持回滚文件': 'Temporary sessions cannot rewind files',
+  '正在回滚文件，请稍后重试': 'Files are being rewound. Retry shortly',
+  '该轮没有可回滚的用户消息': 'This turn has no user message to rewind to',
+  'Claude SDK 不支持回滚文件': 'The Claude SDK cannot rewind files',
+  '有 {count} 个链接类文件未恢复': '{count} linked files were not restored',
 
   // pi 适配
   'pi 未创建会话': 'pi did not create a session',

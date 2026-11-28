@@ -258,6 +258,42 @@ describe('用量与历史', () => {
     expect(turns[1]).toMatchObject({ status: 'completed', error: null })
   })
 
+  it('历史里展开的技能和 @文件收回成标签', () => {
+    const history = messagesToThread({ id: 's1', cwd: '/work' }, [
+      { role: 'user', content: '<skill name="review" location="/s/SKILL.md">\nReferences are relative to /s.\n\n正文\n</skill>\n\n看看' },
+      { role: 'user', content: [{ type: 'text', text: '<file name="/w/a.xml">\n<file>\n</file>\n</file>\n<file name="C:\\w\\b.png"></file>\n分析一下' }] },
+      { role: 'user', content: '<file name="/w/c.md">\n内容\n</file>\n' },
+      { role: 'user', content: '<file name="x"> 是什么标签？' },
+    ])
+    expect(history.items.map((item) => item.content)).toMatchObject([
+      [{ type: 'text', text: '/skill:review 看看' }],
+      [{ type: 'text', text: '分析一下' }, { type: 'mention', name: 'a.xml', path: '/w/a.xml' }, { type: 'mention', name: 'b.png' }],
+      [{ type: 'mention', name: 'c.md' }],
+      [{ type: 'text', text: '<file name="x"> 是什么标签？' }],
+    ])
+  })
+
+  it('历史保留中断、压缩与直接执行的命令', () => {
+    const history = messagesToThread({ id: 's1', cwd: '/work' }, [
+      { role: 'compactionSummary', summary: '摘要', tokensBefore: 10 },
+      { role: 'user', content: '开始' },
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'sleep 9' } }], stopReason: 'aborted', errorMessage: 'Request was aborted' },
+      { role: 'bashExecution', command: 'ls', output: 'a.ts', exitCode: 0, cancelled: false },
+      { role: 'user', content: '继续' },
+      { role: 'assistant', content: [], stopReason: 'aborted' },
+      { role: 'assistant', content: [{ type: 'text', text: '好了' }], stopReason: 'stop' },
+    ])
+    expect(history.turns).toMatchObject([
+      { status: 'completed', items: [{ type: 'contextCompaction', status: 'completed' }] },
+      { status: 'interrupted', error: null, items: [
+        { type: 'userMessage' },
+        { type: 'commandExecution', command: 'sleep 9', status: 'failed' },
+        { type: 'commandExecution', command: 'ls', status: 'completed', aggregatedOutput: 'a.ts', exitCode: 0 },
+      ] },
+      { status: 'completed' },
+    ])
+  })
+
   it('piThread 不冒充 codex/claude 的归属字段', () => {
     const thread = piThread({ id: 's1', cwd: '/work' })
     expect(thread).toMatchObject({

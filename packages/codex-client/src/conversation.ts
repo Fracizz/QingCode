@@ -16,6 +16,9 @@ import type {
 } from './codex-types'
 import { t, translateMessage } from '../../protocol/src/i18n'
 import type { ThreadHistoryCursor, ThreadHistoryPage } from './api'
+import { parseBackgroundTasks, type BackgroundTaskView } from './agentControls'
+import { parsePlan, type PlanView } from './plan'
+import { planExitText } from './planMode'
 import { describeSubagentItem, subagentThreadMetadata, type SubagentItemView, type SubagentThreadMetadata } from './subagents'
 import { USER_INPUT_METHOD, parseUserInputQuestions, userInputResponse, type UserInputQuestion } from './userInput'
 import { ELICITATION_METHOD, elicitationAnswer, elicitationDecision, elicitationDetail, elicitationView } from './elicitation'
@@ -41,6 +44,10 @@ export type ThreadView = {
   savedConfig?: { model: string; effort: string | null; serviceTier?: string | null }
   /** 本机最近一次发送时显式指定的模型与强度，用于判断下一轮是否中途切换了模型。 */
   lastTurnConfig?: { model: string; effort: string | null }
+  /** 最新的计划 / TODO 清单；steps 为空表示已清空。 */
+  plan?: PlanView
+  /** 轮次外仍在运行的后台任务（全量替换）。 */
+  backgroundTasks?: BackgroundTaskView[]
 }
 
 export type TurnMeta = {
@@ -74,14 +81,17 @@ export type ItemView =
   | { kind: 'command'; id: string; command: string; cwd?: string; output: string; exitCode?: number | null; status: string }
   | { kind: 'fileChange'; id: string; changes: { path: string; kind: string; diff?: string }[]; status: string }
   | SubagentItemView
-  | { kind: 'backgroundTask'; id: string; status: 'completed' | 'failed' | 'stopped'; summary: string; result: string }
-  | { kind: 'other'; id: string; type: string; summary: string; status?: string }
+  | { kind: 'backgroundTask'; id: string; status: 'completed' | 'failed' | 'stopped' | 'event' | 'message'; summary: string; result: string }
+  /** plan 仅退出计划模式的工具条目带有：待批准的完整计划。 */
+  | { kind: 'other'; id: string; type: string; summary: string; status?: string; plan?: string }
   /** 本机插入的提示（如中途切换模型），不来自 Agent；anchor 为它所在那条用户消息的 clientId。 */
   | { kind: 'notice'; id: string; text: string; anchor?: string }
 
 export function backgroundTaskLabel(status: Extract<ItemView, { kind: 'backgroundTask' }>['status']): string {
   if (status === 'failed') return t('后台任务失败')
   if (status === 'stopped') return t('后台任务已停止')
+  if (status === 'event') return t('后台任务动态')
+  if (status === 'message') return t('来自其他 Agent 的消息')
   return t('后台任务已完成')
 }
 
@@ -176,15 +186,41 @@ export function emptyState(): ConversationState {
 }
 
 export function failActiveThreads(state: ConversationState, error: string): ConversationState {
-  const active = Object.values(state.threads).filter((thread) => thread.status === 'running' || thread.pendingApprovals.length > 0)
-  if (!active.length) return state
+  const active = (thread: ThreadView) => thread.status === 'running' || thread.pendingApprovals.length > 0
+  const affected = Object.values(state.threads).filter((thread) => active(thread) || thread.backgroundTasks?.length)
+  if (!affected.length) return state
   const threads = { ...state.threads }
-  for (const thread of active) {
-    threads[thread.id] = {
+  for (const thread of affected) {
+    const next: ThreadView = active(thread) ? {
       ...finalizeItems(thread), status: 'error', activity: 'failed', activeTurnId: null, pendingApprovals: [], error,
-    }
+    } : { ...thread }
+    // 后台任务随 Agent 进程结束，进程没了就不会再发清空通知。
+    delete next.backgroundTasks
+    threads[thread.id] = next
   }
   return { threads }
+}
+
+/**
+ * 应用 qingcode/backgroundTasks/list 的回包。before 是发请求前看到的列表：
+ * 期间收到过更新通知时，回包可能更旧，丢弃它。
+ */
+export function applyBackgroundTaskList(
+  s: ConversationState,
+  threadId: string,
+  tasks: BackgroundTaskView[],
+  before: BackgroundTaskView[] | undefined,
+): ConversationState {
+  const current = ownThread(s, threadId)
+  if (!current || current.backgroundTasks !== before || (!tasks.length && !before?.length)) return s
+  return withThread(s, threadId, (thread) => ({ ...thread, backgroundTasks: tasks }))
+}
+
+/** 补读到的更早清单只在还没有任何清单时采用。 */
+export function applyEarlierPlan(s: ConversationState, threadId: string, plan: PlanView): ConversationState {
+  const current = ownThread(s, threadId)
+  if (!current || current.plan) return s
+  return withThread(s, threadId, (thread) => ({ ...thread, plan }))
 }
 
 /** 把即将发送的 UserInput[] 转成一条本地占位气泡。 */
@@ -616,7 +652,8 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
       return { kind: 'fileChange', id, changes: fileChanges(item.changes), status }
     case 'backgroundTaskNotification':
       return {
-        kind: 'backgroundTask', id, status: status === 'failed' || status === 'stopped' ? status : 'completed',
+        kind: 'backgroundTask', id,
+        status: status === 'failed' || status === 'stopped' || status === 'event' || status === 'message' ? status : 'completed',
         summary: scalarText(item.summary), result: scalarText(item.result),
       }
     case 'contextCompaction':
@@ -628,6 +665,8 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
     default: {
       const subagent = describeSubagentItem(item, id)
       if (subagent) return subagent
+      const plan = planExitText(item)
+      if (plan !== undefined) return { kind: 'other', id, type, summary: scalarText(item.tool), status, plan }
       const summary =
         scalarText(item.text) ||
         scalarText(item.review) ||
@@ -705,7 +744,8 @@ function mergeItemView(existing: ItemView, candidate: ItemView): ItemView {
     }
   }
   if (existing.kind === 'other' && candidate.kind === 'other') {
-    return { ...candidate, summary: longer(existing.summary, candidate.summary) }
+    const plan = candidate.plan || existing.plan
+    return { ...candidate, summary: longer(existing.summary, candidate.summary), ...(plan !== undefined ? { plan } : {}) }
   }
   return candidate
 }
@@ -799,8 +839,9 @@ function mergeTurnItems(thread: ThreadView, turn: unknown, streaming: boolean): 
     ids.push(candidate.id)
     items = replaceItem(items, candidate.id, () => candidate, (existing) => mergeItemView(existing, candidate))
   }
-  const next = items === thread.items ? thread : { ...thread, items }
-  return upsertTurnMeta(next, idValue(record.id), { record, itemIds: ids })
+  const updated = items === thread.items ? thread : { ...thread, items }
+  const plan = parsePlan(record.plan, idValue(record.id))
+  return upsertTurnMeta(plan ? { ...updated, plan } : updated, idValue(record.id), { record, itemIds: ids })
 }
 
 function finalizeItems(thread: ThreadView): ThreadView {
@@ -897,6 +938,8 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
       return candidate.id
     })
 
+  // 清单只挂在发生变化的轮次上，按轮次顺序取最后一份。
+  let historyPlan: PlanView | undefined
   // 只看最后一轮：历史里早先失败、之后又成功的轮次不该让整个会话显示为失败。
   let lastTurnError: string | undefined
   let lastTurnOutcome: ThreadOutcome | undefined
@@ -911,6 +954,7 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
     }
     if (!turn) continue
     const turnId = idValue(turn.id)
+    historyPlan = parsePlan(turn.plan, turnId) ?? historyPlan
     const itemIds = appendItems(arrayOf(turn.items), turnStreaming, optionalNumber(turn.startedAt))
     if (turnId) {
       turns.set(turnId, turnMeta(turns.get(turnId), turnId, {
@@ -945,6 +989,10 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   // 历史回报了模型时它就是最新配置（可能已被另一端改过），本机上一轮的记录不再作为比较基准。
   if (previous?.lastTurnConfig && !(typeof raw.model === 'string' && raw.model)) next.lastTurnConfig = previous.lastTurnConfig
   if (previous?.tokenUsage !== undefined) next.tokenUsage = previous.tokenUsage
+  // Codex 历史不带清单、分页可能不含最新清单：没读到时沿用已知的。
+  const plan = historyPlan ?? previous?.plan
+  if (plan) next.plan = plan
+  if (previous?.backgroundTasks) next.backgroundTasks = previous.backgroundTasks
   if (turns.size || previous?.turns) next.turns = [...turns.values()]
   if (status === 'running') {
     next.activity = reportedActivity === 'pending' || reportedActivity === 'input' ? reportedActivity : 'running'
@@ -976,7 +1024,9 @@ export function loadRecentThreadHistory(
     const changed = live.items.filter((item) => (item.kind === 'user' && item.pending) || oldItems.get(item.id) !== item ||
       (activeItems?.has(item.id) && !available.has(item.id)))
     if (changed.length) next.items = mergeSubagentHistory(recent.items, changed, before?.items ?? [])
-    if (live !== before && (live.status !== before?.status || live.activeTurnId !== before?.activeTurnId ||
+    // 读历史期间收到的清单比历史新。
+    if (live.plan && live.plan !== before?.plan) next.plan = live.plan
+    if (live !== before &&(live.status !== before?.status || live.activeTurnId !== before?.activeTurnId ||
         live.activity !== before?.activity || live.error !== before?.error)) {
       const { status, activeTurnId, activity, error } = live
       Object.assign(next, { status, activeTurnId, activity, error })
@@ -1001,8 +1051,10 @@ export function prependThreadHistory(s: ConversationState, id: string, page: Thr
       itemIds: [...new Set([...previous.itemIds, ...turn.itemIds])],
     } : turn)
   }
+  const plan = current.plan ?? older.plan
   return withThread(s, id, () => ({
     ...current,
+    ...(plan ? { plan } : {}),
     items: [...older.items.filter((item) => !currentItems.has(item.id)), ...current.items],
     turns: [...turns.values()],
     historyCursor: page.earlier,
@@ -1042,6 +1094,29 @@ export function applyNotification(s: ConversationState, n: ServerNotification): 
       const id = threadIdFrom(params)
       if (!id) return s
       return withStatus(s, id, params.status)
+    }
+    case 'turn/plan/updated': {
+      const id = threadIdFrom(params)
+      const plan = parsePlan(params, turnIdFrom(params))
+      if (!id || !plan) return s
+      return withThread(s, id, (thread) => ({ ...thread, plan }))
+    }
+    case 'qingcode/backgroundTasks/updated': {
+      const id = threadIdFrom(params)
+      if (!id || !Array.isArray(params.tasks)) return s
+      const tasks = parseBackgroundTasks(params.tasks)
+      // 没打开过的会话收到空列表时不必为它建视图。
+      if (!tasks.length && !ownThread(s, id)) return s
+      return withThread(s, id, (thread) => ({ ...thread, backgroundTasks: tasks }))
+    }
+    case 'thread/closed': {
+      const id = threadIdFrom(params)
+      if (!id || !ownThread(s, id)?.backgroundTasks) return s
+      return withThread(s, id, (thread) => {
+        const next = { ...thread }
+        delete next.backgroundTasks
+        return next
+      })
     }
     case 'turn/started': {
       const id = threadIdFrom(params)

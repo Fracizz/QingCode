@@ -29,6 +29,32 @@ it('后台任务卡片支持触摸展开 Markdown 结果，只有摘要时直接
   }
 })
 
+it('用户消息把技能和附件显示成标签，正文不重复技能名', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const tags = () => [...host.querySelectorAll('.qn-user-skill')].map((tag) => tag.textContent?.trim())
+  const body = () => host.querySelector('.qn-user-bubble > .whitespace-pre-wrap')?.textContent
+  try {
+    // Claude 回显与历史：技能写在正文开头，附件说明在末尾。
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'u',
+      text: '/commit-push all 打包\n\n附件文件（请按需读取）：\n- a.ts: /work/src/a.ts' }} />))
+    expect(tags()).toEqual(['commit-push'])
+    expect(body()).toBe('all 打包')
+    expect(host.querySelector('[title="/work/src/a.ts"]')?.textContent?.trim()).toBe('a.ts')
+    // 发送中的气泡：技能来自 skill 输入项；只发技能时没有空正文。
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 's', text: '', skills: ['pdf'] }} />))
+    expect(tags()).toEqual(['pdf'])
+    expect(body()).toBeUndefined()
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'p', text: '打开 /tmp/a' }} />))
+    expect(tags()).toEqual([])
+    expect(body()).toBe('打开 /tmp/a')
+  } finally {
+    await act(() => root.unmount())
+    vi.unstubAllGlobals()
+  }
+})
+
 it('后台任务摘要过长时标题只占两行，全文收进展开区', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.createElement('div')

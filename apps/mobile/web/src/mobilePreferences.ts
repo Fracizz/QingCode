@@ -1,3 +1,4 @@
+import { DEFAULT_RUNNING_SEND, parseRunningSend, type RunningSendPreference } from '@qn/codex-client'
 import { useLayoutEffect } from 'react'
 import { create } from 'zustand'
 import { callDevice } from './client'
@@ -9,10 +10,12 @@ type MobilePreferences = {
   theme: MobileTheme
   reduceMotion: boolean
   sendKey: 'newline' | 'send'
+  /** 会话运行中点发送键的默认处理。 */
+  runningSend: RunningSendPreference
 }
 
 const storageKey = 'qn.mobile.preferences'
-const defaults: MobilePreferences = { theme: 'dark', reduceMotion: false, sendKey: 'newline' }
+const defaults: MobilePreferences = { theme: 'dark', reduceMotion: false, sendKey: 'newline', runningSend: DEFAULT_RUNNING_SEND }
 
 /** 旧版存过「石墨灰」（graphite）和「跟随系统」（system）：前者并入灰色，后者回到默认深色。 */
 export function parseTheme(value: unknown): MobileTheme {
@@ -28,6 +31,7 @@ function readPreferences(): MobilePreferences {
       theme: parseTheme(value?.theme),
       reduceMotion: value?.reduceMotion === true,
       sendKey: value?.sendKey === 'send' ? 'send' : defaults.sendKey,
+      runningSend: parseRunningSend(value?.runningSend),
     }
   } catch {
     return defaults
@@ -39,8 +43,8 @@ export const useMobilePreferences = create<MobilePreferences & {
 }>((set, get) => ({
   ...readPreferences(),
   update: (values) => {
-    const { theme, reduceMotion, sendKey } = get()
-    const next = { theme, reduceMotion, sendKey, ...values }
+    const { theme, reduceMotion, sendKey, runningSend } = get()
+    const next = { theme, reduceMotion, sendKey, runningSend, ...values }
     set(next)
     try {
       window.localStorage.setItem(storageKey, JSON.stringify(next))

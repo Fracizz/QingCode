@@ -139,6 +139,71 @@ describe('getSessionMessages → v2 Thread/turns/items', () => {
     expect(result.turns[1]).toMatchObject({ status: 'completed', error: null })
   })
 
+  it('中断占位记录不当作用户输入，所在轮次标为 interrupted', () => {
+    const result = sessionMessagesToThread(meta, [
+      sessionMessage('user', [{ type: 'text', text: '跑测试' }], 'u1'),
+      sessionMessage('assistant', [{ type: 'text', text: '开始' }], 'a1'),
+      sessionMessage('user', [{ type: 'text', text: '[Request interrupted by user]' }], 'i1'),
+      sessionMessage('user', [{ type: 'text', text: '继续' }], 'u2'),
+      sessionMessage('user', [{ type: 'text', text: '[Request interrupted by user for tool use]' }], 'i2'),
+      sessionMessage('user', [{ type: 'text', text: '[Request interrupted by user] 是什么' }], 'u3'),
+    ])
+    expect(result.turns.map((turn) => turn.status)).toEqual(['interrupted', 'interrupted', 'completed'])
+    expect(result.items.map((item) => item.id)).not.toContain('i1-uuid')
+    expect(result.items.map((item) => item.id)).not.toContain('i2-uuid')
+    expect(result.items.filter((item) => item.type === 'userMessage')).toHaveLength(3)
+    expect(result.forkPoints[0]!.lastMessageId).toBe('i1-uuid')
+  })
+
+  it('系统写入的记录不显示成用户气泡，也不单独开启轮次', () => {
+    const injected = (uuid: string, content: string, extra: Json) => ({ ...sessionMessage('user', content, uuid), ...extra })
+    const task = { origin: { kind: 'task-notification' } }
+    const result = sessionMessagesToThread(meta, [
+      sessionMessage('user', [{ type: 'text', text: '开始' }], 'u1'),
+      injected('p1', 'Another Claude session sent a message:\n<agent-message from="a1">原文</agent-message>',
+        { origin: { kind: 'peer', name: 'web-fetch', body: '说明 + 报告', handbackReportText: '报告' } }),
+      injected('p2', '<cross-session-message from="x">你好</cross-session-message>', { origin: { kind: 'peer' } }),
+      injected('c1', 'This session is being continued…', { isCompactSummary: true }),
+      injected('t1', '<task-notification>\n<task-id>a</task-id>\n<status>completed</status>\n<summary>子代理</summary>\n'
+        + '<result>引用 <usage> 标签</result>\n<usage><tool_uses>1</tool_uses></usage>\n</task-notification>', task),
+      injected('t2', '<task-notification>\n<task-id>m</task-id>\n<summary>监视</summary>\n<event>ready</event>\n</task-notification>', task),
+      injected('t3', '<task-notification>\n<task-id>k</task-id>\n<status>killed</status>\n<summary>终止</summary>\n</task-notification>', task),
+      injected('f1', '<task-notification>\n<fork-source>分叉说明</fork-source>\n</task-notification>', task),
+    ])
+    expect(result.turns).toHaveLength(1)
+    expect(result.items).toMatchObject([
+      { type: 'userMessage' },
+      { type: 'backgroundTaskNotification', status: 'message', summary: 'web-fetch', result: '报告' },
+      { type: 'backgroundTaskNotification', status: 'message', summary: '', result: '你好' },
+      { type: 'contextCompaction', status: 'completed' },
+      { type: 'backgroundTaskNotification', status: 'completed', summary: '子代理', result: '引用 <usage> 标签' },
+      { type: 'backgroundTaskNotification', status: 'event', summary: '监视', result: 'ready' },
+      { type: 'backgroundTaskNotification', status: 'stopped', summary: '终止' },
+    ])
+    expect(result.items).toHaveLength(7)
+  })
+
+  it('中断后写入的消息另起一轮，中断状态不后移', () => {
+    const result = sessionMessagesToThread(meta, [
+      sessionMessage('user', [{ type: 'text', text: '开始' }], 'u1'),
+      sessionMessage('user', [{ type: 'text', text: '[Request interrupted by user]' }], 'i1'),
+      { ...sessionMessage('user', '消息', 'p1'), origin: { kind: 'peer', body: '消息' } },
+      sessionMessage('assistant', [{ type: 'text', text: '收到' }], 'a1'),
+    ])
+    expect(result.turns.map((turn) => turn.status)).toEqual(['interrupted', 'completed'])
+  })
+
+  it('粘贴内容去掉包装标签，! 命令还原成命令与代码块输出', () => {
+    const result = sessionMessagesToThread(meta, [
+      sessionMessage('user', '看看\n<pasted_content id="4a">\n第一行\n第二行\n</pasted_content id="4a">', 'u1'),
+      sessionMessage('user', '<bash-input>echo hi</bash-input>', 'b1'),
+      sessionMessage('user', '<bash-stdout>hi</bash-stdout><bash-stderr></bash-stderr>', 'b2'),
+      sessionMessage('user', '<bash-input> 是什么标签？', 'u2'),
+    ])
+    const texts = result.items.map((item) => item.type === 'agentMessage' ? item.text : ((item.content as Json[])[0] as Json).text)
+    expect(texts).toEqual(['看看\n第一行\n第二行', '!echo hi', '```\nhi\n```', '<bash-input> 是什么标签？'])
+  })
+
   it('终端本地斜杠命令：命令显示为用户输入，输出作为同一轮回复，说明记录略过', () => {
     const result = sessionMessagesToThread(meta, [
       sessionMessage('user', '<local-command-caveat>Caveat: ignore</local-command-caveat>', 'c0'),

@@ -428,6 +428,24 @@ describe('result / rate_limit_event / turn 收尾', () => {
     expect(finished).toHaveLength(1)
     expect((finished[0]?.params.item as Json).status).toBe('failed')
   })
+
+  it('没有结果的 ExitPlanMode 收尾时记为 failed，不让客户端当成已批准', () => {
+    const started = mapSdkMessage(
+      {
+        type: 'assistant',
+        message: {
+          id: 'm',
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'plan', name: 'ExitPlanMode', input: { plan: '步骤' } }],
+        },
+      },
+      ctx,
+      emptyMapState(),
+    )
+    const finished = finishPendingItems(ctx, started.state, false)
+    expect(finished).toHaveLength(1)
+    expect((finished[0]?.params.item as Json).status).toBe('failed')
+  })
 })
 
 describe('纯函数杂项', () => {

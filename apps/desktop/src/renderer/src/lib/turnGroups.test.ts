@@ -131,6 +131,16 @@ describe('groupTurns', () => {
       .toEqual(['unloaded', 'stopped-older', 'stopped-empty', 'u', 'a'])
   })
 
+  it('实时记录和历史记录指向同一停止轮次时只提示一次，并保留实时用时', () => {
+    const turns: TurnMeta[] = [
+      { id: 'live', outcome: 'interrupted', startedAtMs: 1, durationMs: 3000, itemIds: ['u', 'a'] },
+      { id: 'history', outcome: 'interrupted', startedAtMs: null, durationMs: null, itemIds: ['u', 'a'] },
+    ]
+    const entries = turnTimeline([user('u'), agent('a')], turns)
+    expect(entries.map((entry) => entry.key)).toEqual(['u', 'a', 'stopped-history'])
+    expect(entries[2]).toMatchObject({ durationMs: 3000 })
+  })
+
   it('完成的空摘要不生成可展开的工作过程', () => {
     const items = [user('u'), think('r1', false, ''), think('r2', false, '\n'), agent('a')]
     const turns = [{ id: 't', startedAtMs: 1, durationMs: 1000, itemIds: ['u', 'r1', 'r2', 'a'] }]

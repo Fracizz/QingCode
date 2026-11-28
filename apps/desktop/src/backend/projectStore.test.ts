@@ -160,3 +160,18 @@ describe('readProjects / writeProjects', () => {
     expect(JSON.parse(await readFile(join(dir, 'projects.json'), 'utf8'))).toEqual(list)
   })
 })
+
+describe('项目隐藏', () => {
+  it('隐藏状态落盘；未传 hidden 的保存沿用原状态，显式 false 恢复显示', () => {
+    const added = upsertProject([], { targetId: 'local', path: '/p' }, 'p1', 1)
+    expect(added.project.hidden).toBeUndefined()
+    const hidden = upsertProject(added.projects, { id: 'p1', targetId: 'local', path: '/p', hidden: true }, 'x', 2)
+    expect(hidden.project.hidden).toBe(true)
+    expect(JSON.parse(serializeProjects(hidden.projects))[0].hidden).toBe(true)
+    const opened = upsertProject(hidden.projects, { id: 'p1', targetId: 'local', path: '/p' }, 'x', 3)
+    expect(opened.project.hidden).toBe(true)
+    const shown = upsertProject(opened.projects, { id: 'p1', targetId: 'local', path: '/p', hidden: false }, 'x', 4)
+    expect('hidden' in shown.project).toBe(false)
+    expect(normalizeProjects([{ id: 'a', targetId: 'local', path: '/a', hidden: 'yes' }])[0]).not.toHaveProperty('hidden')
+  })
+})

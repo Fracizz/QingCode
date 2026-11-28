@@ -517,6 +517,8 @@ export default {
   '跟随系统': 'System default',
   '发送快捷键': 'Send shortcut',
   '决定输入框里 Enter 与 Ctrl+Enter 的行为。': 'Controls what Enter and Ctrl+Enter do in the message box.',
+  '运行中发送': 'Sending while running',
+  '会话运行时发送消息的默认处理，仅保存在本机。无法引导时直接发送或排队，不会打断当前一轮。Ctrl+Enter 临时改用另一种方式（发送键为 Ctrl+Enter 时用 Ctrl+Shift+Enter）。': 'What sending does by default while a session is running. Saved on this computer only. When steering isn’t possible the message is sent or queued, without interrupting the turn. Ctrl+Enter uses the other option once (Ctrl+Shift+Enter if Ctrl+Enter is the send key).',
   '启动时自动连接上次使用的目标': 'Connect to the last used target on startup',
   '在后台尝试连接，并通过 SSH 检查远端 Server 更新。': 'Connects in the background and checks over SSH for remote server updates.',
   '启动时自动连接': 'Connect on startup',

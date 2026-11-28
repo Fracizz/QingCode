@@ -1,4 +1,6 @@
 import type {
+  ConsumeAccountRateLimitResetCreditParams,
+  ConsumeAccountRateLimitResetCreditResponse,
   GetAccountParams,
   GetAccountRateLimitsParams,
   GetAccountRateLimitsResponse,
@@ -73,7 +75,16 @@ export type ClientRequestMap = {
     params: GetAccountRateLimitsParams
     result: GetAccountRateLimitsResponse
   }
+  'account/rateLimitResetCredit/consume': {
+    params: ConsumeAccountRateLimitResetCreditParams
+    result: ConsumeAccountRateLimitResetCreditResponse
+  }
   'account/usage/read': { params: GetAccountTokenUsageParams; result: GetAccountTokenUsageResponse }
+  // QingCode 桥接扩展（docs/tasks/T40-paseo-alignment.md）；回包字段由 agentControls.ts 校验。
+  'qingcode/backgroundTasks/list': { params: { threadId: string }; result: { tasks?: unknown } }
+  'qingcode/backgroundTasks/stop': { params: { threadId: string; taskId: string }; result: unknown }
+  'qingcode/commands/list': { params: { threadId: string }; result: { commands?: unknown } }
+  'qingcode/files/rewind': { params: { threadId: string; turnId: string; dryRun: boolean }; result: unknown }
 }
 
 export interface CodexTransport {

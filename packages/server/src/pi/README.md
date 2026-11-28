@@ -21,13 +21,14 @@
 | `thread/fork` | 支持 | 通过 [官方会话 RPC](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc-commands.md#fork) 创建新会话。历史轮次以后一条用户消息为边界；最新轮次使用 `clone` |
 | `thread/unsubscribe` | 支持临时会话 | 空闲时释放进程并通知 `thread/closed` |
 | `thread/resume` / `thread/read` | 支持 | 元数据请求直接返回会话信息。完整历史经 `switch_session {sessionPath}` + `get_messages` 读取 |
-| `thread/turns/list` / `thread/items/list` | 支持 | `get_messages` 历史按用户消息切分，按游标返回轮次或条目，连续分页短期复用同一快照 |
+| `thread/turns/list` / `thread/items/list` | 支持 | `get_messages` 历史按用户消息切分，按游标返回轮次或条目，连续分页短期复用同一快照。展开进正文的技能和 `@文件` 收回成标签，中断、压缩和直接执行的命令单独标示 |
 | `thread/compact/start` | 支持 | 官方 RPC `compact`，通过轮次和 `contextCompaction` 条目播报结果，可用 `abort` 中断 |
-| `turn/start` | 支持**纯文本与 base64 图片** | `prompt {message, images?}`；`disposition=handled` 时不启动 run，桥自行收尾 |
+| `turn/start` | 支持**纯文本与 base64 图片** | `prompt {message, images?}`；`disposition=handled` 时本次输入不启动 run，桥自行收尾（扩展命令另行启动了 run 则等 `agent_settled`）。发送前 pi 已自行开跑时拒绝 |
 | `turn/steer` | 支持**纯文本与 base64 图片** | 校验 `expectedTurnId`，调用官方 `steer {message, images?}`，以原生 `message_start` 确认用户消息送达 |
-| `turn/interrupt` | 支持 | `abort`；以 `agent_settled {aborted:true}` 映射 `turn/completed {status:'interrupted'}`，另设 1.5s 兜底 |
+| `turn/interrupt` | 支持 | 按 `docs/rpc-commands.md` 先 `clear_queue` 再 `abort`，撤掉未送达的引导；以 `agent_settled {aborted:true}` 映射 `turn/completed {status:'interrupted'}`，另设 1.5s 兜底。`clear_queue` 失败时仍发 `abort`；清不掉且还有未送达引导时（旧版 pi），持久会话在 `abort` 后结束进程 |
 | `model/list` | 借用运行中的会话进程调用 `get_available_models` / `get_state` / `get_available_thinking_levels`，结果缓存；无运行中进程时返回缓存或空列表 | R9：不为列模型额外拉起 pi 进程；`turn/start` 的 `model`/`effort` 经 `set_model` / `set_thinking_level` 切换 |
 | `skills/list` | 借用运行中的会话进程 | 官方 RPC `get_commands`，只取 `source: 'skill'`，结果按 cwd 缓存；不为此启动进程，也不扫描资源目录。提示模板与扩展命令仍可直接输入 |
+| `qingcode/commands/list` | 借用该会话运行中的进程 | 官方 RPC `get_commands`（扩展命令、提示模板、技能），返回 `{name, description}`，pi 不提供 `argumentHint`；没有运行中的进程时返回空列表（R9）。内置 TUI 命令不在其中 |
 | `account/read`、`account/rateLimits/read` | **不支持** → `-32601` | pi 没有官方额度接口；`capabilities.rateLimits=false`，前端不显示额度徽标 |
 | `thread/name/set` | 支持 | 官方 RPC `set_session_name`（会启动该会话进程）；列表从会话文件头尾读取最近一次 `session_info`，改名记录落在两块之外时仍显示旧名 |
 | `thread/archive` / `thread/unarchive` | 支持 | daemon 的 `archiveStore` 记录，不改 pi 会话文件 |
@@ -46,6 +47,9 @@ pi 未安装时抛 `AgentHostError('agent_unavailable', …)`，文案只提示�
 - 临时侧聊使用 `--no-session --no-tools --no-extensions`，不写入会话历史。依赖扩展提供的模型在侧聊中不可用。侧栏收起后仍可追问，显式结束会释放进程。
 - 每个会话一个 `pi --mode rpc` 进程；`cwd` = 会话目录；持久会话空闲 30 分钟关闭 stdin 并结束子进程；
   daemon 退出时结束全部子进程。进程退出且本轮未结束时补 `turn/completed {status:'failed'}`。
+- 扩展触发或排队消息续跑的 run 没有对应的 `turn/start`：收到 `agent_start`（或 `turn_start`）且当前无轮次时
+  桥自建轮次并回显其中的用户消息，`agent_settled` 时结束。空闲时的扩展消息、压缩、队列变化等事件不开轮次。
+  运行期间空闲定时器不关闭进程。
 - 事件映射是纯函数 `items.ts`，单测回放 `fixtures/real-prompt.jsonl`（真实 pi 1.6.1 录的一次
   「列出当前目录」prompt；已去掉签名、路径与用户名，不含任何凭据）。
 - `bash`/`powershell` → `commandExecution`；`edit`/`write` → `fileChange`（统一 diff）；
@@ -80,3 +84,6 @@ pi 未安装时抛 `AgentHostError('agent_unavailable', …)`，文案只提示�
 
 - 技能与模型列表依赖运行中的会话进程，首次打开会话前可能为空。
 - 命令执行过程中的增量输出（`tool_execution_update`）尚未映射。
+- 扩展自定义消息（`role: 'custom'`）不展示。仅由它触发的自建轮次没有用户消息，重读历史时并入上一轮，
+  也不能按实时轮次 ID 分叉。
+- `clear_queue` 返回的文本不回传客户端。旧版 pi 上扩展排入的消息清不掉，`abort` 后若续跑会显示为新轮次，可再次停止。

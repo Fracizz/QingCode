@@ -334,6 +334,12 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     keywords: ['enter', 'ctrl+enter', 'shift+enter', '发送', '快捷键', 'send', 'key', '发送快捷键', 'send shortcut'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
   {
+    id: 'runningSend',
+    section: 'general',
+    title: t('运行中发送'),
+    keywords: ['运行中', '引导', '排队', '打断', 'steer', 'queue', 'interrupt', '运行中发送', 'send while running'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  },
+  {
     id: 'autoConnectLast',
     section: 'general',
     title: t('启动时自动连接上次使用的目标'),

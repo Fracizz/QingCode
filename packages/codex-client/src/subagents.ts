@@ -33,6 +33,8 @@ export type SubagentItemView = {
   model?: string
   result?: string
   agents?: { threadId: string; label: string; status: string; result: string }[]
+  /** Agent 在委派条目里直接给出的内部调用记录（没有独立子会话时，如 Claude）。 */
+  activity?: SubagentEntry['activity']
 }
 
 export type SubagentThreadMetadata = {
@@ -147,7 +149,7 @@ export function collectSubagents(
       entry.task = item.detail
       entry.status = item.status
       entry.result = item.result || ''
-      entry.activity.push(event)
+      entry.activity.push(event, ...(item.activity ?? []))
     }
   }
 
@@ -265,11 +267,20 @@ export function describeSubagentItem(
       const block = record(part)
       return block.type === 'text' || block.type === 'inputText' ? string(block.text) : ''
     }).filter(Boolean).join('\n\n') : ''
+    const activity = (Array.isArray(item.activity) ? item.activity : []).map((value: unknown, index) => {
+      const call = record(value)
+      const summary = string(call.summary)
+      return {
+        id: string(call.id) || `${id}:${index}`, title: string(call.tool) || t('子代理'),
+        status: label(callStatuses, call.status), ...(summary ? { detail: summary } : {}),
+      }
+    })
     return {
       kind: 'subagent', id, title: t('委派给子代理'), status: label(callStatuses, item.status), detail,
       ...(string(args.description) ? { name: string(args.description) } : {}),
       ...(string(args.subagent_type) ? { role: string(args.subagent_type) } : {}),
       ...(result ? { result } : {}),
+      ...(activity.length ? { activity } : {}),
     }
   }
 }

@@ -84,7 +84,7 @@ function fakeRpc(state: FakeState): FakeRpc {
   return rpc as unknown as FakeRpc
 }
 
-function harness(sessions: PiSessionInfo[] = [], stateDir?: string) {
+function harness(sessions: PiSessionInfo[] = [], stateDir?: string, idleTimeoutMs?: number) {
   const sent: { clientId: number; msg: ServerMessage }[] = []
   const broadcasts: { seq: number; msg: RpcRecord }[] = []
   const evts: { name: string; payload: Record<string, unknown> }[] = []
@@ -100,6 +100,7 @@ function harness(sessions: PiSessionInfo[] = [], stateDir?: string) {
   const rpcOptions: PiRpcOptions[] = []
   const host = createPiHost(hub, '0.0.1', {
     stateDir,
+    idleTimeoutMs,
     resolve: () => ({ command: 'pi', args: [], shell: false, path: 'pi', version: '1.6.1' }),
     listSessions: async () => sessions,
     createRpc: (options) => {
@@ -595,6 +596,281 @@ describe('PiHost 扩展对话框、改名、技能与上下文占用', () => {
     expect(h.method('thread/tokenUsage/updated').at(-1)?.params).toMatchObject({
       turnId: h.turnId, tokenUsage: { modelContextWindow: 2000, last: { totalTokens: 600 } },
     })
+    h.host.shutdown()
+  })
+})
+
+const running = async (idleTimeoutMs?: number) => {
+  const threadId = 'fake-session'
+  const h = harness(
+    [{ meta: { id: threadId, cwd: '/work' }, sessionFile: '/tmp/fake-session.jsonl' }], undefined, idleTimeoutMs,
+  )
+  const request = (id: number, method: string, params: RpcRecord = {}) =>
+    h.host.handleClientMessage(1, { id, method, params: { threadId, ...params } })
+  const notes = (name: string) =>
+    h.broadcasts.filter(({ msg }) => msg.method === name).map(({ msg }) => msg.params as RpcRecord)
+  const turnIdOf = (id: number) => (responseFor(h.sent, id)?.result as { turn: { id: string } }).turn.id
+  /** 开一轮并让 pi 开始处理首条消息。 */
+  const start = async () => {
+    request(1, 'turn/start', { input: [{ type: 'text', text: '问' }] })
+    await flush()
+    h.rpc().emit({ type: 'agent_start' })
+    h.rpc().emit({ type: 'message_start', message: { role: 'user', content: '问', timestamp: 1 } })
+    return turnIdOf(1)
+  }
+  /** 只加载会话进程，不开轮次。 */
+  const load = async () => {
+    request(90, 'thread/read')
+    await flush()
+  }
+  await h.host.open({})
+  return { ...h, request, notes, turnIdOf, start, load }
+}
+
+describe('PiHost 停止', () => {
+  const steer = (turnId: string, clientId = 'c1') =>
+    ({ expectedTurnId: turnId, input: [{ type: 'text', text: '补充' }], clientUserMessageId: clientId })
+  const legacy = (type: string) =>
+    type === 'clear_queue' ? { success: false, error: 'Unknown command: clear_queue' } : undefined
+
+  it('先 clear_queue 再 abort，撤掉未送达的引导', async () => {
+    const h = await running()
+    const turnId = await h.start()
+    h.request(2, 'turn/steer', steer(turnId))
+    await flush()
+    h.request(3, 'turn/interrupt')
+    await flush()
+    expect(responseFor(h.sent, 3)?.result).toEqual({})
+    expect(h.state.commands.slice(-2)).toEqual(['clear_queue', 'abort'])
+    h.rpc().emit({ type: 'agent_settled', aborted: true })
+    expect(h.notes('turn/completed')).toMatchObject([{ turn: { id: turnId, status: 'interrupted' } }])
+    // 撤掉的引导不能认领之后的用户消息。
+    h.rpc().emit({ type: 'agent_start' })
+    h.rpc().emit({ type: 'message_start', message: { role: 'user', content: '扩展消息', timestamp: 9 } })
+    const echo = h.notes('item/completed').at(-1)?.item as RpcRecord
+    expect(echo).toMatchObject({ type: 'userMessage', content: [{ type: 'text', text: '扩展消息' }] })
+    expect(echo).not.toHaveProperty('steering')
+    expect(echo.clientId ?? null).toBeNull()
+    h.host.shutdown()
+  })
+
+  it.each([
+    ['旧版 pi 不认识命令', (): RpcRecord => ({ success: false, error: 'Unknown command: clear_queue' })],
+    ['命令超时', (): RpcRecord => { throw new Error('pi clear_queue 超时') }],
+  ])('clear_queue 失败时仍发送 abort：%s', async (_name, fail) => {
+    const h = await running()
+    const turnId = await h.start()
+    h.state.handleCommand = (type) => type === 'clear_queue' ? fail() : undefined
+    h.request(2, 'turn/interrupt')
+    await flush()
+    expect(responseFor(h.sent, 2)?.result).toEqual({})
+    expect(h.state.commands.slice(-2)).toEqual(['clear_queue', 'abort'])
+    expect(h.state.closed).toBe(false)
+    h.rpc().emit({ type: 'agent_settled', aborted: true })
+    expect(h.notes('turn/completed')).toMatchObject([{ turn: { id: turnId, status: 'interrupted' } }])
+    h.host.shutdown()
+  })
+
+  it('旧版 pi 还有未送达的引导时结束进程，避免 abort 后继续执行', async () => {
+    const h = await running()
+    const turnId = await h.start()
+    h.state.handleCommand = legacy
+    h.request(2, 'turn/steer', steer(turnId))
+    await flush()
+    const old = h.rpc()
+    h.request(3, 'turn/interrupt')
+    await flush()
+    expect(h.state.commands.slice(-2)).toEqual(['clear_queue', 'abort'])
+    expect(h.state.closed).toBe(true)
+    expect(h.notes('turn/completed')).toMatchObject([{ turn: { id: turnId, status: 'interrupted' } }])
+    // 退出中的旧进程再发事件也不能开新轮次。
+    old.emit({ type: 'agent_start' })
+    expect(h.notes('turn/started')).toHaveLength(1)
+    expect(h.host.activeTurns).toBe(0)
+    h.host.shutdown()
+  })
+
+  it('停止时等在途引导回执后再清队列，排在后面的引导退回客户端', async () => {
+    const h = await running()
+    const turnId = await h.start()
+    const command = h.rpc().command.bind(h.rpc())
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    h.rpc().command = async (type, payload) => {
+      const response = await command(type, payload)
+      if (type === 'steer') await gate
+      return response
+    }
+    h.request(2, 'turn/steer', steer(turnId))
+    await flush()
+    h.request(3, 'turn/steer', steer(turnId, 'c2'))
+    h.request(4, 'turn/interrupt')
+    await flush()
+    expect(h.state.commands).not.toContain('clear_queue')
+    release()
+    await flush()
+    expect(h.state.commands.slice(-3)).toEqual(['steer', 'clear_queue', 'abort'])
+    expect(responseFor(h.sent, 3)?.error).toMatchObject({ code: -32602 })
+    h.host.shutdown()
+  })
+})
+
+describe('PiHost 非 prompt 发起的运行', () => {
+  it('agent_start 建立轮次，回显用户消息并在 agent_settled 结束', async () => {
+    const h = await running()
+    await h.load()
+    h.rpc().emit({ type: 'agent_start' })
+    expect(h.host.activeTurns).toBe(1)
+    const turnId = (h.notes('turn/started')[0]?.turn as { id: string }).id
+    h.rpc().emit({ type: 'turn_start' })
+    h.rpc().emit({ type: 'message_start', message: { role: 'user', content: '排队的消息', timestamp: 5 } })
+    h.rpc().emit({ type: 'message_start', message: { role: 'assistant', content: [] } })
+    h.rpc().emit({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '续跑回答' }] } })
+    // 一次底层运行结束后可能还有续跑，只有 agent_settled 收尾。
+    h.rpc().emit({ type: 'agent_end', messages: [], willRetry: false })
+    h.rpc().emit({ type: 'agent_start' })
+    expect(h.host.activeTurns).toBe(1)
+    h.rpc().emit({ type: 'agent_settled', aborted: false })
+    expect(h.notes('turn/started')).toHaveLength(1)
+    expect(h.notes('turn/completed')).toMatchObject([{ turn: { id: turnId, status: 'completed', items: [
+      { type: 'userMessage', id: `${turnId}-user` }, { type: 'agentMessage', text: '续跑回答' },
+    ] } }])
+    expect(h.host.activeTurns).toBe(0)
+    // 重读历史沿用实时事件里的用户条目 ID。
+    h.state.messages = [{ role: 'user', content: '排队的消息', timestamp: 5 }]
+    h.request(91, 'thread/read')
+    await flush()
+    expect(responseFor(h.sent, 91)?.result).toMatchObject({ thread: { turns: [{ items: [{ id: `${turnId}-user` }] }] } })
+    h.host.shutdown()
+  })
+
+  it('空闲期间的非运行事件不开轮次', async () => {
+    const h = await running()
+    await h.load()
+    const custom = { role: 'custom', customType: 'note', content: '提示', display: true }
+    for (const event of [
+      { type: 'message_start', message: custom },
+      { type: 'message_end', message: custom },
+      { type: 'queue_update', steering: [], followUp: [] },
+      { type: 'compaction_start', reason: 'threshold' },
+      { type: 'compaction_end', reason: 'threshold', aborted: false },
+      { type: 'entry_appended', entry: {} },
+      { type: 'extension_error', error: '坏了' },
+      { type: 'agent_end', messages: [], willRetry: false },
+      { type: 'agent_settled', aborted: false },
+    ]) h.rpc().emit(event)
+    expect(h.broadcasts).toEqual([])
+    expect(h.host.activeTurns).toBe(0)
+    h.host.shutdown()
+  })
+
+  it('空闲定时器不关闭自发运行中的进程，结束后重新计时', async () => {
+    const h = await running(30)
+    await h.load()
+    h.rpc().emit({ type: 'agent_start' })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(h.state.closed).toBe(false)
+    h.rpc().emit({ type: 'agent_settled' })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    expect(h.state.closed).toBe(true)
+    h.host.shutdown()
+  })
+
+  it('准备发送时 pi 已自行开跑，拒绝本次发送且不打断该轮', async () => {
+    const h = await running()
+    await h.load()
+    h.state.handleCommand = (type) => {
+      if (type === 'set_model') h.rpc().emit({ type: 'agent_start' })
+      return undefined
+    }
+    h.request(2, 'turn/start', { model: 'p/m', input: [{ type: 'text', text: '问' }] })
+    await flush()
+    expect(responseFor(h.sent, 2)?.error).toBeDefined()
+    expect(h.state.commands).not.toContain('prompt')
+    expect(h.notes('turn/completed')).toEqual([])
+    expect(h.host.activeTurns).toBe(1)
+    h.host.shutdown()
+  })
+
+  it('prompt 回执 handled 但扩展已开跑时，本轮保持到 agent_settled', async () => {
+    const h = await running()
+    await h.load()
+    h.state.handleCommand = (type) => {
+      if (type !== 'prompt') return undefined
+      h.rpc().emit({ type: 'agent_start' })
+      return { success: true, data: { disposition: 'handled' } }
+    }
+    h.request(2, 'turn/start', { input: [{ type: 'text', text: '/kick' }] })
+    await flush()
+    expect(h.notes('turn/completed')).toEqual([])
+    h.rpc().emit({ type: 'message_start', message: { role: 'user', content: '扩展发起', timestamp: 3 } })
+    h.rpc().emit({ type: 'agent_settled' })
+    expect(h.notes('turn/completed')).toMatchObject([{ turn: { id: h.turnIdOf(2), status: 'completed', items: [
+      { content: [{ text: '/kick' }] }, { content: [{ text: '扩展发起' }] },
+    ] } }])
+    h.host.shutdown()
+  })
+
+  it('prompt 因 pi 正在运行被拒时，另建轮次接住该运行', async () => {
+    const h = await running()
+    await h.load()
+    h.state.handleCommand = (type) => {
+      if (type !== 'prompt') return undefined
+      h.rpc().emit({ type: 'agent_start' })
+      return { success: false, error: 'Agent is already processing' }
+    }
+    h.request(2, 'turn/start', { input: [{ type: 'text', text: '问' }] })
+    await flush()
+    expect(h.notes('turn/completed')).toMatchObject([{ turn: { id: h.turnIdOf(2), status: 'failed' } }])
+    expect(h.notes('turn/started')).toHaveLength(2)
+    expect(h.host.activeTurns).toBe(1)
+    h.host.shutdown()
+  })
+
+  it('手动压缩结束时 pi 已在运行，接着建立轮次', async () => {
+    const h = await running()
+    h.state.compact = async () => {
+      h.rpc().emit({ type: 'agent_start' })
+      return { success: true }
+    }
+    h.request(2, 'thread/compact/start')
+    await flush()
+    expect(h.notes('turn/completed')).toHaveLength(1)
+    expect(h.notes('turn/started')).toHaveLength(2)
+    expect(h.host.activeTurns).toBe(1)
+    h.host.shutdown()
+  })
+})
+
+describe('PiHost qingcode/commands/list', () => {
+  it('没有运行中的会话进程时返回空列表，不启动 pi', async () => {
+    const h = await running()
+    h.request(1, 'qingcode/commands/list')
+    await flush()
+    expect(responseFor(h.sent, 1)?.result).toEqual({ commands: [] })
+    expect(h.rpcOptions).toHaveLength(0)
+    h.host.shutdown()
+  })
+
+  it('经 get_commands 返回当前会话的命令', async () => {
+    const h = await running()
+    await h.load()
+    h.state.handleCommand = (type) => type === 'get_commands' ? { success: true, data: { commands: [
+      { name: 'skill:review', description: '审查', source: 'skill' },
+      { name: 'fix', source: 'prompt' },
+      { name: 'deploy', description: '发布', source: 'extension' },
+      { description: '缺名称' },
+    ] } } : undefined
+    h.request(1, 'qingcode/commands/list')
+    await flush()
+    expect(responseFor(h.sent, 1)?.result).toEqual({ commands: [
+      { name: 'skill:review', description: '审查' },
+      { name: 'fix', description: '' },
+      { name: 'deploy', description: '发布' },
+    ] })
+    h.host.handleClientMessage(1, { id: 2, method: 'qingcode/commands/list', params: {} })
+    await flush()
+    expect(responseFor(h.sent, 2)?.error).toMatchObject({ code: -32602 })
     h.host.shutdown()
   })
 })

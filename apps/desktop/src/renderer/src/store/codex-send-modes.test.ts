@@ -87,7 +87,6 @@ describe('聊天发送方式', () => {
     const { send, ensureOpen, steerPendingSend } = useCodex.getState()
     const address = { ...chat, agent }
     await ensureOpen(targetId, agent)
-    expect(await send('已结束的引导', { ...address, mode: 'steer' })).toBe(false)
     notifyTurn('turn/started', 'other-active', 'inProgress', agent)
     expect(await send('补充要求', { ...address, mode: 'steer' })).toBe(true)
     expect(await send('排队后引导', address)).toBe(true)
@@ -170,6 +169,135 @@ describe('聊天发送方式', () => {
       threadId,
       input: [{ type: 'text', text: '继续', text_elements: [] }],
     })
+  })
+
+  const steer = (text: string) => useCodex.getState().send(text, { ...chat, mode: 'steer' })
+  const view = () => useCodex.getState().sessions[sessionKey(targetId, 'codex')]?.state.threads[threadId]
+  const userTexts = () => view()?.items.flatMap((item) => item.kind === 'user' ? [item.text] : [])
+
+  /** turn/steer 回 error，其余请求照常成功；before 在回错误前执行。 */
+  function failSteer(code: number, before?: () => void) {
+    backend.send.mockImplementation((agent, { id, method }) => {
+      if (method === 'turn/steer') {
+        before?.()
+        receive(agent, { id, error: { code, message: '引导失败原因' } })
+      } else {
+        receive(agent, { id, result: method === 'turn/start' ? { turn: { id, status: 'inProgress', items: [] } } : {} })
+      }
+    })
+  }
+
+  it('引导时轮次刚结束，按普通消息发送', async () => {
+    notifyTurn('turn/completed', 'active', 'completed')
+    expect(await steer('接着做')).toBe(true)
+    expect(methods()).toEqual(['turn/start'])
+    expect(userTexts()).toEqual(['接着做'])
+    expect(useCodex.getState().error).toBeNull()
+  })
+
+  it('斜杠命令不引导，转入排队，本轮结束后发送', async () => {
+    expect(await steer('/review 保留结论')).toBe(true)
+    expect(methods()).toEqual([])
+    expect(pending().map((item) => item.text)).toEqual(['/review 保留结论'])
+    notifyTurn('turn/completed', 'active', 'completed')
+    await vi.waitFor(() => expect(pending()).toEqual([]))
+    expect(methods()).toEqual(['turn/start'])
+  })
+
+  it('本轮正在压缩上下文时转入排队', async () => {
+    receive('codex', {
+      method: 'item/started',
+      params: { threadId, turnId: 'active', item: { type: 'contextCompaction', id: 'compact-1' } },
+    })
+    expect(await steer('压缩时补充')).toBe(true)
+    expect(methods()).toEqual([])
+    expect(pending().map((item) => item.text)).toEqual(['压缩时补充'])
+  })
+
+  it.each(['steer', 'immediate', 'queue'] as const)('手动压缩启动期间 %s 方式的消息排队', async (mode) => {
+    // 轮次事件还没到时会话仍显示空闲；真实流程里队列由压缩持有，这里只核对没有引导或打断。
+    useCodex.setState({ compacting: { [pendingSendKey(chat)]: true } })
+    expect(await useCodex.getState().send('稍后处理', { ...chat, mode })).toBe(true)
+    expect(methods()).toEqual([])
+    expect(pending().map((item) => item.text)).toEqual(['稍后处理'])
+    expect(useCodex.getState().error).toBeNull()
+    useCodex.setState({ compacting: {} })
+  })
+
+  it('Agent 拒绝引导且本轮仍在运行时转入排队', async () => {
+    failSteer(-32600)
+    expect(await steer('补充要求')).toBe(true)
+    expect(methods()).toEqual(['turn/steer'])
+    expect(pending().map((item) => item.text)).toEqual(['补充要求'])
+    expect(userTexts()).toEqual([])
+    expect(useCodex.getState().notice).toBe('当前无法引导，消息已排队')
+    notifyTurn('turn/completed', 'active', 'completed')
+    await vi.waitFor(() => expect(pending()).toEqual([]))
+    expect(methods()).toEqual(['turn/steer', 'turn/start'])
+  })
+
+  it('拒绝回包到达前轮次已结束时直接发送，且只保留一条消息', async () => {
+    failSteer(-32600, () => notifyTurn('turn/completed', 'active', 'completed'))
+    expect(await steer('赶在结束时')).toBe(true)
+    expect(methods()).toEqual(['turn/steer', 'turn/start'])
+    expect(userTexts()).toEqual(['赶在结束时'])
+    expect(pending()).toEqual([])
+  })
+
+  it('引导结果未确认时保留草稿，不自动重发', async () => {
+    failSteer(-32000)
+    expect(await steer('不确定')).toBe(false)
+    expect(methods()).toEqual(['turn/steer'])
+    expect(pending()).toEqual([])
+    expect(userTexts()).toEqual([])
+  })
+
+  it('排队消息的引导被拒绝时原样留在队列，本轮结束后照常发送', async () => {
+    failSteer(-32602)
+    await useCodex.getState().send('排队消息', chat)
+    expect(await useCodex.getState().steerPendingSend(chat, pending()[0]!.id)).toBe(false)
+    expect(pending()[0]).toMatchObject({ text: '排队消息', sending: false })
+    expect(pending()[0]?.error).toBeUndefined()
+    expect(useCodex.getState().notice).toBe('当前无法引导，消息继续排队')
+    notifyTurn('turn/completed', 'active', 'completed')
+    await vi.waitFor(() => expect(pending()).toEqual([]))
+    expect(methods()).toEqual(['turn/steer', 'turn/start'])
+  })
+
+  it('引导排队消息时本轮被停止，暂停队列等用户确认', async () => {
+    failSteer(-32602, () => notifyTurn('turn/completed', 'active', 'interrupted'))
+    await useCodex.getState().send('排队消息', chat)
+    expect(await useCodex.getState().steerPendingSend(chat, pending()[0]!.id)).toBe(false)
+    expect(pending()[0]?.error).toContain('队列已暂停')
+    expect(methods()).toEqual(['turn/steer'])
+  })
+
+  it('打断失败时消息留在队首并暂停', async () => {
+    backend.send.mockImplementation((agent, { id, method }) => {
+      receive(agent, method === 'turn/interrupt' ? { id, error: { code: -32603, message: '无法中断' } } : { id, result: {} })
+    })
+    await useCodex.getState().send('原队列', chat)
+    expect(await useCodex.getState().send('优先修正', { ...chat, mode: 'immediate' })).toBe(true)
+    expect(methods()).toEqual(['turn/interrupt'])
+    expect(pending().map((item) => item.text)).toEqual(['优先修正', '原队列'])
+    expect(pending()[0]?.error).toBe('打断未成功，消息已保留在队列')
+    expect(userTexts()).toEqual([])
+    // 本轮随后正常结束也不自动发送，等用户点继续。
+    notifyTurn('turn/completed', 'active', 'completed')
+    await Promise.resolve()
+    expect(methods()).toEqual(['turn/interrupt'])
+  })
+
+  it('中断请求到达前轮次已自然结束时照常发送', async () => {
+    backend.send.mockImplementation((agent, { id, method }) => {
+      if (method === 'turn/interrupt') {
+        notifyTurn('turn/completed', 'active', 'completed')
+        receive(agent, { id, error: { code: -32600, message: 'no active turn' } })
+      } else receive(agent, { id, result: { turn: { id, status: 'inProgress', items: [] } } })
+    })
+    expect(await useCodex.getState().send('优先修正', { ...chat, mode: 'immediate' })).toBe(true)
+    expect(methods()).toEqual(['turn/interrupt', 'turn/start'])
+    expect(pending()).toEqual([])
   })
 
   it('上一条在回包前已完成时，仍会派发下一条', async () => {

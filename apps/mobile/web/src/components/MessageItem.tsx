@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, CircleX, Copy, Ellipsis, FileCode, FilePen, GitCompare, Image, ListChecks, Pencil, Quote, Terminal } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, CircleX, Copy, Ellipsis, FileCode, FilePen, FileText, GitCompare, Image, ListChecks, Pencil, Quote, Split, Terminal, Wand2 } from 'lucide-react'
 import { backgroundTaskLabel, editUserText, formatReplyTime, localReplyDay, splitMarkdownBlocks, splitUserText, subscribeToReplyDay, workSummaryLabel, type ItemView, type UserInput, getLocale, t, translateMessage } from '@qn/codex-client'
 import { createContext, memo, useContext, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
@@ -135,7 +135,7 @@ function markdownComponents(actions: FileActions | null, streaming: boolean): Co
     img: ({ src, alt }) => <MessageImage src={src ?? ''} alt={alt || t('图片')} />,
     pre: ({ children }) => <pre className="qn-pre">{children}</pre>,
     code: ({ className, children }) => (
-      <code className={`rounded border border-qn-border bg-qn-field px-1 font-mono text-[12px] ${className ?? ''}`}>
+      <code className={`rounded border border-qn-border bg-qn-field px-1 font-mono text-[length:var(--text-xs)] ${className ?? ''}`}>
         {/* 流式输出时文本还在变，等完成后再识别路径，避免链接闪动。 */}
         {actions && !streaming && typeof children === 'string' ? <PathText text={children} actions={actions} /> : children}
       </code>
@@ -179,9 +179,9 @@ function DiffBlock({ text }: { text: string }) {
   return (
     <div>
       {all.length > lines.length && (
-        <div className="mb-1 text-[10px] text-qn-muted">{t('仅显示末尾 {count} 行', { count: lines.length })}</div>
+        <div className="mb-1 text-3xs text-qn-muted">{t('仅显示末尾 {count} 行', { count: lines.length })}</div>
       )}
-      <pre className="qn-pre qn-scroll qn-diff-preview text-[11px] leading-5" tabIndex={0}>
+      <pre className="qn-pre qn-scroll qn-diff-preview" tabIndex={0}>
         {lines.map((line, index) => {
           const tone = line.startsWith('+')
             ? 'text-qn-diff-add'
@@ -201,8 +201,8 @@ function DiffBlock({ text }: { text: string }) {
   )
 }
 
-function MessageActions({ text, onQuote, getPlainText, onEdit, open: controlledOpen, onOpenChange, hideTrigger = false }: {
-  text: string; onQuote?: (text: string) => void; getPlainText?: () => string; onEdit?: () => void
+function MessageActions({ text, onQuote, getPlainText, onEdit, onFork, open: controlledOpen, onOpenChange, hideTrigger = false }: {
+  text: string; onQuote?: (text: string) => void; getPlainText?: () => string; onEdit?: () => void; onFork?: () => void
   open?: boolean; onOpenChange?: (open: boolean) => void; hideTrigger?: boolean
 }) {
   const [ownOpen, setOwnOpen] = useState(false)
@@ -233,6 +233,7 @@ function MessageActions({ text, onQuote, getPlainText, onEdit, open: controlledO
             {hasText && <SheetAction icon={Copy} onClick={() => void copy(getPlainText ? getPlainText() : text)}>{getPlainText ? t('复制纯文本') : t('复制文本')}</SheetAction>}
             {hasText && getPlainText && <SheetAction icon={FileCode} onClick={() => void copy(text)}>{t('复制 Markdown 源文')}</SheetAction>}
             {hasText && onQuote && <SheetAction icon={Quote} onClick={() => { onQuote(text.slice(0, 4000)); setOpen(false) }}>{t('引用到对话')}</SheetAction>}
+            {onFork && <SheetAction icon={Split} onClick={() => { setOpen(false); onFork() }}>{t('新建对话继续')}</SheetAction>}
             {onEdit && <SheetAction icon={Pencil} onClick={() => { setOpen(false); onEdit() }}>{t('编辑并重发')}</SheetAction>}
             {status && <p className="text-xs text-qn-warn" role="alert">{status}</p>}
           </div>
@@ -281,10 +282,10 @@ function CommandDetails({ item, status, onQuote }: {
   const output = all.length > 200 ? all.slice(-200).join('\n') : text
   return (
     <div className="qn-tool-body">
-      <div className="qn-mono whitespace-pre-wrap break-all text-[12px]">$ {item.command || t('（命令）')}</div>
-      {item.cwd && <div className="qn-mono mt-1 text-[10px] text-qn-muted">{item.cwd}</div>}
+      <div className="qn-mono whitespace-pre-wrap break-all text-[length:var(--text-xs)]">$ {item.command || t('（命令）')}</div>
+      {item.cwd && <div className="qn-mono mt-1 text-3xs text-qn-muted">{item.cwd}</div>}
       {output && (
-        <pre className="qn-pre qn-scroll qn-command-output mt-2 overflow-auto whitespace-pre text-[11px] leading-5">
+        <pre className="qn-pre qn-scroll qn-command-output mt-2 overflow-auto whitespace-pre">
           {all.length > 200 && <span className="text-qn-muted">{t('（只显示末尾 200 行）')}{'\n'}</span>}
           {output}
         </pre>
@@ -412,7 +413,7 @@ function FileChangeDetails({ item, onQuote }: {
         return (
           <div key={`${change.path}-${change.kind}-${index}`} className="qn-file-change-row">
             <div className="flex min-h-9 items-center gap-2">
-              {kind && <span className={`shrink-0 text-[11px] font-semibold ${kind.tone}`}>{kind.label}</span>}
+              {kind && <span className={`shrink-0 text-2xs font-semibold ${kind.tone}`}>{kind.label}</span>}
               {linked && actions ? (
                 <button type="button" className="qn-file-change-path" title={change.path}
                   onClick={() => actions.openFile({ path: resolvePath(change.path, actions.cwd) })}>
@@ -424,7 +425,7 @@ function FileChangeDetails({ item, onQuote }: {
                 </span>
               )}
               {stat && (
-                <span className="shrink-0 font-mono text-[11px] tabular-nums">
+                <span className="shrink-0 font-mono text-2xs tabular-nums">
                   <span className="text-qn-ok">+{stat.added}</span> <span className="text-qn-danger">−{stat.removed}</span>
                 </span>
               )}
@@ -456,13 +457,16 @@ function UserMessage({ item, onQuote, onResend }: {
   onQuote?: (text: string) => void
   onResend?: Resend
 }) {
-  const long = isLongUserText(item.text)
   const [expanded, setExpanded] = useState(false)
   const [edit, setEdit] = useState<string | null>(null)
   const [menu, setMenu] = useState(false)
   const [saving, setSaving] = useState(false)
   const [failed, setFailed] = useState(false)
   const parsed = splitUserText(item.text)
+  // 与电脑版一致：发送中的气泡和 Codex 用 skill 输入项，Claude 回显把技能写在正文开头。
+  const skills = item.skills?.length ? item.skills : parsed.skills
+  const files = [...new Set([...(item.files ?? []), ...parsed.files])]
+  const long = isLongUserText(parsed.text)
   const attachments = item.inputExtras ?? []
   const localImage = attachments.some((item) => item.type === 'localImage')
   const revised = edit === null ? '' : editUserText(item.text, edit)
@@ -491,7 +495,20 @@ function UserMessage({ item, onQuote, onResend }: {
         navigator.vibrate?.(10)
         setMenu(true)
       }}>
-        <div className={`whitespace-pre-wrap break-words${long && !expanded ? ' line-clamp-8' : ''}`}>{item.text}</div>
+        {/* 标签放在气泡内：只发技能时气泡仍在，长按操作不丢。 */}
+        {(skills.length > 0 || files.length > 0) && <div className={`flex flex-wrap gap-1.5${parsed.text ? ' mb-1' : ''}`}>
+          {skills.map((name, index) => (
+            <span key={`s-${index}`} className="qn-user-skill inline-flex max-w-full items-center gap-1 rounded-md bg-qn-accent-surface px-2 text-xs leading-6 text-qn-accent">
+              <Wand2 size={12} className="shrink-0" aria-hidden /> <span className="truncate">{name}</span>
+            </span>
+          ))}
+          {files.map((path) => (
+            <span key={`f-${path}`} title={path} className="inline-flex max-w-full items-center gap-1 rounded-md bg-qn-bg px-2 text-xs leading-6 text-qn-muted">
+              <FileText size={12} className="shrink-0" aria-hidden /> <span className="truncate">{path.split(/[\\/]/).pop() || path}</span>
+            </span>
+          ))}
+        </div>}
+        {parsed.text && <div className={`whitespace-pre-wrap break-words${long && !expanded ? ' line-clamp-8' : ''}`}>{parsed.text}</div>}
         {long && (
           <button type="button" className="qn-fold-toggle" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
             {expanded ? t('收起') : t('展开全文')}
@@ -527,6 +544,7 @@ export function MessageItem({
   active,
   showStreamingDots,
   onResend,
+  onFork,
   showActions = true,
   replyTimeInSummary = false,
 }: {
@@ -536,6 +554,8 @@ export function MessageItem({
   active?: boolean
   showStreamingDots?: boolean
   onResend?: Resend
+  /** 从这条回复所在轮次分叉；仅回复消息使用。 */
+  onFork?: () => void
   /** 只在每轮最后一条回复下常驻操作入口；中间的过程说明不再逐条挂「⋯」。 */
   showActions?: boolean
   replyTimeInSummary?: boolean
@@ -552,7 +572,7 @@ export function MessageItem({
             <Markdown text={item.text} streaming={item.streaming === true} />
           </div>
           {showActions && !item.streaming && (
-            <MessageActions text={item.text} onQuote={onQuote} getPlainText={() => markdownRef.current?.innerText ?? item.text} />
+            <MessageActions text={item.text} onQuote={onQuote} getPlainText={() => markdownRef.current?.innerText ?? item.text} onFork={onFork} />
           )}
         </div>
       )
@@ -623,12 +643,27 @@ export function MessageItem({
         const Icon = item.status === 'failed' ? CircleX : item.status === 'interrupted' ? Terminal : Check
         return <div className="qn-thinking" role="status">{busy ? <LoadingIcon /> : <Icon size={14} aria-hidden />}{translateMessage(item.summary)}</div>
       }
+      // 提交的计划：审批结束后仍能在对话里回看全文。
+      if (item.plan) {
+        return (
+          <LazyDetails className="group qn-tool text-xs" summary={
+            <summary className="qn-tool-row list-none [&::-webkit-details-marker]:hidden">
+              <ListChecks size={14} className="shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 truncate">{t('提交的计划')}</span>
+              <ChevronDown size={14} className="shrink-0 transition-transform group-open:rotate-180" aria-hidden />
+            </summary>
+          }>
+            <div className="qn-tool-body qn-markdown min-w-0 wrap-anywhere"><Markdown text={item.plan} streaming={false} /></div>
+            <MessageActions text={item.plan} onQuote={onQuote} />
+          </LazyDetails>
+        )
+      }
       // 其他系统提示：长文本只显示一行摘要，点开看全文（参考 Orca 手机版 notice disclosure）。
       if (item.summary.length > 80 || item.summary.includes('\n')) {
         return (
           <LazyDetails className="group qn-tool text-xs" summary={
             <summary className="qn-tool-row list-none [&::-webkit-details-marker]:hidden">
-              <span className="shrink-0 text-[11px]">{item.type}</span>
+              <span className="shrink-0 text-2xs">{item.type}</span>
               <span className="min-w-0 flex-1 truncate">{item.summary.split('\n')[0]}</span>
               <ChevronDown size={14} className="shrink-0 transition-transform group-open:rotate-180" aria-hidden />
             </summary>
@@ -640,7 +675,7 @@ export function MessageItem({
       }
       return (
         <div className="qn-tool qn-tool-open text-xs">
-          <div className="mb-1 text-[11px] text-qn-muted">{item.type}</div>
+          <div className="mb-1 text-2xs text-qn-muted">{item.type}</div>
           <div className="whitespace-pre-wrap break-words">{item.summary}</div>
           <MessageActions text={item.summary} onQuote={onQuote} />
         </div>

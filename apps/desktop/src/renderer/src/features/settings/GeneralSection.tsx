@@ -5,6 +5,7 @@ import { Checkbox, Modal } from '../../components/ui'
 import { DEFAULT_FONT_SIZES, FONT_SIZES, isFontSize } from '../../../../shared/fontSizes'
 import { AUTO_ARCHIVE_DAYS, isAutoArchiveDays } from '../../../../shared/backendApi'
 import { useFiles } from '../files/filesStore'
+import { RUNNING_SEND_SETTING_OPTIONS, useRunningSend } from './runningSend'
 import { useSettings } from './settingsStore'
 import {
   DEFAULT_AGENT_OPTIONS,
@@ -41,6 +42,8 @@ const languageOptions: Array<{ value: LocalePreference; label: string }> = [
 export function GeneralSection({ visible }: { visible: (itemId: string) => boolean }) {
   const general = useSettings((state) => state.settings.general)
   const update = useSettings((state) => state.update)
+  const runningSend = useRunningSend((state) => state.preference)
+  const setRunningSend = useRunningSend((state) => state.setPreference)
   const fontSizes = FONT_SIZE_SETTINGS.filter(({ id }) => visible(id))
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
   const [language, setLanguage] = useState(readLocalePreference)
@@ -67,6 +70,19 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
             onValueChange={(value) => {
               if (isSettingsSendKey(value)) void update({ general: { sendKey: value } })
             }}
+          />
+        </SettingRow>
+      )}
+
+      {visible('runningSend') && (
+        <SettingRow
+          title={t('运行中发送')}
+          description={t('会话运行时发送消息的默认处理，仅保存在本机。无法引导时直接发送或排队，不会打断当前一轮。Ctrl+Enter 临时改用另一种方式（发送键为 Ctrl+Enter 时用 Ctrl+Shift+Enter）。')}
+        >
+          <Segmented
+            value={runningSend}
+            options={RUNNING_SEND_SETTING_OPTIONS}
+            onChange={setRunningSend}
           />
         </SettingRow>
       )}

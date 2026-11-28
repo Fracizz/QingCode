@@ -127,6 +127,8 @@ export default {
   '后台任务失败': 'Background task failed',
   '后台任务已停止': 'Background task stopped',
   '后台任务已完成': 'Background task completed',
+  '后台任务动态': 'Background task update',
+  '来自其他 Agent 的消息': 'Message from another agent',
   '工作了 {duration}': 'Worked for {duration}',
   '工作过程': 'Work steps',
 
@@ -149,4 +151,33 @@ export default {
   '提交回答': 'Submit answer',
   '跳过': 'Skip',
   '（可多选）': '(select all that apply)',
+
+  // 额度重置卡
+  '重置卡': 'Reset credits',
+  '额度重置卡': 'Rate limit reset',
+  '可用 {count} 张': '{count} available',
+  '另有 {count} 张未列出明细': '{count} more without details',
+  '使用': 'Use',
+  '使用一张': 'Use one',
+  '使用中…': 'Using…',
+  '使用重置卡？': 'Use a reset credit?',
+  '将消耗 1 张重置卡来重置当前账号的 Codex 额度，使用后无法撤销。':
+    'This spends 1 reset credit to reset the Codex rate limits of the current account. It can’t be undone.',
+  '由 Codex 选择下一张可用的卡。': 'Codex picks the next available credit.',
+  '确认使用': 'Use credit',
+  '长期有效': 'No expiry',
+  '已过期': 'Expired',
+  '有效期至 {when}': 'Expires {when}',
+  '已使用重置卡，额度已重置': 'Reset credit used. Rate limits were reset',
+  '当前没有需要重置的额度': 'There is no rate limit to reset right now',
+  '没有可用的重置卡': 'No reset credit available',
+  '这次重置此前已完成': 'This reset was already completed',
+  '等待结果超时': 'Timed out waiting for the result',
+  '无法确认使用结果，请刷新额度后查看': 'Couldn’t confirm the result. Refresh the quota to check',
+  '未确认使用结果，请先刷新额度查看。{reason}': 'Result unconfirmed. Refresh the quota to check first. {reason}',
+
+  // 计划模式与后台任务
+  '计划模式': 'Plan mode',
+  '只分析并给出计划，批准后才动手': 'Analyze and propose a plan; changes start only after approval',
+  '工作流': 'Workflow',
 } satisfies Record<string, string>

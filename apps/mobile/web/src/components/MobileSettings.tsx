@@ -1,7 +1,7 @@
 import { readLocalePreference, saveLocalePreference, t, type LocalePreference } from '@qn/codex-client'
 import {
-  ALargeSmall, Check, ChevronRight, CornerDownLeft, Download, Info, Languages, Minus, Palette, Plus, Sparkles, Sun, Wifi,
-  type LucideIcon,
+  ALargeSmall, Check, ChevronRight, CornerDownLeft, CornerDownRight, Download, Info, Languages, Minus, Palette, Plus, Sparkles,
+  Sun, Wifi, type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -23,6 +23,12 @@ const themes: readonly { value: MobileTheme; label: string }[] = [
   { value: 'gray', label: t('灰色') },
   { value: 'light', label: t('浅色') },
 ]
+
+const runningSendOptions = [
+  { value: 'steer', label: t('引导') },
+  { value: 'queue', label: t('排队') },
+  { value: 'interrupt', label: t('打断后发送') },
+] as const
 
 const languages: readonly { value: LocalePreference; label: string }[] = [
   { value: 'system', label: t('跟随系统') },
@@ -132,6 +138,7 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
   const theme = useMobilePreferences((state) => state.theme)
   const reduceMotion = useMobilePreferences((state) => state.reduceMotion)
   const sendKey = useMobilePreferences((state) => state.sendKey)
+  const runningSend = useMobilePreferences((state) => state.runningSend)
   const update = useMobilePreferences((state) => state.update)
   const [chatFont, setChatFont] = useState(readChatFont)
   const [localError, setLocalError] = useState<string | null>(null)
@@ -284,6 +291,9 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
             options={[{ value: 'newline', label: t('回车换行') }, { value: 'send', label: t('回车发送') }]}
             onChange={(value) => reportLocalSave(update({ sendKey: value }))}
             hint={t('Shift+Enter 换行，Ctrl 或 ⌘+Enter 发送。')} />
+          <ChoiceRow icon={CornerDownRight} title={t('运行中发送')} value={runningSend} options={runningSendOptions}
+            onChange={(value) => reportLocalSave(update({ runningSend: value }))}
+            hint={t('无法引导时直接发送或排队，不会打断当前一轮。长按发送键可临时选择其他方式。')} />
         </SettingGroup>
 
         {screenError && <Note tone="error" message={screenError} />}
