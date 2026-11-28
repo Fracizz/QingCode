@@ -840,4 +840,9 @@ export default {
   '项目': 'Project',
   '系统': 'System',
   '管理员': 'Admin',
+
+  // 提问卡片
+  '已回答': 'Answered',
+  '下一题': 'Next',
+  '第 {index} 题': 'Question {index}',
 } satisfies Record<string, string>
