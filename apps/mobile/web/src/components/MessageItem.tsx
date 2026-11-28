@@ -487,8 +487,9 @@ function UserMessage({ item, onQuote, onResend }: {
 
   return (
     <div className="flex flex-col items-end">
+      {/* 说明引导何时被读取：本轮中途读到，或本轮结束后作为下一轮开场。 */}
       {item.steering && <span className="mb-1 text-xs text-qn-muted">
-        {item.steering === 'nextTurn' ? t('引导 · 下一轮') : t('引导 · 当前轮')}
+        {item.steering === 'nextTurn' ? t('引导 · 本轮结束后读取') : t('引导 · 已在本轮读取')}
       </span>}
       {/* 用户消息不常驻「⋯」：长按气泡（或右键）打开操作，减少消息流里的按钮噪音。 */}
       <div className="qn-user-bubble" onContextMenu={(event) => {

@@ -133,6 +133,16 @@ it('thread/resume 补进的服务档位记入会话配置，thread/read 的快�
   expect(threadOf(off).savedConfig?.serviceTier).toBeNull()
 })
 
+it('打开会话时采用 daemon 附带的用量，没带时沿用本机已有读数', () => {
+  const usage = { total: { totalTokens: 40 }, last: { totalTokens: 30 }, modelContextWindow: 100 }
+  const opened = loadThread(emptyState(), { id: 't1', tokenUsage: usage, turns: [] } as unknown as LoadableThread)
+  expect(threadOf(opened).tokenUsage).toEqual(usage)
+  const reread = loadThread(opened, { id: 't1', turns: [] } as unknown as LoadableThread)
+  expect(threadOf(reread).tokenUsage).toEqual(usage)
+  const newer = { ...usage, last: { totalTokens: 60 } }
+  expect(threadOf(loadThread(reread, { id: 't1', tokenUsage: newer, turns: [] } as unknown as LoadableThread)).tokenUsage).toEqual(newer)
+})
+
 describe('跨端会话状态', () => {
   it('从状态事件区分待审批、待输入和运行中', () => {
     const change = (activeFlags: string[]) => note('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags } })

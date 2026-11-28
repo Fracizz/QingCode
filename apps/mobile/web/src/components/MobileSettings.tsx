@@ -1,6 +1,6 @@
 import { readLocalePreference, saveLocalePreference, t, type LocalePreference } from '@qn/codex-client'
 import {
-  ALargeSmall, Check, ChevronRight, CornerDownLeft, CornerDownRight, Download, Info, Languages, Minus, Palette, Plus, Sparkles,
+  ALargeSmall, Check, ChevronRight, CornerDownLeft, CornerDownRight, Download, ImageDown, Info, Languages, Minus, Palette, Plus, Sparkles,
   Sun, Wifi, type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
@@ -28,6 +28,12 @@ const runningSendOptions = [
   { value: 'queue', label: t('排队') },
   { value: 'steer', label: t('引导') },
   { value: 'interrupt', label: t('打断后发送') },
+] as const
+
+const imageCompressionOptions = [
+  { value: 'high', label: t('高（体积最小）') },
+  { value: 'medium', label: t('中（默认）') },
+  { value: 'low', label: t('低（画质最好）') },
 ] as const
 
 const languages: readonly { value: LocalePreference; label: string }[] = [
@@ -139,6 +145,7 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
   const reduceMotion = useMobilePreferences((state) => state.reduceMotion)
   const sendKey = useMobilePreferences((state) => state.sendKey)
   const runningSend = useMobilePreferences((state) => state.runningSend)
+  const imageCompression = useMobilePreferences((state) => state.imageCompression)
   const update = useMobilePreferences((state) => state.update)
   const [chatFont, setChatFont] = useState(readChatFont)
   const [localError, setLocalError] = useState<string | null>(null)
@@ -294,6 +301,9 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
           <ChoiceRow icon={CornerDownRight} title={t('运行中发送')} value={runningSend} options={runningSendOptions}
             onChange={(value) => reportLocalSave(update({ runningSend: value }))}
             hint={t('无法引导时直接发送或排队，不会打断当前一轮。长按发送键可临时选择其他方式。')} />
+          <ChoiceRow icon={ImageDown} title={t('图片压缩')} value={imageCompression} options={imageCompressionOptions}
+            onChange={(value) => reportLocalSave(update({ imageCompression: value }))}
+            hint={t('发送前压缩图片，HEIF 照片会转成 JPEG。压缩越高体积越小、上传越快；一条消息的图片总大小有上限，图片多时会自动多压一些。')} />
         </SettingGroup>
 
         {screenError && <Note tone="error" message={screenError} />}

@@ -1,5 +1,12 @@
 import { expect, it } from 'vitest'
-import { parseTheme } from './mobilePreferences'
+import { parseImageCompression, parseTheme } from './mobilePreferences'
+
+it('图片压缩只有高、中、低三档，缺省或未知值回到中档', () => {
+  expect(parseImageCompression('high')).toBe('high')
+  expect(parseImageCompression('low')).toBe('low')
+  expect(parseImageCompression(undefined)).toBe('medium')
+  expect(parseImageCompression('max')).toBe('medium')
+})
 
 it('主题与电脑版一致只有深色、灰色、浅色，旧值迁移到对应主题', () => {
   expect(parseTheme('dark')).toBe('dark')

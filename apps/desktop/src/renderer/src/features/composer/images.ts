@@ -5,7 +5,7 @@ import { t } from '@qn/codex-client'
 
 /** 单张图片上限（按解码后字节数）；与 server 侧 Claude/pi 映射的上限一致。 */
 export const IMAGE_MAX_BYTES = 10 * 1024 * 1024
-export const MAX_IMAGES = 8
+export const MAX_IMAGES = 50
 export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const
 
 const MIME_SET = new Set<string>(IMAGE_MIME_TYPES)

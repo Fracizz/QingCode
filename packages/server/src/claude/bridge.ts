@@ -21,7 +21,8 @@ import { SteerHistoryStore } from '../steerHistory'
 import { VERSION } from '../version'
 import { nativeAgentCwd } from '../workspace/paths'
 import { buildApprovalRequest, permissionResult } from './approval'
-import { lastReplyModel, parseClaudeSteer, sessionInfoToMeta, sessionMessagesToThread, threadListResponse, type ClaudeSteerHistory } from './history'
+import { ContextWindowStore, resultModelWindow } from './contextWindows'
+import { lastContextUsage, lastReplyModel, parseClaudeSteer, sessionInfoToMeta, sessionMessagesToThread, threadListResponse, type ClaudeSteerHistory } from './history'
 import { backgroundTaskList, rewindResponse, slashCommandList, type BackgroundTask, type RewindResponse } from './controls'
 import { HistoryPageCache, listHistoryItems, listHistoryTurns } from './historyPages'
 import { BridgeRpcError } from './errors'
@@ -235,6 +236,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private readonly idleTimeoutMs: number
   private readonly steerHistory: SteerHistoryStore<ClaudeSteerHistory>
   private readonly archives: ArchiveStore
+  private readonly contextWindows: ContextWindowStore
   private requestCounter = 0
   private readonly skills = new SkillsCatalog()
 
@@ -247,6 +249,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
     this.steerHistory = new SteerHistoryStore(options.stateDir, 'claude', parseClaudeSteer, (msg) => this.hub.log(msg))
     this.archives = new ArchiveStore(options.stateDir, 'claude', (msg) => this.hub.log(msg))
+    this.contextWindows = new ContextWindowStore(options.stateDir, (msg) => this.hub.log(msg))
   }
 
   protected async openAgent(options: AgentOpenOptions): Promise<{
@@ -556,6 +559,17 @@ export class ClaudeBridge extends JsonRpcAgentHost {
           // 历史轮次 ID 按下标生成，压缩后会错位；记下发给客户端时对应的消息，回滚按它定位。
           for (const point of history.forkPoints) {
             if (point.promptMessageId) session.turnStartIds.set(point.turnId, point.promptMessageId)
+          }
+          // 用量只在轮次进行中推送，打开历史会话时用最近一次回复的 usage 补上占用读数。
+          const last = session.turnId ? null : lastContextUsage(messages)
+          const lastTurnId = scalarText(asRecord(history.turns.at(-1))?.id)
+          if (last && lastTurnId) {
+            this.notify({ method: 'thread/tokenUsage/updated', params: {
+              threadId,
+              turnId: lastTurnId,
+              tokenUsage: { total: last, last, estimated: true,
+                modelContextWindow: session.state.contextWindow ?? this.contextWindows.lookup(threadId, session.historyModel) },
+            } })
           }
           return withActivity(history.turns, session.state.sidechains)
         }
@@ -1130,6 +1144,8 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       this.probeContextWindow(session)
     }
     if (record?.type === 'result') {
+      const learned = resultModelWindow(record)
+      if (learned) this.contextWindows.record(session.meta.id, learned.model, learned.window)
       const userMessageIds = record.user_message_uuids
       if (session.turnId && Array.isArray(userMessageIds)) {
         const answered = userMessageIds.at(-1)
@@ -1161,6 +1177,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       const window = finite(usage?.rawMaxTokens) ?? finite(usage?.maxTokens)
       if (!window || window <= 0 || session.query !== query || session.state.contextWindow != null) return
       session.state.contextWindow = window
+      this.contextWindows.record(session.meta.id, null, window)
       const last = session.state.contextUsage
       if (!session.turnId || !last) return
       this.notify({ method: 'thread/tokenUsage/updated', params: {

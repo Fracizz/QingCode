@@ -3,7 +3,7 @@ import {
   msToSeconds,
   sessionInfoToMeta,
   sessionMessagesToThread,
-  threadListResponse, lastReplyModel } from './history'
+  threadListResponse, lastContextUsage, lastReplyModel } from './history'
 import type { Json, SessionMeta } from './v2'
 
 const meta: SessionMeta = { id: 'sess-1', cwd: '/work', createdAt: 100, updatedAt: 200 }
@@ -283,5 +283,27 @@ describe('lastReplyModel', () => {
       { message: { role: 'assistant', model: '<synthetic>' } },
     ])).toBe('claude-sonnet-5-5')
     expect(lastReplyModel([{ message: { role: 'user', content: 'x' } }])).toBeNull()
+  })
+})
+
+describe('lastContextUsage', () => {
+  const usage = { input_tokens: 10, cache_read_input_tokens: 100, cache_creation_input_tokens: 5, output_tokens: 20 }
+
+  it('取主会话最近一次回复的 usage 作为当前上下文占用', () => {
+    expect(lastContextUsage([
+      { message: { role: 'assistant', model: 'claude-sonnet-5-5', usage: { input_tokens: 1, output_tokens: 1 } } },
+      { message: { role: 'assistant', model: 'claude-sonnet-5-5', usage } },
+      { message: { role: 'assistant', model: 'claude-haiku-5', usage: { input_tokens: 9 } }, parent_tool_use_id: 'tool-1' },
+      { message: { role: 'assistant', model: '<synthetic>', usage: { input_tokens: 0 } } },
+      { message: { role: 'user', content: 'x' } },
+    ])).toMatchObject({ totalTokens: 135, inputTokens: 115, outputTokens: 20 })
+  })
+
+  it('最近一次回复之后发生过压缩时不给读数', () => {
+    expect(lastContextUsage([
+      { message: { role: 'assistant', model: 'claude-sonnet-5-5', usage } },
+      { isCompactSummary: true, message: { role: 'user', content: 'summary' } },
+    ])).toBeNull()
+    expect(lastContextUsage([{ message: { role: 'user', content: 'x' } }])).toBeNull()
   })
 })

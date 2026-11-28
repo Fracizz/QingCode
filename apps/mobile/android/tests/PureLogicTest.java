@@ -72,6 +72,18 @@ public final class PureLogicTest {
     check("image/png".equals(NativeFileRules.imageMime(new byte[] { (byte) 0x89, 'P', 'N', 'G', 13, 10, 26, 10 })), "PNG signature");
     check("image/webp".equals(NativeFileRules.imageMime("RIFF0000WEBP".getBytes(java.nio.charset.StandardCharsets.US_ASCII))), "WebP signature");
     check(NativeFileRules.imageMime(new byte[] { '<', 's', 'v', 'g', '>' }) == null, "rejects unknown image payloads");
+    byte[] heic = { 0, 0, 0, 24, 'f', 't', 'y', 'p', 'h', 'e', 'i', 'c', 0, 0, 0, 0, 'm', 'i', 'f', '1', 'h', 'e', 'i', 'c' };
+    check(NativeFileRules.isHeif(heic, null), "HEIC major brand");
+    byte[] compatible = { 0, 0, 0, 20, 'f', 't', 'y', 'p', 'a', 'b', 'c', 'd', 0, 0, 0, 0, 'm', 'i', 'f', '1' };
+    check(NativeFileRules.isHeif(compatible, null), "HEIF compatible brand");
+    byte[] mp4 = { 0, 0, 0, 20, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm', 'h', 'e', 'i', 'c', 'm', 'p', '4', '1' };
+    check(!NativeFileRules.isHeif(mp4, null), "minor version is not a brand");
+    check(NativeFileRules.isHeif(null, "image/HEIC"), "HEIC declared mime");
+    check(!NativeFileRules.isHeif(new byte[] { (byte) 0xff, (byte) 0xd8, (byte) 0xff }, "image/jpeg"), "JPEG is not HEIF");
+    check(NativeFileRules.imagePreset("medium").maxEdge == 1600, "medium preset");
+    check(NativeFileRules.imagePreset(null).maxEdge == 1600, "default preset is medium");
+    check(NativeFileRules.imagePreset("high").maxEdge < NativeFileRules.imagePreset("medium").maxEdge, "high compresses more");
+    check(NativeFileRules.imagePreset("low").keepOriginal && !NativeFileRules.imagePreset("medium").keepOriginal, "low keeps originals");
   }
 
   private static void rejectsDownloadChunk(String raw) {

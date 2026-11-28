@@ -12,6 +12,7 @@ import {
 } from '@qn/codex-client'
 import { Check, MessageCircleQuestion } from 'lucide-react'
 import { useState } from 'react'
+import { twoColumnOptions } from '../userInputLayout'
 import { Badge, Button, Card } from './ui'
 
 /**
@@ -66,11 +67,13 @@ export function UserInputCard({ approval, submitting, offline, onSubmit }: {
               <legend className="mb-2 whitespace-pre-wrap text-compact break-words">
                 {!paged && question.header && <span className="mr-2 text-xs text-qn-muted">{question.header}</span>}
                 {question.question}
-                {question.multiSelect && <span className="ml-1 text-xs text-qn-muted">{t('（可多选）')}</span>}
-                {question.optional && <span className="ml-1 text-xs text-qn-muted">{t('（选填）')}</span>}
+                {/* 标记不折行：宁可整体换到下一行，也不拆成「可多 / 选」。 */}
+                {question.multiSelect && <span className="ml-1 whitespace-nowrap text-xs text-qn-muted">{t('（可多选）')}</span>}
+                {question.optional && <span className="ml-1 whitespace-nowrap text-xs text-qn-muted">{t('（选填）')}</span>}
               </legend>
               {question.options.length > 0 && (
-                <div className="flex flex-col gap-1.5" role={question.multiSelect ? 'group' : 'radiogroup'}>
+                <div className={twoColumnOptions(question.options) ? 'grid grid-cols-2 gap-1.5' : 'flex flex-col gap-1.5'}
+                  role={question.multiSelect ? 'group' : 'radiogroup'}>
                   {question.options.map((option) => {
                     const selected = draft.picked.includes(option.label)
                     return (
@@ -80,8 +83,10 @@ export function UserInputCard({ approval, submitting, offline, onSubmit }: {
                         role={question.multiSelect ? 'checkbox' : 'radio'}
                         aria-checked={selected}
                         onClick={() => update(question, (value) => pickUserInputOption(question, value, option.label))}
-                        className={`min-h-10 rounded-lg border px-2.5 py-1.5 text-left ${selected ? 'border-qn-accent bg-qn-accent/10' : 'border-qn-outline'}`}
+                        className="qn-choice"
                       >
+                        {/* 选中只加深描边并打勾，不铺强调色底：同一屏的品牌色留给提交按钮。 */}
+                        {selected && <Check size={14} strokeWidth={2.25} className="qn-choice-check" aria-hidden />}
                         <div className="text-compact break-words">{question.localizedOptions ? translateMessage(option.label) : option.label}</div>
                         {/* 说明默认最多两行，选中后展开全文。 */}
                         {option.description && <div className={`text-xs text-qn-muted break-words${selected ? '' : ' line-clamp-2'}`}>{option.description}</div>}

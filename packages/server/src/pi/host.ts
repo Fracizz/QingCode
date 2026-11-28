@@ -358,7 +358,11 @@ export class PiHost extends JsonRpcAgentHost {
     const load = async () => {
       const rpc = await this.ensureRpc(session)
       const messages = await this.readMessages(rpc)
-      return messagesToThread(meta, messages, session.userItemIds).turns
+      const turns = messagesToThread(meta, messages, session.userItemIds).turns
+      // 用量只在轮次结束时推送，打开历史会话时向 pi 读一次当前上下文占用补上读数。
+      const lastTurnId = scalarText(asRecord(turns.at(-1))?.id)
+      if (!session.turnId && lastTurnId) void this.reportContextUsage(session, lastTurnId, null)
+      return turns
     }
     const saved = await (paged
       ? this.historyPages.read(threadId, params.cursor != null || method === 'thread/items/list', load)

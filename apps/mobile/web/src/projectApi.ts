@@ -33,3 +33,19 @@ export async function suggestFiles(project: Project, query: string): Promise<Pro
 export function parentFolder(path: string): string {
   return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
 }
+
+/** 路径面包屑：每段带上到该段为止的相对路径，根目录由调用方用项目名表示。 */
+export function folderCrumbs(path: string): { name: string; path: string }[] {
+  const parts = path.split('/').filter(Boolean)
+  return parts.map((name, index) => ({ name, path: parts.slice(0, index + 1).join('/') }))
+}
+
+/** 列表里的修改时间：今年内省略年份，跨年才写全，窄屏一行放得下大小与时间。 */
+export function formatFileTime(mtimeMs: number, locale: string, now = Date.now()): string {
+  if (!Number.isFinite(mtimeMs) || mtimeMs <= 0) return ''
+  const date = new Date(mtimeMs)
+  const sameYear = date.getFullYear() === new Date(now).getFullYear()
+  return date.toLocaleString(locale, {
+    ...(sameYear ? {} : { year: 'numeric' }), month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+  })
+}

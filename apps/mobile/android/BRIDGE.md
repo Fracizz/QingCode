@@ -57,7 +57,7 @@
 | `appearance.systemBars` | `{light}` | 根据 WebView 当前配色设置系统栏，返回 `light`。浅色配色使用深色系统图标。 |
 | `clipboard.read` | `{}` | 剪贴板文本字符串（无内容时 `""`） |
 | `clipboard.write` | `{text}` | `{ok:true}`。文本上限 256 Ki UTF-16 字符。 |
-| `images.pick` | `{maxCount?, maxBytes?}` | `{images:[{name,mime,dataUrl}], skipped}`。系统选择器支持选取最多四张图，返回的压缩后总字节数不超过 700 KiB。 |
+| `images.pick` | `{maxCount?, maxBytes?, compression?}` | `{images:[{name,mime,dataUrl}], skipped, overLimit, heifUnsupported}`。系统选择器支持选取最多 20 张图，超出 `maxCount` 的张数计入 `overLimit`；返回的压缩后总字节数不超过 700 KiB。`compression` 取 `high`/`medium`（默认）/`low`，对应最长边 1080/1600/2048 与递减的 JPEG 质量；`low` 在体积允许时原样保留 PNG/JPEG/WebP，GIF 始终原样保留。HEIF/HEIC 解码后转成 sRGB JPEG，需 Android 9+，更低版本计入 `heifUnsupported`。 |
 | `download.start` | `{host, port?, fp, token, projectId, targetId, path, name, size}` | 原生前台服务经网关 `mobile.files.read` 逐块拉取并直接写入目标文件，应用切后台或页面销毁后继续。Android 10+ 自动保存到「下载/QingCode」，Android 8/9 打开系统保存界面（取消时返回 `null`）。MIME 按扩展名取系统映射，避免文件提供方追加 `.bin`。同一时间只允许一个下载，文件最长 512 MiB。返回状态快照。 |
 | `download.status` | `{id?}` | 状态快照 `{id,name,path,size,written,state,auto,error?,savedName?}`，`state` 为 `running`/`done`/`failed`/`cancelled`，`auto` 表示自动保存到下载目录。省略 `id` 时返回最近一次下载，没有时返回 `null`。 |
 | `download.cancel` | `{id}` | 取消指定下载并清理未完成文件，返回 `{ok:true}`。通知栏也可取消。 |

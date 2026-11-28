@@ -1,5 +1,5 @@
 export type DraftImage = { name: string; mime: string; dataUrl: string }
-export const MAX_IMAGES = 4
+export const MAX_IMAGES = 20
 export const IMAGE_BYTES = 700 * 1024
 
 export function attachmentBytes(images: readonly DraftImage[]): number {

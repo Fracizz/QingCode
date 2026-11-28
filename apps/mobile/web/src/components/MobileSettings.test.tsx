@@ -68,8 +68,10 @@ it('常用设置即时应用并保存，对话继承原有字号且选词时不�
 
     await choose('发送按键', '回车发送')
     expect(JSON.parse(localStorage.getItem('qn.mobile.preferences') ?? 'null')).toEqual({
-      theme: 'light', reduceMotion: true, sendKey: 'send', runningSendMode: 'queue',
+      theme: 'light', reduceMotion: true, sendKey: 'send', runningSendMode: 'queue', imageCompression: 'medium',
     })
+    await choose('图片压缩', '高（体积最小）')
+    expect(JSON.parse(localStorage.getItem('qn.mobile.preferences') ?? 'null')).toMatchObject({ imageCompression: 'high' })
     await act(() => root.render(<Harness settings={false} />))
     const input = host.querySelector('textarea')!
     const enter = (options?: KeyboardEventInit) =>

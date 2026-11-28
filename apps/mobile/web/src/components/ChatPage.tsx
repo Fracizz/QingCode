@@ -1,4 +1,4 @@
-import { ChevronDown, PanelLeft, Square } from 'lucide-react'
+import { ArrowDown, ChevronDown, PanelLeft, Square } from 'lucide-react'
 import { AGENT_CAPABILITIES, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
@@ -7,7 +7,7 @@ import { toast } from '../toast'
 import { copyText } from '../client'
 import { nearBottom } from '../composerLogic'
 import { prefsFor, resolveSelection } from '../models'
-import { currentCwd, displayedAccessMode, selectedAccessMode, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, selectedPlanReturn, useApp } from '../store'
+import { currentCwd, displayedAccessMode, selectedAccessMode, selectedPendingSteers, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, selectedPlanReturn, useApp } from '../store'
 import { chatTimeline, replyPhase, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { changeThreadPreference, threadPreferenceKey, useWorkspacePreferences } from '../workspace'
@@ -123,6 +123,8 @@ export function ChatPage() {
   const historyScroll = useRef<{ key: string; height: number; top: number } | null>(null)
   const approvalsRef = useRef<HTMLDivElement>(null)
   const following = useRef(true)
+  const [awayFromBottom, setAwayFromBottom] = useState(false)
+  const pendingSteerCount = useApp((s) => selectedPendingSteers(s)?.length ?? 0)
   const previousChat = useRef(chatKey)
 
   const view = selectedThreadId ? session?.state.threads[selectedThreadId] : undefined
@@ -214,12 +216,13 @@ export function ChatPage() {
 
   useLayoutEffect(() => {
     if (previousChat.current !== chatKey) {
+      setAwayFromBottom(false)
       previousChat.current = chatKey
       following.current = true
     }
     const node = scrollRef.current
     if (node && following.current) node.scrollTop = node.scrollHeight
-  }, [chatKey, timeline, approvals.length, progress, interrupted, turnError])
+  }, [chatKey, timeline, approvals.length, progress, interrupted, turnError, pendingSteerCount])
 
   useLayoutEffect(() => {
     const previous = historyScroll.current
@@ -242,6 +245,9 @@ export function ChatPage() {
     const node = scrollRef.current
     if (!node) return
     following.current = nearBottom(node)
+    // 离底部超过约半屏才显示回到底部，贴底附近的小幅滚动不闪按钮。
+    const away = node.scrollHeight - node.scrollTop - node.clientHeight > node.clientHeight / 2
+    setAwayFromBottom((current) => current === away ? current : away)
   }
 
   async function showEarlier() {
@@ -271,6 +277,7 @@ export function ChatPage() {
     if (!node) return
     following.current = true
     node.scrollTop = node.scrollHeight
+    setAwayFromBottom(false)
   }
 
   async function resend(text: string, attachments: UserInput[]) {
@@ -377,9 +384,10 @@ export function ChatPage() {
   return (
     <>
       <Header
+        className="qn-chat-header"
         title={threadTitle || project?.name || t('对话')}
         icon={
-          <Button variant="ghost" className="qn-header-icon size-[44px] shrink-0" onClick={() => setSwitching(true)}
+          <Button variant="ghost" className="qn-header-icon qn-header-island size-[44px] shrink-0" onClick={() => setSwitching(true)}
             aria-label={t('切换会话')} aria-haspopup="dialog" aria-expanded={switching}>
             <PanelLeft size={20} strokeWidth={1.75} aria-hidden />
           </Button>
@@ -393,7 +401,8 @@ export function ChatPage() {
           </span>
         }
         right={
-          <>
+          // 右侧操作收进一个悬浮按钮组，与左侧会话切换按钮呼应，标题区不再被分隔线截断。
+          <div className="qn-header-island">
             {subagents.length > 0 && (
               <FileActionsContext.Provider value={fileActions}>
                 <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={eventsConnected && session?.opened ? session.rpc : null}
@@ -404,7 +413,7 @@ export function ChatPage() {
             <NewSessionButton project={project} projects={projects} iconOnly className="qn-header-icon size-[44px] shrink-0" />
             {/* 对话中直接进入项目文件、终端等页面，不必先退回项目列表。 */}
             {project && <ProjectTools key={project.id} project={project} compact className="qn-header-icon size-[44px] shrink-0" />}
-          </>
+          </div>
         }
       />
       {needsRepair && activeId && (
@@ -464,6 +473,13 @@ export function ChatPage() {
                   )
                 })}
               </FileActionsContext.Provider>
+                <PendingSteers key={`steer:${chatKey}`} items={items} running={running} agentName={agentLabel(selectedAgent)}
+                  onRestore={(text) => {
+                    // 输入框已有内容时追加在后面，不覆盖用户正在写的草稿。
+                    const current = useApp.getState().draftText
+                    setDraftText(current.trim() ? `${current}
+${text}` : text)
+                  }} />
               {progress && (
                 <div className="qn-thinking qn-replying" role="status"><LoadingIcon aria-hidden />{progress}</div>
               )}
@@ -494,16 +510,15 @@ export function ChatPage() {
               {t('引用选中文字')}
             </Button>
           )}
+          {/* 往上翻看历史时给一个回到最新的入口，靠右下、贴近拇指；流式输出不再抢滚动。 */}
+          {awayFromBottom && (
+            <Button variant="ghost" className="qn-jump-latest" aria-label={t('回到最新消息')} onClick={jumpToLatest}>
+              <ArrowDown size={18} strokeWidth={1.9} aria-hidden />
+            </Button>
+          )}
         </div>
         <PlanPanel key={`plan:${chatKey}`} plan={view?.plan} running={running} />
         <BackgroundTasks key={`tasks:${chatKey}`} />
-        <PendingSteers key={`steer:${chatKey}`} items={items} running={running} agentName={agentLabel(selectedAgent)}
-          onRestore={(text) => {
-            // 输入框已有内容时追加在后面，不覆盖用户正在写的草稿。
-            const current = useApp.getState().draftText
-            setDraftText(current.trim() ? `${current}
-${text}` : text)
-          }} />
         <QueuedMessages key={`queue:${chatKey}`} running={running} canSteer={canSteer} />
         <Composer
           key={chatKey}

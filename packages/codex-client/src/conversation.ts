@@ -988,7 +988,10 @@ export function loadThread(s: ConversationState, thread: LoadableThread): Conver
   if (savedConfig) next.savedConfig = savedConfig
   // 历史回报了模型时它就是最新配置（可能已被另一端改过），本机上一轮的记录不再作为比较基准。
   if (previous?.lastTurnConfig && !(typeof raw.model === 'string' && raw.model)) next.lastTurnConfig = previous.lastTurnConfig
-  if (previous?.tokenUsage !== undefined) next.tokenUsage = previous.tokenUsage
+  // daemon 在打开会话的响应里附上最近一次上报的用量（Codex 协议的 Thread 没有这个字段），它比本机旧读数新。
+  const reportedUsage = raw.tokenUsage
+  if (reportedUsage != null && typeof reportedUsage === 'object') next.tokenUsage = reportedUsage
+  else if (previous?.tokenUsage !== undefined) next.tokenUsage = previous.tokenUsage
   // Codex 历史不带清单、分页可能不含最新清单：没读到时沿用已知的。
   const plan = historyPlan ?? previous?.plan
   if (plan) next.plan = plan

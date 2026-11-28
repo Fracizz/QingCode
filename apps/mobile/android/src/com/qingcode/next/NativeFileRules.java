@@ -6,7 +6,7 @@ import java.util.Locale;
 import java.util.Set;
 
 final class NativeFileRules {
-  static final int MAX_IMAGE_COUNT = 4;
+  static final int MAX_IMAGE_COUNT = 20;
   static final int MAX_IMAGE_BYTES = 700 * 1024;
   static final int DATA_CHUNK_BYTES = 256 * 1024;
   static final long MAX_DOWNLOAD_BYTES = 512L * 1024 * 1024;
@@ -89,6 +89,47 @@ final class NativeFileRules {
     }
     return null;
   }
+
+  /** 压缩档位：档位越高体积越小。返回最长边与依次尝试的 JPEG 质量，未知值按默认中档。 */
+  static ImagePreset imagePreset(String level) {
+    if ("high".equals(level)) return new ImagePreset(1080, new int[] { 64, 48, 36 }, false);
+    // 低压缩优先保留画质：在体积允许时原样发送 PNG/JPEG/WebP。
+    if ("low".equals(level)) return new ImagePreset(2048, new int[] { 90, 82, 64, 48 }, true);
+    return new ImagePreset(1600, new int[] { 82, 64, 48 }, false);
+  }
+
+  static final class ImagePreset {
+    final int maxEdge;
+    final int[] qualities;
+    final boolean keepOriginal;
+
+    ImagePreset(int maxEdge, int[] qualities, boolean keepOriginal) {
+      this.maxEdge = maxEdge;
+      this.qualities = qualities;
+      this.keepOriginal = keepOriginal;
+    }
+  }
+
+  /** 识别 HEIF/HEIC：ISO BMFF 的 ftyp 盒，主品牌或兼容品牌属于 HEIF 系列。 */
+  static boolean isHeif(byte[] bytes, String declaredMime) {
+    if (declaredMime != null) {
+      String mime = declaredMime.toLowerCase(Locale.ROOT);
+      if (mime.equals("image/heif") || mime.equals("image/heic") || mime.startsWith("image/heif-")
+        || mime.startsWith("image/heic-")) return true;
+    }
+    if (bytes == null || bytes.length < 12 || !startsWith(bytes, 4, 'f', 't', 'y', 'p')) return false;
+    long boxSize = ((bytes[0] & 0xffL) << 24) | ((bytes[1] & 0xff) << 16) | ((bytes[2] & 0xff) << 8) | (bytes[3] & 0xff);
+    int end = (int) Math.min(bytes.length, boxSize < 16 ? 12 : boxSize);
+    for (int offset = 8; offset + 4 <= end; offset += 4) {
+      // offset 12 是次版本号，不是品牌。
+      if (offset == 12) continue;
+      String brand = new String(bytes, offset, 4, java.nio.charset.StandardCharsets.US_ASCII);
+      if (HEIF_BRANDS.contains(brand)) return true;
+    }
+    return false;
+  }
+
+  private static final Set<String> HEIF_BRANDS = Set.of("heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs", "mif1", "msf1");
 
   private static boolean startsWith(byte[] bytes, int offset, int... signature) {
     if (bytes.length < offset + signature.length) return false;

@@ -1,15 +1,15 @@
 import { getLocale, t, translateMessage } from '@qn/codex-client'
-import { Archive, Ellipsis, FileText, Folder, Pin, PinOff, RotateCw, Terminal, type LucideIcon } from 'lucide-react'
+import { Archive, ArrowUp, Check, ChevronRight, Download, Ellipsis, Eye, EyeOff, FileText, Folder, Pin, PinOff, RotateCw, Terminal, X, type LucideIcon } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { callDevice } from '../client'
 import { getWindowNativePort, NativeRequestError } from '../native'
-import { parentFolder, projectConnection, projectRpc, type DeviceDownload, type ProjectFile, type ProjectFiles } from '../projectApi'
+import { folderCrumbs, formatFileTime, parentFolder, projectConnection, projectRpc, type DeviceDownload, type ProjectFile, type ProjectFiles } from '../projectApi'
 import { friendlyError } from '../state'
 import { useApp } from '../store'
 import type { Project } from '../types'
 import { formatBytes } from '../viewer'
 import { threadPreferenceKey, toggleProjectPin, useWorkspace, useWorkspacePreferences, workspaceProjectKey } from '../workspace'
-import { AgentTag, Button, Dialog, Empty, Loading, Note, SheetAction } from './ui'
+import { AgentTag, Button, Dialog, Empty, Loading, LoadingIcon, Note, SheetAction } from './ui'
 import { toast } from '../toast'
 
 const TerminalPanel = lazy(async () => ({ default: (await import('./TerminalPanel')).TerminalPanel }))
@@ -137,6 +137,19 @@ function sortEntries(entries: readonly ProjectFile[]): ProjectFile[] {
     || a.name.localeCompare(b.name, getLocale() === 'en' ? 'en-US' : 'zh-CN', { numeric: true, sensitivity: 'base' }))
 }
 
+const LARGE_FILE_BYTES = 100 * 1024 * 1024
+
+type FileState = 'running' | 'starting' | 'done' | 'idle'
+
+function DownloadProgress({ job }: { job: DeviceDownload }) {
+  return (
+    <span className="mt-1.5 flex items-center gap-2">
+      <progress className="min-w-0 flex-1" value={job.written} max={job.size || 1} aria-label={t('下载进度')} />
+      <span className="text-xs whitespace-nowrap text-qn-muted tabular-nums">{formatBytes(job.written)} / {formatBytes(job.size)}</span>
+    </span>
+  )
+}
+
 function ProjectFileBrowser({ project, desktopId, onClose }: {
   project: Project; desktopId: string | null; onClose: () => void
 }) {
@@ -149,11 +162,12 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
   const [needsTarget, setNeedsTarget] = useState(false)
   const [selected, setSelected] = useState<ProjectFile | null>(null)
   const [job, setJob] = useState<DeviceDownload | null>(null)
-  const [starting, setStarting] = useState(false)
+  const [starting, setStarting] = useState<string | null>(null)
   const reported = useRef<string | null>(null)
   const targetState = useApp((s) => s.targetStates[project.targetId]?.state)
   const requestConnect = useApp((s) => s.requestConnect)
   const fileAvailable = Boolean(getWindowNativePort())
+  const locale = getLocale() === 'en' ? 'en-US' : 'zh-CN'
 
   useEffect(() => {
     let current = true
@@ -182,6 +196,7 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
   }, [project, desktopId, path, query, hidden, refresh, targetState])
 
   const running = job?.state === 'running'
+  const busy = running || starting !== null
 
   // 打开页面时接上仍在后台进行的下载；进行中每 500ms 刷新一次进度。
   useEffect(() => {
@@ -220,13 +235,13 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
   }
 
   async function download(file: ProjectFile) {
-    if (job?.state === 'running' || starting) return
+    if (busy) return
     const connection = projectConnection(desktopId)
     if (!connection) {
       toast(t('请先连接电脑'), { tone: 'error' })
       return
     }
-    setStarting(true)
+    setStarting(file.path)
     try {
       // 原生前台服务直接经网关拉取分块，应用切到后台或关闭此页面后继续下载。
       const started = await callDevice<DeviceDownload | null>('download.start', {
@@ -240,74 +255,179 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
     } catch (error) {
       toast(friendlyError(error, t('下载失败')), { tone: 'error' })
     } finally {
-      setStarting(false)
+      setStarting(null)
     }
+  }
+
+  /** 行尾下载键：大文件先进详情确认网络与空间，其余直接开始。 */
+  function quickDownload(file: ProjectFile) {
+    if (file.size >= LARGE_FILE_BYTES) setSelected(file)
+    else void download(file)
   }
 
   function cancelDownload() {
     if (job) void callDevice('download.cancel', { id: job.id }).catch(() => undefined)
   }
 
+  function fileState(file: ProjectFile): FileState {
+    if (job?.path === file.path && job.state === 'running') return 'running'
+    if (starting === file.path) return 'starting'
+    if (job?.path === file.path && job.state === 'done') return 'done'
+    return 'idle'
+  }
+
+  const searching = query.trim() !== ''
+  const entries = listing ? (searching ? listing.entries : sortEntries(listing.entries)) : []
+  const crumbs = folderCrumbs(path)
+  // 正在下载的文件不在当前列表里（换了目录或在搜索）时，在顶部保留一条进度，随时可取消。
+  const jobVisible = running && entries.some((entry) => entry.path === job.path)
+
   return (
     <Dialog title={t('项目文件 · {name}', { name: project.name })} placement="full" onClose={onClose}>
       <div className="space-y-2">
         <input type="search" className="qn-input" aria-label={t('搜索项目文件')} placeholder={t('搜索文件名或相对路径')}
-          value={query} onChange={(event) => { setQuery(event.target.value); setSelected(null) }} disabled={starting} />
-        <div className="flex min-w-0 items-center gap-1 text-sm">
-          <Button onClick={() => browse(parentFolder(path))} disabled={!path}>{t('上级')}</Button>
-          <div className="min-w-0 flex-1 truncate text-qn-muted" title={path}>{path ? `/${path}` : '/'}</div>
-          <label className="flex min-h-11 items-center gap-1 px-1 whitespace-nowrap">
-            <input type="checkbox" checked={hidden} onChange={(event) => setHidden(event.target.checked)} disabled={starting} /> {t('隐藏文件')}
-          </label>
-          <Button variant="ghost" className="qn-list-action" aria-label={t('刷新文件')} onClick={() => setRefresh(refresh + 1)} disabled={starting}>
+          value={query} onChange={(event) => { setQuery(event.target.value); setSelected(null) }} />
+        <div className="flex min-w-0 items-center gap-1">
+          <Button variant="ghost" className="qn-list-action shrink-0" aria-label={t('上级目录')} title={t('上级目录')}
+            onClick={() => browse(parentFolder(path))} disabled={!path || searching}>
+            <ArrowUp size={18} strokeWidth={1.75} aria-hidden />
+          </Button>
+          {/* 面包屑可横向滚动，深层目录也能一步跳回任意上级。 */}
+          <nav className="flex min-w-0 flex-1 items-center overflow-x-auto text-sm whitespace-nowrap" aria-label={t('当前目录')}>
+            <button type="button" className={`min-h-11 shrink-0 px-1 ${crumbs.length ? 'text-qn-muted' : 'font-medium'}`}
+              onClick={() => browse('')} aria-current={crumbs.length ? undefined : 'page'}>{project.name}</button>
+            {crumbs.map((crumb, index) => {
+              const last = index === crumbs.length - 1
+              return (
+                <span key={crumb.path} className="flex shrink-0 items-center">
+                  <ChevronRight size={14} className="text-qn-dim" aria-hidden />
+                  <button type="button" className={`min-h-11 px-1 ${last ? 'font-medium' : 'text-qn-muted'}`}
+                    onClick={() => browse(crumb.path)} aria-current={last ? 'page' : undefined}>{crumb.name}</button>
+                </span>
+              )
+            })}
+          </nav>
+          <Button variant="ghost" className={`qn-list-action shrink-0 ${hidden ? 'text-qn-accent' : ''}`} aria-pressed={hidden}
+            aria-label={t('显示隐藏文件')} title={t('显示隐藏文件')} onClick={() => setHidden(!hidden)}>
+            {hidden ? <Eye size={18} strokeWidth={1.75} aria-hidden /> : <EyeOff size={18} strokeWidth={1.75} aria-hidden />}
+          </Button>
+          <Button variant="ghost" className="qn-list-action shrink-0" aria-label={t('刷新文件')} onClick={() => setRefresh(refresh + 1)}>
             <RotateCw size={17} strokeWidth={1.75} aria-hidden />
           </Button>
         </div>
-        {message && <Note message={message} tone="error" onClose={() => setMessage(null)}
-          actionLabel={needsTarget ? t('连接目标') : undefined} onAction={needsTarget ? () => requestConnect(project.targetId) : undefined} />}
-        {selected && (
+        {!fileAvailable && <p className="qn-hint">{t('请在 Android 应用中下载。')}</p>}
+        {running && !jobVisible && (
           <div className="rounded-xl border border-qn-border bg-qn-card px-3 py-2">
-            <p className="break-all text-sm font-medium">{selected.name}</p>
-            <p className="my-1 text-xs text-qn-muted">{formatBytes(selected.size)} · {new Date(selected.mtimeMs).toLocaleString(getLocale() === 'en' ? 'en-US' : 'zh-CN')}</p>
-            {running && job.path === selected.path ? (
-              <div className="flex items-center gap-2">
-                <progress className="min-w-0 flex-1" value={job.written} max={job.size || 1} aria-label={t('下载进度')} />
-                <span className="text-xs text-qn-muted">{formatBytes(job.written)} / {formatBytes(job.size)}</span>
-                <Button onClick={cancelDownload}>{t('取消')}</Button>
-              </div>
-            ) : (
-              <>
-                {selected.size >= 100 * 1024 * 1024 && <p className="mb-2 text-xs text-qn-warn">{t('文件超过 100 MiB，请确认网络与存储空间。')}</p>}
-                <div className="flex gap-2">
-                  <Button variant="primary" disabled={!fileAvailable || running || starting} onClick={() => void download(selected)}>{t('下载')}</Button>
-                  <Button variant="ghost" onClick={() => setSelected(null)}>{t('关闭详情')}</Button>
-                </div>
-                {!fileAvailable && <p className="text-xs text-qn-muted">{t('请在 Android 应用中下载。')}</p>}
-                {running && <p className="mt-1 text-xs text-qn-muted">{t('正在下载 {name}，完成后可继续下载其他文件。', { name: job.name })}</p>}
-              </>
-            )}
+            <div className="flex items-center gap-2">
+              <Download size={16} className="shrink-0 text-qn-accent" aria-hidden />
+              <p className="min-w-0 flex-1 truncate text-sm" title={job.name}>{t('正在下载 {name}', { name: job.name })}</p>
+              <Button variant="ghost" className="qn-list-action -my-1 shrink-0" aria-label={t('取消下载 {name}', { name: job.name })} onClick={cancelDownload}>
+                <X size={18} aria-hidden />
+              </Button>
+            </div>
+            <DownloadProgress job={job} />
           </div>
         )}
+        {message && <Note message={message} tone="error" onClose={() => setMessage(null)}
+          actionLabel={needsTarget ? t('连接目标') : undefined} onAction={needsTarget ? () => requestConnect(project.targetId) : undefined} />}
         {listing === null && !message && <p className="py-4 text-center text-sm text-qn-muted" role="status">{t('正在读取文件…')}</p>}
-        {listing?.entries.length === 0 && <p className="py-4 text-center text-sm text-qn-muted">{query ? t('没有匹配的文件') : t('目录为空')}</p>}
+        {listing?.entries.length === 0 && <p className="py-4 text-center text-sm text-qn-muted">{searching ? t('没有匹配的文件') : t('目录为空')}</p>}
         {listing?.truncated && <p className="text-xs text-qn-warn">{t('结果较多，请缩小查询范围。')}</p>}
-        {listing && listing.entries.length > 0 && (
-          <div className="overflow-hidden rounded-xl border border-qn-border bg-qn-card">
-            {(query.trim() ? listing.entries : sortEntries(listing.entries)).map((entry) => (
-              <button key={entry.path} className="qn-row border-b border-qn-border px-3 py-2 last:border-0" type="button" disabled={starting}
-                onClick={() => entry.kind === 'dir' ? browse(entry.path) : setSelected(entry)}>
-                <span aria-hidden className={entry.kind === 'dir' ? 'text-qn-accent' : 'text-qn-muted'}>
-                  {entry.kind === 'dir' ? (
-                    <Folder size={18} strokeWidth={1.75} />
+        {entries.length > 0 && (
+          <ul className="overflow-hidden rounded-xl border border-qn-border bg-qn-card">
+            {entries.map((entry) => {
+              const label = searching ? entry.path : entry.name
+              if (entry.kind === 'dir') {
+                return (
+                  <li key={entry.path} className="border-b border-qn-border last:border-0">
+                    <button className="qn-row px-3 py-2" type="button" onClick={() => browse(entry.path)}>
+                      <Folder size={18} strokeWidth={1.75} className="shrink-0 text-qn-accent" aria-hidden />
+                      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+                      <ChevronRight size={16} className="shrink-0 text-qn-dim" aria-hidden />
+                    </button>
+                  </li>
+                )
+              }
+              const state = fileState(entry)
+              return (
+                <li key={entry.path} className="flex items-center border-b border-qn-border last:border-0">
+                  <button className="qn-row min-w-0 flex-1 items-start py-2.5 pr-1 pl-3" type="button" onClick={() => setSelected(entry)}>
+                    <FileText size={18} strokeWidth={1.75} className="mt-px shrink-0 text-qn-muted" aria-hidden />
+                    <span className="min-w-0 flex-1">
+                      {/* 同前缀的文件（如只差版本号的安装包）截断成一行无法区分，名称最多折两行。 */}
+                      <span className="line-clamp-2 text-sm [overflow-wrap:anywhere]">{label}</span>
+                      {state === 'running' && job ? <DownloadProgress job={job} /> : (
+                        <span className="mt-0.5 block text-xs text-qn-muted">
+                          {formatBytes(entry.size)}{entry.mtimeMs > 0 && ` · ${formatFileTime(entry.mtimeMs, locale)}`}
+                          {state === 'done' && <span className="text-qn-ok"> · {t('已保存')}</span>}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                  {fileAvailable && (state === 'running' ? (
+                    <Button variant="ghost" className="qn-list-action mr-1 shrink-0" aria-label={t('取消下载 {name}', { name: entry.name })} onClick={cancelDownload}>
+                      <X size={18} aria-hidden />
+                    </Button>
                   ) : (
-                    <FileText size={18} strokeWidth={1.75} />
-                  )}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-sm">{query ? entry.path : entry.name}</span>
-                {entry.kind === 'file' && <span className="text-xs whitespace-nowrap text-qn-muted">{formatBytes(entry.size)}</span>}
-              </button>
-            ))}
-          </div>
+                    <Button variant="ghost" className="qn-list-action mr-1 shrink-0 text-qn-accent" aria-label={t('下载 {name}', { name: entry.name })}
+                      disabled={busy} onClick={() => quickDownload(entry)}>
+                      {state === 'starting' ? <LoadingIcon size={18} />
+                        : state === 'done' ? <Check size={18} aria-hidden /> : <Download size={18} strokeWidth={1.75} aria-hidden />}
+                    </Button>
+                  ))}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+      {selected && (
+        <FileDetails file={selected} locale={locale} job={job} state={fileState(selected)} fileAvailable={fileAvailable} busy={busy}
+          onDownload={() => void download(selected)} onCancel={cancelDownload} onClose={() => setSelected(null)} />
+      )}
+    </Dialog>
+  )
+}
+
+/** 点文件行弹出的详情：完整名称与路径、大文件提醒，以及下载或取消。 */
+function FileDetails({ file, locale, job, state, fileAvailable, busy, onDownload, onCancel, onClose }: {
+  file: ProjectFile
+  locale: string
+  job: DeviceDownload | null
+  state: FileState
+  fileAvailable: boolean
+  busy: boolean
+  onDownload: () => void
+  onCancel: () => void
+  onClose: () => void
+}) {
+  const otherJob = job?.state === 'running' && job.path !== file.path ? job.name : null
+  return (
+    <Dialog title={t('文件详情')} onClose={onClose}>
+      <p className="text-sm font-medium break-all">{file.name}</p>
+      <p className="qn-mono mt-1 text-xs break-all text-qn-muted">{file.path}</p>
+      <p className="mt-2 text-xs text-qn-muted">
+        {formatBytes(file.size)}{file.mtimeMs > 0 && ` · ${new Date(file.mtimeMs).toLocaleString(locale)}`}
+      </p>
+      <div className="mt-3">
+        {state === 'running' && job ? (
+          <>
+            <DownloadProgress job={job} />
+            <p className="qn-hint mt-2">{t('关闭此页面或切到后台后下载会继续，进度见通知栏。')}</p>
+            <Button className="mt-3 w-full" onClick={onCancel}>{t('取消下载')}</Button>
+          </>
+        ) : (
+          <>
+            {file.size >= LARGE_FILE_BYTES && <p className="mb-2 text-xs text-qn-warn">{t('文件超过 100 MiB，请确认网络与存储空间。')}</p>}
+            {otherJob && <p className="qn-hint mb-2">{t('正在下载 {name}，完成后可继续下载其他文件。', { name: otherJob })}</p>}
+            {state === 'done' && <p className="mb-2 text-xs text-qn-ok">{t('已保存到手机。')}</p>}
+            {fileAvailable ? (
+              <Button variant="primary" className="w-full" disabled={busy} onClick={onDownload}>
+                {state === 'starting' ? <LoadingIcon size={18} /> : <Download size={18} strokeWidth={1.75} aria-hidden />}
+                {state === 'done' ? t('重新下载') : t('下载')}
+              </Button>
+            ) : <p className="qn-hint">{t('请在 Android 应用中下载。')}</p>}
+          </>
         )}
       </div>
     </Dialog>

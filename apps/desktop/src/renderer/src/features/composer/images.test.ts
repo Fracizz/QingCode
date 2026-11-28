@@ -36,7 +36,7 @@ describe('screenFiles', () => {
     expect(result.rejected[0]?.reason).toMatch(/超过 10 MiB/)
   })
 
-  it('最多 8 张：已有图片计入，超出部分被拒', () => {
+  it('最多 50 张：已有图片计入，超出部分被拒', () => {
     const files = [file('1.png', 'image/png'), file('2.png', 'image/png'), file('c.txt', 'text/plain')]
     const result = screenFiles(files, { existingImages: MAX_IMAGES - 1, imagesAllowed: true })
     expect(result.accepted.map((f) => f.name)).toEqual(['1.png', 'c.txt'])
@@ -91,7 +91,7 @@ describe('imageSendBlock', () => {
   })
   it('张数与单张问题', () => {
     expect(imageSendBlock(Array(MAX_IMAGES).fill(ok), true)).toBeNull()
-    expect(imageSendBlock(Array(MAX_IMAGES + 1).fill(ok), true)).toMatch(/最多 8 张/)
+    expect(imageSendBlock(Array(MAX_IMAGES + 1).fill(ok), true)).toMatch(/最多 50 张/)
     expect(imageSendBlock([ok, 'data:image/tiff;base64,QUJD'], true)).toMatch(/请移除后再发送/)
   })
 

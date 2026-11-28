@@ -91,12 +91,14 @@ export function Composer({
   nativeCommands, onCommandMenuOpen, planMode,
 }: ComposerProps) {
   const sendKey = useMobilePreferences((state) => state.sendKey)
+  const imageCompression = useMobilePreferences((state) => state.imageCompression)
   const defaultMode = runningSendMode(useMobilePreferences((state) => state.runningSend))
   const [comment, setComment] = useState('')
   const [showAnnotations, setShowAnnotations] = useState(false)
   const [images, setImages] = useState(() => photoDrafts.get(draftKey) ?? NO_IMAGES)
   const [pickedSkills, setPickedSkills] = useState(() => skillDrafts.get(draftKey) ?? NO_SKILLS)
   const [picking, setPicking] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const [caret, setCaret] = useState<number | null>(null)
   const [imeActive, setImeActive] = useState(false)
   const [activeCommand, setActiveCommand] = useState(0)
@@ -139,12 +141,14 @@ export function Composer({
     return () => { mounted.current = false }
   }, [])
   useEffect(() => setComment(''), [quoteDraft])
+  // 收起态只留一行（添加图片、输入、发送/停止）；聚焦输入或已有内容时展开出工具行。
+  const compact = !expanded && !text.trim() && images.length === 0 && !planMode && !picking
   useLayoutEffect(() => {
     const input = textarea.current
     if (!input) return
     input.style.height = 'auto'
     input.style.height = `${Math.min(input.scrollHeight, 126)}px`
-  }, [text])
+  }, [text, compact])
   useEffect(() => {
     if (!project || query === undefined) return
     let current = true
@@ -176,18 +180,27 @@ export function Composer({
     if (disabled || imageUnavailable || picking || images.length >= MAX_IMAGES) return
     setPicking(true)
     try {
-      const result = await callDevice<{ images: unknown[]; skipped: number }>('images.pick', {
+      const result = await callDevice<{ images: unknown[]; skipped: number; overLimit?: number; heifUnsupported?: number }>('images.pick', {
         maxCount: MAX_IMAGES - images.length,
         maxBytes: IMAGE_BYTES - attachmentBytes(images),
+        compression: imageCompression,
       }, 300_000)
       if (!mounted.current) return
       const incoming = Array.isArray(result?.images) ? result.images.filter(isDraftImage) : []
       const next = [...images, ...incoming].slice(0, MAX_IMAGES)
+      // 原生端截掉的和这里截掉的都算超出张数，统一提示上限。
+      const overLimit = (result?.overLimit ?? 0) + images.length + incoming.length - next.length
       if (attachmentBytes(next) > IMAGE_BYTES) {
         toast(t('图片超过可用空间，请选择较小的图片'), { tone: 'warn' })
         return
       }
       updateImages(next)
+      if (overLimit > 0) {
+        toast(t('一条消息最多 {max} 张图片，已忽略多出的 {count} 张', { max: MAX_IMAGES, count: overLimit }), { tone: 'warn' })
+      }
+      if (result?.heifUnsupported) {
+        toast(t('有 {count} 张 HEIF 照片无法添加：需要 Android 9 及以上系统', { count: result.heifUnsupported }), { tone: 'warn' })
+      }
       if (result?.skipped) {
         toast(result.skipped === 1 ? t('有 1 张图片无法添加，请选择较小的图片')
           : t('有 {count} 张图片无法添加，请选择较小的图片', { count: result.skipped }), { tone: 'warn' })
@@ -378,7 +391,15 @@ export function Composer({
         </div>
       )}
       {images.length > 0 && imageUnavailable && <div className="mb-2 text-xs text-qn-warn">{imageUnavailable}</div>}
-      <div className="qn-composer">
+      <div className="qn-composer" data-compact={compact ? 'true' : undefined}
+        // 有内容时本来就展开，只在空输入框聚焦时改状态，避免程序聚焦（选完命令回填后）多一次渲染。
+        onFocus={(event) => { if ((event.target as EventTarget) === textarea.current && !text.trim()) setExpanded(true) }}
+        onBlur={(event) => {
+          const box = event.currentTarget
+          // 焦点留在输入框内（工具按钮、弹层）时保持展开；弹层开着时也不收起，免得弹层随工具行一起被隐藏。
+          if (box.contains(event.relatedTarget as Node | null) || box.querySelector('dialog[open]')) return
+          setExpanded(false)
+        }}>
         {planMode && (
           <div className="qn-plan-mode" role="status">
             <ListTodo size={15} aria-hidden />
@@ -412,7 +433,12 @@ export function Composer({
           enterKeyHint={sendKey === 'send' ? 'send' : 'enter'}
           placeholder={!busy ? placeholder : actualMode === 'steer' ? t('输入补充内容，发送后引导当前一轮')
             : actualMode === 'immediate' ? t('输入下一条，发送后打断本轮') : t('输入下一条，发送后排队')}
-          onChange={(event) => { onChangeText(event.target.value); setCaret(event.target.selectionStart) }}
+          onChange={(event) => {
+            onChangeText(event.target.value)
+            setCaret(event.target.selectionStart)
+            // 输入中删空内容也保持展开，键盘还在时不收成一行。
+            setExpanded(true)
+          }}
           onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
           onBlur={(event) => { if (!commandList.current?.contains(event.relatedTarget)) setCaret(null) }}
           onKeyDown={onKeyDown}
@@ -420,14 +446,16 @@ export function Composer({
           onCompositionEnd={() => { composing.current = false; setImeActive(false) }}
         />
         <div className="qn-composer-toolbar">
+          {/* 添加图片固定在最左：收起时与输入框同一行，展开后领起工具行。 */}
+          <Button variant="ghost" className="qn-icon-button qn-composer-add" aria-label={t('添加图片')}
+            title={imageUnavailable ?? (images.length >= MAX_IMAGES ? t('一条消息最多 {max} 张图片', { max: MAX_IMAGES }) : undefined)}
+            onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
+            <ImagePlus size={19} strokeWidth={1.75} aria-hidden />
+          </Button>
           <div className="qn-composer-tools">{toolbar}</div>
-          {/* 常用操作靠右、离拇指近：上下文环、添加图片、发送/停止；低频的访问模式与模型在左。 */}
+          {/* 常用操作靠右、离拇指近：上下文环、发送/停止；低频的访问模式与模型在左，收起时隐藏。 */}
           <div className="qn-composer-actions">
             {trailing}
-            <Button variant="ghost" className="qn-icon-button" aria-label={t('添加图片')} title={imageUnavailable}
-              onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
-              <ImagePlus size={18} strokeWidth={1.75} aria-hidden />
-            </Button>
             {/* 停止与发送共用一个位置（参考 Orca 手机版）：没有可发送内容时是停止键，一输入就换成发送键（排队）。 */}
             {running && !canSend && !sending && (
               <Button variant="danger" className="qn-stop-button" aria-label={interrupting ? t('正在中断') : t('停止运行')}

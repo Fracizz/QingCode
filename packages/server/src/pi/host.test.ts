@@ -341,7 +341,7 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
       data: [{ id: 'turn-fake-session-2' }],
       nextCursor: expect.any(String),
     })
-    expect(state.commands).toEqual(['switch_session', 'get_state', 'get_messages'])
+    expect(state.commands).toEqual(['switch_session', 'get_state', 'get_messages', 'get_session_stats'])
     host.shutdown()
   })
 

@@ -9,6 +9,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorSpace;
 import android.graphics.ImageDecoder;
 import android.graphics.Paint;
 import android.graphics.Rect;
@@ -30,10 +31,9 @@ import java.util.Locale;
 import java.util.Set;
 
 final class NativeInputs {
-  private static final int MAX_BITMAP_EDGE = 1600;
   private static final int MAX_BITMAP_PIXELS = 120_000_000;
-  private static final int[] JPEG_EDGES = { MAX_BITMAP_EDGE, 1080, 720, 480 };
-  private static final int[] JPEG_QUALITIES = { 82, 64, 48 };
+  /** 档位的最长边放不下预算时，依次退到这些边长。 */
+  private static final int[] FALLBACK_EDGES = { 1080, 720, 480 };
   private final ContentResolver resolver;
   private final ActivityRequests requests;
 
@@ -56,6 +56,7 @@ final class NativeInputs {
   JSONObject pickImages(JSONObject params) throws Exception {
     int count = cap(params.optInt("maxCount", NativeFileRules.MAX_IMAGE_COUNT), NativeFileRules.MAX_IMAGE_COUNT);
     int remaining = cap(params.optInt("maxBytes", NativeFileRules.MAX_IMAGE_BYTES), NativeFileRules.MAX_IMAGE_BYTES);
+    NativeFileRules.ImagePreset preset = NativeFileRules.imagePreset(params.optString("compression", "medium"));
     Intent result = showImagePicker(count);
     JSONArray entries = new JSONArray();
     if (result == null) return new JSONObject().put("images", entries).put("skipped", 0);
@@ -74,12 +75,18 @@ final class NativeInputs {
     }
 
     ArrayList<Uri> uris = new ArrayList<>(selected);
+    int heifUnsupported = 0;
     for (int index = 0; index < uris.size(); index++) {
       Uri uri = uris.get(index);
       if (!ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) continue;
       int budget = remaining / (uris.size() - index);
       try {
-        Photo photo = readPhoto(uri, budget);
+        // Android 9 起系统才能解码 HEIF；更低版本单独计数，提示原因而不是笼统地说图片太大。
+        if (Build.VERSION.SDK_INT < 28 && NativeFileRules.isHeif(readHeader(uri), resolver.getType(uri))) {
+          heifUnsupported++;
+          continue;
+        }
+        Photo photo = readPhoto(uri, budget, preset);
         if (photo == null) continue;
         String name = ProjectDownloads.displayName(resolver, uri, fallbackName(index, photo.mime));
         if (photo.converted && !name.toLowerCase(Locale.ROOT).endsWith(".jpg")) {
@@ -93,7 +100,11 @@ final class NativeInputs {
         // 单张照片无效或授权失效时，保留本次成功读入的其他照片。
       }
     }
-    return new JSONObject().put("images", entries).put("skipped", Math.max(0, picked - entries.length()));
+    // 超出张数的单独返回，让界面提示「最多 N 张」，而不是误报为图片太大。
+    int overLimit = Math.max(0, picked - count);
+    return new JSONObject().put("images", entries)
+      .put("skipped", Math.max(0, picked - overLimit - heifUnsupported - entries.length()))
+      .put("overLimit", overLimit).put("heifUnsupported", heifUnsupported);
   }
 
   private Intent showImagePicker(int count) throws Exception {
@@ -110,22 +121,43 @@ final class NativeInputs {
     return requests.choose(photos, "photo_picker_unavailable", "当前设备无法打开系统图片选择界面");
   }
 
-  private Photo readPhoto(Uri uri, int limit) throws IOException {
+  private Photo readPhoto(Uri uri, int limit, NativeFileRules.ImagePreset preset) throws IOException {
     if (limit <= 0) return null;
     byte[] original = readAtMost(uri, limit);
     String mime = original == null ? null : NativeFileRules.imageMime(original);
+    Photo kept = null;
     if (mime != null) {
       // 已经读入的截图可直接校验尺寸，无需再向相册提供方请求一遍。
       BitmapFactory.Options bounds = readBounds(uri, original);
-      return validDimensions(bounds.outWidth, bounds.outHeight) ? new Photo(original, mime, false) : null;
+      if (!validDimensions(bounds.outWidth, bounds.outHeight)) return null;
+      kept = new Photo(original, mime, false);
+      // GIF 重新编码会丢动画；低压缩档位在体积允许时保留原图。
+      boolean fits = Math.max(bounds.outWidth, bounds.outHeight) <= preset.maxEdge;
+      if ("image/gif".equals(mime) || (preset.keepOriginal && fits)) return kept;
+      if (!fits) kept = null;
     }
 
-    Bitmap source = decodeSmall(uri, original);
-    if (source == null) return null;
+    // HEIF 等模型不接受的格式走这里，统一转成 JPEG。
+    Bitmap source = decodeSmall(uri, original, preset.maxEdge);
+    if (source == null) return kept;
     try {
-      return compressedPhoto(source, limit);
+      Photo compressed = compressedPhoto(source, limit, preset);
+      // 小图重新编码可能反而更大，此时保留原图。
+      if (kept != null && (compressed == null || compressed.bytes.length >= kept.bytes.length)) return kept;
+      return compressed;
     } finally {
       source.recycle();
+    }
+  }
+
+  private byte[] readHeader(Uri uri) throws IOException {
+    try (InputStream input = resolver.openInputStream(uri)) {
+      if (input == null) return null;
+      byte[] header = new byte[64];
+      int length = 0;
+      int read;
+      while (length < header.length && (read = input.read(header, length, header.length - length)) != -1) length += read;
+      return java.util.Arrays.copyOf(header, length);
     }
   }
 
@@ -164,7 +196,7 @@ final class NativeInputs {
     return width > 0 && height > 0 && (long) width * height <= MAX_BITMAP_PIXELS;
   }
 
-  private Bitmap decodeSmall(Uri uri, byte[] original) throws IOException {
+  private Bitmap decodeSmall(Uri uri, byte[] original, int maxEdge) throws IOException {
     if (Build.VERSION.SDK_INT >= 28) {
       ImageDecoder.Source image = original == null ? ImageDecoder.createSource(resolver, uri)
         : ImageDecoder.createSource(ByteBuffer.wrap(original));
@@ -172,8 +204,10 @@ final class NativeInputs {
         int width = info.getSize().getWidth();
         int height = info.getSize().getHeight();
         if (!validDimensions(width, height)) throw new IllegalArgumentException("图片尺寸不受支持");
-        double ratio = Math.min(1.0, (double) MAX_BITMAP_EDGE / Math.max(width, height));
+        double ratio = Math.min(1.0, (double) maxEdge / Math.max(width, height));
         decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
+        // HEIF 照片常带 Display P3 或 10 位色彩，转成 sRGB 再编码 JPEG，避免偏色。
+        decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB));
         decoder.setTargetSize(Math.max(1, (int) (width * ratio)), Math.max(1, (int) (height * ratio)));
       });
     }
@@ -181,22 +215,26 @@ final class NativeInputs {
     if (!validDimensions(bounds.outWidth, bounds.outHeight)) return null;
     BitmapFactory.Options options = new BitmapFactory.Options();
     options.inSampleSize = 1;
-    while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > MAX_BITMAP_EDGE) options.inSampleSize *= 2;
+    while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > maxEdge) options.inSampleSize *= 2;
     if (original != null) return BitmapFactory.decodeByteArray(original, 0, original.length, options);
     try (InputStream input = resolver.openInputStream(uri)) {
       return input == null ? null : BitmapFactory.decodeStream(input, null, options);
     }
   }
 
-  private static Photo compressedPhoto(Bitmap source, int limit) {
+  private static Photo compressedPhoto(Bitmap source, int limit, NativeFileRules.ImagePreset preset) {
     int sourceWidth = source.getWidth();
     int sourceHeight = source.getHeight();
     int longest = Math.max(sourceWidth, sourceHeight);
     int previousEdge = 0;
     ByteArrayOutputStream encoded = new ByteArrayOutputStream();
-    for (int maxEdge : JPEG_EDGES) {
+    int[] edges = new int[FALLBACK_EDGES.length + 1];
+    edges[0] = preset.maxEdge;
+    System.arraycopy(FALLBACK_EDGES, 0, edges, 1, FALLBACK_EDGES.length);
+    for (int maxEdge : edges) {
       int edge = Math.min(longest, maxEdge);
-      if (edge == previousEdge) continue;
+      // 只往小退：比档位最长边还大的回退边长跳过。
+      if (edge == previousEdge || maxEdge > preset.maxEdge) continue;
       previousEdge = edge;
       int width = Math.max(1, sourceWidth * edge / longest);
       int height = Math.max(1, sourceHeight * edge / longest);
@@ -208,7 +246,7 @@ final class NativeInputs {
           canvas.drawColor(Color.WHITE);
           canvas.drawBitmap(source, null, new Rect(0, 0, width, height), new Paint(Paint.FILTER_BITMAP_FLAG));
         }
-        for (int quality : JPEG_QUALITIES) {
+        for (int quality : preset.qualities) {
           encoded.reset();
           if (output.compress(Bitmap.CompressFormat.JPEG, quality, encoded) && encoded.size() <= limit) {
             return new Photo(encoded.toByteArray(), "image/jpeg", true);

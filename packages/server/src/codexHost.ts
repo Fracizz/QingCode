@@ -7,6 +7,7 @@ import { IdMapper } from './idMapper'
 import { redact } from './log'
 import { PendingRequests } from './pendingRequests'
 import { ReplayBuffer } from './replayBuffer'
+import { ThreadUsage } from './threadUsage'
 import { TurnTiming } from './turnTiming'
 import { VERSION } from './version'
 
@@ -169,6 +170,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
   private readonly buffer = new ReplayBuffer()
   private readonly pending = new PendingRequests()
   private readonly turnTiming = new TurnTiming()
+  private readonly threadUsage = new ThreadUsage()
 
   constructor(
     protected readonly hub: AgentHostHub,
@@ -270,6 +272,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
     this.pending.clear()
     this.ids.clear()
     this.turnTiming.clear()
+    this.threadUsage.clear()
     this.closeAgent()
   }
 
@@ -284,7 +287,7 @@ export abstract class JsonRpcAgentHost implements AgentHost {
     if (kind === 'response') {
       const forwarded = this.ids.take(msg.id)
       if (!forwarded) return
-      const result = this.turnTiming.history(msg.result, forwarded.historyThreadId)
+      const result = this.threadUsage.history(this.turnTiming.history(msg.result, forwarded.historyThreadId))
       const response = result === msg.result ? msg : { ...msg, result }
       try {
         this.hub.send(forwarded.clientId, {
@@ -303,7 +306,10 @@ export abstract class JsonRpcAgentHost implements AgentHost {
       return
     }
 
-    if (kind === 'notification') msg = this.turnTiming.notification(msg)
+    if (kind === 'notification') {
+      msg = this.turnTiming.notification(msg)
+      this.threadUsage.notification(msg)
+    }
     const seq = this.buffer.push(msg).seq
     if (kind === 'request') {
       this.pending.add(msg.id as JsonRpcId, msg, seq)

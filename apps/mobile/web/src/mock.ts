@@ -386,7 +386,7 @@ export class MockNativePort implements NativePort {
       case 'clipboard.read':
         return MOCK_SAMPLE_TEXT
       case 'images.pick':
-        return { images: [mockPickedImage()], skipped: 0 }
+        return { images: [mockPickedImage()], skipped: 0, overLimit: 0, heifUnsupported: 0 }
       case 'storage.get':
         return this.readStorage(str(params.key))
       case 'storage.set': {

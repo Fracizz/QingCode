@@ -3,7 +3,7 @@
 import { appendImageNote, t } from '@qn/codex-client'
 import type { UserInput } from '@qn/codex-client'
 
-export const MAX_ATTACHMENTS = 8
+export const MAX_ATTACHMENTS = 50
 /** 图片压缩后上限：随消息以 data URL 发送，太大会拖慢 turn/start 并占满上下文。 */
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 /** 超过这个边长的图片先缩放（模型侧也会缩，提前缩省带宽）。 */

@@ -86,7 +86,7 @@
 | 新会话 | 侧栏"新会话"、`Ctrl+N`、项目行悬停按钮、顶栏"…"菜单 → 进入**草稿态**，发第一条消息时才创建会话 |
 | 选 Agent | 草稿态输入框左下 Agent 菜单；不可用的 Agent 置灰并显示原因；会话创建后 Agent 固定 |
 | 选模型 | 输入框右下模型选择器：搜索模型 → 选模型 → 推理强度分段（Low/Med/High/XHigh/Max/极致，按模型支持项显示）→ 速度 Fast 开关（模型有加速档才显示）。偏好按 Agent 存 `localStorage['qn-model-prefs']`，发送时作为 `turn/start` 的 `model / effort / serviceTier` 覆盖；目标上没有该模型时回落默认。模型列表来自 `model/list`，为空（Claude 桥接）时不显示选择器 |
-| 附件 | 粘贴、拖入主区或点输入框左下回形针添加，最多 8 个。图片（png/jpg/gif/webp）读成 data URL 随消息发送，边长 >2048 或 >5 MB 时缩放转 WebP；其他文件 ≤10 MB：本机目标直接引用本机路径，SSH 目标先经 `fs.write` 上传到目标机 `~/.qingcode-next/uploads/<日期>/`，上传中/失败时不能发送。发送为 `turn/start` 的 `image` / `mention` 输入；Claude 桥接转成图片内容块与"附件文件"说明 |
+| 附件 | 粘贴、拖入主区或点输入框左下回形针添加，最多 50 个（图片最多 50 张，超出时提示并忽略多出的部分）。图片（png/jpg/gif/webp）读成 data URL 随消息发送，边长 >2048 或 >5 MB 时缩放转 WebP；其他文件 ≤10 MB：本机目标直接引用本机路径，SSH 目标先经 `fs.write` 上传到目标机 `~/.qingcode-next/uploads/<日期>/`，上传中/失败时不能发送。发送为 `turn/start` 的 `image` / `mention` 输入；Claude 桥接转成图片内容块与"附件文件"说明 |
 | 斜杠菜单 | 桌面与手机在对话输入框输入 `/` 查看内置命令，↑↓ 选择、Enter/Tab 确认、Esc 关闭，也可以点击或触摸。用 `/help` 查看完整清单与不可用原因。桌面同一菜单还列出 Agent 技能，选中技能显示为标签并作为 `skill` 输入发送 |
 | 上下文占用 | `thread/tokenUsage/updated` 的 `last.totalTokens / modelContextWindow`，≥75% 琥珀、≥90% 红。点占用环或用 `/context` 查看会话用量，`/compact` 打开压缩确认。账号额度用 `/status`、`/usage` 或 `/quota` 查看 |
 | 工具步骤 | 连续 ≥2 个命令/文件改动/思考折叠成"已运行 N 条命令 · M 个失败 · 编辑了 K 个文件"，运行中默认展开 |

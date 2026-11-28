@@ -6,12 +6,16 @@ import { getWindowNativePort } from './native'
 
 /** 与电脑版主题一致：深色（默认）、灰色、浅色。 */
 export type MobileTheme = 'dark' | 'gray' | 'light'
+/** 图片压缩档位：高压缩体积最小，低压缩画质最好。 */
+export type ImageCompression = 'high' | 'medium' | 'low'
+export const IMAGE_COMPRESSIONS: readonly ImageCompression[] = ['high', 'medium', 'low']
 type MobilePreferences = {
   theme: MobileTheme
   reduceMotion: boolean
   sendKey: 'newline' | 'send'
   /** 会话运行中点发送键的默认处理。 */
   runningSend: RunningSendPreference
+  imageCompression: ImageCompression
 }
 
 const storageKey = 'qn.mobile.preferences'
@@ -20,7 +24,13 @@ const storageKey = 'qn.mobile.preferences'
  * 选择存在 runningSendMode 字段：上一版把电脑版默认值「引导」写进过 runningSend，不能当作用户的选择。
  */
 const MOBILE_RUNNING_SEND: RunningSendPreference = 'queue'
-const defaults: MobilePreferences = { theme: 'dark', reduceMotion: false, sendKey: 'newline', runningSend: MOBILE_RUNNING_SEND }
+const defaults: MobilePreferences = {
+  theme: 'dark', reduceMotion: false, sendKey: 'newline', runningSend: MOBILE_RUNNING_SEND, imageCompression: 'medium',
+}
+
+export function parseImageCompression(value: unknown): ImageCompression {
+  return IMAGE_COMPRESSIONS.find((item) => item === value) ?? defaults.imageCompression
+}
 
 export function parseMobileRunningSend(value: unknown): RunningSendPreference {
   return RUNNING_SEND_PREFERENCES.find((item) => item === value) ?? MOBILE_RUNNING_SEND
@@ -41,6 +51,7 @@ function readPreferences(): MobilePreferences {
       reduceMotion: value?.reduceMotion === true,
       sendKey: value?.sendKey === 'send' ? 'send' : defaults.sendKey,
       runningSend: parseMobileRunningSend(value?.runningSendMode),
+      imageCompression: parseImageCompression(value?.imageCompression),
     }
   } catch {
     return defaults
@@ -52,8 +63,8 @@ export const useMobilePreferences = create<MobilePreferences & {
 }>((set, get) => ({
   ...readPreferences(),
   update: (values) => {
-    const { theme, reduceMotion, sendKey, runningSend } = get()
-    const next = { theme, reduceMotion, sendKey, runningSend, ...values }
+    const { theme, reduceMotion, sendKey, runningSend, imageCompression } = get()
+    const next = { theme, reduceMotion, sendKey, runningSend, imageCompression, ...values }
     set(next)
     try {
       const { runningSend: runningSendMode, ...rest } = next

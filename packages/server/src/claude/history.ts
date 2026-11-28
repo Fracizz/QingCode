@@ -18,6 +18,7 @@ import {
   type SessionMeta,
   type ThreadConfig,
   type V2Item,
+  tokenBreakdown,
 } from './v2'
 
 export interface HistoryResult {
@@ -128,6 +129,25 @@ export function lastReplyModel(messages: unknown[]): string | null {
     if (!message || scalarText(message.role) !== 'assistant') continue
     const model = scalarText(message.model)
     if (model && model !== '<synthetic>') return model
+  }
+  return null
+}
+
+/**
+ * 历史里最近一次主代理回复的 usage 就是会话当前的上下文占用，打开历史会话时据此补上占用环。
+ * 之后若发生过压缩，压缩前的读数已失效，返回 null 等下一轮上报。
+ */
+export function lastContextUsage(messages: unknown[]): (Json & { totalTokens: number }) | null {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const entry = asRecord(messages[index])
+    if (!entry || entry.isSidechain === true || scalarText(entry.parent_tool_use_id)) continue
+    if (entry.isCompactSummary === true || scalarText(entry.subtype) === 'compact_boundary') return null
+    const message = asRecord(entry.message ?? messages[index])
+    if (!message || scalarText(message.role) !== 'assistant' || scalarText(message.model) === '<synthetic>') continue
+    const usage = asRecord(message.usage)
+    if (!usage) continue
+    const last = tokenBreakdown(usage)
+    if (last.totalTokens > 0) return last
   }
   return null
 }
