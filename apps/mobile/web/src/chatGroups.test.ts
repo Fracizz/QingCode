@@ -67,7 +67,8 @@ it('中断标记保留在原轮次，支持只含隐藏命令或没有条目的�
     interrupted('not-loaded', ['older']), interrupted('only-command', ['hidden']), interrupted('empty', []),
     { id: 'next', itemIds: ['b'], outcome: 'completed', startedAtMs: null, durationMs: null },
   ], false)
-  expect(timeline.map((entry) => entry.key)).toEqual(['a', 'stopped-only-command', 'stopped-empty', 'b'])
+  // 隐藏的命令轮与空轮之间没有可见内容，提示合成一条。
+  expect(timeline.map((entry) => entry.key)).toEqual(['a', 'stopped-empty', 'b'])
   expect(timeline[0]).toMatchObject({ kind: 'visible', trail: [{ id: 'hidden' }] })
 })
 

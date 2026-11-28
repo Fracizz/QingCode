@@ -11,6 +11,8 @@ export type QueuedSend = ChatDraft & {
   delegate: boolean
   overrides: TurnOverrides
   accessMode?: AccessMode
+  /** 排队的会话压缩：按队列顺序执行，不是发给 Agent 的消息。 */
+  compact?: boolean
   saving?: boolean
   sending?: boolean
   error?: string

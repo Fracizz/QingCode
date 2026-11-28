@@ -171,6 +171,29 @@ describe('排队消息操作', () => {
     expect(lists.other?.threads).toEqual([])
   })
 
+  it('运行中发起压缩：排进队列按顺序执行，压缩结束后才发后面的消息', async () => {
+    const { send, compactConversation } = useCodex.getState()
+    await send('先发的', chat)
+    expect(await compactConversation()).toBe(true)
+    expect(await compactConversation()).toBe(false)
+    await send('后发的', chat)
+    expect(pending().map((item) => [item.text, !!item.compact])).toEqual([['先发的', false], ['/compact', true], ['后发的', false]])
+    expect(methods()).toEqual([])
+
+    notifyTurn('turn/completed', 'active', 'completed')
+    await vi.waitFor(() => expect(methods()).toEqual(['turn/start']))
+    notifyTurn('turn/started', 'second', 'inProgress')
+    notifyTurn('turn/completed', 'second', 'completed')
+    await vi.waitFor(() => expect(methods()).toEqual(['turn/start', 'thread/compact/start']))
+    // 回执到了但压缩轮次还没开始：不抢发下一条。
+    expect(pending().map((item) => item.text)).toEqual(['/compact', '后发的'])
+    notifyTurn('turn/started', 'compaction', 'inProgress')
+    await vi.waitFor(() => expect(pending().map((item) => item.text)).toEqual(['后发的']))
+    expect(methods()).toHaveLength(2)
+    notifyTurn('turn/completed', 'compaction', 'completed')
+    await vi.waitFor(() => expect(methods()).toEqual(['turn/start', 'thread/compact/start', 'turn/start']))
+  })
+
   it('新对话继续：在侧栏分叉到最后一个已结束的轮次，主会话不切换', async () => {
     await useCodex.getState().send('接着做', chat)
     const id = pending()[0]!.id

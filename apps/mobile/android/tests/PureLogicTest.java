@@ -38,6 +38,7 @@ public final class PureLogicTest {
     verifyDownloadInputs();
     verifyUpdateUrl();
     verifyLanguageRules();
+    verifyScreenCorner();
     System.out.println("pure logic tests passed");
   }
 
@@ -123,6 +124,17 @@ public final class PureLogicTest {
     }
     check("en".equals(LanguageRules.resolve("en", "zh-CN")), "English preference wins");
     check("zh".equals(LanguageRules.resolve("zh", "en-US")), "Chinese preference wins");
+  }
+
+  private static void verifyScreenCorner() {
+    check(ScreenCorner.extraBottomGap(0, 0, 0) == 0, "square screen needs no gap");
+    check(ScreenCorner.extraBottomGap(18, 0, 0) == 0, "tiny corner needs no gap");
+    check(Math.abs(ScreenCorner.extraBottomGap(30, 0, 0) - 8f) < 0.1f, "gap for 30 radius");
+    check(Math.abs(ScreenCorner.extraBottomGap(40, 0, 0) - 13.6f) < 0.1f, "gap for 40 radius");
+    check(Math.abs(ScreenCorner.extraBottomGap(55, 0, 0) - 23.4f) < 0.1f, "gap for 55 radius");
+    check(ScreenCorner.extraBottomGap(40, 24, 0) == 0, "navigation area already clears the corner");
+    check(ScreenCorner.extraBottomGap(40, 300, 0) == 0, "keyboard needs no gap");
+    check(ScreenCorner.extraBottomGap(40, 0, 40) == 0, "side inset moves the box past the corner");
   }
 
   private static void check(boolean condition, String name) {

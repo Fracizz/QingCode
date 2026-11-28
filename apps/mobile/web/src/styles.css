@@ -1790,8 +1790,8 @@ input[type="radio"] {
   border-top-color: transparent;
   background: var(--color-qn-bg);
   padding-top: 4px;
-  /* 比通用底栏多留 2px：全面屏的底部圆角和手势区会轻微遮住输入框。 */
-  padding-bottom: 10px;
+  /* 全面屏底部圆角会遮住输入框：Android 壳按圆角半径下发 --qn-corner-gap，读不到时用默认值。 */
+  padding-bottom: max(8px, var(--qn-corner-gap, 14px));
 }
 
 .qn-composer-images {
@@ -2306,6 +2306,9 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   font-size: 13px;
   color: var(--color-qn-muted);
 }
+
+/* 停止图标单独上色：灰色线框在中文旁边容易被看成「口」字。 */
+.qn-turn-interrupted > svg { flex-shrink: 0; color: var(--color-qn-warn); }
 
 /* 回复进度胶囊：须写在 .qn-thinking 之后并提高优先级，否则内边距与文字色会被上面的通用规则覆盖。 */
 .qn-thinking.qn-replying {

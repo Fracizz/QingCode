@@ -168,6 +168,8 @@ type PendingSend = {
   text: string
   input: UserInput[]
   overrides: TurnOverrides
+  /** 排队的会话压缩：按队列顺序执行，不是发给 Agent 的消息。 */
+  compact?: boolean
   sending?: boolean
   error?: string
 }
@@ -1282,6 +1284,21 @@ export const useCodex = create<CodexState>((set, get) => {
     }
   }
 
+  const setCompacting = (key: string, value: boolean) => set((state) => {
+    const compacting = { ...state.compacting }
+    if (value) compacting[key] = true
+    else delete compacting[key]
+    return { compacting }
+  })
+
+  /** 执行排到队首的压缩；返回时压缩轮次已经开始。 */
+  async function startQueuedCompaction(session: TargetSession, threadId: string): Promise<void> {
+    if (session.agent === 'codex' && session.threadsAwaitingResume.has(threadId)) {
+      await reopenThreadForSending(session, threadId)
+    }
+    await startThreadCompaction(session.rpc, threadId)
+  }
+
   async function flushPending(chat: ChatAddress, retry = false): Promise<void> {
     const key = pendingSendKey(chat)
     if (changingParentThreads.has(key)) return
@@ -1296,16 +1313,19 @@ export const useCodex = create<CodexState>((set, get) => {
 
     submitting.add(key)
     updatePending(chat, (list) => list.map((item) => item.id === next.id ? { ...item, sending: true, error: undefined } : item))
-    const pendingUser = userItemFromInput(globalThis.crypto.randomUUID(), next.input)
-    addPendingUser(session.key, chat.threadId, pendingUser)
+    const pendingUser = next.compact ? null : userItemFromInput(globalThis.crypto.randomUUID(), next.input)
+    if (pendingUser) addPendingUser(session.key, chat.threadId, pendingUser)
+    else setCompacting(key, true)
     try {
-      await startTurn(session, chat.threadId, next.input, next.overrides, pendingUser)
+      if (pendingUser) await startTurn(session, chat.threadId, next.input, next.overrides, pendingUser)
+      else await startQueuedCompaction(session, chat.threadId)
       updatePending(chat, (list) => list.filter((item) => item.id !== next.id))
     } catch (err) {
-      removePendingUser(session.key, [chat.threadId], pendingUser.id)
-      pausePending(chat, friendlyError(err, t('排队消息未发送')))
+      if (pendingUser) removePendingUser(session.key, [chat.threadId], pendingUser.id)
+      pausePending(chat, friendlyError(err, pendingUser ? t('排队消息未发送') : t('压缩会话失败')))
     } finally {
       submitting.delete(key)
+      if (!pendingUser) setCompacting(key, false)
       updatePending(chat, (list) => list.map((item) => item.id === next.id ? { ...item, sending: false } : item))
     }
     if (!get().pendingSends[key]?.[0]?.error && get().sessions[session.key]?.state.threads[chat.threadId]?.status === 'idle') {
@@ -2189,7 +2209,7 @@ export const useCodex = create<CodexState>((set, get) => {
 
     editPendingSend: (chat, id, text) => {
       const item = get().pendingSends[pendingSendKey(chat)]?.find((entry) => entry.id === id)
-      if (!item || item.sending || !holdingPending.has(id)) return false
+      if (!item || item.compact || item.sending || !holdingPending.has(id)) return false
       const input = replacePendingText(item.input, item.text, text)
       if (!input || turnInputSizeProblem(adaptTurnInput(chat.agent, input))) return false
       updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, text, input } : entry))
@@ -2202,7 +2222,7 @@ export const useCodex = create<CodexState>((set, get) => {
       const session = state.sessions[sessionKey(chat.targetId, chat.agent)]
       const view = session?.state.threads[chat.threadId]
       const item = state.pendingSends[key]?.find((entry) => entry.id === id)
-      if (!session?.opened || !item || item.sending ||
+      if (!session?.opened || !item || item.compact || item.sending ||
         submitting.has(key) || holdingPending.has(id)) return false
       const plan = planSteer({ agent: chat.agent, view, input: item.input })
       if (plan.route !== 'steer') {
@@ -2251,7 +2271,7 @@ export const useCodex = create<CodexState>((set, get) => {
       const session = state.sessions[sessionKey(chat.targetId, chat.agent)]
       const view = session?.state.threads[chat.threadId]
       const item = state.pendingSends[key]?.find((entry) => entry.id === id)
-      if (!session?.opened || view?.status !== 'running' || !item || item.sending || state.compacting[key] ||
+      if (!session?.opened || view?.status !== 'running' || !item || item.compact || item.sending || state.compacting[key] ||
         submitting.has(key) || holdingPending.has(id) || changingParentThreads.has(key)) return false
       if (session.openedConfig?.directory !== configDirFor(chat.targetId, chat.agent)) return false
       const turnId = view.activeTurnId
@@ -2297,7 +2317,7 @@ export const useCodex = create<CodexState>((set, get) => {
       const state = get()
       const session = state.sessions[sessionKey(chat.targetId, chat.agent)]
       const item = state.pendingSends[key]?.find((entry) => entry.id === id)
-      if ((mode === 'continue' && !canContinueQueued(chat.agent)) || !item || item.sending ||
+      if ((mode === 'continue' && !canContinueQueued(chat.agent)) || !item || item.compact || item.sending ||
         submitting.has(key) || holdingPending.has(id) || changingParentThreads.has(key)) return false
       if (!session?.opened) {
         updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, error: t('连接未就绪，请重新连接后再试') } : entry))
@@ -2603,9 +2623,9 @@ export const useCodex = create<CodexState>((set, get) => {
         set({ error: t('请先打开会话') })
         return false
       }
-      if (initial.sending || initial.compacting[chatKey] || changingParentThreads.has(chatKey) ||
-        threadHasWork(chat) || view.pendingApprovals.length) {
-        set({ error: t('请先处理当前轮次、审批或排队消息') })
+      if (initial.compacting[chatKey] || initial.pendingSends[chatKey]?.some((item) => item.compact)) return false
+      if (changingParentThreads.has(chatKey)) {
+        set({ error: t('正在更新该会话，请稍后重试') })
         return false
       }
       const quotas = useRateLimits.getState()
@@ -2613,6 +2633,14 @@ export const useCodex = create<CodexState>((set, get) => {
       if (agent === 'claude' ? claudeQuotaBlocked(quota) : quota?.rateLimitReachedType || quota?.spendControlReached) {
         set({ error: t('当前额度已用完') })
         return false
+      }
+      // 会话在忙或前面还有排队内容时，压缩排到队尾。
+      if (initial.sending || threadHasWork(chat) || view.pendingApprovals.length) {
+        const item: PendingSend = { id: ++nextPendingId, text: '/compact', input: [], overrides: {}, compact: true }
+        updatePending(chat, (list) => [...list, item])
+        set({ error: null })
+        void flushPending(chat)
+        return true
       }
       const token = openThreadToken
       const isCurrent = () => token === openThreadToken && isMainChat(get(), chat)

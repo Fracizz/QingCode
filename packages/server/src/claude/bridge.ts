@@ -22,11 +22,12 @@ import { VERSION } from '../version'
 import { nativeAgentCwd } from '../workspace/paths'
 import { buildApprovalRequest, permissionResult } from './approval'
 import { ContextWindowStore, resultModelWindow } from './contextWindows'
+import { ModelCache } from './modelCache'
 import { lastContextUsage, lastReplyModel, parseClaudeSteer, sessionInfoToMeta, sessionMessagesToThread, threadListResponse, type ClaudeSteerHistory } from './history'
 import { backgroundTaskList, rewindResponse, slashCommandList, type BackgroundTask, type RewindResponse } from './controls'
 import { HistoryPageCache, listHistoryItems, listHistoryTurns } from './historyPages'
 import { BridgeRpcError } from './errors'
-import { emptyMapState, finishPendingItems, mapSdkMessage, nextTurnState, type MapState } from './items'
+import { liveItems, emptyMapState, finishPendingItems, mapSdkMessage, nextTurnState, type MapState } from './items'
 import { sidechainItemId, withActivity } from './sidechain'
 import { withdrawMessages } from './withdraw'
 import {
@@ -101,6 +102,8 @@ interface BridgeSession {
   query: QueryLike | null
   input: AsyncQueue<SDKUserMessage> | null
   turnId: string | null
+  /** 当前轮次写进 SDK 历史的消息 UUID，读历史时据此认出本轮内容。 */
+  liveMessageIds: Set<string>
   turnMessageIds: Map<string, string>
   /** 轮次 → 开启它的用户消息 UUID，即该轮开始前的文件检查点。 */
   turnStartIds: Map<string, string>
@@ -237,6 +240,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private readonly steerHistory: SteerHistoryStore<ClaudeSteerHistory>
   private readonly archives: ArchiveStore
   private readonly contextWindows: ContextWindowStore
+  private readonly modelCache: ModelCache
   private requestCounter = 0
   private readonly skills = new SkillsCatalog()
 
@@ -250,6 +254,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     this.steerHistory = new SteerHistoryStore(options.stateDir, 'claude', parseClaudeSteer, (msg) => this.hub.log(msg))
     this.archives = new ArchiveStore(options.stateDir, 'claude', (msg) => this.hub.log(msg))
     this.contextWindows = new ContextWindowStore(options.stateDir, (msg) => this.hub.log(msg))
+    this.modelCache = new ModelCache(options.stateDir, (msg) => this.hub.log(msg))
   }
 
   protected async openAgent(options: AgentOpenOptions): Promise<{
@@ -551,8 +556,12 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         const load = async () => {
           const messages = await this.sessionReader(scope).getSessionMessages(threadId, { dir: session.meta.cwd })
           session.historyModel = lastReplyModel(messages)
+          // 进行中的轮次由实时条目提供：历史按另一套 ID 解析同样的内容，混在一起客户端会显示两遍。
+          const liveStart = session.turnId
+            ? messages.findIndex((message) => session.liveMessageIds.has(scalarText(asRecord(message)?.uuid))) : -1
           const history = sessionMessagesToThread(session.meta,
-            messages.filter((message) => !session.pendingSteers.has(scalarText(asRecord(message)?.uuid))),
+            (liveStart < 0 ? messages : messages.slice(0, liveStart))
+              .filter((message) => !session.pendingSteers.has(scalarText(asRecord(message)?.uuid))),
             {}, session.state.taskNotifications.deliveryIds, session.steerHistory)
           // 续用的会话从历史认回已有任务，之后只带 ID 的 TaskUpdate 才能对上。
           if (!session.turnId && session.state.plan.tasks.size === 0) session.state = { ...session.state, plan: history.plan }
@@ -587,11 +596,10 @@ export class ClaudeBridge extends JsonRpcAgentHost {
         const saved = await (paged
           ? scope.historyPages.read(threadId, params.cursor != null || method === 'thread/items/list', load)
           : load())
-        // 正在运行的条目由事件流补齐，避免和 SDK 已经写入历史的内容重复。
         const active = session.turnId
         const plan = session.state.turnPlan
         const turns = active ? [...saved, {
-          ...buildTurn(active, [], 'inProgress'),
+          ...buildTurn(active, liveItems(session.state), 'inProgress'),
           ...(plan ? { plan: { explanation: null, plan } } : {}),
         }] : saved
         if (method === 'thread/turns/list') return listHistoryTurns(threadId, turns, params)
@@ -685,7 +693,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     if (scope.realModels) return scope.realModels
     const query = this.activeModelQuery(scope)
     const read = query?.supportedModels
-    if (!query || !read) return staticModelList()
+    if (!query || !read) return this.fallbackModels(scope)
     scope.modelListRequest ??= this.fetchModels(scope, read.bind(query)).finally(() => {
       scope.modelListRequest = null
     })
@@ -702,13 +710,18 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private async fetchModels(scope: ClaudeScope, read: () => Promise<unknown[]>): Promise<Json> {
     try {
       const list = supportedModelList(await read())
-      if (!list) return staticModelList()
+      if (!list) return this.fallbackModels(scope)
       this.storeModels(scope, list)
       return list
     } catch (err) {
-      this.hub.log(`claude 模型表读取失败，回退别名列表: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
-      return staticModelList()
+      this.hub.log(`claude 模型表读取失败，回退缓存或别名列表: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
+      return this.fallbackModels(scope)
     }
+  }
+
+  /** 拿不到真实表时先用上次缓存的，从没取到过才给别名表。 */
+  private fallbackModels(scope: ClaudeScope): Json {
+    return this.modelCache.get(scope.directory) ?? staticModelList()
   }
 
   /**
@@ -718,6 +731,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private storeModels(scope: ClaudeScope, list: Json): void {
     if (scope.realModels) return
     scope.realModels = list
+    this.modelCache.set(scope.directory, list)
     if (this.opened && scope === this.currentScope()) this.notify({ method: 'qingcode/models/updated', params: {} })
   }
 
@@ -967,6 +981,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       }
       session.compaction = compact
       session.state = nextTurnState(session.state)
+      session.liveMessageIds = new Set([messageId])
       for (const item of items) {
         session.state.items[scalarText(item.id)] = item
         session.state.order.push(scalarText(item.id))
@@ -1125,6 +1140,8 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       const turnId = this.startAgentTurn(session)
       if (consumedIds(record).length === 0) session.agentTurnId = turnId
     }
+    if (session.turnId && (record?.type === 'assistant' || record?.type === 'user') && !record.parent_tool_use_id
+      && typeof record.uuid === 'string') session.liveMessageIds.add(record.uuid)
     const ctx = {
       threadId: session.meta.id,
       turnId: session.turnId ?? '',
@@ -1194,6 +1211,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     session.turnId = turnId
     session.compaction = false
     session.state = nextTurnState(session.state)
+    session.liveMessageIds = new Set()
     this.notify({ method: 'turn/started', params: {
       threadId: session.meta.id,
       turn: buildTurn(turnId, [], 'inProgress'),
@@ -1223,6 +1241,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       session.pendingSteers.delete(id)
       session.state.items[id] = item
       session.state.order.push(id)
+      session.liveMessageIds.add(id)
       this.notify(itemCompleted({ threadId: session.meta.id, turnId, cwd: session.meta.cwd }, item))
     }
     if (!session.meta.ephemeral && session.pendingSteers.size < pendingCount) {
@@ -1501,6 +1520,7 @@ function makeSession(
     query: null,
     input: null,
     turnId: null,
+    liveMessageIds: new Set(),
     turnMessageIds: new Map(),
     turnStartIds: new Map(),
     pendingSteers: new Map(),

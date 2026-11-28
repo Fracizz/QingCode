@@ -1,4 +1,4 @@
-import { ArrowDown, Bot, ChevronDown, ListChecks, PanelLeft, Square } from 'lucide-react'
+import { ArrowDown, Bot, ChevronDown, CircleStop, ListChecks, PanelLeft } from 'lucide-react'
 import { AGENT_CAPABILITIES, branchPoint, canReviseMessage, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, revisionNote, turnOpeningMessages, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
@@ -7,7 +7,7 @@ import { toast } from '../toast'
 import { copyText } from '../client'
 import { nearBottom } from '../composerLogic'
 import { prefsFor, resolveSelection } from '../models'
-import { currentCwd, displayedAccessMode, selectedAccessMode, selectedPendingSteers, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, selectedPlanReturn, useApp } from '../store'
+import { currentCwd, displayedAccessMode, selectedAccessMode, selectedPendingSteers, selectedAccessPreference, selectedCompactionBlockedReason, selectedCompactionStarting, selectedPlanReturn, selectedQueuedSends, useApp } from '../store'
 import { chatTimeline, replyPhase, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { changeThreadPreference, threadPreferenceKey, useWorkspacePreferences } from '../workspace'
@@ -74,6 +74,7 @@ export function ChatPage() {
   const compactConversation = useApp((s) => s.compactConversation)
   const compactionBlockedReason = useApp(selectedCompactionBlockedReason)
   const compactionStarting = useApp(selectedCompactionStarting)
+  const queuedCount = useApp((s) => selectedQueuedSends(s)?.length ?? 0)
   const respondApproval = useApp((s) => s.respondApproval)
   const respondUserInput = useApp((s) => s.respondUserInput)
   const approvalSubmitting = useApp((s) => s.approvalSubmitting)
@@ -149,6 +150,7 @@ export function ChatPage() {
   const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
     item.type === 'contextCompaction' && item.status === 'inProgress' && activeItemIds?.includes(item.id))
   const canSteer = running && turnSteerBlock(selectedAgent, view, compactionStarting) === null
+  const compactionWillQueue = running || sending || approvals.length > 0 || queuedCount > 0
   const timeline = useMemo(() => chatTimeline(withoutErrorEcho(items, view?.error, running), view?.turns, running, activeItemIds),
     [items, view?.error, view?.turns, running, activeItemIds])
   const latestStop = interrupted && view?.turns?.at(-1)?.outcome === 'interrupted' ? view.turns.at(-1)?.id : undefined
@@ -480,7 +482,8 @@ export function ChatPage() {
                   const index = firstVisible + offset
                   const onQuote = (text: string) => setQuote({ key: chatKey, text })
                   if (entry.kind === 'work') return <WorkGroup key={entry.key} work={entry} onQuote={onQuote} />
-                  if (entry.kind === 'stopped') return <TurnInterrupted key={entry.key} announce={entry.key === latestStopKey} />
+                  if (entry.kind === 'stopped') return <TurnInterrupted key={entry.key}
+                    announce={entry.key === latestStopKey || (interrupted && index === timeline.length - 1)} />
                   const { block, trail, finalReply } = entry
                   const previous = offset > 0 ? timeline[index - 1] : undefined
                   return (
@@ -510,7 +513,9 @@ ${text}` : text)
               {progress && (
                 <div className="qn-thinking qn-replying" role="status"><LoadingIcon aria-hidden />{progress}</div>
               )}
-              {interrupted && !timeline.some((entry) => entry.kind === 'stopped' && entry.key === latestStopKey) && <TurnInterrupted announce />}
+              {/* 刚停掉的一轮没留下任何内容时补一条提示；末尾已经是停止提示就不再重复。 */}
+              {interrupted && timeline.at(-1)?.kind !== 'stopped'
+                && !timeline.some((entry) => entry.kind === 'stopped' && entry.key === latestStopKey) && <TurnInterrupted announce />}
               {turnError && <TurnErrorCard message={turnError} />}
               {approvals.length > 0 && (
                 <div ref={approvalsRef} className="space-y-3">
@@ -611,6 +616,7 @@ ${text}` : text)
               compact={selectedThreadId ? {
                 busy: compacting,
                 blockedReason: compactionBlockedReason,
+                willQueue: compactionWillQueue,
                 onCompact: () => void compactConversation(),
               } : undefined} />
           }
@@ -648,7 +654,7 @@ ${text}` : text)
 }
 
 function TurnInterrupted({ announce }: { announce: boolean }) {
-  return <div className="qn-turn-interrupted" role={announce ? 'status' : undefined}><Square size={13} aria-hidden />{t('本轮已中断')}</div>
+  return <div className="qn-turn-interrupted" role={announce ? 'status' : undefined}><CircleStop size={15} aria-hidden />{t('本轮已中断')}</div>
 }
 
 /** Claude 会把失败原因同时作为一条普通回复发出；交给错误卡片统一显示，不重复两遍。 */

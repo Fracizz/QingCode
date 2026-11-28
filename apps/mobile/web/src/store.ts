@@ -581,8 +581,9 @@ export function selectedCompactionBlockedReason(state: AppState): string | null 
   const thread = session?.state.threads[address.threadId]
   if (!session?.opened || !thread) return t('请先打开会话')
   if (selectedCompactionStarting(state)) return t('正在启动压缩…')
-  if (thread.status === 'running' || thread.pendingApprovals.length > 0 || state.sending) return t('请先等待当前一轮结束')
-  if (selectedQueuedSends(state)?.length) return t('请先处理排队的消息')
+  if (thread.status === 'running' && thread.items.some((item) => item.kind === 'other' &&
+    item.type === 'contextCompaction' && item.status === 'inProgress')) return t('正在压缩会话…')
+  if (selectedQueuedSends(state)?.some((item) => item.compact)) return t('压缩已在排队')
   if (address.agent === 'claude' && claudeQuotaBlocked(state.claudeRateLimits[address.targetId])) return t('当前额度已用完')
   const quota = address.agent === 'codex' ? state.rateLimits[address.targetId]?.snapshot : null
   if (quota?.rateLimitReachedType || quota?.spendControlReached) return t('当前额度已用完')
@@ -1357,6 +1358,24 @@ export const useApp = create<AppState>((set, get) => {
     if (turn.status === 'failed' || turn.status === 'interrupted') pauseQueue(sendKey(address), '上一轮未完成，队列已暂停')
   }
 
+  /** 执行排到队首的压缩；返回时压缩轮次已经开始。 */
+  async function startQueuedCompaction(session: AgentSession, address: SendAddress): Promise<void> {
+    const key = sendKey(address)
+    const epoch = desktopEpoch
+    set((state) => ({ compactingThreads: { ...state.compactingThreads, [key]: true } }))
+    try {
+      await startThreadCompaction(session.rpc, address.threadId)
+    } finally {
+      if (epoch === desktopEpoch) {
+        set((state) => {
+          const compactingThreads = { ...state.compactingThreads }
+          delete compactingThreads[key]
+          return { compactingThreads }
+        })
+      }
+    }
+  }
+
   async function flushQueue(address: SendAddress, retry = false): Promise<void> {
     const { desktopId, targetId, agent, threadId } = address
     const state = get()
@@ -1422,7 +1441,8 @@ export const useApp = create<AppState>((set, get) => {
         submitted = true
         // 升级前的队列可能只有消息快照，显式修改会话权限后即以新设置为准。
         const mode = accessPreference(get(), address) ?? next.accessMode
-        await startMessageTurn(session, address, queuedInput(agent, next), next.overrides, mode)
+        if (next.compact) await startQueuedCompaction(session, address)
+        else await startMessageTurn(session, address, queuedInput(agent, next), next.overrides, mode)
         if (epoch === desktopEpoch) void dropQueuedSend(key, next.id)
       }
     } catch (err) {
@@ -1430,7 +1450,7 @@ export const useApp = create<AppState>((set, get) => {
         const streamChanged = streamEpoch !== eventStreamEpoch
         const code = isRecord(err) ? errorCode(err.data) : ''
         // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
-        const message = friendlyError(err, '排队消息未发送')
+        const message = friendlyError(err, next.compact ? '压缩会话失败' : '排队消息未发送')
         const replyLost = code === 'network' || code === 'timeout' || message.startsWith('Codex request timed out:')
         // turn/start 的回包不参加事件回放，发出后丢失回包可能已经在电脑执行。
         const linkInterrupted = get().sessions[session.key]?.linkInterrupted
@@ -1477,6 +1497,8 @@ export const useApp = create<AppState>((set, get) => {
     let handed = 0
     try {
       for (const item of list) {
+        // 电脑代发只支持消息；压缩及其后的内容留到手机回到前台再处理。
+        if (item.compact) break
         const access = mobileTurnAccess(get(), agent, accessPreference(get(), address) ?? item.accessMode)
         const request = relayRequest(targetId, threadId, agent, item, access, !!session.accessSupported, makeId())
         await getGateway().rpc(conn, 'mobile.queue.put', { targetId, agent, threadId, id: item.id, running, request })
@@ -3745,12 +3767,24 @@ export const useApp = create<AppState>((set, get) => {
       const address = selectedSendAddress(initial)
       if (!address || selectedCompactionBlockedReason(initial)) return false
       const key = sendKey(address)
-      if (submitting.has(key) || reconnectTask) {
+      if (reconnectTask) {
         set({ error: t('会话正在处理消息或恢复连接，请稍后再压缩') })
         return false
       }
       const { targetId, agent, threadId } = address
       const session = initial.sessions[sessionKey(targetId, agent)]!
+      // 会话在忙或前面还有排队内容时，压缩排到队尾。
+      const enqueue = async () => {
+        const item: QueuedSend = { id: makeId(), text: '/compact', annotations: [], attachments: [], delegate: false, overrides: {}, compact: true }
+        set({ error: null })
+        await updateQueue(key, (list) => list.some((entry) => entry.compact) ? list : [...list, item])
+        void flushQueue(address)
+        if (inBackground()) void handOffQueue(address)
+        return true
+      }
+      const view = session.state.threads[threadId]!
+      if (submitting.has(key) || initial.sending || view.status === 'running' || view.pendingApprovals.length > 0
+        || initial.queuedSends[key]?.length) return enqueue()
       const epoch = desktopEpoch
       const navigation = navigationEpoch
       const isCurrent = () => {
@@ -3770,7 +3804,7 @@ export const useApp = create<AppState>((set, get) => {
         }
         const thread = current.state.threads[threadId]
         if (!thread || isArchived(address.desktopId, targetId, { agent, id: threadId })) throw new Error(t('请重新打开会话'))
-        if (thread.status === 'running' || thread.pendingApprovals.length > 0) throw new Error(t('请先等待当前一轮结束'))
+        if (thread.status === 'running' || thread.pendingApprovals.length > 0) return await enqueue()
         if (queueLimited(address)) throw new Error(t('当前额度已用完'))
 
         await startThreadCompaction(session.rpc, threadId)
@@ -4005,7 +4039,7 @@ export const useApp = create<AppState>((set, get) => {
       const address = selectedSendAddress(get())
       if (!address) return null
       const item = get().queuedSends[sendKey(address)]?.find((entry) => entry.id === id)
-      if (!item || item.sending || item.saving || savingQueue.has(id) || editingQueue.has(id)) return null
+      if (!item || item.compact || item.sending || item.saving || savingQueue.has(id) || editingQueue.has(id)) return null
       editingQueue.add(id)
       return (resume = true) => {
         if (editingQueue.delete(id) && resume) void flushQueue(address)
@@ -4044,7 +4078,7 @@ export const useApp = create<AppState>((set, get) => {
       const session = state.sessions[sessionKey(targetId, agent)]
       const view = session?.state.threads[threadId]
       const item = state.queuedSends[key]?.find((entry) => entry.id === id)
-      if (!session?.opened || !item || item.sending || item.saving
+      if (!session?.opened || !item || item.compact || item.sending || item.saving
         || submitting.has(key) || editingQueue.has(id) || savingQueue.has(id)) return false
       const input = queuedInput(agent, item)
       const plan = planSteer({ agent, view, input, compactionStarting: !!state.compactingThreads[key] })
@@ -4120,7 +4154,7 @@ export const useApp = create<AppState>((set, get) => {
       const view = session?.state.threads[threadId]
       const item = state.queuedSends[key]?.find((entry) => entry.id === id)
       // 队列交给电脑代发期间不能再从手机发送，否则同一条会发两次。
-      if (!session?.opened || session.linkInterrupted || view?.status !== 'running' || !item || item.sending || item.saving
+      if (!session?.opened || session.linkInterrupted || view?.status !== 'running' || !item || item.compact || item.sending || item.saving
         || submitting.has(key) || editingQueue.has(id) || savingQueue.has(id) || state.compactingThreads[key]
         || remoteQueues.has(key) || handingOff.has(key) || takeBackTask) return false
       const turnId = view.activeTurnId
@@ -4211,7 +4245,7 @@ export const useApp = create<AppState>((set, get) => {
       const key = sendKey(address)
       const session = state.sessions[sessionKey(targetId, agent)]
       const item = state.queuedSends[key]?.find((entry) => entry.id === id)
-      if (!session?.opened || !item || item.sending || item.saving || submitting.has(key)
+      if (!session?.opened || !item || item.compact || item.sending || item.saving || submitting.has(key)
         || editingQueue.has(id) || savingQueue.has(id) || state.compactingThreads[key]) return false
       if (queueLimited(address)) {
         set({ error: t('当前额度已用完，排队消息已保留') })

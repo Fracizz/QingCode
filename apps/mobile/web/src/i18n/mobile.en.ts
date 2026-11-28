@@ -684,6 +684,7 @@ export default {
   '请重新打开会话': 'Reopen the session',
   '尚未收到压缩进度，请检查当前会话': 'No compaction progress yet. Check the session',
   '压缩会话失败。{message}': 'Compaction failed. {message}',
+  '压缩会话失败': 'Failed to compact the session',
 
   // 额度
   '额度': 'Quota',

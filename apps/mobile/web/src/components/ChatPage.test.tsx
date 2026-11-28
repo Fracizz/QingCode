@@ -209,6 +209,17 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
     expect(host.querySelector('[role="alert"]')).toBeNull()
     expect(toasts()).toBe('')
 
+    // 接着停掉还没回复的一轮，它的消息没有留下：两次停止仍只提示一条。
+    const stopped = { startedAtMs: null, durationMs: null, outcome: 'interrupted' as const }
+    await act(() => setTurn({ ...thread, status: 'error', activity: 'interrupted', activeTurnId: null,
+      turns: [{ id: 'turn', ...stopped, itemIds: ['message', 'reply', 'command'] }, { id: 'retry', ...stopped, itemIds: ['gone'] }],
+    }))
+    expect(host.textContent?.match(/本轮已中断/g)).toHaveLength(1)
+    await act(() => setTurn({ ...thread, status: 'error', activity: 'interrupted', activeTurnId: null,
+      turns: [{ id: 'turn', ...stopped, itemIds: ['message', 'reply', 'command'] }, { id: 'retry', ...stopped, itemIds: [] }],
+    }))
+    expect(host.textContent?.match(/本轮已中断/g)).toHaveLength(1)
+
     await act(() => setTurn({ ...thread, status: 'error', activity: 'failed', activeTurnId: null, error: '503: upstream down',
       items: [...thread.items, { kind: 'user', id: 'next', text: '开始下一轮' }],
       turns: [{ id: 'turn', outcome: 'interrupted', startedAtMs: null, durationMs: null, itemIds: ['message', 'reply', 'command'] }],

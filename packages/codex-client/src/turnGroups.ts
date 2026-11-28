@@ -36,6 +36,26 @@ export function streamingReplyId(thread: ThreadView | undefined): string | undef
   if (last?.kind === 'agent' && last.streaming && last.text.trim()) return last.id
 }
 
+/**
+ * 两条停止提示之间没有可见内容时只留一条：停掉还没有回复的一轮会让提示挨在一起。
+ * 保留靠后那条的 key（页面按它识别最近一次停止），用时累加。
+ */
+export function mergeAdjacentStops<T extends { kind: string }>(entries: readonly T[]): T[] {
+  const merged: T[] = []
+  for (const entry of entries) {
+    const previous = merged.at(-1)
+    if (entry.kind !== 'stopped' || previous?.kind !== 'stopped') {
+      merged.push(entry)
+      continue
+    }
+    const before = (previous as unknown as StoppedTurnEntry).durationMs
+    const after = (entry as unknown as StoppedTurnEntry).durationMs
+    const durationMs = before === null && after === null ? null : (before ?? 0) + (after ?? 0)
+    merged[merged.length - 1] = { ...entry, durationMs }
+  }
+  return merged
+}
+
 export function turnTimeline(items: readonly ItemView[], turns: readonly TurnMeta[] | undefined): TimelineEntry[] {
   const messages = items.map((item): MessageEntry => ({ kind: 'item', key: item.id, item }))
   if (!turns?.some((turn) => turn.outcome === 'interrupted')) return messages
@@ -76,7 +96,7 @@ export function turnTimeline(items: readonly ItemView[], turns: readonly TurnMet
     timeline.push(...(stops.get(index)?.reverse() ?? []), message)
   })
   timeline.push(...(stops.get(items.length)?.reverse() ?? []))
-  return timeline
+  return mergeAdjacentStops(timeline)
 }
 
 /** 按用户消息切轮；进行中的那一轮保持展开，方便看实时进度。 */
@@ -156,7 +176,8 @@ export function groupTurns(items: readonly ItemView[], turns: readonly TurnMeta[
     }
   }
   flush(running)
-  return out
+  // 空推理等不显示的条目过滤掉后，提示也可能变成相邻。
+  return mergeAdjacentStops(out)
 }
 
 function turnDuration(segment: ItemView[], turnsByItem: Map<string, TurnMeta[]>): number | null {

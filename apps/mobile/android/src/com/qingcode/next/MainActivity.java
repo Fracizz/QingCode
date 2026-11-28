@@ -11,6 +11,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.RoundedCorner;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowInsets;
@@ -56,6 +57,8 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
   private boolean backPending;
   /** 状态栏高度（CSS px）：页面画到状态栏下面，由前端自己留出这段空白。 */
   private float safeTopCss;
+  /** 输入框避开底部圆角还需抬高的距离（CSS px）；读不到圆角时为负，页面用默认间距。 */
+  private float cornerGapCss = -1;
   private final AtomicReference<String> pendingPairing = new AtomicReference<>();
 
   @Override protected void onCreate(Bundle saved) {
@@ -332,16 +335,31 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
       // 顶部不由原生让位：WebView 延伸到状态栏下方（沉浸式），高度交给页面的 --qn-safe-top。
       view.setPadding(safe.left, 0, safe.right, safe.bottom);
       Insets top = windowInsets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-      safeTopCss = top.top / getResources().getDisplayMetrics().density;
-      pushSafeTop();
+      float density = getResources().getDisplayMetrics().density;
+      safeTopCss = top.top / density;
+      cornerGapCss = cornerGap(windowInsets, safe, density);
+      pushSafeArea();
       return WindowInsets.CONSUMED;
     });
   }
 
-  private void pushSafeTop() {
+  /** Android 12 起才能读到屏幕圆角；分屏等窗口不贴屏幕角时同样读不到。 */
+  private static float cornerGap(WindowInsets windowInsets, Insets safe, float density) {
+    if (Build.VERSION.SDK_INT < 31) return -1;
+    RoundedCorner left = windowInsets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT);
+    RoundedCorner right = windowInsets.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT);
+    if (left == null && right == null) return -1;
+    int radius = Math.max(left == null ? 0 : left.getRadius(), right == null ? 0 : right.getRadius());
+    return ScreenCorner.extraBottomGap(radius / density, safe.bottom / density, Math.min(safe.left, safe.right) / density);
+  }
+
+  private void pushSafeArea() {
     if (destroyed || webView == null) return;
-    String value = String.format(Locale.ROOT, "%.2fpx", safeTopCss);
-    webView.evaluateJavascript("document.documentElement.style.setProperty('--qn-safe-top'," + Json.quote(value) + ")", null);
+    String top = String.format(Locale.ROOT, "%.2fpx", safeTopCss);
+    String corner = cornerGapCss < 0 ? "" : String.format(Locale.ROOT, "%.2fpx", cornerGapCss);
+    // 空字符串会移除变量，样式回落到默认间距。
+    webView.evaluateJavascript("document.documentElement.style.setProperty('--qn-safe-top'," + Json.quote(top) + ");"
+      + "document.documentElement.style.setProperty('--qn-corner-gap'," + Json.quote(corner) + ")", null);
   }
 
   private void configureWebView(WebView view) {
@@ -376,13 +394,13 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
         return overrideUrl(request.getUrl().toString());
       }
 
-      // 每次页面加载后重新下发状态栏高度，原生侧的 insets 回调可能早于页面就绪。
+      // 每次页面加载后重新下发安全区尺寸，原生侧的 insets 回调可能早于页面就绪。
       @Override public void onPageCommitVisible(WebView current, String url) {
-        pushSafeTop();
+        pushSafeArea();
       }
 
       @Override public void onPageFinished(WebView current, String url) {
-        pushSafeTop();
+        pushSafeArea();
       }
 
       @Override public WebResourceResponse shouldInterceptRequest(WebView current, String url) {

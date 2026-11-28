@@ -188,6 +188,30 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
     }
   })
 
+  it('取到过的真实模型表落盘，重启后打开历史会话前不启动 Claude 也能给出', async () => {
+    const stateDir = mkdtempSync(path.join(tmpdir(), 'qn-claude-models-'))
+    const h = harness({ stateDir })
+    const restarted = harness({ stateDir })
+    const ids = (msg: { result?: unknown }) => ((msg.result as Json).data as Json[]).map((model) => model.id)
+    try {
+      await h.bridge.open({})
+      request(h, 'turn', 'turn/start', { threadId: 'old-1', input: [{ type: 'text', text: '开始', text_elements: [] }] })
+      await response(h, 'turn')
+      Object.assign(h.queries[0]!, { supportedModels: async () => [{ value: 'claude-sonnet-5-5', displayName: 'Sonnet 5.5' }] })
+      request(h, 'live', 'model/list')
+      expect(ids(await response(h, 'live'))).toEqual(['claude-sonnet-5-5'])
+
+      await restarted.bridge.open({})
+      request(restarted, 'cached', 'model/list')
+      expect(ids(await response(restarted, 'cached'))).toEqual(['claude-sonnet-5-5'])
+      expect(restarted.queries).toHaveLength(0)
+    } finally {
+      h.bridge.shutdown()
+      restarted.bridge.shutdown()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
   it('以 SDK 回显确认引导归属，并在 Claude 已排好下一轮时保持会话运行', async () => {
     const transcript: { uuid: string; message: unknown }[] = []
     const stateDir = mkdtempSync(path.join(tmpdir(), 'qn-claude-steering-'))
@@ -363,10 +387,19 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
       request(h, 'read', 'thread/read', { threadId })
       expect((await response(h, 'read')).result).toMatchObject({
         thread: { turns: [
-          { items: [{ type: 'userMessage', id: clientUserMessageId, content: input }] },
-          { status: 'inProgress', items: [] },
+          { status: 'inProgress', items: [{ type: 'userMessage', id: clientUserMessageId, content: input }] },
         ] },
       })
+      // 回复写进 SDK 历史后重新读取，仍只出现一次，且沿用实时事件的条目 ID。
+      const reply = { id: 'msg-1', role: 'assistant', content: [{ type: 'text', text: '看到了' }] }
+      h.queries[0]!.emit({ type: 'assistant', uuid: 'reply-uuid', message: reply })
+      transcript.push({ uuid: 'reply-uuid', message: reply })
+      await until(() => hasNote(h, 'item/completed'))
+      const live = (note(h, 'item/completed').params as { item: { id: string } }).item
+      request(h, 'reread', 'thread/read', { threadId })
+      const turns = ((await response(h, 'reread')).result as { thread: { turns: { items: unknown[] }[] } }).thread.turns
+      expect(turns).toHaveLength(1)
+      expect(turns[0]!.items).toMatchObject([echo, { type: 'agentMessage', id: live.id, text: '看到了' }])
     } finally {
       h.bridge.shutdown()
     }

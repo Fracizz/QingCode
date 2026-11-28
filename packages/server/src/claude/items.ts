@@ -314,6 +314,20 @@ function mapInjected(message: Json, ctx: MapContext, state: MapState, out: V2Not
   return true
 }
 
+/** 进行中轮次的现有条目，id 与实时事件一致；还在输出的文本/思考块带上目前收到的内容。 */
+export function liveItems(state: MapState): V2Item[] {
+  return state.order.flatMap((id) => {
+    const item = state.items[id]
+    if (!isRecord(item)) return []
+    const kind = state.blockKinds[id]
+    if (!kind || state.blockPhase?.[id] === 'done') return [item]
+    const text = state.blockText[id] ?? ''
+    // 还没收到内容的块不下发，等事件流补齐。
+    if (!text) return []
+    return [kind === 'thinking' ? reasoningItem(id, text) : agentMessageItem(id, text)]
+  })
+}
+
 /** 仍在 inProgress 的 item 在轮次结束时补 completed，避免界面一直显示运行中。 */
 export function finishPendingItems(ctx: MapContext, state: MapState, failed = false): V2Notification[] {
   const out: V2Notification[] = []

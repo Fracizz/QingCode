@@ -103,7 +103,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
   const accessLabel = (selection?: SessionAccessSelection) => accessOption(selection)?.label
   const actionMessage = queue.find((item) => item.id === actionsFor)
   // 引导的条件：本轮运行中、可引导、且不是斜杠命令（命令只能作为独立一轮发送）。
-  const steerable = (message: (typeof queue)[number]) => running && canSteer
+  const steerable = (message: (typeof queue)[number]) => running && canSteer && !message.compact
     && !isSlashDraft(agent, message.text, message.attachments.filter((item) => item.type === 'skill').length)
   const startEdit = (id: string, text: string) => {
     if (unlock.current) return
@@ -139,7 +139,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
                   <AccessIcon size={14} strokeWidth={1.9} role="img" aria-label={access.label}
                     className={`shrink-0 ${access.warning ? 'text-qn-danger' : 'text-qn-warn'}`} />
                 )}
-                <p className="min-w-0 flex-1 truncate">{message.text.trim() || t('附件或引用')}</p>
+                <p className="min-w-0 flex-1 truncate">{message.compact ? t('压缩会话') : message.text.trim() || t('附件或引用')}</p>
                 {message.sending || message.saving ? <Badge>{message.saving ? t('保存中') : t('发送中')}</Badge> : (
                   <div className="flex shrink-0 items-center gap-0.5">
                     {steerable(message) && (
@@ -147,10 +147,12 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
                         title={agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
                         onClick={() => void steer(message.id)}>{t('引导')}</Button>
                     )}
-                    <Button variant="ghost" className="qn-icon-button" aria-label={t('更多操作')} aria-haspopup="dialog"
-                      onClick={() => setActionsFor(message.id)}>
-                      <MoreHorizontal size={17} aria-hidden />
-                    </Button>
+                    {!message.compact && (
+                      <Button variant="ghost" className="qn-icon-button" aria-label={t('更多操作')} aria-haspopup="dialog"
+                        onClick={() => setActionsFor(message.id)}>
+                        <MoreHorizontal size={17} aria-hidden />
+                      </Button>
+                    )}
                     <Button variant="ghost" className="qn-icon-button" aria-label={t('移除排队消息 {index}', { index: index + 1 })} onClick={() => remove(message.id)}>
                       <X size={16} aria-hidden />
                     </Button>

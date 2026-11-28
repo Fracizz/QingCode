@@ -127,8 +127,10 @@ describe('groupTurns', () => {
       { id: 'next', outcome: 'completed', startedAtMs: 3, durationMs: 2000, itemIds: ['u', 'a'] },
     ]
     expect(kinds(groupTurns([user('u'), agent('a')], turns, false))).toEqual(['stopped-empty', 'u', 'a'])
-    expect(kinds(groupTurns([user('unloaded'), user('u'), agent('a')], turns, false)))
-      .toEqual(['unloaded', 'stopped-older', 'stopped-empty', 'u', 'a'])
+    // 两条提示之间没有内容时合成一条，用时累加。
+    const merged = groupTurns([user('unloaded'), user('u'), agent('a')], turns, false)
+    expect(kinds(merged)).toEqual(['unloaded', 'stopped-empty', 'u', 'a'])
+    expect(merged[1]).toMatchObject({ durationMs: 1000 })
   })
 
   it('实时记录和历史记录指向同一停止轮次时只提示一次，并保留实时用时', () => {

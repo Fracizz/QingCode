@@ -210,6 +210,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const sendingQueued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.[0]?.sending))
   const queued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.length))
   const compactionStarting = useCodex((s) => !!(chatKey && s.compacting[chatKey]))
+  const compactionQueued = useCodex((s) => !!(chatKey && s.pendingSends[chatKey]?.some((item) => item.compact)))
   const quota = useRateLimits((s) => {
     if (currentAgent === 'claude') return sessionId ? s.byAgent[sessionId]?.snapshot : null
     return currentAgent === 'codex' && currentTargetId ? s.byTarget[currentTargetId]?.snapshot : null
@@ -597,8 +598,9 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const latestReply = items.findLast((item) => item.kind === 'agent' && !item.streaming && item.text.trim())
   const quotaBlocked = currentAgent === 'claude' ? claudeQuotaBlocked(quota) : !!(quota?.rateLimitReachedType || quota?.spendControlReached)
   const compactBlocked = !currentThreadId || !opened || !view || openingThread ? t('请先打开会话')
-    : running || sending || compacting || approvals.length ? t('请先等待当前一轮结束')
-    : queued ? t('请先处理排队的消息') : quotaBlocked ? t('当前额度已用完') : null
+    : compacting ? t('正在压缩会话…') : compactionQueued ? t('压缩已在排队')
+    : quotaBlocked ? t('当前额度已用完') : null
+  const compactWillQueue = running || sending || queued || approvals.length > 0
   const commandReason = (id: ChatCommandId) => {
     if (id === 'model' && !opened) return t('请先连接当前 Agent')
     if (id === 'diff' && !currentCwd) return t('请先选择项目')
@@ -949,8 +951,9 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
           {turnUsage && <p>{t('最近上报的单轮用量 {tokens} tokens', { tokens: formatTokens(turnUsage.tokens) })}</p>}
           {!usage && !turnUsage && <p className="text-qn-muted">{t('暂无会话用量')}</p>}
           {currentThreadId && <>
-            <button type="button" className="qn-button" disabled={!!compactBlocked} onClick={() => void confirmCommand('compact')}>{t('压缩会话')}</button>
-            <p className="text-qn-muted">{compactBlocked ?? t('压缩会总结较早的对话，让后续回复使用更短的上下文。账号已用额度不会恢复。')}</p>
+            <button type="button" className="qn-button" disabled={!!compactBlocked} onClick={() => void confirmCommand('compact')}>{compactWillQueue ? t('排队压缩') : t('压缩会话')}</button>
+            <p className="text-qn-muted">{compactBlocked ?? (compactWillQueue ? t('当前一轮和已排队的内容处理完后开始压缩。')
+              : t('压缩会总结较早的对话，让后续回复使用更短的上下文。账号已用额度不会恢复。'))}</p>
           </>}
         </div>
       </Modal>}

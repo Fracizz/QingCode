@@ -1,4 +1,4 @@
-import { groupTurns, t, type ItemView, type TurnEntry, type TurnMeta } from '@qn/codex-client'
+import { groupTurns, mergeAdjacentStops, t, type ItemView, type TurnEntry, type TurnMeta } from '@qn/codex-client'
 
 export { streamingReplyId } from '@qn/codex-client'
 
@@ -112,7 +112,8 @@ export function chatTimeline(items: readonly ItemView[], turns: readonly TurnMet
     }
   }
   flush()
-  return timeline
+  // 命令等步骤在手机上隐藏，隔着它们的两条停止提示看起来是挨着的。
+  return mergeAdjacentStops(timeline)
 }
 
 /** 根据本轮最新一步推断回复阶段，命令被隐藏后仍让用户知道在忙什么。 */

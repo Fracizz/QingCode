@@ -136,7 +136,7 @@ export function SendQueue({
         <div className="flex items-center gap-1.5 text-qn-muted"><ListEnd size={14} /> {t('排队消息（{count}）', { count: pending.length })}</div>
         <ul className="qn-scroll mt-1 max-h-32 space-y-0.5 overflow-auto">
           {pending.map((item) => {
-            const text = item.text.trim()
+            const text = item.compact ? t('压缩会话') : item.text.trim()
             const attachments = attachmentPreviews(item.input, chat.targetId, cwd)
             return (
               <li key={item.id} className="rounded-md bg-qn-elevated px-2">
@@ -160,7 +160,7 @@ export function SendQueue({
                       {t('继续发送')}
                     </button>
                   )}
-                  {!item.sending && canSteer && !isSlashInput(agent, item.input) && (
+                  {!item.sending && !item.compact && canSteer && !isSlashInput(agent, item.input) && (
                     <button
                       type="button"
                       className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 text-qn-accent hover:underline"
@@ -170,7 +170,7 @@ export function SendQueue({
                       <CornerDownRight size={12} aria-hidden />{t('引导')}
                     </button>
                   )}
-                  {!item.sending && running && (
+                  {!item.sending && !item.compact && running && (
                     <button
                       type="button"
                       className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 text-qn-accent hover:underline"
@@ -180,14 +180,14 @@ export function SendQueue({
                       <Zap size={12} aria-hidden />{t('插入')}
                     </button>
                   )}
-                  {!item.sending && allowNewThread && newThreadActions(agent).map(({ mode, label, Icon }) => (
+                  {!item.sending && !item.compact && allowNewThread && newThreadActions(agent).map(({ mode, label, Icon }) => (
                     <IconButton key={mode} label={label} size="sm" onClick={() => {
                       if (holdItem(item.id)) setDestination({ id: item.id, mode })
                     }}>
                       <Icon size={13} />
                     </IconButton>
                   ))}
-                  {!item.sending && (
+                  {!item.sending && !item.compact && (
                     <IconButton label={t('重新编辑')} size="sm" onClick={() => {
                       if (holdItem(item.id)) setEdit({ id: item.id, text: item.text })
                     }}>

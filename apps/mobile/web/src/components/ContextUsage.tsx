@@ -5,7 +5,7 @@ import { Button, Dialog, LoadingIcon } from './ui'
 export function ContextUsage({ tokenUsage, compact, panel: controlledPanel, onPanelChange }: {
   tokenUsage: unknown
   /** 压缩不再二次确认：点按钮即关闭面板并开始压缩。 */
-  compact?: { busy: boolean; blockedReason: string | null; onCompact: () => void }
+  compact?: { busy: boolean; blockedReason: string | null; willQueue?: boolean; onCompact: () => void }
   panel?: 'usage' | null
   onPanelChange?: (panel: 'usage' | null) => void
 }) {
@@ -68,10 +68,12 @@ export function ContextUsage({ tokenUsage, compact, panel: controlledPanel, onPa
                   setPanel(null)
                   compact.onCompact()
                 }}>
-                  {busy ? t('正在压缩会话…') : t('压缩会话')}
+                  {busy ? t('正在压缩会话…') : compact.willQueue ? t('排队压缩') : t('压缩会话')}
                 </Button>
                 <p className="qn-ctx-note">
-                  {!busy && compact.blockedReason ? compact.blockedReason : t('压缩会总结较早的对话，让后续回复使用更短的上下文。账号已用额度不会恢复。')}
+                  {!busy && compact.blockedReason ? compact.blockedReason
+                    : !busy && compact.willQueue ? t('当前一轮和已排队的内容处理完后开始压缩。')
+                    : t('压缩会总结较早的对话，让后续回复使用更短的上下文。账号已用额度不会恢复。')}
                 </p>
               </div>
             )}
