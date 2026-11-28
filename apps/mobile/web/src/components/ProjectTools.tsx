@@ -1,7 +1,8 @@
-import { getLocale, t, translateMessage } from '@qn/codex-client'
+import { getLocale, t } from '@qn/codex-client'
 import { Archive, ArrowUp, Check, ChevronRight, Download, Ellipsis, Eye, EyeOff, FileText, Folder, Pin, PinOff, RotateCw, Terminal, X, type LucideIcon } from 'lucide-react'
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { callDevice } from '../client'
+import { watchDownload } from '../downloads'
 import { getWindowNativePort, NativeRequestError } from '../native'
 import { folderCrumbs, formatFileTime, parentFolder, projectConnection, projectRpc, type DeviceDownload, type ProjectFile, type ProjectFiles } from '../projectApi'
 import { friendlyError } from '../state'
@@ -161,9 +162,9 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
   const [message, setMessage] = useState<string | null>(null)
   const [needsTarget, setNeedsTarget] = useState(false)
   const [selected, setSelected] = useState<ProjectFile | null>(null)
+  const [confirming, setConfirming] = useState<ProjectFile | null>(null)
   const [job, setJob] = useState<DeviceDownload | null>(null)
   const [starting, setStarting] = useState<string | null>(null)
-  const reported = useRef<string | null>(null)
   const targetState = useApp((s) => s.targetStates[project.targetId]?.state)
   const requestConnect = useApp((s) => s.requestConnect)
   const fileAvailable = Boolean(getWindowNativePort())
@@ -204,11 +205,9 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
     let current = true
     const poll = () => callDevice<DeviceDownload | null>('download.status', job ? { id: job.id } : {}).then((next) => {
       if (!current || !next) return
-      if (!job && next.state !== 'running') {
-        // 页面打开前已结束的下载不再提示。
-        reported.current = next.id
-        return
-      }
+      if (!job && next.state !== 'running') return
+      // 页面重开时接上仍在进行的下载，完成提示统一交给应用层监听。
+      if (next.state === 'running') watchDownload(next.id)
       setJob(next)
     }, () => undefined)
     if (!job) void poll()
@@ -216,17 +215,6 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
     const timer = setInterval(() => void poll(), 500)
     return () => { current = false; clearInterval(timer) }
   }, [fileAvailable, job?.id, running])
-
-  useEffect(() => {
-    if (!job || job.state === 'running' || reported.current === job.id) return
-    reported.current = job.id
-    if (job.state === 'done') {
-      const name = job.savedName ?? job.name
-      toast(job.auto ? t('已保存到 下载/QingCode/{name}', { name }) : t('已保存 {name}', { name }), { tone: 'ok' })
-    } else if (job.state === 'failed') {
-      toast(job.error ? translateMessage(job.error) : t('下载失败'), { tone: 'error' })
-    }
-  }, [job])
 
   function browse(next: string) {
     setPath(next)
@@ -250,7 +238,9 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
       }, 300_000)
       if (started) {
         setJob(started)
-        if (started.auto) toast(t('已开始下载，可切到后台，进度见通知栏'), { tone: 'ok' })
+        // 不阻塞：可以继续浏览、关掉此页或切到后台，完成后由 watchDownload 提示。
+        watchDownload(started.id)
+        toast(t('已开始后台下载，完成后会提醒你'))
       }
     } catch (error) {
       toast(friendlyError(error, t('下载失败')), { tone: 'error' })
@@ -259,10 +249,15 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
     }
   }
 
-  /** 行尾下载键：大文件先进详情确认网络与空间，其余直接开始。 */
+  /** 行尾下载键：先弹确认框，确定后转入后台下载。 */
   function quickDownload(file: ProjectFile) {
-    if (file.size >= LARGE_FILE_BYTES) setSelected(file)
-    else void download(file)
+    setConfirming(file)
+  }
+
+  function confirmDownload() {
+    const file = confirming
+    setConfirming(null)
+    if (file) void download(file)
   }
 
   function cancelDownload() {
@@ -370,7 +365,8 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
                     </Button>
                   ) : (
                     <Button variant="ghost" className="qn-list-action mr-1 shrink-0 text-qn-accent" aria-label={t('下载 {name}', { name: entry.name })}
-                      disabled={busy} onClick={() => quickDownload(entry)}>
+                      // 另一个文件下载中也能点开确认框，框里说明需等它完成。
+                      disabled={starting !== null} onClick={() => quickDownload(entry)}>
                       {state === 'starting' ? <LoadingIcon size={18} />
                         : state === 'done' ? <Check size={18} aria-hidden /> : <Download size={18} strokeWidth={1.75} aria-hidden />}
                     </Button>
@@ -383,8 +379,34 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
       </div>
       {selected && (
         <FileDetails file={selected} locale={locale} job={job} state={fileState(selected)} fileAvailable={fileAvailable} busy={busy}
-          onDownload={() => void download(selected)} onCancel={cancelDownload} onClose={() => setSelected(null)} />
+          onDownload={() => { setSelected(null); void download(selected) }} onCancel={cancelDownload} onClose={() => setSelected(null)} />
       )}
+      {confirming && (
+        <DownloadConfirm file={confirming} otherJob={running && job.path !== confirming.path ? job.name : null}
+          onConfirm={confirmDownload} onClose={() => setConfirming(null)} />
+      )}
+    </Dialog>
+  )
+}
+
+/** 下载确认：说明保存位置与后台进行，确定后立即关闭，不等下载结束。 */
+function DownloadConfirm({ file, otherJob, onConfirm, onClose }: {
+  file: ProjectFile
+  otherJob: string | null
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  return (
+    <Dialog title={t('下载文件')} onClose={onClose}>
+      <p className="text-sm font-medium break-all">{file.name}</p>
+      <p className="mt-1 text-xs text-qn-muted">{formatBytes(file.size)}</p>
+      <p className="qn-hint mt-3">{t('在后台下载，可以继续操作或切到其他应用，完成后会提醒你。')}</p>
+      {file.size >= LARGE_FILE_BYTES && <p className="mt-2 text-xs text-qn-warn">{t('文件超过 100 MiB，请确认网络与存储空间。')}</p>}
+      {otherJob && <p className="mt-2 text-xs text-qn-warn">{t('正在下载 {name}，完成后可继续下载其他文件。', { name: otherJob })}</p>}
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <Button onClick={onClose}>{t('取消')}</Button>
+        <Button variant="primary" disabled={Boolean(otherJob)} onClick={onConfirm}>{t('确定')}</Button>
+      </div>
     </Dialog>
   )
 }

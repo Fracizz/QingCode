@@ -2,6 +2,7 @@
 export default {
   // 通用
   '取消': 'Cancel',
+  '确定': 'OK',
   '保存': 'Save',
   '删除': 'Delete',
   '关闭': 'Close',
@@ -501,6 +502,13 @@ export default {
   '放回输入框': 'Put back in composer',
   '移除引导消息': 'Remove steering message',
   '移除': 'Remove',
+  '已下载 {name}，保存在 下载/QingCode': 'Downloaded {name} to Downloads/QingCode',
+  '已下载 {name}': 'Downloaded {name}',
+  '{name} 下载失败：{reason}': 'Couldn’t download {name}: {reason}',
+  '{name} 下载失败': 'Couldn’t download {name}',
+  '已开始后台下载，完成后会提醒你': 'Downloading in the background. We’ll let you know when it’s done',
+  '下载文件': 'Download file',
+  '在后台下载，可以继续操作或切到其他应用，完成后会提醒你。': 'It downloads in the background. Keep working or switch apps; you’ll be notified when it’s done.',
   '停止本轮后发送': 'Stop this turn first',
   '发送队列': 'Send queue',
   '1 条消息排队': '1 message queued',
