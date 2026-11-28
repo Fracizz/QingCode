@@ -23,6 +23,12 @@ export function hasSkillToken(text: string, name: string): boolean {
   return Boolean(name) && tokenPattern(name).test(text)
 }
 
+/** 按空白切分正文并标出技能标记，各段拼回去与原文一致；供输入框按位置上色。 */
+export function splitSkillTokens(text: string, skills: readonly { name: string }[]): { text: string; skill: boolean }[] {
+  const tokens = new Set(skills.filter((skill) => skill.name).map((skill) => `/${skill.name}`))
+  return text.split(/(\s+)/).filter(Boolean).map((part) => ({ text: part, skill: tokens.has(part) }))
+}
+
 /**
  * 找出正文里仍保留的已选技能并移除对应标记；用户手动删掉标记的技能不再发送。
  * 没有技能标记时正文原样返回。

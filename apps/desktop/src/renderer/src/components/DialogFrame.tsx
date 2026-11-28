@@ -32,7 +32,7 @@ export function DialogFrame({
             onEscapeKeyDown={blockDismiss}
             onPointerDownOutside={blockDismiss}
             className={cn(
-              'qn-no-drag flex flex-col overflow-hidden rounded-2xl border border-qn-border-strong bg-qn-panel shadow-[var(--qn-shadow-dialog)] outline-none',
+              'qn-no-drag flex flex-col overflow-hidden rounded-xl border border-qn-border-strong bg-qn-panel shadow-[var(--qn-shadow-dialog)] outline-none',
               className,
             )}
             {...props}

@@ -54,6 +54,17 @@ it('输入 / 列出技能，选中后以 /名字 留在输入框里，发送时�
     await act(() => button('发送')!.click())
     expect(onSend.mock.calls[1]![0]).toBe('再总结 ')
     expect(onSend.mock.calls[1]![1]).toEqual([])
+
+    // 手动敲出完整技能名：输入框里上色，发送时同样按 skill 输入。
+    await type('/pdf all')
+    expect(host.querySelector('.qn-composer-skill')?.textContent).toBe('/pdf')
+    expect(host.querySelector('.qn-composer-mirror')?.textContent).toBe('/pdf all')
+    await act(() => button('发送')!.click())
+    expect(onSend.mock.calls[2]![0]).toBe('all')
+    expect(onSend.mock.calls[2]![1]).toEqual([{ type: 'skill', name: 'pdf', path: '/skills/pdf/SKILL.md' }])
+
+    await type('/pdfx')
+    expect(host.querySelector('.qn-composer-mirror')).toBeNull()
   } finally {
     await act(() => root.unmount())
     host.remove()

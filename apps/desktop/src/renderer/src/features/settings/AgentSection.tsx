@@ -64,7 +64,7 @@ function AgentRow({
   }
 
   return (
-    <div className="rounded-xl border border-qn-border bg-qn-fg/[0.02] p-3">
+    <div className="rounded-lg border border-qn-border bg-qn-fg/[0.02] p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="text-ui font-medium text-qn-text">{info.label}</span>

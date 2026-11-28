@@ -18,7 +18,7 @@ export function PlanPanel({ plan, running, contentWidthClassName = 'max-w-3xl' }
     <div className="shrink-0 px-6 pb-1">
       <section
         aria-label={t('任务清单')}
-        className={cn('mx-auto rounded-xl border border-qn-border bg-qn-panel px-3 py-1.5 text-ui-sm', contentWidthClassName)}
+        className={cn('mx-auto rounded-lg border border-qn-border bg-qn-panel px-3 py-1.5 text-ui-sm', contentWidthClassName)}
       >
         <button
           type="button"

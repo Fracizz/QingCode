@@ -165,7 +165,7 @@ function TaskCard({
   const overrideOs = Object.keys(task.overrides ?? {}) as RunOs[]
   const offPlatform = platform && task.restriction !== 'all' && task.restriction !== platform
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-qn-border bg-qn-bg/40 p-3">
+    <div className="flex flex-col gap-2 rounded-lg border border-qn-border bg-qn-bg/40 p-3">
       <div className="flex items-center gap-2">
         <input
           className="qn-input min-w-0 flex-1"

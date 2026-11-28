@@ -27,6 +27,40 @@ export function modelKey(model: string | null | undefined): string | null {
   return key && key !== '<synthetic>' ? key : null
 }
 
+const STANDARD_WINDOW = 200_000
+const EXTENDED_WINDOW = 1_000_000
+
+/**
+ * 没学到窗口时的兜底（参照 paseo 的模型清单）。历史里的模型名不带 [1m]，
+ * 同时有 200K 与 1M 两档的模型先按 200K 算，读数超过 200K 时说明用的是 1M 档。
+ */
+const DEFAULT_WINDOWS: Record<string, number> = {
+  'claude-opus-5-5': EXTENDED_WINDOW,
+  'claude-opus-5': EXTENDED_WINDOW,
+  'claude-mythos-5-2': EXTENDED_WINDOW,
+  'claude-mythos-5-1': EXTENDED_WINDOW,
+  'claude-fable-5-2': EXTENDED_WINDOW,
+  'claude-fable-5-1': EXTENDED_WINDOW,
+  'claude-fable-5': EXTENDED_WINDOW,
+  'claude-sonnet-5-5': EXTENDED_WINDOW,
+  'claude-haiku-5-5': EXTENDED_WINDOW,
+  'claude-sonnet-5': STANDARD_WINDOW,
+  'claude-opus-4-8': STANDARD_WINDOW,
+  'claude-opus-4-7': STANDARD_WINDOW,
+  'claude-opus-4-6': STANDARD_WINDOW,
+  'claude-sonnet-4-6': STANDARD_WINDOW,
+  'claude-haiku-4-5': STANDARD_WINDOW,
+}
+
+export function defaultModelWindow(model: string | null | undefined, usedTokens?: number | null): number | null {
+  if (model?.trim().toLowerCase().endsWith('[1m]')) return EXTENDED_WINDOW
+  // 带发布日期的完整模型名（如 claude-haiku-4-5-20251001）按去掉日期的名字查。
+  const key = modelKey(model)?.replace(/-\d{8}$/, '')
+  const window = key ? DEFAULT_WINDOWS[key] : undefined
+  if (window === undefined) return null
+  return window < EXTENDED_WINDOW && typeof usedTokens === 'number' && usedTokens > window ? EXTENDED_WINDOW : window
+}
+
 /** result.modelUsage 里窗口最大的模型即主会话模型（与 items.ts 取窗口的口径一致）。 */
 export function resultModelWindow(result: unknown): { model: string | null; window: number } | null {
   const usage = typeof result === 'object' && result !== null ? (result as Record<string, unknown>).modelUsage : null
@@ -54,10 +88,11 @@ export class ContextWindowStore {
     private readonly log: (message: string) => void,
   ) {}
 
-  lookup(threadId: string, model: string | null | undefined): number | null {
+  /** 先按会话、再按模型查学到的窗口，都没有时用内置清单兜底。 */
+  lookup(threadId: string, model: string | null | undefined, usedTokens?: number | null): number | null {
     const record = this.read()
     const key = modelKey(model)
-    return record.sessions[threadId] ?? (key ? record.models[key] : undefined) ?? null
+    return record.sessions[threadId] ?? (key ? record.models[key] : undefined) ?? defaultModelWindow(model, usedTokens)
   }
 
   record(threadId: string, model: string | null | undefined, window: number): void {

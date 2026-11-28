@@ -62,7 +62,7 @@ export function DirectoryDialog() {
 
   return (
     <Dialog title={t('添加项目')} onClose={close}>
-      <div className="qn-mono mb-2 break-all rounded-lg border border-qn-border bg-qn-field p-2 text-[11px]">
+      <div className="qn-mono mb-2 break-all qn-surface p-2 text-[11px]">
         {directory.path || t('（正在读取主目录…）')}
       </div>
       {directory.error && <Note message={directory.error} tone="error" />}
@@ -73,7 +73,7 @@ export function DirectoryDialog() {
           {directory.parent && (
             <button
               type="button"
-              className="qn-row border-b border-qn-border"
+              className="qn-row border-b border-qn-divider"
               onClick={() => void browse(directory.parent ?? '')}
             >
               <ArrowUp size={16} className="text-qn-muted" aria-hidden /><span>{t('上一级')}</span>
@@ -86,7 +86,7 @@ export function DirectoryDialog() {
             <button
               key={entry.name}
               type="button"
-              className="qn-row border-b border-qn-border"
+              className="qn-row border-b border-qn-divider"
               onClick={() => void browse(joinPath(directory.path, entry.name))}
             >
               <Folder size={18} strokeWidth={1.75} className="shrink-0 text-qn-accent" aria-hidden />

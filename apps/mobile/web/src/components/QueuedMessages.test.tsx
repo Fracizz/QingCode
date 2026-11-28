@@ -34,7 +34,7 @@ it('行内只留引导、更多、移除，新会话入口在更多面板中且�
     })
     expect([...host.querySelectorAll('li button')].slice(0, 3)
       .map((item) => item.getAttribute('aria-label') ?? item.textContent))
-      .toEqual(['引导', '更多操作', '移除排队消息 1'])
+      .toEqual(['插入', '更多操作', '移除排队消息 1'])
     await act(() => button('更多操作').click())
     await act(() => button('新会话开始').click())
     expect(host.querySelector('dialog')?.textContent).toContain('从空白会话开始')

@@ -139,14 +139,14 @@ function AgentRecord({ entry, live, rpc, renderItem }: {
       </div>
       {task && <section className="space-y-1">
         <h4 className="text-xs font-medium text-qn-muted">{t('委派任务')}</h4>
-        <p className="whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-bg/60 px-3 py-2 text-[13px]">{task}</p>
+        <p className="whitespace-pre-wrap break-words qn-surface px-3 py-2 text-[13px]">{task}</p>
       </section>}
       {entry.result && <section className="space-y-1">
         <h4 className="text-xs font-medium text-qn-muted">{t('返回结果')}</h4>
-        <div className="whitespace-pre-wrap break-words rounded-lg border border-qn-border bg-qn-bg/60 px-3 py-2 text-[13px]">{entry.result}</div>
+        <div className="whitespace-pre-wrap break-words qn-surface px-3 py-2 text-[13px]">{entry.result}</div>
       </section>}
       {entry.activity.length > 0 && (
-        <details className="rounded-lg border border-qn-border px-3 py-2 text-[13px]">
+        <details className="qn-surface px-3 py-2 text-[13px]">
           <summary className="cursor-pointer select-none font-medium text-qn-muted">{t('活动记录 · {count}', { count: entry.activity.length })}</summary>
           <ol className="mt-2 divide-y divide-qn-border">
             {entry.activity.map((event) => (
@@ -161,7 +161,7 @@ function AgentRecord({ entry, live, rpc, renderItem }: {
           </ol>
         </details>
       )}
-      {threadId && <section className="space-y-2 border-t border-qn-border pt-3" aria-label={t('子会话记录')}>
+      {threadId && <section className="space-y-2 border-t border-qn-divider pt-3" aria-label={t('子会话记录')}>
         <div className="flex items-center justify-between gap-2">
           <h4 className="text-xs font-medium text-qn-muted">{items.length ? t('子会话记录 · {count} 条', { count: items.length }) : t('子会话记录')}</h4>
           <Button variant="ghost" aria-label={t('刷新记录')} disabled={!rpc || reading} onClick={refreshHistory}>
@@ -184,61 +184,48 @@ function AgentRecord({ entry, live, rpc, renderItem }: {
   )
 }
 
-export function SubagentLauncher({ entries, threads, rpc, renderItem }: {
+export function SubagentDialog({ entries, threads, rpc, renderItem, onClose }: {
   entries: readonly SubagentEntry[]
   threads?: Readonly<Record<string, ThreadView>>
   rpc: CodexRpcLike | null
   renderItem: RenderItem
+  onClose: () => void
 }) {
-  const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState('')
   const entry = entries.find((item) => item.key === selected)
   const active = entries.filter(({ status }) => ['active', 'warn'].includes(subagentStatusTone(status))).length
 
   return (
-    <>
-      <Button variant="ghost" className="qn-header-icon shrink-0" aria-label={t('子代理')} aria-haspopup="dialog"
-        aria-expanded={open} onClick={() => { setSelected(''); setOpen(true) }}>
-        <span className={`relative ${entries.length ? 'text-violet-300' : ''}`}>
-          <Bot size={20} strokeWidth={1.8} aria-hidden />
-          {entries.length > 0 && <span aria-hidden className={`absolute -right-2 -top-1 min-w-3.5 rounded-full px-0.5 text-[9px] leading-3.5 tabular-nums ${active ? 'bg-qn-accent text-qn-bg' : 'bg-qn-active text-qn-text'}`}>
-            {entries.length > 99 ? '99+' : entries.length}
-          </span>}
-        </span>
-      </Button>
-      {open && (
-        <Dialog title={t('子代理')} placement="full" onClose={() => setOpen(false)}>
-          <div className="qn-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain" key={entry?.key ?? 'list'}>
-            {entry ? (
-              <SubagentRpcContext.Provider value={rpc}>
-                <Button variant="ghost" className="mb-3 gap-1" onClick={() => setSelected('')}>
-                  <ArrowLeft size={16} aria-hidden /> {t('返回子代理列表')}
-                </Button>
-                <AgentRecord entry={entry} live={entry.threadId ? threads?.[entry.threadId] : undefined} rpc={rpc} renderItem={renderItem} />
-              </SubagentRpcContext.Provider>
-            ) : entries.length > 0 ? (
-              <>
-                <p className="mb-3 text-sm text-qn-muted">{entries.length === 1 ? t('1 个子代理') : t('{count} 个子代理', { count: entries.length })}{active > 0 ? ` · ${t('{count} 个活动中', { count: active })}` : ''}</p>
-                <div className="space-y-1.5" aria-label={t('子代理列表')}>
-                  {entries.map((item) => (
-                    <button type="button" key={item.key} onClick={() => setSelected(item.key)}
-                      className="flex min-h-14 w-full items-center gap-2.5 rounded-xl border border-qn-border px-2.5 py-2 text-left active:bg-qn-hover">
-                      <AgentAvatar seed={agentSeed(item)} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">{item.name}</span>
-                        {item.task && <span className="mt-0.5 block truncate text-xs text-qn-muted">{item.task}</span>}
-                      </span>
-                      <AgentBadge status={item.status} />
-                      <ChevronRight size={15} className="shrink-0 text-qn-muted" aria-hidden />
-                    </button>
-                  ))}
-                </div>
-              </>
-            ) : <Empty>{t('当前会话暂无子代理。')}</Empty>}
-          </div>
-        </Dialog>
-      )}
-    </>
+    <Dialog title={t('子代理')} placement="full" onClose={onClose}>
+      <div className="qn-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain" key={entry?.key ?? 'list'}>
+        {entry ? (
+          <SubagentRpcContext.Provider value={rpc}>
+            <Button variant="ghost" className="mb-3 gap-1" onClick={() => setSelected('')}>
+              <ArrowLeft size={16} aria-hidden /> {t('返回子代理列表')}
+            </Button>
+            <AgentRecord entry={entry} live={entry.threadId ? threads?.[entry.threadId] : undefined} rpc={rpc} renderItem={renderItem} />
+          </SubagentRpcContext.Provider>
+        ) : entries.length > 0 ? (
+          <>
+            <p className="mb-3 text-sm text-qn-muted">{entries.length === 1 ? t('1 个子代理') : t('{count} 个子代理', { count: entries.length })}{active > 0 ? ` · ${t('{count} 个活动中', { count: active })}` : ''}</p>
+            <div className="space-y-1.5" aria-label={t('子代理列表')}>
+              {entries.map((item) => (
+                <button type="button" key={item.key} onClick={() => setSelected(item.key)}
+                  className="flex min-h-14 w-full items-center gap-2.5 qn-surface px-2.5 py-2 text-left active:bg-qn-hover">
+                  <AgentAvatar seed={agentSeed(item)} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{item.name}</span>
+                    {item.task && <span className="mt-0.5 block truncate text-xs text-qn-muted">{item.task}</span>}
+                  </span>
+                  <AgentBadge status={item.status} />
+                  <ChevronRight size={15} className="shrink-0 text-qn-muted" aria-hidden />
+                </button>
+              ))}
+            </div>
+          </>
+        ) : <Empty>{t('当前会话暂无子代理。')}</Empty>}
+      </div>
+    </Dialog>
   )
 }
 

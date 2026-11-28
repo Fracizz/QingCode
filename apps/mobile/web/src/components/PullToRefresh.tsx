@@ -67,7 +67,8 @@ export function PullToRefresh({
     function move(event: TouchEvent) {
       if (!gesture) return
       const touch = event.touches[0]
-      if (event.touches.length !== 1 || touch?.identifier !== gesture.id || !atTop()) {
+      // 内层已接管这次触摸（如长按拖动排序）时不再下拉刷新。
+      if (event.defaultPrevented || event.touches.length !== 1 || touch?.identifier !== gesture.id || !atTop()) {
         cancel()
         return
       }

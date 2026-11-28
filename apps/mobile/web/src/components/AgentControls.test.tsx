@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { CodexRpc, type ApprovalView, type ThreadView, type UserInput } from '@qn/codex-client'
-import { act, useState } from 'react'
+import { act, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { type AgentSession, useApp } from '../store'
 import { MobileCodexTransport } from '../transport'
+import { closeTopSheet } from '../workspace'
 import { ApprovalCard } from './ApprovalCard'
-import { BackgroundTasks } from './BackgroundTasks'
 import { Composer } from './Composer'
-import { PlanPanel } from './PlanPanel'
+import { DOCK_COLLAPSE_MS, StatusDock, type DockSheet } from './StatusDock'
 
 it('原生命令并入命令菜单，内置命令优先；计划模式在输入区常驻并可退出', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -83,8 +83,23 @@ it('计划审批显示完整计划，只提供批准与继续规划', async () =
   }
 })
 
-it('任务清单显示进度；后台任务按能力显示，停止失败后可再次点击', async () => {
+it('状态胶囊显示清单与后台任务，停止失败后可再次点击，用完收回', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const methods = {
+    showModal(this: HTMLDialogElement) { this.open = true },
+    close(this: HTMLDialogElement) { this.open = false },
+  }
+  for (const [name, value] of Object.entries(methods)) {
+    Object.defineProperty(HTMLDialogElement.prototype, name, { value, configurable: true })
+  }
+  function Dock({ done = false }: { done?: boolean }) {
+    const [sheet, setSheet] = useState<DockSheet | null>(null)
+    const scroll = useRef<HTMLDivElement>(null)
+    return <StatusDock sheet={sheet} onSheetChange={setSheet} scrollRef={scroll} running subagents={[]} rpc={null}
+      renderItem={() => null} plan={{ turnId: 'u', explanation: null, steps: [
+        { step: '读代码', status: 'completed' }, { step: '改代码', status: done ? 'completed' : 'inProgress' },
+      ] }} />
+  }
   const initial = useApp.getState()
   const host = document.createElement('div')
   const root = createRoot(host)
@@ -105,23 +120,40 @@ it('任务清单显示进度；后台任务按能力显示，停止失败后可�
     await act(() => {
       useApp.setState({ selectedTargetId: 'local', selectedAgent: 'claude', selectedThreadId: 'bg', eventsConnected: true,
         sessions: { [session.key]: session }, refreshBackgroundTasks: refresh, stopBackgroundTask: stop })
-      root.render(<>
-        <PlanPanel running plan={{ turnId: 'u', explanation: null, steps: [
-          { step: '读代码', status: 'completed' }, { step: '改代码', status: 'inProgress' },
-        ] }} />
-        <BackgroundTasks />
-      </>)
+      vi.useFakeTimers()
+      root.render(<Dock />)
     })
-    expect(host.querySelector('[aria-label="任务清单"] summary')?.textContent).toBe('任务清单 1/2改代码')
+    const dock = () => host.querySelector('.qn-status-dock')
+    const open = async (label: string) => {
+      await act(() => host.querySelector<HTMLButtonElement>(`.qn-status-dock [aria-label="${label}"]`)!.click())
+    }
+    expect(dock()?.getAttribute('data-state')).toBe('open')
     expect(refresh).toHaveBeenCalledOnce()
+    await open('任务清单 1/2')
+    expect(host.querySelector('dialog[open]')?.textContent).toContain('改代码')
+    await act(() => { closeTopSheet() })
+    expect(host.querySelector('dialog[open]')).toBeNull()
+    // 无操作几秒后收成单个图标，点一下重新展开。
+    await act(() => vi.advanceTimersByTime(DOCK_COLLAPSE_MS))
+    expect(dock()?.querySelectorAll('button')).toHaveLength(1)
+    await open('会话状态')
+    expect(dock()?.querySelectorAll('button')).toHaveLength(2)
+    await open('后台任务（1）')
     const button = () => host.querySelector<HTMLButtonElement>('[aria-label="停止任务 构建"]')!
     await act(async () => { button().click() })
     expect(stop).toHaveBeenCalledExactlyOnceWith('build')
     expect(button().disabled).toBe(false)
+    // 最后一个任务结束时弹层自动收起；清单完成后胶囊整体收回。
+    await act(() => useApp.setState({ sessions: { [session.key]: { ...session,
+      state: { threads: { bg: { ...thread, backgroundTasks: [] } } } } } }))
+    expect(host.querySelector('dialog[open]')).toBeNull()
+    await act(() => root.render(<Dock done />))
+    expect(dock()?.getAttribute('data-state')).toBe('closed')
     // 没有后台任务能力的 Agent 不显示入口。
     await act(() => useApp.setState({ selectedAgent: 'codex', sessions: { 'codex:local': { ...session, key: 'codex:local', agent: 'codex' } } }))
-    expect(host.querySelector('[aria-label="后台任务"]')).toBeNull()
+    expect(host.querySelector('[aria-label="后台任务（1）"]')?.closest('[data-state="open"]') ?? null).toBeNull()
   } finally {
+    vi.useRealTimers()
     await act(() => root.unmount())
     useApp.setState(initial)
     rpc.dispose()

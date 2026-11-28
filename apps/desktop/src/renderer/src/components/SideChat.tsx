@@ -165,7 +165,7 @@ export function SideChat() {
         {showWelcome && (
           <div className="grid min-h-full place-items-center py-3 text-center">
             <div className="max-w-64">
-              <span className="mx-auto mb-3 grid size-10 place-items-center rounded-xl border border-qn-border-strong bg-qn-elevated text-qn-muted">
+              <span className="mx-auto mb-3 grid size-10 place-items-center rounded-lg border border-qn-border-strong bg-qn-elevated text-qn-muted">
                 <Quote size={19} aria-hidden />
               </span>
               <p className="text-ui leading-5 text-qn-muted">

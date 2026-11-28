@@ -59,7 +59,7 @@ export function SessionSwitcher({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Dialog title={t('切换会话')} onClose={close} placement="left">
+    <Dialog title={t('切换会话')} onClose={close} placement="full">
       <div className="qn-segment mb-3" aria-label={t('会话范围')}>
         <Button aria-pressed={scope === 'project'} onClick={() => setScope('project')}>{t('本项目')}</Button>
         <Button aria-pressed={scope === 'all'} onClick={() => setScope('all')}>{t('全部')}</Button>

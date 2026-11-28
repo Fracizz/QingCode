@@ -87,7 +87,7 @@ export function ModelPicker({ targetId, agent, open: controlledOpen, onOpenChang
           )}
           {/* 紧凑单行列表：只显示模型名。描述由关键词粗略翻译，常与模型不符，手机上不再展示。 */}
           {options.length > 0 && (
-            <div className="mb-3 divide-y divide-qn-border overflow-hidden rounded-xl border border-qn-border" role="listbox" aria-label={t('模型')}>
+            <div className="mb-3 qn-surface divide-y divide-qn-divider overflow-hidden" role="listbox" aria-label={t('模型')}>
               {options.map((model) => {
                 const selected = model.model === selection.model?.model
                 return (

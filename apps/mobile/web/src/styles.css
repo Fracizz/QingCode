@@ -1,6 +1,11 @@
 @import "tailwindcss";
 
 @theme {
+  /* 圆角档位（两端一致，见 docs/design/ui-shell.md §6）：用 px 固定，不随根字号缩放。 */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
   /* 小号文字做成变量，对话区按所选字号整体平移。 */
   --text-3xs: 10px;
   --text-2xs: 11px;
@@ -30,6 +35,8 @@
   --color-qn-dim: #8a8a8a;
   --color-qn-accent: #68dfc6;
   --color-qn-accent-surface: #193a35;
+  /* 列表当前项、按下态的叠加底色（半透明，随所在表面自动适配）。 */
+  --color-qn-hover: rgb(255 255 255 / 7%);
   --color-qn-danger: #ff9d8c;
   --color-qn-ok: #6fcf8f;
   --color-qn-warn: #edcb8d;
@@ -41,7 +48,7 @@
   --color-qn-claude: #f0a37f;
   --color-qn-archive: #7a4422;
   --color-qn-archive-text: #ffffff;
-  /* 子代理头像配色：与电脑版 --color-qn-avatar-* 同值，实色底配白色图标。 */
+  /* 子代理与项目首字母头像配色：与电脑版 --color-qn-avatar-* 同值，实色底配白色图标或字母。 */
   --color-qn-avatar-1: #3f72af;
   --color-qn-avatar-2: #2f8466;
   --color-qn-avatar-3: #a8622f;
@@ -60,7 +67,7 @@
 :root {
   /* 状态栏高度：Android 壳让页面画到状态栏下方并下发 --qn-safe-top，浏览器里退回 env()。 */
   --qn-top: var(--qn-safe-top, env(safe-area-inset-top, 0px));
-  --qn-radius: 12px;
+  --qn-radius: var(--radius-lg);
   --qn-accent-surface: var(--color-qn-accent-surface);
   --qn-press: rgb(255 255 255 / 5%);
   /* 表面层级：靠 1px 边缘高光与投影分层，不靠更多边框或卡片套卡片。 */
@@ -70,7 +77,7 @@
   --qn-elev-3: 0 -8px 32px rgb(0 0 0 / 45%);
   /* 悬浮在对话上的控件（顶栏按钮组、输入框、回到底部）：柔和投影加 1px 边缘，浅色下也分得清边界。 */
   --qn-float-shadow: 0 0 0 1px var(--qn-edge), 0 4px 16px rgb(0 0 0 / 32%);
-  --qn-float-radius: 16px;
+  --qn-float-radius: var(--radius-xl);
   /* 分段控件选中滑块：比轨道亮一档，深色下也能看出浮起。 */
   --qn-thumb: #3a3b3f;
   --qn-composer-shadow: rgb(0 0 0 / 40%);
@@ -134,6 +141,7 @@
   --color-qn-ok: #20633a;
   --color-qn-warn: #785016;
   --color-qn-primary-text: #ffffff;
+  --color-qn-hover: rgb(0 0 0 / 5%);
   --color-qn-diff-add: #185a39;
   --color-qn-diff-remove: #9a2927;
   --color-qn-claude: #8a4527;
@@ -283,10 +291,10 @@ input[type="radio"] {
   align-items: center;
   gap: 6px;
   padding: 0 12px;
-  border: 1px solid var(--qn-edge-top);
+  border: 0;
   border-radius: 999px;
-  background: var(--color-qn-raised);
-  box-shadow: var(--qn-elev-1);
+  background: var(--color-qn-composer);
+  box-shadow: var(--qn-float-shadow);
   color: var(--color-qn-accent);
   font-size: 12px;
   white-space: nowrap;
@@ -301,11 +309,50 @@ input[type="radio"] {
 }
 
 .qn-card {
-  border: 1px solid var(--color-qn-border);
+  /* 卡片、列表组、内容块统一只靠底色分层：不画描边、边缘高光或投影。 */
   border-radius: var(--qn-radius);
   background: var(--color-qn-card);
   padding: 12px;
 }
+
+/* 内容块表面（工具输出、文件列表、引用框）：与 .qn-card 同一套，不带内边距；子项之间用 divider 细线。 */
+.qn-surface {
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-card);
+}
+
+/* 浮在内容上的弹出列表（斜杠命令、@ 文件）：与输入框同一表面和投影，无硬描边。 */
+.qn-popover {
+  padding: 6px;
+  border-radius: var(--qn-float-radius);
+  background: var(--color-qn-composer);
+  box-shadow: var(--qn-float-shadow), 0 10px 32px var(--qn-composer-shadow);
+  scrollbar-width: none;
+}
+
+.qn-popover-row {
+  border-radius: var(--radius-md);
+  padding-inline: 10px;
+}
+
+.qn-popover-row[aria-current="true"],
+.qn-popover-row:active { background: var(--color-qn-hover); }
+
+/* 进度条：细圆条，颜色跟随文字色（默认品牌色），不用浏览器默认的绿/灰。 */
+.qn-meter {
+  display: block;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-qn-text) 10%, transparent);
+  color: var(--color-qn-accent);
+  appearance: none;
+}
+.qn-meter::-webkit-progress-bar { border-radius: 999px; background: transparent; }
+.qn-meter::-webkit-progress-value { border-radius: 999px; background: currentColor; transition: width 0.2s ease; }
+.qn-meter::-moz-progress-bar { border-radius: 999px; background: currentColor; }
 
 .qn-row {
   display: flex;
@@ -354,9 +401,10 @@ input[type="radio"] {
   min-height: 42px;
   min-width: 42px;
   padding: 6px 14px;
-  border: 1px solid var(--color-qn-border);
+  /* 默认按钮为浅填充、无描边：层级靠底色区分，与输入框、浮层的去描边风格一致。 */
+  border: 1px solid transparent;
   border-radius: var(--qn-radius);
-  background: var(--color-qn-card);
+  background: var(--color-qn-raised);
   color: var(--color-qn-text);
   font-size: 14px;
   font-family: inherit;
@@ -371,7 +419,7 @@ input[type="radio"] {
 }
 
 .qn-button-danger {
-  border-color: var(--color-qn-border-strong);
+  background: color-mix(in srgb, var(--color-qn-danger) 12%, transparent);
   color: var(--color-qn-danger);
 }
 
@@ -389,8 +437,9 @@ input[type="radio"] {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border: 1px solid var(--color-qn-border);
-  border-radius: 999px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, currentColor 13%, transparent);
+  border-radius: var(--radius-md);
   font-size: 11px;
   color: var(--color-qn-muted);
   white-space: nowrap;
@@ -402,7 +451,7 @@ input[type="radio"] {
   min-height: 30px;
   padding: 4px 12px;
   cursor: pointer;
-  background: var(--color-qn-card);
+  background: var(--color-qn-raised);
 }
 
 /* 外观保持紧凑的胶囊，用透明伪元素把可点区域补到约 44px 高。 */
@@ -421,8 +470,9 @@ input[type="radio"] {
 }
 
 .qn-note {
-  border: 1px solid var(--color-qn-border);
+  /* 提示条不画外框，靠浅色底区分；警告 / 错误换成对应色调的底。 */
   border-radius: var(--qn-radius);
+  background: var(--color-qn-card);
   padding: 10px 12px;
   font-size: 12px;
   line-height: 1.5;
@@ -439,7 +489,7 @@ input[type="radio"] {
   justify-content: center;
   min-height: 28px;
   margin: -4px 0;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--color-qn-text);
   font-size: 12px;
   font-weight: 600;
@@ -468,17 +518,20 @@ input[type="radio"] {
 .qn-note-close:active { background: var(--qn-press); }
 
 .qn-note-error {
+  background: color-mix(in srgb, var(--color-qn-danger) 10%, var(--color-qn-card));
   color: var(--color-qn-danger);
 }
 
 .qn-note-warn {
+  background: color-mix(in srgb, var(--color-qn-warn) 10%, var(--color-qn-card));
   color: var(--color-qn-warn);
 }
 
 .qn-label {
   display: block;
-  margin-bottom: 6px;
-  font-size: 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--color-qn-muted);
 }
 
@@ -521,27 +574,13 @@ input[type="radio"] {
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--color-qn-border);
-  border-radius: var(--qn-radius) var(--qn-radius) 0 0;
+  border-radius: var(--qn-float-radius) var(--qn-float-radius) 0 0;
   background: var(--color-qn-panel);
   padding: 12px max(14px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
 }
 
-.qn-dialog[data-placement="left"][open] {
-  align-items: stretch;
-  justify-content: flex-start;
-}
-
-.qn-dialog[data-placement="left"] .qn-dialog-panel {
-  display: flex;
-  flex-direction: column;
-  width: min(87%, 440px);
-  max-width: none;
-  max-height: 100%;
-  border-radius: 0 var(--qn-radius) var(--qn-radius) 0;
-  padding-top: max(16px, var(--qn-top));
-}
-
-.qn-dialog[data-placement="full"] .qn-dialog-panel {
+/* 只作用于自身面板：全屏页里打开的操作菜单、选择框仍按各自的弹层样式显示。 */
+.qn-dialog[data-placement="full"] > .qn-dialog-panel {
   display: flex;
   flex-direction: column;
   max-width: none;
@@ -549,12 +588,14 @@ input[type="radio"] {
   max-height: none;
   border: 0;
   border-radius: 0;
+  /* 铺满屏幕后不需要弹层的顶边高光。 */
+  box-shadow: none;
   padding-top: max(12px, var(--qn-top));
 }
 
 /* ===== 应用设置：参考旧版手机设置页，分组圆角卡片 + 行首线性图标，右侧当前值 / 开关 ===== */
-/* 设置页底色比分组卡片低一档，卡片才浮得起来。 */
-.qn-dialog[data-placement="full"] .qn-dialog-panel:has(> .qn-settings) {
+/* 设置页、会话切换页底色比分组卡片低一档，卡片才浮得起来。 */
+.qn-dialog[data-placement="full"] > .qn-dialog-panel:has(> .qn-settings, > .qn-switcher-list) {
   background: var(--color-qn-bg);
 }
 
@@ -589,19 +630,8 @@ input[type="radio"] {
   overflow: hidden;
   isolation: isolate;
   border-radius: var(--qn-radius);
+  /* 与列表卡片一致：只靠底色分层，不画边缘高光和投影。 */
   background: var(--color-qn-card);
-  box-shadow: var(--qn-elev-1);
-}
-
-/* 边缘高光画在最上层，行的按下底色不会盖住它。 */
-.qn-settings-group::after {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  border-radius: inherit;
-  box-shadow: inset 0 1px 0 var(--qn-edge-top), inset 0 0 0 1px var(--qn-edge);
-  content: "";
-  pointer-events: none;
 }
 
 .qn-settings-footnote {
@@ -710,7 +740,7 @@ input[type="radio"] {
   flex-shrink: 0;
   width: 46px;
   height: 28px;
-  border-radius: 14px;
+  border-radius: 999px;
   background: var(--color-qn-field);
   box-shadow: inset 0 0 0 1.5px var(--color-qn-outline);
   transition: background-color 140ms ease, box-shadow 140ms ease;
@@ -756,7 +786,7 @@ input[type="radio"] {
   height: 40px;
   padding: 0;
   border: 0;
-  border-radius: calc(var(--qn-radius) - 2px);
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-qn-text);
   cursor: pointer;
@@ -923,7 +953,7 @@ input[type="radio"] {
  */
 .qn-md-code {
   padding: 1px 5px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-qn-text) 8%, transparent);
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: var(--text-xs);
@@ -975,7 +1005,8 @@ input[type="radio"] {
 .qn-bar {
   height: 6px;
   border-radius: 999px;
-  background: var(--color-qn-field);
+  /* 与 .qn-meter 同一种浅灰轨道。 */
+  background: color-mix(in srgb, var(--color-qn-text) 10%, transparent);
   overflow: hidden;
 }
 
@@ -1020,10 +1051,10 @@ input[type="radio"] {
   gap: 4px;
   margin-top: 10px;
   padding: 4px;
-  border: 1px solid var(--color-qn-border-strong);
-  border-radius: 16px;
-  background: var(--color-qn-raised);
-  box-shadow: var(--qn-elev-1);
+  border: 0;
+  border-radius: var(--qn-float-radius);
+  background: var(--color-qn-composer);
+  box-shadow: var(--qn-float-shadow);
 }
 
 /* 消息里的可点击路径：保持行内排版，只加下划线与强调色。 */
@@ -1039,7 +1070,7 @@ input[type="radio"] {
   cursor: pointer;
   overflow-wrap: anywhere;
 }
-.qn-path-link:focus-visible { border-radius: 3px; outline: 2px solid var(--color-qn-accent); outline-offset: 1px; }
+.qn-path-link:focus-visible { border-radius: var(--radius-sm); outline: 2px solid var(--color-qn-accent); outline-offset: 1px; }
 
 /* 只读查看页：全屏覆盖在对话页之上，返回键先关闭它。 */
 .qn-viewer {
@@ -1115,9 +1146,10 @@ input[type="radio"] {
   max-width: 100%;
   min-height: 32px;
   padding: 3px 12px;
-  border: 1px solid var(--color-qn-border);
-  border-radius: 999px;
-  background: var(--color-qn-card);
+  /* 与分段控件轨道同一种浅灰填充，不画外框。 */
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-qn-text) 7%, transparent);
   color: var(--color-qn-muted);
   font-size: 12px;
   font-family: inherit;
@@ -1125,20 +1157,22 @@ input[type="radio"] {
 }
 
 .qn-chip-active {
-  border-color: var(--color-qn-border-strong);
-  color: var(--color-qn-text);
-  background: color-mix(in srgb, var(--color-qn-accent) 18%, var(--color-qn-card));
+  color: var(--color-qn-accent);
+  font-weight: 600;
+  background: var(--qn-accent-surface);
 }
 
 .qn-agent-tag {
   display: inline-flex;
   align-items: center;
   padding: 1px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 10px;
   line-height: 1.5;
   white-space: nowrap;
-  border: 1px solid var(--color-qn-border);
+  /* 标签统一为同色浅填充、无描边（与芯片、分段控件一致）。 */
+  border: 1px solid transparent;
+  background: color-mix(in srgb, currentColor 13%, transparent);
   color: var(--color-qn-muted);
 }
 
@@ -1339,7 +1373,7 @@ input[type="radio"] {
 .qn-project-filter-option {
   padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: calc(var(--qn-radius) - 4px);
+  border-radius: var(--radius-md);
 }
 
 .qn-project-filter-option[aria-pressed="true"] {
@@ -1357,14 +1391,13 @@ input[type="radio"] {
   margin-top: 12px;
 }
 
-/* 分组标题照搬 rust 版：文件夹图标 + 粗体名称 + 描边来源标签 + 数量，右侧强调色 + 与次要操作。 */
+/* 分组标题照搬 rust 版：图标（项目用首字母头像） + 粗体名称 + 描边来源标签 + 数量，右侧强调色 + 与次要操作。 */
 .qn-group-heading {
   display: flex;
   align-items: center;
   gap: 2px;
   min-height: 44px;
   margin-bottom: 4px;
-  padding-left: 8px;
   color: var(--color-qn-text);
   font-size: 15px;
   font-weight: 620;
@@ -1382,16 +1415,17 @@ input[type="radio"] {
 }
 
 .qn-source-tag {
-  /* 带地址后可能较长：与项目名一起收缩，放不下时截断，不把计数和按钮挤出去。 */
+  /* 带地址后可能较长：与项目名一起收缩，放不下时从开头截断（地址末尾最能区分机器），不把计数和按钮挤出去。 */
   flex-shrink: 1;
   min-width: 0;
   max-width: 55%;
   overflow: hidden;
+  direction: rtl;
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 0 6px;
-  border: 1px solid var(--color-qn-border-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, currentColor 13%, transparent);
   color: var(--color-qn-muted);
   font-size: 12px;
   font-weight: 500;
@@ -1399,7 +1433,6 @@ input[type="radio"] {
 }
 
 .qn-source-tag[data-kind="ssh"] {
-  border-color: color-mix(in srgb, var(--color-qn-source-ssh) 45%, transparent);
   color: var(--color-qn-source-ssh);
 }
 
@@ -1429,7 +1462,7 @@ input[type="radio"] {
   min-height: 40px;
   margin-left: -4px;
   padding: 0 4px;
-  border-radius: 8px;
+  border-radius: var(--qn-radius);
   text-align: left;
 }
 
@@ -1504,6 +1537,26 @@ input[type="radio"] {
 .qn-session-more {
   border-top: 1px solid var(--color-qn-divider);
 }
+
+/* 会话页的项目分组排序：分组间距放进行内以便计算让位距离；只在标题上禁用选字，分组内的弹层不受影响。 */
+.qn-group-sort > .qn-sortable-item {
+  border: 0;
+  padding-top: 12px;
+  -webkit-touch-callout: default;
+  user-select: auto;
+}
+.qn-group-sort .qn-workspace-group { margin-top: 0; }
+.qn-group-sort .qn-group-title { -webkit-touch-callout: none; user-select: none; }
+.qn-group-sort > .qn-sortable-item[data-dragging] { background: none; box-shadow: none; }
+.qn-group-sort > [data-dragging] .qn-group-heading {
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+.qn-group-sort[data-collapsed] > .qn-sortable-item { padding-top: 4px; }
+.qn-group-sort[data-collapsed] .qn-group-heading { margin-bottom: 0; }
+.qn-group-sort[data-collapsed] .qn-list-group { display: none; }
+.qn-group-sort[data-dropping] > .qn-sortable-item { transition: none; }
 
 /* 会话列表的排序区嵌在分组卡片里，拖动时卡片也不能裁掉浮起的行。 */
 .qn-list-group:has(> .qn-sortable[data-sorting="true"]) {
@@ -1648,7 +1701,7 @@ input[type="radio"] {
   gap: 4px;
   padding: 0 6px;
   border: 1px solid transparent;
-  border-radius: calc(var(--qn-radius) - 4px);
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-qn-muted);
   font-family: inherit;
@@ -1700,9 +1753,9 @@ input[type="radio"] {
 }
 
 .qn-composer {
-  /* 参照简约聊天应用：不画外框和边缘圈，只靠底色与柔和投影从对话上浮起。圆角 20px，比胶囊小，工具多时也放得下。 */
+  /* 参照简约聊天应用：不画外框和边缘圈，只靠底色与柔和投影从对话上浮起。圆角用浮层档，左右留白跟上方的排队卡片一致。 */
   border: 0;
-  border-radius: 20px;
+  border-radius: var(--qn-float-radius);
   background: var(--color-qn-composer);
   box-shadow: 0 6px 24px var(--qn-composer-shadow);
   transition: box-shadow var(--qn-motion-short) ease;
@@ -1734,7 +1787,7 @@ input[type="radio"] {
 
 .qn-composer-image .qn-image-thumbnail {
   display: block;
-  border-radius: 10px;
+  border-radius: var(--qn-radius);
 }
 
 .qn-composer-image-img {
@@ -1742,7 +1795,7 @@ input[type="radio"] {
   width: 56px;
   height: 56px;
   border: 1px solid var(--color-qn-border);
-  border-radius: 10px;
+  border-radius: var(--qn-radius);
   object-fit: cover;
 }
 
@@ -1767,27 +1820,32 @@ input[type="radio"] {
   opacity: 0.5;
 }
 
-/* 斜杠菜单：命令与技能同一列表，行首图标区分种类。 */
+/* 斜杠菜单：命令与技能同一列表，行首图标区分种类；行间不画分隔线，当前项用底色标出。 */
 .qn-slash-row {
-  gap: 10px;
-  min-height: 48px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--color-qn-divider);
+  gap: 12px;
+  min-height: 52px;
+  padding-block: 6px;
   font-size: 14px;
   text-align: left;
 }
 
-.qn-slash-row:last-child { border-bottom: 0; }
-
+/* 圆形底座，与底部动作面板的图标同形。 */
 .qn-slash-icon {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
   place-items: center;
-  border-radius: 7px;
-  background: var(--qn-press);
+  border-radius: 50%;
+  background: var(--color-qn-raised);
   color: var(--color-qn-muted);
+}
+
+/* 命令图标直接用正文字体的「/」字形：与输入框里敲出的斜杠角度完全一致（矢量图标是 45°，比字形平）。 */
+.qn-slash-glyph {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .qn-slash-icon[data-kind="skill"] {
@@ -1814,6 +1872,24 @@ input[type="radio"] {
 
 .qn-composer .qn-textarea:focus-visible {
   outline: none;
+}
+
+/* 技能标记上色层：沿用输入框的排版类，盖在其上且不接收触摸。 */
+.qn-composer .qn-composer-mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+}
+
+/* 底色必须不透明，才能盖住下面的原字；不加内边距和加粗，避免与原文错位。 */
+.qn-composer-skill {
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-qn-accent) 16%, var(--color-qn-composer));
+  color: var(--color-qn-accent);
 }
 
 /* 空间不足时让右侧操作整组换行，给模型和访问模式留出空间。 */
@@ -1850,7 +1926,7 @@ input[type="radio"] {
   max-width: 14rem;
 }
 
-/* 模型做成描边胶囊（参照「深度思考」芯片）：一眼看出可点，名称过长时截断。 */
+/* 模型做成描边按钮：一眼看出可点，名称过长时截断。 */
 .qn-composer-model > .qn-button {
   width: 100%;
   min-width: 44px;
@@ -1859,7 +1935,7 @@ input[type="radio"] {
   gap: 4px;
   padding: 0 10px 0 12px;
   border: 1px solid var(--color-qn-border);
-  border-radius: 999px;
+  background: transparent;
   color: var(--color-qn-text);
   font-size: 13px;
 }
@@ -1871,7 +1947,7 @@ input[type="radio"] {
   min-width: 36px;
   min-height: 36px;
   padding: 0;
-  /* 与模型胶囊同一套描边，成组出现在工具行左侧。 */
+  /* 与模型按钮同一套描边，成组出现在工具行左侧。 */
   border: 1px solid var(--color-qn-border);
   border-radius: 999px;
   color: var(--color-qn-muted);
@@ -1899,7 +1975,7 @@ input[type="radio"] {
   margin: 6px 6px 0;
   padding: 0 0 0 10px;
   border: 1px solid color-mix(in srgb, var(--color-qn-accent) 35%, transparent);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: var(--qn-accent-surface);
   color: var(--color-qn-text);
   font-size: 12.5px;
@@ -1980,7 +2056,7 @@ input[type="radio"] {
   justify-content: center;
   cursor: zoom-in;
   vertical-align: middle;
-  border-radius: 8px;
+  border-radius: var(--qn-radius);
 }
 
 /* 消息操作入口是次要操作：小尺寸、低对比，靠左贴着回复，不撑高消息。 */
@@ -2148,7 +2224,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 .qn-replying {
   width: fit-content;
   padding: 6px 12px 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-qn-accent) 10%, transparent);
   color: var(--color-qn-text);
 }
@@ -2186,8 +2262,8 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   min-height: 30px;
   gap: 7px;
   padding: 5px 11px 5px 9px;
-  /* 状态条按「标准控件」档用小圆角，与输入框 18px、排队卡片 10px 同步收小；扁平只留淡底不描边。 */
-  border-radius: 6px;
+  /* 状态条是矮元素，用小圆角档；扁平只留淡底不描边。 */
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-qn-accent) 10%, transparent);
   color: var(--color-qn-text);
   line-height: 1.4;
@@ -2199,34 +2275,13 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 .qn-list-group {
   border: 0;
   background: var(--color-qn-card);
-  /* rust 版 .rows：一层浅投影 + 1px 边缘高光。高光画在 ::after 上并盖住行面，行底色和左滑面板不会把它遮掉。 */
+  /* 列表卡片只靠底色与页面区分、行间细线分隔：不画外圈描边和投影（会话、项目、连接各页统一）。 */
   position: relative;
   isolation: isolate;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 32%);
-}
-
-.qn-list-group::after {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  border-radius: inherit;
-  box-shadow: inset 0 1px 0 var(--qn-edge-top), inset 0 0 0 1px var(--qn-edge);
-  pointer-events: none;
-  content: "";
-}
-
-/* 项目下的会话列表：去掉卡片外圈的圆角描边和投影，只保留底色与行间分隔线。 */
-.qn-list-group.qn-list-plain {
-  box-shadow: none;
-}
-
-.qn-list-group.qn-list-plain::after {
-  content: none;
 }
 
 .qn-card {
   border-color: transparent;
-  box-shadow: inset 0 0 0 1px var(--qn-edge), inset 0 1px 0 var(--qn-edge-top);
 }
 
 .qn-header {
@@ -2278,7 +2333,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   min-height: 40px;
   margin: 14px auto 0;
   padding: 0 12px;
-  border-radius: 8px;
+  border-radius: var(--qn-radius);
   color: var(--color-qn-accent);
   font-size: 13.5px;
   font-weight: 600;
@@ -2382,8 +2437,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 /* ===== 弹层 ===== */
 .qn-dialog[open]::backdrop { animation: qn-fade var(--qn-motion-medium) ease backwards; }
 .qn-dialog[open] .qn-dialog-panel { animation: qn-sheet-up 340ms var(--qn-ease-sheet) backwards; }
-.qn-dialog[data-placement="left"][open] .qn-dialog-panel { animation: qn-drawer-in 240ms var(--qn-ease-emphasized) backwards; }
-.qn-dialog[data-placement="full"][open] .qn-dialog-panel { animation: qn-push-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
+.qn-dialog[data-placement="full"][open] > .qn-dialog-panel { animation: qn-push-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
 
 .qn-dialog-panel {
   border: 0;
@@ -2407,7 +2461,6 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 
 @keyframes qn-fade { from { opacity: 0; } }
 @keyframes qn-sheet-up { from { transform: translateY(100%); } }
-@keyframes qn-drawer-in { from { opacity: 0; transform: translateX(-12px); } }
 
 .qn-spin { animation: qn-spin 2s linear infinite; }
 @keyframes qn-spin { to { transform: rotate(360deg); } }
@@ -2435,37 +2488,53 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 }
 
 /*
- * 对话页顶栏：与页面同底、去掉分隔线，按钮收进悬浮按钮组；
- * 下方一条渐隐让滚上去的消息自然淡出，而不是被一条硬线切断。
+ * 对话页顶栏：与页面同底、去掉分隔线，按钮收进悬浮按钮组。
+ * 顶栏紧接对话区时叠在消息上方，消息从标题和按钮底下滚过并渐隐；
+ * 中间插有提示条时保持实底，避免提示条钻到顶栏下面。
  */
 .qn-header.qn-chat-header {
+  --qn-chat-header-height: 56px;
   position: relative;
   z-index: 3;
   gap: 10px;
-  border-bottom-color: transparent;
+  border-bottom: 0;
   background: var(--color-qn-bg);
   backdrop-filter: none;
 }
+.qn-header.qn-chat-header:has(+ .qn-chat-surface) {
+  min-height: var(--qn-chat-header-height);
+  margin-bottom: calc(-1 * var(--qn-chat-header-height));
+  background: transparent;
+}
+/* 渐变层比顶栏多出 20px；色标从底边往上量，状态栏是否并入顶栏都适用。标题所在高度保持近实底。 */
 .qn-chat-header:has(+ .qn-chat-surface)::after {
   position: absolute;
-  top: 100%;
-  right: 0;
-  left: 0;
-  height: 14px;
-  background: linear-gradient(var(--color-qn-bg), transparent);
+  z-index: -1;
+  inset: 0 0 -20px;
+  background: linear-gradient(
+    var(--color-qn-bg) calc(100% - 48px),
+    color-mix(in srgb, var(--color-qn-bg) 95%, transparent) calc(100% - 28px),
+    color-mix(in srgb, var(--color-qn-bg) 72%, transparent) calc(100% - 16px),
+    transparent
+  );
   content: "";
   pointer-events: none;
+}
+/* 首条消息默认停在顶栏下方；数值是顶栏高度加原有的 12px 留白。 */
+.qn-chat-header + .qn-chat-surface > div > .qn-body {
+  padding-top: 68px;
+  scroll-padding-top: 68px;
 }
 .qn-header-island {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  border-radius: var(--qn-float-radius);
+  border-radius: 999px;
   background: var(--color-qn-composer);
   box-shadow: var(--qn-float-shadow);
 }
 .qn-header-island > .qn-header-icon,
-.qn-header-island .qn-header-icon { border-radius: var(--qn-float-radius); }
+.qn-header-island .qn-header-icon { border-radius: 999px; }
 .qn-header-icon.qn-header-island { background: var(--color-qn-composer); }
 
 /* 顶栏图标按钮：无边框，保持 44px 触控区。 */
@@ -2493,6 +2562,52 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   background: var(--color-qn-accent);
 }
 
+/* ===== 对话页状态胶囊：子代理、任务清单、后台任务，有事滑出、用完收回 ===== */
+.qn-status-dock {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 12px;
+  display: flex;
+  width: 44px;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-qn-composer);
+  box-shadow: var(--qn-float-shadow);
+  max-height: 180px;
+  transition: transform var(--qn-motion-medium) var(--qn-ease-emphasized), opacity var(--qn-motion-medium) ease,
+    max-height var(--qn-motion-medium) var(--qn-ease-emphasized), visibility var(--qn-motion-medium);
+}
+.qn-status-dock[data-collapsed] { max-height: 44px; }
+/* 顶栏叠在对话区上方时，胶囊排在右侧按钮组正下方。 */
+.qn-chat-header + .qn-chat-surface .qn-status-dock { top: 62px; }
+.qn-status-dock[data-state="open"] { animation: qn-dock-in var(--qn-motion-medium) var(--qn-ease-emphasized) backwards; }
+/* 滑动消息时大半退到屏幕外并变淡，露出的一截仍可点。 */
+.qn-status-dock[data-tucked] { opacity: 0.45; transform: translateX(34px); }
+.qn-status-dock[data-state="closed"] { visibility: hidden; opacity: 0; transform: translateX(60px); }
+@keyframes qn-dock-in { from { opacity: 0; transform: translateX(60px); } }
+
+.qn-status-dock-item {
+  display: flex;
+  min-height: 50px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--color-qn-text);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.qn-status-dock-item + .qn-status-dock-item { border-top: 1px solid var(--color-qn-divider); }
+.qn-status-dock-item:only-child { min-height: 44px; gap: 0; }
+.qn-status-dock-item:active { background: var(--qn-press); }
+.qn-status-dock-item[data-tone="accent"] { color: var(--color-qn-accent); }
+.qn-status-dock-item[data-tone="warn"] { color: var(--color-qn-warn); }
+.qn-status-dock-item[data-tone="danger"] { color: var(--color-qn-danger); }
+
 /* ===== 对话 ===== */
 /* 用户消息：右侧灰色气泡，回复无边框（同电脑版）。 */
 /* 长消息折叠开关：气泡内的强调色小字，命中区补到 32px。 */
@@ -2508,8 +2623,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 .qn-user-bubble {
   max-width: 86%;
   padding: 9px 13px;
-  /* 与对话输入框同步收小圆角。 */
-  border-radius: 10px;
+  border-radius: var(--qn-radius);
   background: var(--color-qn-raised);
   font-size: 14px;
   line-height: 1.6;
@@ -2570,7 +2684,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   min-height: 44px;
   padding: 7px 26px 7px 11px;
   border: 1px solid var(--color-qn-outline);
-  border-radius: 10px;
+  border-radius: var(--qn-radius);
   text-align: left;
   transition: border-color var(--qn-motion-short) ease;
 }
@@ -2594,8 +2708,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 
 .qn-tool-open {
   padding: 8px 10px;
-  background: var(--color-qn-panel);
-  box-shadow: inset 0 0 0 1px var(--qn-edge);
+  background: var(--color-qn-card);
 }
 
 .qn-tool-row {
@@ -2683,9 +2796,8 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   font-size: max(8px, calc(16px + var(--qn-chat-delta)));
 }
 
-/* 对话页左右留白 16px，正文不贴边；输入框底栏同步。 */
+/* 对话页左右留白 16px，正文不贴边。 */
 .qn-chat-surface > div > .qn-body { padding-inline: 16px; }
-.qn-chat-surface .qn-footer.qn-composer-footer { padding-inline: 16px; }
 
 /* 消息里打开的弹层是操作界面，不随对话字号变化。 */
 .qn-chat-surface .qn-body dialog {
@@ -2725,11 +2837,12 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   gap: 8px;
   width: 100%;
   max-width: 480px;
-  padding: 10px 12px;
-  border: 1px solid var(--color-qn-border);
-  border-radius: var(--qn-radius);
-  background: var(--color-qn-panel);
-  box-shadow: var(--qn-elev-1);
+  padding: 10px 14px;
+  /* 悬浮提示与顶栏按钮组、输入框同一套悬浮表面。 */
+  border: 0;
+  border-radius: var(--qn-float-radius);
+  background: var(--color-qn-composer);
+  box-shadow: var(--qn-float-shadow), 0 8px 24px var(--qn-composer-shadow);
   color: var(--color-qn-text);
   font-size: 13px;
   line-height: 1.5;
@@ -2780,7 +2893,6 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   padding: 6px 14px;
   border-radius: var(--qn-radius);
   background: var(--color-qn-card);
-  box-shadow: inset 0 0 0 1px var(--qn-edge), inset 0 1px 0 var(--qn-edge-top);
   list-style: none;
   font-size: 13.5px;
 }
@@ -2827,17 +2939,19 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 
 /* 排队区：浮在输入框上方的圆角卡片，与页面同底，不再是整条灰带。 */
 .qn-queue {
+  /* 抬到输入框底栏之上，底边的描边圈和投影不被底栏底色截掉。 */
+  position: relative;
+  z-index: 1;
   flex-shrink: 0;
   margin: 6px 12px 0;
   padding: 0 4px 0 12px;
   /* 去掉描边：与输入框同属浮在对话上的面板，用投影和底色区分。 */
-  border-radius: 12px;
+  border-radius: var(--qn-radius);
   background: var(--color-qn-composer);
   box-shadow: var(--qn-float-shadow);
 }
 .qn-queue-details > summary { min-height: 36px; font-size: 12.5px; }
 /* 展开清单后当前步骤已在列表里，摘要行不再重复。 */
-.qn-plan[open] .qn-plan-current { visibility: hidden; }
 .qn-queue-list {
   max-height: min(26dvh, 9rem);
   margin: 0;
@@ -2863,7 +2977,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   min-height: 28px;
   padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--color-qn-accent) 35%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--qn-accent-surface);
   color: var(--color-qn-accent);
   font-size: 12.5px;
@@ -2877,12 +2991,12 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   gap: 12px;
 }
 
-/* 主机卡片：与列表卡片同一层级（底色 + 浅投影 + 1px 边缘高光），整卡可点。 */
+/* 主机卡片：与列表卡片同一层级，整卡可点。 */
 .qn-usage-host,
 .qn-usage-card {
   border-radius: var(--qn-radius);
-  background: var(--color-qn-composer);
-  box-shadow: var(--qn-float-shadow);
+  /* 与会话、项目列表卡片同一套：只靠底色分层。 */
+  background: var(--color-qn-card);
 }
 
 .qn-usage-host {
@@ -2973,7 +3087,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 .qn-usage-badge {
   margin-left: auto;
   padding: 0 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-qn-accent) 14%, transparent);
   color: var(--color-qn-accent);
   font-size: 12px;
@@ -2998,7 +3112,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   display: grid;
   gap: 8px;
   padding: 12px;
-  border-radius: calc(var(--qn-radius) - 4px);
+  border-radius: var(--radius-md);
   background: var(--color-qn-field);
 }
 
@@ -3057,7 +3171,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   gap: 4px;
   min-width: 0;
   padding: 10px 12px;
-  border-radius: calc(var(--qn-radius) - 4px);
+  border-radius: var(--radius-md);
   background: var(--color-qn-field);
 }
 
@@ -3120,7 +3234,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 
 .qn-usage-bar-col {
   width: min(100%, 22px);
-  border-radius: 4px 4px 0 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: var(--color-qn-accent);
   transition: opacity var(--qn-motion-short) ease;
 }
@@ -3194,6 +3308,10 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
     margin-inline: max(12px, calc((100% - var(--qn-column)) / 2));
   }
 
+  .qn-footer.qn-composer-footer {
+    padding-inline: max(12px, calc((100% - var(--qn-column)) / 2));
+  }
+
   /* 顶栏内容与阅读列对齐，返回键不再远离正文。 */
   .qn-header {
     padding-inline: max(12px, calc((100% - var(--qn-column)) / 2 - 8px));
@@ -3206,7 +3324,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 
   .qn-dialog:is(:not([data-placement]), [data-placement="bottom"]) .qn-dialog-panel {
     max-height: 80%;
-    border-radius: var(--qn-radius);
+    border-radius: var(--qn-float-radius);
     padding-bottom: 16px;
   }
 
@@ -3214,3 +3332,189 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
     display: none;
   }
 }
+
+/* ===== 会话用量弹层：上下文进度 + 分组数值 + 压缩按钮，与设置页同一套分组卡片 ===== */
+.qn-ctx-sheet {
+  display: grid;
+  gap: 16px;
+  padding-top: 4px;
+}
+
+.qn-ctx {
+  display: grid;
+  gap: 10px;
+}
+
+.qn-ctx-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.qn-ctx-foot {
+  margin: -2px 0 0;
+  color: var(--color-qn-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.qn-ctx-stat {
+  min-height: 52px;
+}
+
+.qn-ctx-stat + .qn-ctx-stat { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-qn-text) 8%, transparent); }
+.qn-ctx-stat > dt { font-size: 14px; }
+.qn-ctx-stat > dd { margin: 0; color: var(--color-qn-text); }
+
+.qn-ctx-note {
+  margin: 0;
+  color: var(--color-qn-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* 弹层底色与卡片同为 panel 色：弹层里把卡片色抬亮一档（不透明，左滑行面等依赖卡片底色的地方一起跟随），
+   弹层里的卡片、列表组、内容块才分得出来。 */
+.qn-dialog:not([data-placement="full"]) .qn-dialog-panel {
+  --color-qn-card: color-mix(in srgb, var(--color-qn-text) 5%, var(--color-qn-panel));
+}
+.qn-dialog:not([data-placement="full"]) :is(.qn-list-row + .qn-list-row, .qn-thread-row + .qn-thread-row, .qn-sortable-item + .qn-sortable-item) {
+  border-top-color: color-mix(in srgb, var(--color-qn-text) 7%, transparent);
+}
+/* 当前会话整行高亮（含右侧“更多”按钮列），不只是左边的内容区。 */
+.qn-thread-row:has(.qn-thread-content[aria-current="true"]) { background: var(--color-qn-raised); }
+.qn-dialog:not([data-placement="full"]) :is(.qn-list-row[aria-current="true"], .qn-thread-row:has(.qn-thread-content[aria-current="true"])) {
+  background: color-mix(in srgb, var(--color-qn-text) 11%, var(--color-qn-panel));
+}
+
+/* ===== 额度详情（Codex / Claude）：标题行 + 分组卡片，与会话用量弹层同一套 ===== */
+.qn-quota {
+  display: grid;
+  gap: 12px;
+}
+
+.qn-quota-head,
+.qn-quota-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qn-quota-head > .qn-quota-refresh { margin-left: auto; }
+
+/* 小节标题与模型弹层的「推理强度」、设置页分组标题同级：次要色小字。 */
+.qn-quota-title {
+  margin: 0;
+  color: var(--color-qn-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.qn-quota-section {
+  display: grid;
+  gap: 8px;
+}
+
+.qn-quota-section-head {
+  justify-content: space-between;
+  padding-inline: 2px;
+  color: var(--color-qn-muted);
+  font-size: 13px;
+}
+
+/* 刷新、使用：矮按钮，可见 32px，命中区靠外边距补足。 */
+.qn-quota-refresh,
+.qn-quota-action {
+  flex-shrink: 0;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.qn-quota-card {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.qn-quota-window {
+  display: grid;
+  gap: 8px;
+}
+
+.qn-quota-window-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.qn-quota-sub {
+  color: var(--color-qn-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.qn-quota-foot {
+  display: grid;
+  gap: 2px;
+  padding-inline: 2px;
+  color: var(--color-qn-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.qn-quota-list {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+
+.qn-quota-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.qn-quota-item + .qn-quota-item { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-qn-text) 8%, transparent); }
+
+.qn-quota-item-title {
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.qn-quota-stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.qn-quota-stats dt { color: var(--color-qn-muted); }
+.qn-quota-stats dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+.qn-quota-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 48px;
+}
+
+.qn-quota-bar {
+  flex: 1;
+  border-radius: 4px;
+  background: var(--color-qn-accent);
+}
+
+.qn-quota-bar[data-empty] { background: color-mix(in srgb, var(--color-qn-text) 10%, transparent); }

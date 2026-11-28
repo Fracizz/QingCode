@@ -120,7 +120,7 @@ function ArchivedConversations({ desktopId, project, onClose }: { desktopId: str
           {result.threads.map((thread) => {
             const key = threadPreferenceKey(project.targetId, thread.agent, thread.id)
             const title = prefs?.threads[key]?.title ?? thread.title
-            return <div key={key} className="qn-row gap-2 border-b border-qn-border py-2">
+            return <div key={key} className="qn-row gap-2 border-b border-qn-divider py-2">
               <div className="min-w-0 flex-1"><p className="truncate" title={title}>{title}</p><AgentTag agent={thread.agent} /></div>
               <Button aria-label={t('恢复 {title}', { title })} disabled={restoring !== null} onClick={() => void restoreThread(thread, key)}>
                 {restoring === key ? t('恢复中…') : t('恢复')}
@@ -145,7 +145,7 @@ type FileState = 'running' | 'starting' | 'done' | 'idle'
 function DownloadProgress({ job }: { job: DeviceDownload }) {
   return (
     <span className="mt-1.5 flex items-center gap-2">
-      <progress className="min-w-0 flex-1" value={job.written} max={job.size || 1} aria-label={t('下载进度')} />
+      <progress className="qn-meter min-w-0 flex-1" value={job.written} max={job.size || 1} aria-label={t('下载进度')} />
       <span className="text-xs whitespace-nowrap text-qn-muted tabular-nums">{formatBytes(job.written)} / {formatBytes(job.size)}</span>
     </span>
   )
@@ -312,7 +312,7 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
         </div>
         {!fileAvailable && <p className="qn-hint">{t('请在 Android 应用中下载。')}</p>}
         {running && !jobVisible && (
-          <div className="rounded-xl border border-qn-border bg-qn-card px-3 py-2">
+          <div className="qn-surface px-3 py-2">
             <div className="flex items-center gap-2">
               <Download size={16} className="shrink-0 text-qn-accent" aria-hidden />
               <p className="min-w-0 flex-1 truncate text-sm" title={job.name}>{t('正在下载 {name}', { name: job.name })}</p>
@@ -329,12 +329,12 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
         {listing?.entries.length === 0 && <p className="py-4 text-center text-sm text-qn-muted">{searching ? t('没有匹配的文件') : t('目录为空')}</p>}
         {listing?.truncated && <p className="text-xs text-qn-warn">{t('结果较多，请缩小查询范围。')}</p>}
         {entries.length > 0 && (
-          <ul className="overflow-hidden rounded-xl border border-qn-border bg-qn-card">
+          <ul className="qn-surface overflow-hidden">
             {entries.map((entry) => {
               const label = searching ? entry.path : entry.name
               if (entry.kind === 'dir') {
                 return (
-                  <li key={entry.path} className="border-b border-qn-border last:border-0">
+                  <li key={entry.path} className="border-b border-qn-divider last:border-0">
                     <button className="qn-row px-3 py-2" type="button" onClick={() => browse(entry.path)}>
                       <Folder size={18} strokeWidth={1.75} className="shrink-0 text-qn-accent" aria-hidden />
                       <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
@@ -345,7 +345,7 @@ function ProjectFileBrowser({ project, desktopId, onClose }: {
               }
               const state = fileState(entry)
               return (
-                <li key={entry.path} className="flex items-center border-b border-qn-border last:border-0">
+                <li key={entry.path} className="flex items-center border-b border-qn-divider last:border-0">
                   <button className="qn-row min-w-0 flex-1 items-start py-2.5 pr-1 pl-3" type="button" onClick={() => setSelected(entry)}>
                     <FileText size={18} strokeWidth={1.75} className="mt-px shrink-0 text-qn-muted" aria-hidden />
                     <span className="min-w-0 flex-1">

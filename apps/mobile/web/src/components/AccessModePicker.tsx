@@ -66,7 +66,7 @@ export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, su
                 const OptionIcon = MODE_ICONS[option.mode]
                 return (
                   <button key={option.mode} type="button" aria-pressed={option.mode === effectiveMode}
-                    className="qn-row gap-3 rounded-xl border border-qn-border px-3 py-2 disabled:opacity-50"
+                    className="qn-row qn-surface gap-3 px-3 py-2 disabled:opacity-50"
                     disabled={disabled || (!supported && option.mode !== 'default')}
                     onClick={() => {
                       if (next === mode) close()
@@ -107,7 +107,7 @@ export function NoApprovalNotice() {
       </Button>
       {open && (
         <Dialog title={t('访问模式')} onClose={() => setOpen(false)}>
-          <div className="qn-row gap-3 rounded-xl border border-qn-border px-3 py-2">
+          <div className="qn-row qn-surface gap-3 px-3 py-2">
             <ShieldOff size={18} strokeWidth={1.75} className="shrink-0 text-qn-danger" aria-hidden />
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-medium text-qn-danger">{label}</span>

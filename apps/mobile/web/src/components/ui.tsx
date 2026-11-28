@@ -158,7 +158,7 @@ export function Dialog({
   title: string
   children: ReactNode
   onClose: () => void
-  placement?: 'bottom' | 'left' | 'full'
+  placement?: 'bottom' | 'full'
   /** 关闭按钮放在标题栏；手机靠返回手势关闭，不再在底部放大号关闭按钮。内容自己处理关闭时（如看图点空白关闭）传 none。 */
   closeAt?: 'top' | 'none'
 }) {

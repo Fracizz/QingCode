@@ -257,7 +257,7 @@ export function ConnectionFormPage() {
                   onChange={(event) => updateDraft('port', event.target.value)} />
               </Field>
               <div className="qn-label">{t('证书指纹')}</div>
-              <div className="qn-mono mb-3 rounded-xl border border-qn-border bg-qn-field p-2 text-xs">
+              <div className="qn-mono mb-3 qn-surface p-2 text-xs">
                 {normalizeFingerprint(form.draft.fp) ?? t('待导入')}
               </div>
             </details>

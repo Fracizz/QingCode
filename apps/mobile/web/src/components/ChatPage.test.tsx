@@ -311,14 +311,16 @@ it('会话切换常驻顶栏，出现子代理时也可从顶栏查看记录和�
     expect(host.querySelector('header button[aria-label="子代理"]')).toBeNull()
     expect(host.querySelector('.qn-composer button[aria-label="切换会话"]')).toBeNull()
     await clickButton('切换会话')
-    expect(dialog()?.getAttribute('data-placement')).toBe('left')
+    expect(dialog()?.getAttribute('data-placement')).toBe('full')
     expect(switcher?.getAttribute('aria-expanded')).toBe('true')
     await act(() => { expect(closeTopSheet()).toBe(true) })
     expect(dialog()).toBeNull()
     expect(switcher?.getAttribute('aria-expanded')).toBe('false')
 
     await act(() => useApp.setState({ sessions: { [session.key]: session } }))
-    expect(host.querySelector('header button[aria-label="子代理"] svg.lucide-bot')).toBeTruthy()
+    const dockButton = '.qn-status-dock[data-state="open"] button[aria-label="子代理"]'
+    expect(host.querySelector(`${dockButton} svg.lucide-bot`)).toBeTruthy()
+    expect(host.querySelector('header button[aria-label="子代理"]')).toBeNull()
     expect(host.querySelector('header button[aria-label="返回"]')).toBeNull()
     expect(host.querySelector('.qn-body')?.textContent).not.toContain('启动子代理')
     expect(historyReads()).toHaveLength(0)
@@ -367,7 +369,7 @@ it('会话切换常驻顶栏，出现子代理时也可从顶栏查看记录和�
     expect(dialog()?.textContent).toContain('已完成')
     await act(() => useApp.setState({ selectedThreadId: 'other' }))
     expect(dialog()).toBeNull()
-    expect(host.querySelector('header button[aria-label="子代理"]')).toBeNull()
+    expect(host.querySelector('.qn-status-dock')).toBeNull()
     expect(host.querySelector('header button[aria-label="切换会话"]')).toBe(switcher)
   } finally {
     await act(() => root.unmount())

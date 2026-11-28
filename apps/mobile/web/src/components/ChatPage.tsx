@@ -1,6 +1,6 @@
-import { ArrowDown, ChevronDown, PanelLeft, Square } from 'lucide-react'
+import { ArrowDown, Bot, ChevronDown, ListChecks, PanelLeft, Square } from 'lucide-react'
 import { AGENT_CAPABILITIES, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { bindChatPinch } from '../chatFont'
 import { toast } from '../toast'
@@ -12,8 +12,6 @@ import { chatTimeline, replyPhase, streamingReplyId } from '../chatGroups'
 import { formatTurnError, friendlyError } from '../state'
 import { changeThreadPreference, threadPreferenceKey, useWorkspacePreferences } from '../workspace'
 import { ApprovalCard } from './ApprovalCard'
-import { BackgroundTasks } from './BackgroundTasks'
-import { PlanPanel } from './PlanPanel'
 import { UserInputCard } from './UserInputCard'
 import { AccessModePicker, NoApprovalNotice } from './AccessModePicker'
 import { Composer } from './Composer'
@@ -28,7 +26,7 @@ import { AgentQuota } from './RateLimitView'
 import { SessionSwitcher } from './SessionSwitcher'
 import { skillsKey, useSkills } from '../skills'
 import { slashCommandsKey, useSlashCommands } from '../slashCommands'
-import { SubagentLauncher } from './SubagentDetails'
+import { planLabel, StatusDock, type DockSheet } from './StatusDock'
 import { Badge, Button, Dialog, Empty, Header, LoadingIcon, Note } from './ui'
 
 const NO_ITEMS: ItemView[] = []
@@ -89,8 +87,9 @@ export function ChatPage() {
   const [quote, setQuote] = useState<{ key: string; text: string } | null>(null)
   const [stopRequest, setStopRequest] = useState<{ chatKey: string; turnId: string } | null>(null)
   const [switching, setSwitching] = useState(false)
+  const [dockSheet, setDockSheet] = useState<{ key: string; sheet: DockSheet } | null>(null)
   const [commandDialog, setCommandDialog] = useState<{ key: string; id: ChatCommandId } | null>(null)
-  const [contextPanel, setContextPanel] = useState<{ key: string; panel: 'usage' | 'confirm' } | null>(null)
+  const [contextPanel, setContextPanel] = useState<{ key: string; panel: 'usage' } | null>(null)
   const [commandFeedback, setCommandFeedback] = useState<{ key: string; message: string } | null>(null)
   const [commandName, setCommandName] = useState('')
   const [commandPending, setCommandPending] = useState(false)
@@ -311,6 +310,12 @@ export function ChatPage() {
     }
   }
 
+  const changeDockSheet = useCallback((sheet: DockSheet | null) => setDockSheet(sheet ? { key: chatKey, sheet } : null), [chatKey])
+  // 状态胶囊收回后，历史子代理与任务清单仍可从顶栏“⋯”菜单查看。
+  const dockActions = [
+    ...(subagents.length ? [{ icon: Bot, label: `${t('子代理')} · ${subagents.length}`, onClick: () => changeDockSheet('subagents') }] : []),
+    ...(view?.plan?.steps.length ? [{ icon: ListChecks, label: planLabel(view.plan), onClick: () => changeDockSheet('plan') }] : []),
+  ]
   const latestReply = items.findLast((item) => item.kind === 'agent' && !item.streaming && item.text.trim())
   const commandReason = (id: ChatCommandId) => {
     if (id === 'model' && !session?.opened) return t('请先连接当前 Agent')
@@ -336,7 +341,8 @@ export function ChatPage() {
         void state.refreshThreads()
         if (skillKey && skillRpc) void loadSkills(skillKey, cwd || null, skillRpc, true)
         return
-      case 'compact': setContextPanel({ key: chatKey, panel: 'confirm' }); return
+      // 压缩不再二次确认：命令和用量面板里的按钮都直接开始。
+      case 'compact': void compactConversation(); return
       case 'context': setContextPanel({ key: chatKey, panel: 'usage' }); return
       case 'model':
         if (selectedTargetId) void state.loadModels(selectedTargetId, selectedAgent, true)
@@ -414,21 +420,16 @@ export function ChatPage() {
         right={
           // 右侧操作收进一个悬浮按钮组，与左侧会话切换按钮呼应，标题区不再被分隔线截断。
           <div className="qn-header-island">
-            {subagents.length > 0 && (
-              <FileActionsContext.Provider value={fileActions}>
-                <SubagentLauncher key={chatKey} entries={subagents} threads={session?.state.threads} rpc={eventsConnected && session?.opened ? session.rpc : null}
-                  renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
-              </FileActionsContext.Provider>
-            )}
             {/* 常驻新建入口：不必先回到会话列表；无当前项目时由按钮内弹出项目选择。 */}
             <NewSessionButton project={project} projects={projects} iconOnly className="qn-header-icon size-[44px] shrink-0" />
             {/* 对话中直接进入项目文件、终端等页面，不必先退回项目列表。 */}
-            {project && <ProjectTools key={project.id} project={project} compact className="qn-header-icon size-[44px] shrink-0" />}
+            {project && <ProjectTools key={project.id} project={project} compact className="qn-header-icon size-[44px] shrink-0"
+              actions={dockActions} />}
           </div>
         }
       />
       {needsRepair && activeId && (
-        <div className="border-b border-qn-border bg-qn-panel px-3 pt-2">
+        <div className="border-b border-qn-divider bg-qn-panel px-3 pt-2">
           <Note
             tone="warn"
             message={t('电脑连接需要重新配对')}
@@ -438,7 +439,7 @@ export function ChatPage() {
         </div>
       )}
       {approvals.length > 0 && (
-        <button className="qn-row border-b border-qn-border bg-qn-panel px-3 text-sm" type="button"
+        <button className="qn-row border-b border-qn-divider bg-qn-panel px-3 text-sm" type="button"
           onClick={() => approvalsRef.current?.scrollIntoView({ block: 'nearest' })}>
           <Badge tone="warn">{approvals.length === 1 ? t('1 项待审批') : t('{count} 项待审批', { count: approvals.length })}</Badge>
           <span className="min-w-0 flex-1 truncate text-qn-muted">{translateMessage(approvals[0]?.title ?? '')}</span><ChevronDown size={16} aria-hidden />
@@ -515,12 +516,19 @@ ${text}` : text)
             </div>
           </div>
           {selection?.key === chatKey && (
-            <Button className="absolute bottom-3 left-3 bg-qn-panel shadow-lg"
+            <Button className="absolute bottom-3 left-4 bg-qn-composer shadow-(--qn-float-shadow)"
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => { setQuote(selection); window.getSelection()?.removeAllRanges(); setSelection(null) }}>
               {t('引用选中文字')}
             </Button>
           )}
+          {/* 子代理、任务清单、后台任务：需要关注时从右上角滑出。 */}
+          <FileActionsContext.Provider value={fileActions}>
+            <StatusDock key={`dock:${chatKey}`} sheet={dockSheet?.key === chatKey ? dockSheet.sheet : null} onSheetChange={changeDockSheet}
+              scrollRef={scrollRef} plan={view?.plan} running={running} subagents={subagents} threads={session?.state.threads}
+              rpc={eventsConnected && session?.opened ? session.rpc : null}
+              renderItem={(item, showStreamingDots) => <MessageItem key={item.id} item={item} showStreamingDots={showStreamingDots} />} />
+          </FileActionsContext.Provider>
           {/* 往上翻看历史时给一个回到最新的入口，靠右下、贴近拇指；流式输出不再抢滚动。 */}
           {awayFromBottom && (
             <Button variant="ghost" className="qn-jump-latest" aria-label={t('回到最新消息')} onClick={jumpToLatest}>
@@ -528,8 +536,6 @@ ${text}` : text)
             </Button>
           )}
         </div>
-        <PlanPanel key={`plan:${chatKey}`} plan={view?.plan} running={running} />
-        <BackgroundTasks key={`tasks:${chatKey}`} />
         <QueuedMessages key={`queue:${chatKey}`} running={running} canSteer={canSteer} />
         <Composer
           key={chatKey}
@@ -590,7 +596,7 @@ ${text}` : text)
               compact={selectedThreadId ? {
                 busy: compacting,
                 blockedReason: compactionBlockedReason,
-                onConfirm: () => void compactConversation(),
+                onCompact: () => void compactConversation(),
               } : undefined} />
           }
         />

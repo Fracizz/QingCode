@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { ContextUsage } from './ContextUsage'
 
-it('无用量数据也能打开压缩入口，只有确认按钮发送请求', async () => {
+it('无用量数据也能打开压缩入口，点压缩会话直接发送请求并关闭面板', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const dialog = HTMLDialogElement.prototype
   const methods = ['showModal', 'close'] as const
@@ -13,7 +13,7 @@ it('无用量数据也能打开压缩入口，只有确认按钮发送请求', a
   const host = document.createElement('div')
   document.body.append(host)
   const root = createRoot(host)
-  const onConfirm = vi.fn()
+  const onCompact = vi.fn()
   const button = (name: string) => [...host.querySelectorAll('button')].find((item) =>
     item.textContent?.trim() === name || item.getAttribute('aria-label') === name)
   const click = async (name: string) => {
@@ -23,16 +23,11 @@ it('无用量数据也能打开压缩入口，只有确认按钮发送请求', a
   }
 
   try {
-    await act(() => root.render(<ContextUsage tokenUsage={null} compact={{ busy: false, blockedReason: null, onConfirm }} />))
+    await act(() => root.render(<ContextUsage tokenUsage={null} compact={{ busy: false, blockedReason: null, onCompact }} />))
     await click('查看上下文，暂无上下文用量')
+    expect(onCompact).not.toHaveBeenCalled()
     await click('压缩会话')
-    expect(host.querySelector('[aria-label="确认压缩会话"]')).toBeTruthy()
-    expect(onConfirm).not.toHaveBeenCalled()
-    await click('取消')
-    expect(onConfirm).not.toHaveBeenCalled()
-    await click('压缩会话')
-    await click('确认压缩')
-    expect(onConfirm).toHaveBeenCalledTimes(1)
+    expect(onCompact).toHaveBeenCalledTimes(1)
     expect(host.querySelector('dialog')).toBeNull()
 
     const tokenUsage = { last: { totalTokens: 128 }, modelContextWindow: null, estimated: true, estimatedCostUsd: 0.012 }
@@ -40,7 +35,7 @@ it('无用量数据也能打开压缩入口，只有确认按钮发送请求', a
     await click('查看会话用量')
     const usage = host.querySelector('[aria-label="会话用量"]')
     expect(usage?.textContent).toContain('128 tokens')
-    expect(usage?.textContent).toMatch(/费用估算 .*0\.012/)
+    expect(usage?.textContent).toMatch(/单轮费用估算.*0\.012/)
     expect(usage?.querySelector('progress')).toBeNull()
     // 没有窗口大小时也显示圆环（空环），与有用量时同一图标。
     expect(host.querySelector('[data-testid="context-ring"] circle:nth-of-type(2)')?.getAttribute('stroke-dasharray')).toBe('0 100')

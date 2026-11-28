@@ -48,7 +48,7 @@ export function CodeBlock({ code, lang, streaming = false }: { code: string; lan
   }
 
   return (
-    <div className="group/code my-3 overflow-hidden rounded-xl border border-qn-border bg-qn-code">
+    <div className="group/code my-3 overflow-hidden rounded-lg border border-qn-border bg-qn-code">
       <div className="flex h-8 items-center justify-between border-b border-qn-border/70 pl-3.5 pr-1.5 text-ui-sm text-qn-dim">
         <span className="font-mono">{lang ?? 'text'}</span>
         <button

@@ -44,7 +44,7 @@ export function BackgroundTasksPanel({ targetId, agent, threadId, contentWidthCl
     <div className="shrink-0 px-6 pb-1">
       <section
         aria-label={t('后台任务')}
-        className={cn('mx-auto rounded-xl border border-qn-border bg-qn-panel px-3 py-2 text-ui-sm', contentWidthClassName)}
+        className={cn('mx-auto rounded-lg border border-qn-border bg-qn-panel px-3 py-2 text-ui-sm', contentWidthClassName)}
       >
         <div className="flex flex-wrap items-center gap-x-1.5 text-qn-muted">
           <Activity size={14} className="shrink-0" aria-hidden />

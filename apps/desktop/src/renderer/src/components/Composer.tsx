@@ -3,7 +3,7 @@ import {
   accessOptions, alternateSendMode, exactChatCommand, hasSkillToken, insertSkillToken, isSlashDraft, resolveAccessMode,
   runningSendMode, t, takeSkillTokens, translateMessage,
 } from '@qn/codex-client'
-import { ArrowUp, CircleAlert, FileText, ImageOff, ListTodo, Paperclip, Shield, ShieldAlert, ShieldOff, Slash, Square, Wand2, X } from 'lucide-react'
+import { ArrowUp, CircleAlert, FileText, ImageOff, ListTodo, Paperclip, Shield, ShieldAlert, ShieldOff, Square, Wand2, X } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { agentPlaceholder, sessionKey } from '../lib/agents'
 import {
@@ -495,7 +495,7 @@ export function Composer({
         )}
         <div
           className={cn(
-            'rounded-[20px] border border-qn-composer-outline bg-qn-composer shadow-[var(--qn-composer-shadow)] transition-colors focus-within:border-qn-outline',
+            'rounded-xl border border-qn-composer-outline bg-qn-composer shadow-[var(--qn-composer-shadow)] transition-colors focus-within:border-qn-outline',
             disabled && 'opacity-70',
           )}
         >
@@ -629,12 +629,12 @@ export function Composer({
             {leading}
             {accessAddress && accessMode === 'plan' && !untrusted && !noApprovals && (
               // 计划模式改变发送效果，常驻标识并提供退出入口。
-              <span role="status" className="inline-flex h-7 items-center gap-1 rounded-full border border-qn-accent bg-qn-accent/12 pl-2.5 pr-1 text-ui-sm text-qn-text">
+              <span role="status" className="inline-flex h-7 items-center gap-1 rounded-md border border-qn-accent bg-qn-accent/12 pl-2.5 pr-1 text-ui-sm text-qn-text">
                 <ListTodo size={13} className="shrink-0 text-qn-accent" aria-hidden />
                 {t('计划模式')}
                 <button
                   type="button"
-                  className="inline-flex size-5 items-center justify-center rounded-full text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover disabled:opacity-40"
+                  className="inline-flex size-5 items-center justify-center rounded-sm text-qn-muted outline-none hover:bg-qn-hover hover:text-qn-text focus-visible:ring-1 focus-visible:ring-qn-outline-hover disabled:opacity-40"
                   aria-label={t('退出计划模式')}
                   disabled={Boolean(disabled || sending || compactionStarting)}
                   onClick={() => setAccessMode(accessAddress, draftRevision, planReturn)}
@@ -676,8 +676,8 @@ export function Composer({
                   <button
                     type="button"
                     className={cn(
-                      'inline-flex h-8 items-center justify-center gap-1 overflow-hidden rounded-full text-ui-sm font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover',
-                      busy ? 'pl-2.5 pr-3' : 'w-8',
+                      'inline-flex h-8 items-center justify-center gap-1 overflow-hidden text-ui-sm font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover',
+                      busy ? 'rounded-lg pl-2.5 pr-3' : 'w-8 rounded-full',
                       canSend ? 'bg-qn-text text-qn-bg hover:bg-qn-text/90' : 'bg-qn-fg/12 text-qn-dim',
                     )}
                     disabled={!canSend}
@@ -804,7 +804,8 @@ function SlashMenu({
               item.kind === 'skill' ? 'bg-qn-brand/10 text-qn-brand' : 'bg-qn-fg/[0.06] text-qn-muted',
             )}
           >
-            {item.kind === 'skill' ? <Wand2 size={14} /> : <Slash size={14} />}
+            {/* 命令用正文字体的「/」字形，与输入框里敲出的斜杠角度一致（矢量 Slash 图标是 45°）。 */}
+            {item.kind === 'skill' ? <Wand2 size={14} /> : <span className="text-[13px] font-semibold leading-none">/</span>}
           </span>
           <span className="min-w-0 flex-1">
             <span className="block wrap-anywhere text-ui leading-5 text-qn-text">

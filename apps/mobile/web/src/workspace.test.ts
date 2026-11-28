@@ -4,7 +4,7 @@ import { createGateway, setGateway } from './client'
 import { MOCK_FP } from './mock'
 import { useApp } from './store'
 import type { Connection, Project, Target } from './types'
-import { applyGroupOrder, changeThreadPreference, closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, moveWorkspaceProject, orderWorkspaceProjects, orderWorkspaceThreads, placeWorkspaceThread, recentThreadStatus, registerBackHandler, startWorkspaceObserver, stickyGroupOrder, workspaceGroupKey, pinnedFirst, toggleProjectPin, workspaceProjectKey, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
+import { applyGroupOrder, changeThreadPreference, closeTopSheet, displayPath, filterProjects, groupWorkspaceThreads, isWorkspaceTabDoubleTap, moveWorkspaceProject, orderWorkspaceProjects, placeWorkspaceGroup, orderWorkspaceThreads, placeWorkspaceThread, recentThreadStatus, registerBackHandler, startWorkspaceObserver, stickyGroupOrder, workspaceGroupKey, pinnedFirst, toggleProjectCollapse, toggleProjectPin, workspaceProjectKey, threadPreviewLine, useWorkspace, visibleWorkspaceThreads, type WorkspaceThread } from './workspace'
 
 const laptop: Project = { id: 'laptop', targetId: 'local', name: 'sandbox', path: 'C:\\sandbox', lastOpenedAt: 1 }
 const remote: Project = { id: 'remote', targetId: 'ssh', name: 'sandbox', path: '/srv/sandbox', lastOpenedAt: 0 }
@@ -88,7 +88,14 @@ describe('移动工作台', () => {
       moveWorkspaceProject(desktopId, nextProject, [laptop, nextProject], -1)
       toggleProjectPin(desktopId, remote)
       toggleProjectPin(desktopId, laptop)
+      toggleProjectCollapse(desktopId, remote)
       placeWorkspaceThread(desktopId, laptop, [newer, third], 0, 1)
+      // 置顶项目之间调整置顶列表；置顶与普通项目不能互换；普通项目写入分组顺序。
+      const [pinA, pinB] = [workspaceProjectKey(laptop), workspaceProjectKey(remote)]
+      placeWorkspaceGroup(desktopId, ['x', pinA, 'y'], pinA, 'x')
+      placeWorkspaceGroup(desktopId, ['x', pinA, 'y'], 'y', 'x')
+      placeWorkspaceGroup(desktopId, [], pinB, pinA)
+      placeWorkspaceGroup(desktopId, [], pinA, pinB)
       await vi.waitFor(async () => expect(await gateway.storageGet('workspace.sessions')).toContain('本地别名'))
       stop()
       useWorkspace.setState({ preferences: {} })
@@ -104,11 +111,18 @@ describe('移动工作台', () => {
       expect(orderWorkspaceProjects([laptop, nextProject], prefs?.projectOrders.local)).toEqual([nextProject, laptop])
       // 置顶项目持久化，后置顶的排在前面；再次切换即取消。
       expect(prefs?.pinnedProjects).toEqual([workspaceProjectKey(laptop), workspaceProjectKey(remote)])
+      expect(prefs?.groupOrder).toEqual(['y', 'x', pinA])
+      // 收起状态持久化。
+      expect(prefs?.collapsedProjects).toEqual([workspaceProjectKey(remote)])
+      toggleProjectCollapse(desktopId, remote)
+      expect(useWorkspace.getState().preferences[desktopId]?.collapsedProjects).toBeUndefined()
       toggleProjectPin(desktopId, laptop)
       expect(useWorkspace.getState().preferences[desktopId]?.pinnedProjects).toEqual([workspaceProjectKey(remote)])
       expect(useWorkspace.getState().preferences['another-desktop']).toBeUndefined()
     } finally {
       stop()
+      // 等排队的写入落盘，避免漏到后面用假计时器的用例里。
+      await new Promise((resolve) => setTimeout(resolve, 100))
       useApp.setState(app)
       useWorkspace.setState(workspace)
       setGateway(null)
@@ -291,6 +305,33 @@ describe('最近会话的新结果标记', () => {
       useApp.setState({ page: 'chat', selectedThreadId: 'same-id', selectedAgent: 'codex' })
     })
     expect(result).toMatchObject({ updatedAt: 5, unread: false })
+  })
+
+  it('重新进入时拉取离开期间的未读，之后发现的会话也补上', async () => {
+    const gateway = createGateway()
+    const app = useApp.getState()
+    const workspace = useWorkspace.getState()
+    const rpc = vi.spyOn(gateway, 'rpc').mockImplementation(async () => ({
+      threads: [{ agent: 'codex', threadId: 'same-id' }, { agent: 'codex', threadId: 'later' }],
+    }) as never)
+    setGateway(gateway)
+    useApp.setState({ connections: [conn], activeId: conn.id, page: 'workspace', sessions: session({}), eventsConnected: false })
+    useWorkspace.setState({ threads: { [conn.id]: [thread(laptop)] }, projects: {} })
+    const stop = startWorkspaceObserver()
+    const rows = () => useWorkspace.getState().threads[conn.id]!
+    try {
+      // 目标早已就绪时不会再收到 target.state，事件流连上就要拉取。
+      useApp.setState({ eventsConnected: true })
+      await vi.waitFor(() => expect(rows()[0]?.unread).toBe(true))
+      useWorkspace.setState({ threads: { [conn.id]: [...rows(), thread(laptop, { id: 'later' })] } })
+      await vi.waitFor(() => expect(rows()[1]?.unread).toBe(true))
+      expect(rpc).toHaveBeenCalledWith(conn, 'server.req', { targetId: 'local', method: 'thread.unread.list', params: {} })
+    } finally {
+      stop()
+      useApp.setState(app)
+      useWorkspace.setState(workspace)
+      setGateway(null)
+    }
   })
 
   it('运行中的会话在后台结束时标记为有新结果', async () => {

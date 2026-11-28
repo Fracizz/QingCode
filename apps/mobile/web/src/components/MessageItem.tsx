@@ -157,8 +157,8 @@ function markdownComponents(actions: FileActions | null, streaming: boolean): Co
         <table className="my-2 w-full border-collapse text-xs">{children}</table>
       </div>
     ),
-    th: ({ children }) => <th className="border border-qn-border px-2 py-1 text-left">{children}</th>,
-    td: ({ children }) => <td className="border border-qn-border px-2 py-1">{children}</td>,
+    th: ({ children }) => <th className="border border-qn-divider px-2 py-1 text-left">{children}</th>,
+    td: ({ children }) => <td className="border border-qn-divider px-2 py-1">{children}</td>,
   }
 }
 
@@ -592,7 +592,7 @@ export function MessageItem({
       )
     case 'reasoning':
       return (
-        <LazyDetails className="rounded-xl border border-qn-border bg-qn-card px-3 py-2 text-xs" summary={
+        <LazyDetails className="qn-surface px-3 py-2 text-xs" summary={
           <summary className="flex items-center gap-2 text-qn-muted">
             <span>{t('◌ 推理摘要')}</span>
             {item.streaming && <Badge tone="accent">{t('进行中')}</Badge>}
@@ -629,7 +629,7 @@ export function MessageItem({
         </span>
       </>
       const row = 'flex min-h-11 items-center gap-2 px-3 py-1.5 text-qn-muted'
-      const surface = 'min-w-0 rounded-xl border border-qn-border bg-qn-card text-xs'
+      const surface = 'min-w-0 qn-surface text-xs'
       if (!body) return <div className={`${surface} ${row}`}>{header}</div>
       return (
         <LazyDetails className={`group ${surface}`} summary={
@@ -638,7 +638,7 @@ export function MessageItem({
             <ChevronDown size={14} className="shrink-0 transition-transform group-open:rotate-180" aria-hidden />
           </summary>
         }>
-          <div className="qn-markdown min-w-0 wrap-anywhere border-t border-qn-border px-3 py-2 text-sm">
+          <div className="qn-markdown min-w-0 wrap-anywhere border-t border-qn-divider px-3 py-2 text-sm">
             <Markdown text={body} streaming={false} />
           </div>
         </LazyDetails>

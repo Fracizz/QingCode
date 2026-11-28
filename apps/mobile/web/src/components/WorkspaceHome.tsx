@@ -1,5 +1,5 @@
 import { sessionStatusLabels, type SessionStatus, t, translateMessage } from '@qn/codex-client'
-import { Archive, ChartColumn, Check, ChevronDown, ChevronRight, Cloud, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, X } from 'lucide-react'
+import { Archive, ChartColumn, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Cloud, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { sessionKey } from '../agents'
 import { pageName } from '../names'
@@ -14,6 +14,7 @@ import {
   openWorkspaceThread,
   orderWorkspaceProjects,
   pinnedFirst,
+  placeWorkspaceGroup,
   placeWorkspaceProject,
   placeWorkspaceThread,
   renameCachedThread,
@@ -31,6 +32,7 @@ import {
   workspaceThreadKey,
   type WorkspaceTab,
   type WorkspaceThread,
+  toggleProjectCollapse,
 } from '../workspace'
 import { formatTime, friendlyError } from '../state'
 import { ARCHIVE_ACTION_WIDTH, threadSwipeAxis, threadSwipeOffset } from '../threadSwipe'
@@ -126,12 +128,39 @@ export function ProjectOrigin({ target }: { target?: Target }) {
   return <span className="qn-origin" title={target?.kind === 'local' ? undefined : target?.host}>{name}</span>
 }
 
-/** 会话分组标题里的来源小标签（rust 版样式）：远端与直连带上主机地址，同名项目也能分清在哪台机器。 */
+/** 会话分组标题里的来源小标签（rust 版样式）：远端与直连带上主机地址，同名项目也能分清在哪台机器。远端靠颜色区分，只显示地址。 */
 function SourceTag({ target }: { target?: Target }) {
   if (!target) return <span className="qn-source-tag">{t('目标已移除')}</span>
-  const label = target.kind === 'ssh' ? t('远端 · {host}', { host: target.host })
+  const label = target.kind === 'ssh' ? target.host
     : target.kind === 'direct' ? t('直连 · {host}', { host: target.host }) : t('本机')
-  return <span className="qn-source-tag" data-kind={target.kind} title={target.kind === 'local' ? undefined : `${target.name} · ${target.host}:${target.port}`}>{label}</span>
+  // 外层样式用 rtl 让省略号落在开头、保住地址末尾；bdi 保证文字本身仍按从左到右排。
+  return <span className="qn-source-tag" data-kind={target.kind} title={target.kind === 'local' ? undefined : `${target.name} · ${target.host}:${target.port}`}><bdi dir="ltr">{label}</bdi></span>
+}
+
+// 首字母头像与电脑版项目树一致：同样的取色算法和尺寸，同一项目在两端颜色相同。
+const INITIAL_COLORS = [
+  'bg-qn-avatar-1', 'bg-qn-avatar-2', 'bg-qn-avatar-3', 'bg-qn-avatar-4',
+  'bg-qn-avatar-5', 'bg-qn-avatar-6', 'bg-qn-avatar-7', 'bg-qn-avatar-8',
+]
+
+function ProjectInitial({ name }: { name: string }) {
+  const ch = (Array.from(name.replace(/^[^\p{L}\p{N}]+/u, ''))[0] ?? Array.from(name)[0] ?? '?').toUpperCase()
+  let hash = 0
+  for (const c of name) hash = (hash * 31 + c.codePointAt(0)!) | 0
+  const color = INITIAL_COLORS[Math.abs(hash) % INITIAL_COLORS.length]
+  // 用 SVG 按字形几何居中：CSS 行盒按 ascent/descent 居中，大写字母会偏上。
+  // 拉丁字母/数字以基线 + 约 0.36em 让大写字高居中；中日韩字符用 central 基线。
+  const latin = /^[\p{Script=Latin}\p{N}]$/u.test(ch)
+  return (
+    <span aria-hidden className={`inline-flex size-[18px] shrink-0 rounded-md text-white ${color}`}>
+      <svg width="18" height="18" viewBox="0 0 18 18" className="block">
+        <text x="9" y={latin ? 13 : 9} textAnchor="middle" dominantBaseline={latin ? 'alphabetic' : 'central'}
+          fontSize="11" fontWeight="600" fill="currentColor">
+          {ch}
+        </text>
+      </svg>
+    </span>
+  )
 }
 
 export function WorkspaceThreadRow({
@@ -469,14 +498,16 @@ export function WorkspaceHome() {
     groupWorkspaceThreads(visibleWorkspaceThreads(threadList, desktopId, archived), projects, query, preferences),
   [threadList, desktopId, archived, projects, query, preferences])
   // 项目分组位置固定：只有新项目插到最前，已有项目不随会话状态重排。
-  const groupOrder = useMemo(() => {
+  const baseOrder = useMemo(() => {
     const key = desktopId ?? ''
     const next = stickyGroupOrder(freshGroups.map(workspaceGroupKey), projectGroupOrders.get(key) ?? [])
     projectGroupOrders.set(key, next)
-    // 置顶项目始终排在最前；取消置顶后回到原来的固定位置。
-    return pinnedFirst(next, preferences?.pinnedProjects, (item) => item)
+    // 拖动保存过的顺序优先，之后新出现的项目仍插到最前。
+    return preferences?.groupOrder ? stickyGroupOrder(next, preferences.groupOrder) : next
   }, [freshGroups, desktopId, preferences])
-  const groups = useMemo(() => applyGroupOrder(freshGroups, groupOrder), [freshGroups, groupOrder])
+  // 置顶项目始终排在最前；取消置顶后回到原来的固定位置。
+  const groups = useMemo(() => applyGroupOrder(freshGroups, pinnedFirst(baseOrder, preferences?.pinnedProjects, (item) => item)),
+    [freshGroups, baseOrder, preferences])
 
   const refresh = useCallback(async () => {
     if (desktopId) await Promise.all([loadTargets(), loadProjects(desktopId)])
@@ -486,6 +517,7 @@ export function WorkspaceHome() {
 
   const isSessions = tab === 'sessions'
   const searching = query.trim().length > 0
+  const pinnedGroupCount = groups.filter((group) => preferences?.pinnedProjects?.includes(workspaceGroupKey(group))).length
   const threadCount = groups.reduce((sum, group) => sum + group.threads.length, 0)
   const projectCount = projectGroups.reduce((sum, group) => sum + group.rows.length, 0)
   const showTargets = () => {
@@ -536,25 +568,44 @@ export function WorkspaceHome() {
             </>
           )}
           {isSessions ? (
-            groups.length ? groups.map(({ project, threads }) => (
-              <section key={JSON.stringify([desktopId, project.targetId, project.id])} className="qn-workspace-group">
-                <div className="qn-group-heading">
-                  <button type="button" className="qn-group-title" onClick={() => void showWorkspaceProject(project)}
-                    aria-label={t('进入 {name} 项目的会话', { name: project.name })}>
-                    <Folder size={18} strokeWidth={1.75} className="qn-group-icon" aria-hidden />
-                    <h2 className="truncate">{project.name}</h2>
-                    {preferences?.pinnedProjects?.includes(workspaceProjectKey(project))
-                      && <Pin size={13} className="shrink-0 text-qn-muted" aria-label={t('已置顶')} />}
-                    <SourceTag target={targets.find((item) => item.id === project.targetId)} />
-                    <span className="qn-group-count">{threads.length}</span>
-                  </button>
-                  {targets.some((item) => item.id === project.targetId) && <NewSessionButton project={project} iconOnly className="qn-list-action qn-new-session" />}
-                  <ProjectTools project={project} compact />
-                </div>
-                <WorkspaceThreadList project={project} threads={threads} searching={searching}
-                  onOpen={(thread) => void openWorkspaceThread(thread, project)} />
-              </section>
-            )) : (
+            groups.length ? (
+              // 长按项目标题拖动整个分组；拖动期间收起会话，方便跨多个项目移动。
+              <SortableList items={groups} itemKey={(group) => JSON.stringify([desktopId, workspaceGroupKey(group)])}
+                className="qn-group-sort" handle=".qn-group-title" collapse disabled={searching || !desktopId} label={pageName('projects')}
+                clamp={(from, to) => from < pinnedGroupCount ? Math.min(to, pinnedGroupCount - 1) : Math.max(to, pinnedGroupCount)}
+                onMove={(from, to) => {
+                  const moved = groups[from]
+                  const anchor = groups[to]
+                  if (desktopId && moved && anchor) placeWorkspaceGroup(desktopId, baseOrder, workspaceGroupKey(moved), workspaceGroupKey(anchor))
+                }}>
+                {({ project, threads }) => {
+                  const collapsed = preferences?.collapsedProjects?.includes(workspaceProjectKey(project)) ?? false
+                  return <section className="qn-workspace-group">
+                    <div className="qn-group-heading">
+                      <button type="button" className="qn-group-title" onClick={() => void showWorkspaceProject(project)}
+                        aria-label={t('进入 {name} 项目的会话', { name: project.name })}>
+                        <ProjectInitial name={project.name} />
+                        <h2 className="truncate">{project.name}</h2>
+                        {preferences?.pinnedProjects?.includes(workspaceProjectKey(project))
+                          && <Pin size={13} className="shrink-0 text-qn-muted" aria-label={t('已置顶')} />}
+                        <SourceTag target={targets.find((item) => item.id === project.targetId)} />
+                        <span className="qn-group-count">{threads.length}</span>
+                      </button>
+                      {targets.some((item) => item.id === project.targetId) && <NewSessionButton project={project} iconOnly className="qn-list-action qn-new-session" />}
+                      {/* 搜索时总是展示匹配结果，收起操作此时看不出效果，不提供。 */}
+                      <ProjectTools project={project} compact sortable={!searching && groups.length > 1}
+                        actions={searching || !desktopId ? undefined : [{
+                          icon: collapsed ? ChevronsUpDown : ChevronsDownUp,
+                          label: collapsed ? t('展开会话') : t('收起会话'),
+                          onClick: () => toggleProjectCollapse(desktopId, project),
+                        }]} />
+                    </div>
+                    {(searching || !collapsed) && <WorkspaceThreadList project={project} threads={threads} searching={searching}
+                      onOpen={(thread) => void openWorkspaceThread(thread, project)} />}
+                  </section>
+                }}
+              </SortableList>
+            ) : (
               <Empty>
                 <p>{query ? t('没有匹配的会话。') : t('还没有最近访问的会话。')}</p>
                 <button type="button" className="qn-dashed-action qn-pressable" onClick={() => { setQuery(''); setTab('projects') }}>{t('选择项目')}</button>

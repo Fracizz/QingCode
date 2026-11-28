@@ -24,7 +24,7 @@ export function MessageImage({ src, label, compact = false }: { src: string; lab
           type="button"
           aria-label={t('查看{label}', { label })}
           aria-haspopup="dialog"
-          className="max-w-[min(100%,16rem)] cursor-zoom-in overflow-hidden rounded-xl border border-qn-border bg-qn-panel text-qn-muted hover:text-qn-text focus-visible:outline-2 focus-visible:outline-qn-outline-hover focus-visible:outline-offset-2"
+          className="max-w-[min(100%,16rem)] cursor-zoom-in overflow-hidden rounded-lg border border-qn-border bg-qn-panel text-qn-muted hover:text-qn-text focus-visible:outline-2 focus-visible:outline-qn-outline-hover focus-visible:outline-offset-2"
           onClick={() => previewRef.current?.showModal()}
         >
           <img src={src} alt="" className="mx-auto max-h-48 max-w-full object-contain" />

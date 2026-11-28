@@ -282,6 +282,7 @@ export default {
   '继续发送': 'Resume sending',
   '补充到当前一轮': 'Add to the current turn',
   '引导': 'Steer',
+  '插入': 'Insert',
   '重新编辑': 'Edit',
   '移除排队消息': 'Remove queued message',
   '重新编辑排队消息': 'Edit queued message',

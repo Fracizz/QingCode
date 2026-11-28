@@ -498,7 +498,7 @@ export function TerminalPanel({ project }: { project: Project }) {
         {selected && <Button variant="ghost" aria-label={t('终端操作')} onClick={() => setMenu(true)}><Ellipsis size={19} aria-hidden /></Button>}
       </div>
       {closing && selected && (
-        <div className="flex items-center gap-2 rounded-xl border border-qn-border px-2 text-sm">
+        <div className="flex items-center gap-2 qn-surface px-2 text-sm">
           <span className="flex-1">{t('关闭会终止该终端。')}</span>
           <Button variant="ghost" disabled={busy} onClick={() => setClosing(false)}>{t('取消')}</Button>
           <Button variant="danger" disabled={busy} onClick={() => void terminate()}>{t('关闭')}</Button>

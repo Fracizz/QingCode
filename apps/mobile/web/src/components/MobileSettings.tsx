@@ -97,7 +97,7 @@ function ChoiceRow<T extends string | boolean>({
         <span className="qn-setting-value">{current?.label}</span>
         <ChevronRight className="qn-setting-chevron" size={18} aria-hidden />
       </button>
-      {/* 挂到 body：嵌在全屏设置页里会被 .qn-dialog[data-placement="full"] 的后代选择器撑成全屏。 */}
+      {/* 挂到 body：选项面板不嵌在全屏设置页的 DOM 里。 */}
       {open && createPortal(
         <Dialog title={title} onClose={() => setOpen(false)}>
           {hint && <p className="qn-select-hint">{hint}</p>}

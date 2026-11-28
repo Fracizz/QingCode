@@ -170,14 +170,18 @@ export abstract class JsonRpcAgentHost implements AgentHost {
   private readonly buffer = new ReplayBuffer()
   private readonly pending = new PendingRequests()
   private readonly turnTiming = new TurnTiming()
-  private readonly threadUsage = new ThreadUsage()
+  private readonly threadUsage: ThreadUsage
 
   constructor(
     protected readonly hub: AgentHostHub,
     protected readonly version: string = VERSION,
     protected readonly agentLabel: string = 'codex app-server',
     protected readonly eventName: string = 'codex',
-  ) {}
+    /** 给出时会话用量落盘，daemon 重启后打开历史会话仍有读数。 */
+    usageStateDir?: string,
+  ) {
+    this.threadUsage = new ThreadUsage({ stateDir: usageStateDir, agent: eventName, log: (message) => hub.log(message) })
+  }
 
   get lastSeq(): number {
     return this.buffer.lastSeq
@@ -399,8 +403,8 @@ export class CodexHost extends JsonRpcAgentHost {
   private replacingChild = false
   private shuttingDown = false
 
-  constructor(hub: AgentHostHub, version: string = VERSION) {
-    super(hub, version, 'codex app-server', 'codex')
+  constructor(hub: AgentHostHub, version: string = VERSION, options: { stateDir?: string } = {}) {
+    super(hub, version, 'codex app-server', 'codex', options.stateDir)
   }
 
   protected openAgent(options: AgentOpenOptions): Promise<AgentRuntimeOpen> {

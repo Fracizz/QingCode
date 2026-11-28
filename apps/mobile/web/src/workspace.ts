@@ -31,6 +31,10 @@ type WorkspacePreferences = {
   projectOrders: Record<string, string[]>
   /** 置顶项目的键（workspaceProjectKey），越靠前越晚置顶；旧数据没有此字段。 */
   pinnedProjects?: string[]
+  /** 会话页收起了会话列表的项目键（workspaceProjectKey）；旧数据没有此字段。 */
+  collapsedProjects?: string[]
+  /** 会话页长按拖动后的项目分组顺序（workspaceProjectKey）；旧数据没有此字段。 */
+  groupOrder?: string[]
   /** 长按拖动后的会话顺序：项目键 → 会话偏好键（threadPreferenceKey）；旧数据没有此字段。 */
   threadOrders?: Record<string, string[]>
 }
@@ -177,11 +181,17 @@ function parsePreferences(raw: unknown): WorkspacePreferences | undefined {
     Array.isArray(order) ? [[key, [...new Set(order.filter((id) => typeof id === 'string'))]]] : []))
   const pinnedProjects = Array.isArray(value.pinnedProjects)
     ? [...new Set(value.pinnedProjects.filter((key) => typeof key === 'string'))] : []
+  const collapsedProjects = Array.isArray(value.collapsedProjects)
+    ? [...new Set(value.collapsedProjects.filter((key) => typeof key === 'string'))] : []
   const threadOrders = Object.fromEntries(Object.entries(value.threadOrders ?? {}).flatMap(([key, order]) =>
     Array.isArray(order) ? [[key, [...new Set(order.filter((id) => typeof id === 'string'))]]] : []))
+  const groupOrder = Array.isArray(value.groupOrder)
+    ? [...new Set(value.groupOrder.filter((key) => typeof key === 'string'))] : []
   return {
     fp: value.fp, threads, projectOrders,
+    ...(groupOrder.length ? { groupOrder } : {}),
     ...(pinnedProjects.length ? { pinnedProjects } : {}),
+    ...(collapsedProjects.length ? { collapsedProjects } : {}),
     ...(Object.keys(threadOrders).length ? { threadOrders } : {}),
   }
 }
@@ -341,12 +351,38 @@ export function toggleProjectPin(desktopId: string, project: Pick<Project, 'targ
   })
 }
 
+/** 收起或展开会话页里某个项目的会话列表（仅此手机）。 */
+export function toggleProjectCollapse(desktopId: string, project: Pick<Project, 'targetId' | 'id'>): void {
+  const key = workspaceProjectKey(project)
+  changePreferences(desktopId, (current) => {
+    const collapsed = current.collapsedProjects ?? []
+    const next = collapsed.includes(key) ? collapsed.filter((item) => item !== key) : [...collapsed, key]
+    const { collapsedProjects: _, ...rest } = current
+    return next.length ? { ...rest, collapsedProjects: next } : rest
+  })
+}
+
 /** 长按拖动后保存当前目标下的项目顺序（仅此手机）。 */
 export function placeWorkspaceProject(desktopId: string, rows: Project[], from: number, to: number): void {
   const moved = rows[from]
   if (!moved || from === to || !rows[to]) return
   const ids = reorder(rows.map(({ id }) => id), from, to)
   changePreferences(desktopId, (current) => ({ ...current, projectOrders: { ...current.projectOrders, [moved.targetId]: ids } }))
+}
+
+/**
+ * 会话页长按拖动项目分组后，把 moved 挪到 anchor 的位置（仅此手机）。
+ * order 为不含置顶提前的完整分组顺序；置顶项目之间只调整置顶列表，取消置顶后仍回到原位。
+ */
+export function placeWorkspaceGroup(desktopId: string, order: readonly string[], moved: string, anchor: string): void {
+  if (moved === anchor) return
+  changePreferences(desktopId, (current) => {
+    const pinned = current.pinnedProjects ?? []
+    if (pinned.includes(moved) !== pinned.includes(anchor)) return current
+    const list = pinned.includes(moved) ? pinned : order
+    const next = reorder(list, list.indexOf(moved), list.indexOf(anchor))
+    return list === pinned ? { ...current, pinnedProjects: next } : { ...current, groupOrder: next }
+  })
 }
 
 /**
@@ -424,7 +460,7 @@ export function startWorkspaceObserver(): () => void {
     useWorkspace.setState((current) => ({ threads: { ...current.threads, [desktopId]: next } }))
     persistWorkspace()
   }
-  const pullUnread = async (desktopId: string, targetId: string) => {
+  const readUnread = async (desktopId: string, targetId: string) => {
     let keys: Set<string> | null
     try {
       keys = unreadKeysFromList(await unreadReq(targetId, 'thread.unread.list', {}))
@@ -444,6 +480,34 @@ export function startWorkspaceObserver(): () => void {
       return unread
     })
   }
+  // 同一目标的拉取串行执行；进行中又有变化时结束后补拉一次，避免旧结果盖掉新状态。值表示是否需要补拉。
+  const pulling = new Map<string, boolean>()
+  const pullUnread = async (desktopId: string, targetId: string) => {
+    const flight = targetKey(desktopId, targetId)
+    if (pulling.has(flight)) {
+      pulling.set(flight, true)
+      return
+    }
+    do {
+      pulling.set(flight, false)
+      await readUnread(desktopId, targetId)
+    } while (pulling.get(flight))
+    pulling.delete(flight)
+  }
+  // 网关不补发连接前的事件，也不下发早已就绪的目标状态：冷启动、重连、回到前台和发现新会话时都要主动拉取。
+  const pullThreadsUnread = (threads?: WorkspaceThread[]) => {
+    const { activeId, eventsConnected } = useApp.getState()
+    if (!activeId || !eventsConnected) return
+    const rows = threads ?? useWorkspace.getState().threads[activeId] ?? []
+    for (const targetId of new Set(rows.map((thread) => thread.targetId))) void pullUnread(activeId, targetId)
+  }
+  const stopNewThreads = useWorkspace.subscribe((now, before) => {
+    const { activeId } = useApp.getState()
+    if (!activeId || now.threads[activeId] === before.threads[activeId]) return
+    const known = new Set((before.threads[activeId] ?? []).map(workspaceThreadKey))
+    const added = (now.threads[activeId] ?? []).filter((thread) => !known.has(workspaceThreadKey(thread)))
+    if (added.length) pullThreadsUnread(added)
+  })
   // 正在查看的会话变化（或回到前台）时回写已读，电脑端随之清除未读。
   let viewedKey: string | null = null
   const syncViewed = () => {
@@ -461,6 +525,7 @@ export function startWorkspaceObserver(): () => void {
     const change = parseUnreadChange(payload)
     if (!change) return
     sharedUnread.add(targetKey(desktopId, targetId))
+    if (pulling.has(targetKey(desktopId, targetId))) pulling.set(targetKey(desktopId, targetId), true)
     const thread = { targetId, agent: change.agent, id: change.threadId }
     if (change.unread && visibleChat(useApp.getState(), thread)) {
       markRead(targetId, change.agent, change.threadId)
@@ -485,7 +550,11 @@ export function startWorkspaceObserver(): () => void {
     }))
     persistWorkspace()
   }
-  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', clearViewed)
+  const onVisibility = () => {
+    clearViewed()
+    if (document.visibilityState !== 'hidden') pullThreadsUnread()
+  }
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
 
   // 缓存合并只增不减；Claude/pi 归档后手机没有本地标记，需在此直接移除，否则首页仍显示该会话。
   const stopArchive = onThreadArchived((desktopId, targetId, archived) => {
@@ -521,6 +590,7 @@ export function startWorkspaceObserver(): () => void {
 
     if (!now.activeId) return
     syncViewed()
+    if (now.eventsConnected && (!before.eventsConnected || now.activeId !== before.activeId)) pullThreadsUnread()
     if (now.targetStates !== before.targetStates || now.activeId !== before.activeId) {
       for (const [id, value] of Object.entries(now.targetStates)) {
         const wasReady = now.activeId === before.activeId && before.targetStates[id]?.state === 'ready'
@@ -569,7 +639,8 @@ export function startWorkspaceObserver(): () => void {
     unsubscribe()
     stopArchive()
     stopServerEvt()
-    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', clearViewed)
+    stopNewThreads()
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility)
   }
 }
 

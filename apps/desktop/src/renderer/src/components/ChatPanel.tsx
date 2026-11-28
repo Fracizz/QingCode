@@ -651,6 +651,8 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
       case 'copy':
         if (latestReply?.kind === 'agent') void copyText(latestReply.text).then((ok) => showCommandMessage(ok ? t('已复制最近一条回复') : t('复制失败')))
         return
+      // 压缩不再二次确认，命令与用量面板里的按钮都直接开始。
+      case 'compact': void confirmCommand('compact'); return
     }
     showCommand(id)
   }
@@ -767,7 +769,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
             ) : (
               <div className="space-y-4 pt-4">
                 {(firstVisible > 0 || view?.historyCursor) && (
-                  <button type="button" className="mx-auto block rounded-full px-3 py-1.5 text-ui-md text-qn-muted hover:bg-qn-hover" disabled={historyLoading} onClick={() => void showEarlier()}>
+                  <button type="button" className="mx-auto block rounded-lg px-3 py-1.5 text-ui-md text-qn-muted hover:bg-qn-hover" disabled={historyLoading} onClick={() => void showEarlier()}>
                     {historyLoading ? t('正在加载更早消息…') : t('查看更早消息')}
                   </button>
                 )}
@@ -833,7 +835,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
         {!pinned && (
           <button
             type="button"
-            className="qn-surface-float absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5 text-ui-sm hover:bg-qn-hover"
+            className="qn-surface-float absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-lg px-3 py-1.5 text-ui-sm hover:bg-qn-hover"
             onClick={scrollToBottom}
           >
             <ArrowDown size={14} /> {t('回到底部')}
@@ -951,8 +953,8 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
           {turnUsage?.costUsd != null && <p>{t('费用估算 {cost}', { cost: formatCost(turnUsage.costUsd) })}</p>}
           {!usage && !turnUsage && <p className="text-qn-muted">{t('暂无会话用量')}</p>}
           {currentThreadId && <>
-            <button type="button" className="qn-button" disabled={!!compactBlocked} onClick={() => showCommand('compact')}>{t('压缩会话')}</button>
-            {compactBlocked && <p className="text-qn-muted">{compactBlocked}</p>}
+            <button type="button" className="qn-button" disabled={!!compactBlocked} onClick={() => void confirmCommand('compact')}>{t('压缩会话')}</button>
+            <p className="text-qn-muted">{compactBlocked ?? t('压缩会总结较早的对话，让后续回复使用更短的上下文。账号已用额度不会恢复。')}</p>
           </>}
         </div>
       </Modal>}
@@ -969,15 +971,14 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
           </button>
         ))}
       </Modal>}
-      {(activeCommand === 'rename' || activeCommand === 'archive' || activeCommand === 'fork' || activeCommand === 'compact') && (
+      {(activeCommand === 'rename' || activeCommand === 'archive' || activeCommand === 'fork') && (
         <Modal title={activeCommand === 'rename' ? t('重命名会话') : activeCommand === 'archive' ? t('归档会话')
-          : activeCommand === 'fork' ? t('创建会话分支') : t('压缩会话')} onClose={closeCommand}>
+          : t('创建会话分支')} onClose={closeCommand}>
           <form onSubmit={(event) => { event.preventDefault(); void confirmCommand(activeCommand) }}>
             {activeCommand === 'rename'
               ? <input className="qn-input w-full" aria-label={t('会话名称')} value={commandName} onChange={(event) => setCommandName(event.target.value)} />
               : <p className="text-qn-muted">{activeCommand === 'archive' ? t('可在已归档会话中恢复。')
-                : activeCommand === 'fork' ? t('从当前会话复制上下文并打开新分支。')
-                : t('压缩会总结较早的对话，让后续回复使用更短的上下文。账号已用额度不会恢复。')}</p>}
+                : t('从当前会话复制上下文并打开新分支。')}</p>}
             {commandMessage && <p role="alert" className="mt-2 text-qn-danger">{commandMessage}</p>}
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" className="qn-button-subtle" onClick={closeCommand}>{t('取消')}</button>
@@ -990,7 +991,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
         <RewindDialog chat={messageChat} turnId={rewinding.turnId} onClose={() => setRewinding(null)} />
       )}
       {dragging && (
-        <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-qn-outline bg-qn-bg/85 text-ui-md text-qn-text">
+        <div className="pointer-events-none absolute inset-3 z-40 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-qn-outline bg-qn-bg/85 text-ui-md text-qn-text">
           <ImagePlus size={28} className="text-qn-accent" />
           {t('松开以添加图片或文件')}
           <span className="text-ui-sm text-qn-muted">

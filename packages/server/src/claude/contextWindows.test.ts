@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ContextWindowStore, modelKey, parseContextWindowRecord, resultModelWindow } from './contextWindows'
+import { ContextWindowStore, defaultModelWindow, modelKey, parseContextWindowRecord, resultModelWindow } from './contextWindows'
 
 const dirs: string[] = []
 afterEach(() => {
@@ -36,6 +36,23 @@ describe('Claude 上下文窗口记录', () => {
     expect(reopened.lookup('s2', 'claude-opus-5-5')).toBe(200_000)
     expect(reopened.lookup('cli-only', 'claude-opus-5-5')).toBe(1_000_000)
     expect(reopened.lookup('cli-only', 'claude-haiku-5')).toBeNull()
+  })
+
+  it('没学到窗口时按内置清单兜底，学到的优先', () => {
+    const store = new ContextWindowStore(undefined, () => undefined)
+    expect(store.lookup('fresh', 'claude-sonnet-5-5')).toBe(1_000_000)
+    expect(store.lookup('fresh', 'claude-haiku-4-5-20251001')).toBe(200_000)
+    store.record('learned', 'claude-sonnet-5-5', 200_000)
+    expect(store.lookup('learned', 'claude-sonnet-5-5')).toBe(200_000)
+  })
+
+  it('有两档窗口的模型读数超过 200K 时按 1M 算，未知模型不猜', () => {
+    expect(defaultModelWindow('claude-opus-4-8', 150_000)).toBe(200_000)
+    expect(defaultModelWindow('claude-opus-4-8', 350_000)).toBe(1_000_000)
+    expect(defaultModelWindow('claude-opus-4-8[1m]')).toBe(1_000_000)
+    expect(defaultModelWindow('claude-haiku-5')).toBeNull()
+    expect(defaultModelWindow('<synthetic>')).toBeNull()
+    expect(defaultModelWindow(null)).toBeNull()
   })
 
   it('损坏的记录按空表处理', () => {

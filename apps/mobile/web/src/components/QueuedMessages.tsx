@@ -1,7 +1,7 @@
 import {
   AGENT_CAPABILITIES, isSlashDraft, resolveAccessMode, sessionAccessOptions, type SessionAccessSelection, t, translateMessage,
 } from '@qn/codex-client'
-import { GitBranch, ListOrdered, MessageSquarePlus, MoreHorizontal, Pencil, X } from 'lucide-react'
+import { CornerDownRight, GitBranch, ListOrdered, MessageSquarePlus, MoreHorizontal, Pencil, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { UNCONFIRMED_QUEUED_SEND } from '../queuedSends'
 import { selectedAccessPreference, selectedQueuedSends, useApp, type QueuedThreadMode } from '../store'
@@ -101,6 +101,9 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
   }
   const accessLabel = (selection?: SessionAccessSelection) => accessOption(selection)?.label
   const actionMessage = queue.find((item) => item.id === actionsFor)
+  // 与行内「插入」同一条件：本轮运行中、可引导、且不是斜杠命令（命令只能作为独立一轮发送）。
+  const steerable = (message: (typeof queue)[number]) => running && canSteer
+    && !isSlashDraft(agent, message.text, message.attachments.filter((item) => item.type === 'skill').length)
   const startEdit = (id: string, text: string) => {
     if (unlock.current) return
     const release = beginEdit(id)
@@ -138,11 +141,10 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
                 <p className="min-w-0 flex-1 truncate">{message.text.trim() || t('附件或引用')}</p>
                 {message.sending || message.saving ? <Badge>{message.saving ? t('保存中') : t('发送中')}</Badge> : (
                   <div className="flex shrink-0 items-center gap-0.5">
-                    {running && canSteer && !isSlashDraft(agent, message.text,
-                      message.attachments.filter((item) => item.type === 'skill').length) && (
+                    {steerable(message) && (
                       <Button variant="ghost" className="qn-queue-steer" disabled={!connected}
                         title={agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
-                        onClick={() => void steer(message.id)}>{t('引导')}</Button>
+                        onClick={() => void steer(message.id)}>{t('插入')}</Button>
                     )}
                     <Button variant="ghost" className="qn-icon-button" aria-label={t('更多操作')} aria-haspopup="dialog"
                       onClick={() => setActionsFor(message.id)}>
@@ -164,6 +166,11 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
           <blockquote className="qn-sheet-quote">{actionMessage.text.trim() || t('附件或引用')}</blockquote>
           {/* 与项目工具菜单同一套轻量动作行：操作项只是选择，不需要卡片套卡片和进入箭头。 */}
           <div className="qn-sheet-actions">
+            {/* 插入：不等本轮结束，把这条消息补进正在运行的一轮（引导）；Claude 做完当前一步后读取。 */}
+            {steerable(actionMessage) && (
+              <SheetAction icon={CornerDownRight} disabled={!connected}
+                onClick={() => { setActionsFor(null); void steer(actionMessage.id) }}>{t('插入')}</SheetAction>
+            )}
             {newChatActions.map(({ mode, label, Icon }) => (
               <SheetAction key={mode} icon={Icon} onClick={() => { setActionsFor(null); chooseDestination(actionMessage.id, mode) }}>{label}</SheetAction>
             ))}

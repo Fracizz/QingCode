@@ -37,7 +37,7 @@ export function ApprovalCard({ approval, agent, plan, submitting, offline, onDec
           <span className="min-w-0 flex-1 text-sm font-medium break-words">{t('计划待批准')}</span>
           <Badge tone="warn">{submitting ? t('正在提交') : t('待审批')}</Badge>
         </div>
-        <div className="qn-scroll mb-2 max-h-[50dvh] overflow-auto rounded-lg border border-qn-border bg-qn-field px-3 py-2">
+        <div className="qn-scroll mb-2 max-h-[50dvh] overflow-auto qn-surface px-3 py-2">
           {plan.trim()
             ? <div className="qn-markdown min-w-0 wrap-anywhere"><Markdown text={plan} streaming={false} /></div>
             : <pre className="qn-pre whitespace-pre-wrap text-xs">{approval.detail}</pre>}

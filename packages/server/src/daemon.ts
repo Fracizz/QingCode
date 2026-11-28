@@ -131,7 +131,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     },
   })
   const hosts: Record<AgentKind, AgentHost> = {
-    codex: new CodexHost(hubFor('codex'), options.version),
+    codex: new CodexHost(hubFor('codex'), options.version, { stateDir: paths.stateDir }),
     claude: options.createClaudeHost
       ? options.createClaudeHost(hubFor('claude'), options.version)
       : createClaudeHost(hubFor('claude'), options.version, { stateDir: paths.stateDir }),

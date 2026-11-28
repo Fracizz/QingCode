@@ -1,8 +1,8 @@
 import {
-  chatCommandQuery, exactChatCommand, hasSkillToken, insertSkillToken, isSlashDraft, matchingChatCommands, runningSendMode, t,
-  takeSkillTokens, translateMessage, type ChatCommandId, type SlashCommandView, type UserInput,
+  chatCommandQuery, exactChatCommand, hasSkillToken, insertSkillToken, isSlashDraft, matchingChatCommands, runningSendMode,
+  splitSkillTokens, t, takeSkillTokens, translateMessage, type ChatCommandId, type SlashCommandView, type UserInput,
 } from '@qn/codex-client'
-import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, ListTodo, Slash, Square, Wand2, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, ListTodo, Square, Wand2, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
 import { attachmentBytes, IMAGE_BYTES, insertFileMention, isDraftImage, MAX_IMAGES, mentionAt, type DraftImage } from '../composerLogic'
@@ -105,6 +105,7 @@ export function Composer({
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [fileStatus, setFileStatus] = useState('')
   const textarea = useRef<HTMLTextAreaElement>(null)
+  const mirror = useRef<HTMLDivElement>(null)
   const composing = useRef(false)
   const mounted = useRef(true)
   const mention = project && caret !== null ? mentionAt(text, caret) : null
@@ -146,7 +147,8 @@ export function Composer({
     input.style.height = 'auto'
     // 上限交给 CSS 的 max-height（约 8 行、且不超过可视高度 35%），超出后内部滚动。
     input.style.height = `${input.scrollHeight}px`
-  }, [text])
+    if (mirror.current) mirror.current.scrollTop = input.scrollTop
+  })
   useEffect(() => {
     if (!project || query === undefined) return
     let current = true
@@ -213,8 +215,11 @@ export function Composer({
   const canSend = (!disabled && !sending && !picking &&
     (!imageUnavailable || images.length === 0) && Boolean(text.trim() || images.length || annotations.length))
   const busy = running || !!compacting
+  // 手动敲出完整的 /技能名 与从菜单选中等效；选过的排在前面，技能列表还没加载时仍认得。
+  const knownSkills = [...pickedSkills, ...(skills ?? [])]
+  const tokenParts = splitSkillTokens(text, knownSkills)
   // 按钮与占位文字显示消息实际的去向，引导不可用时会转入排队。
-  const draft = takeSkillTokens(text, pickedSkills)
+  const draft = takeSkillTokens(text, knownSkills)
   const slashDraft = isSlashDraft(agent, draft.text, draft.skills.length)
   // 压缩刚发起、轮次事件还没到时（compacting 但未运行），任何方式都只能排队。
   const actualMode: SendMode = (compacting && !running) || (defaultMode === 'steer' && (compacting || !canSteer || slashDraft))
@@ -229,7 +234,7 @@ export function Composer({
     if (!canSend || composing.current) return
     setCaret(null)
     // 技能以 /名字 留在正文里，发送时拆成 skill 输入，发给 Agent 的内容与选技能卡片时一致。
-    const { text: body, skills: used } = takeSkillTokens(text, pickedSkills)
+    const { text: body, skills: used } = draft
     const attachments: UserInput[] = [
       ...used.map((skill): UserInput => ({ type: 'skill', name: skill.name, path: skill.path })),
       ...images.map((image): UserInput => ({ type: 'image', url: image.dataUrl })),
@@ -312,7 +317,7 @@ export function Composer({
   return (
     <div className="qn-footer qn-composer-footer relative">
       {quoteDraft && (
-        <div className="mb-2 rounded-xl border border-qn-border bg-qn-card p-2">
+        <div className="mb-2 qn-surface p-2">
           <div className="qn-mono mb-2 max-h-20 overflow-y-auto whitespace-pre-wrap break-words text-xs text-qn-muted">{quoteDraft}</div>
           <div className="flex gap-2">
             <input
@@ -339,7 +344,7 @@ export function Composer({
           {showAnnotations && (
             <div className="mt-1 max-h-36 space-y-2 overflow-y-auto">
               {annotations.map((annotation) => (
-                <div key={annotation.id} className="rounded-xl border border-qn-border bg-qn-card p-2">
+                <div key={annotation.id} className="qn-surface p-2">
                   <div className="mb-1 flex items-start gap-2">
                     <div className="qn-mono min-w-0 flex-1 whitespace-pre-wrap break-words text-xs text-qn-muted">{annotation.quote}</div>
                     <Button variant="ghost" onClick={() => onRemoveAnnotation(annotation.id)} aria-label={t('删除引用')}><X size={16} /></Button>
@@ -353,10 +358,10 @@ export function Composer({
         </div>
       )}
       {mention && (
-        <div className="absolute inset-x-3 bottom-full z-10 mb-1 max-h-48 overflow-y-auto rounded-xl border border-qn-border bg-qn-panel shadow-lg">
+        <div className="qn-popover absolute inset-x-3 bottom-full z-10 mb-2 max-h-48 overflow-y-auto">
           {fileStatus && <div className="px-3 py-2 text-xs text-qn-muted" role="status">{translateMessage(fileStatus)}</div>}
           {files.map((file) => (
-            <button key={file.path} type="button" className="qn-row border-b border-qn-border px-3 text-sm last:border-0"
+            <button key={file.path} type="button" className="qn-row qn-popover-row text-sm"
               onPointerDown={(event) => event.preventDefault()} onClick={() => selectFile(file.path)}>
               <FileText size={15} className="shrink-0 text-qn-muted" aria-hidden /><span className="min-w-0 truncate" title={file.path}>{file.path}</span>
             </button>
@@ -365,14 +370,14 @@ export function Composer({
       )}
       {commandMatches.length > 0 && (
         <div ref={commandList} role="group" aria-label={t('对话命令')}
-          className="absolute inset-x-3 bottom-full z-10 mb-1 max-h-64 overflow-y-auto rounded-xl border border-qn-border bg-qn-panel shadow-lg">
+          className="qn-popover absolute inset-x-3 bottom-full z-10 mb-2 max-h-72 overflow-y-auto">
           {commandMatches.map((entry, index) => (
             <button key={slashEntryKey(entry)} type="button"
               aria-current={index === activeCommand ? true : undefined}
-              className={`qn-row qn-slash-row ${index === activeCommand ? 'bg-qn-hover' : ''}`}
+              className="qn-row qn-popover-row qn-slash-row"
               onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSlash(entry)}>
               <span className="qn-slash-icon" data-kind={entry.kind} aria-hidden>
-                {entry.kind === 'skill' ? <Wand2 size={14} /> : <Slash size={14} />}
+                {entry.kind === 'skill' ? <Wand2 size={15} /> : <span className="qn-slash-glyph">/</span>}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate">
@@ -414,23 +419,34 @@ export function Composer({
             ))}
           </ul>
         )}
-        <textarea
-          ref={textarea}
-          className="qn-textarea"
-          rows={1}
-          value={text}
-          disabled={disabled}
-          aria-label={t('消息')}
-          enterKeyHint={sendKey === 'send' ? 'send' : 'enter'}
-          placeholder={!busy ? placeholder : actualMode === 'steer' ? t('输入补充内容，发送后引导当前一轮')
-            : actualMode === 'immediate' ? t('输入下一条，发送后打断本轮') : t('输入下一条，发送后排队')}
-          onChange={(event) => { onChangeText(event.target.value); setCaret(event.target.selectionStart) }}
-          onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
-          onBlur={(event) => { if (!commandList.current?.contains(event.relatedTarget)) setCaret(null) }}
-          onKeyDown={onKeyDown}
-          onCompositionStart={() => { composing.current = true; setImeActive(true) }}
-          onCompositionEnd={() => { composing.current = false; setImeActive(false) }}
-        />
+        <div className="relative">
+          <textarea
+            ref={textarea}
+            className="qn-textarea"
+            rows={1}
+            value={text}
+            disabled={disabled}
+            aria-label={t('消息')}
+            enterKeyHint={sendKey === 'send' ? 'send' : 'enter'}
+            placeholder={!busy ? placeholder : actualMode === 'steer' ? t('输入补充内容，发送后引导当前一轮')
+              : actualMode === 'immediate' ? t('输入下一条，发送后打断本轮') : t('输入下一条，发送后排队')}
+            onChange={(event) => { onChangeText(event.target.value); setCaret(event.target.selectionStart) }}
+            onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+            onScroll={(event) => { if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop }}
+            onBlur={(event) => { if (!commandList.current?.contains(event.relatedTarget)) setCaret(null) }}
+            onKeyDown={onKeyDown}
+            onCompositionStart={() => { composing.current = true; setImeActive(true) }}
+            onCompositionEnd={() => { composing.current = false; setImeActive(false) }}
+          />
+          {/* textarea 不能给部分文字上色：叠一层同排版的透明副本，只让技能标记显形并盖住原字。 */}
+          {tokenParts.some((part) => part.skill) && (
+            <div ref={mirror} className="qn-textarea qn-composer-mirror" aria-hidden>
+              {tokenParts.map((part, index) => part.skill
+                ? <mark key={index} className="qn-composer-skill">{part.text}</mark> : part.text)}
+              {text.endsWith('\n') && '​'}
+            </div>
+          )}
+        </div>
         <div className="qn-composer-toolbar">
           <div className="qn-composer-tools">{toolbar}</div>
           {/* 常用操作靠右、离拇指近：上下文环、添加图片、发送/停止；低频的访问模式与模型在左。 */}

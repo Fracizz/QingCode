@@ -130,7 +130,7 @@ export function SendQueue({
     <div className={`shrink-0 ${compact ? 'px-4' : 'px-6'}`}>
       <section
         aria-label={t('发送队列')}
-        className={`mx-auto rounded-xl border border-qn-border bg-qn-panel px-3 py-2 text-ui-sm ${contentWidthClassName}`}
+        className={`mx-auto rounded-lg border border-qn-border bg-qn-panel px-3 py-2 text-ui-sm ${contentWidthClassName}`}
       >
         <div className="flex items-center gap-1.5 text-qn-muted"><ListEnd size={14} /> {t('排队消息（{count}）', { count: pending.length })}</div>
         <ul className="qn-scroll mt-1 max-h-32 space-y-0.5 overflow-auto">
@@ -166,7 +166,7 @@ export function SendQueue({
                       title={agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
                       onClick={() => void steer(chat, item.id)}
                     >
-                      <CornerDownRight size={12} aria-hidden />{t('引导')}
+                      <CornerDownRight size={12} aria-hidden />{t('插入')}
                     </button>
                   )}
                   {!item.sending && allowNewThread && newThreadActions(agent).map(({ mode, label, Icon }) => (

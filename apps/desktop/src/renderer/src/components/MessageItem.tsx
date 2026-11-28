@@ -556,7 +556,7 @@ function UserMessage({ item, onEdit, editNote, onRewind }: {
       )}
       {edit !== null ? (
         <form
-          className="w-full max-w-[80%] rounded-2xl border border-qn-outline bg-qn-elevated px-3 py-2 focus-within:border-qn-outline-hover"
+          className="w-full max-w-[80%] rounded-lg border border-qn-outline bg-qn-elevated px-3 py-2 focus-within:border-qn-outline-hover"
           onSubmit={(event) => {
             event.preventDefault()
             void resend()
@@ -588,7 +588,7 @@ function UserMessage({ item, onEdit, editNote, onRewind }: {
           </div>
         </form>
       ) : (skills.length > 0 || parsed.text.trim()) && (
-        <div className="max-w-[80%] whitespace-pre-wrap wrap-anywhere rounded-2xl rounded-br-md border border-qn-fg/[0.06] bg-qn-bubble px-4 py-2.5 text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-text">
+        <div className="max-w-[80%] whitespace-pre-wrap wrap-anywhere rounded-lg border border-qn-fg/[0.06] bg-qn-bubble px-4 py-2.5 text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-text">
           {skills.map((name, index) => (
             <Fragment key={name}>{index > 0 && ' '}<span className="font-medium text-qn-brand">/{name}</span></Fragment>
           ))}

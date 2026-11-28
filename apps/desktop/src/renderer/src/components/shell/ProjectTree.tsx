@@ -433,7 +433,7 @@ function ProjectInitial({ name }: { name: string }) {
   // 拉丁字母/数字以基线 + 约 0.36em 让大写字高居中；中日韩字符用 central 基线。
   const latin = /^[\p{Script=Latin}\p{N}]$/u.test(ch)
   return (
-    <span aria-hidden className={`inline-flex size-(--qn-tree-icon-size) shrink-0 rounded-[5px] text-white ${color}`}>
+    <span aria-hidden className={`inline-flex size-(--qn-tree-icon-size) shrink-0 rounded-md text-white ${color}`}>
       <svg width="18" height="18" viewBox="0 0 18 18" className="block">
         <text
           x="9"

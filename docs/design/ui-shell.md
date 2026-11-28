@@ -74,7 +74,7 @@
 | 项目树 | 行高 32 | 当前项目展开显示会话（默认 8 条）；当前会话青轨 + 选中底；运行中转圈、待审批琥珀标签；每条会话行尾显示 Agent 图标；悬停换成"新会话 / 移除项目" | `shell/ProjectTree.tsx` |
 | 主区顶栏 | 44px | 会话标题、所在项目、运行中徽标、Agent、"…"菜单 | `shell/MainHeader.tsx` |
 | 消息流 | `max-w-3xl` 居中 | 草稿页 / 消息；连续 ≥2 个工具步骤折叠成摘要行；错误横幅；"回到底部"居中悬浮 | `ChatPanel.tsx`、`MessageItem.tsx`、`shell/WelcomePane.tsx` |
-| 输入框 | 圆角 12px 卡片（`rounded-xl`） | 自动增高（≤40% 视口）；左：Agent 选择（仅草稿态）；右：上下文占用环、模型选择器、发送/停止；下方环境行 | `Composer.tsx`、`AgentPicker.tsx`、`ModelPicker.tsx` |
+| 输入框 | 圆角 12px（`rounded-xl`） | 自动增高（≤40% 视口）；左：Agent 选择（仅草稿态）；右：上下文占用环、模型选择器、发送/停止；下方环境行 | `Composer.tsx`、`AgentPicker.tsx`、`ModelPicker.tsx` |
 
 > 去掉了 v1 的底部状态栏：目标状态在切换器与输入框环境行，额度在标题栏胶囊，Agent 状态在环境行与主区横幅，版本号在侧栏底部。
 > 会话列表一次只加载一个 cwd（codex store 现状），同一时间只展开当前项目。
@@ -145,17 +145,17 @@ Tailwind 尺寸全是 rem，**根字号不得改小**（v1 用 14px 导致 `text
 
 ### 尺寸
 
-- 圆角统一使用下表的档位。
+- 圆角统一使用下表的档位，电脑与手机一致（两端 `@theme` 的 `--radius-*`；手机 `--qn-radius` = 8px、`--qn-float-radius` = 12px）。
 
 | 档位 | 用途 |
 |---|---|
-| `rounded-sm` 4px | 文字级高亮：划词框、搜索命中、行内文件链接、光标 |
-| `rounded-md` 6px | ≤24px 的小元素：Badge、标签/chip、kbd、行内代码、`IconButton size="sm"` |
-| `rounded-lg` 8px | 标准控件：按钮、输入框（`.qn-input`）、菜单项、标签页、列表行、Tooltip、弹窗/浮层内的信息块 |
-| `rounded-xl` 12px | 独立容器：代码块、卡片（含排队消息面板和对话输入框）、所有浮层（菜单、Popover、斜杠菜单、划词工具条、右键菜单、Toast） |
-| `rounded-2xl` 16px | 弹窗、用户消息气泡、拖放遮罩 |
-| `rounded-full` | 状态点、圆形按钮、进度条、胶囊 |
+| `rounded-sm` 4px | 嵌在文字里的元素：划词框、搜索命中、行内文件链接、技能标记、光标；复选框 |
+| `rounded-md` 6px | 矮元素（≤30px）或套在别的框里：Badge、标签/chip、状态条、kbd、行内代码、`IconButton size="sm"`、分段控件内项 |
+| `rounded-lg` 8px | 贴在页面上的内容与控件：按钮（含带文字的操作）、输入框（`.qn-input`）、菜单项、标签页、列表行、代码块、卡片（含排队消息面板）、消息气泡、缩略图、Tooltip |
+| `rounded-xl` 12px（上限） | 浮在内容上面或承载输入：对话输入框、菜单、Popover、斜杠菜单、划词工具条、右键菜单、Toast、弹窗、底部弹层顶角、拖放遮罩 |
+| `rounded-full` | 里面没有文字（数字除外）：状态点、纯图标的圆形按钮与按钮组、开关、进度条、数字角标 |
 
+- 嵌套时内圆角 ≈ 外圆角 − 间距，取最近的档位。不使用 `rounded-2xl` 和临时像素值。
 - 控件高度：图标按钮 32（`IconButton` 默认）/ 24（`size="sm"`）；列表行 32；菜单项 ≥32。
 - 图标：12–13（徽标/环境行）、14–15（列表/工具条/菜单）、16（标题与主按钮）。
 

@@ -568,7 +568,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
               threadId,
               turnId: lastTurnId,
               tokenUsage: { total: last, last, estimated: true,
-                modelContextWindow: session.state.contextWindow ?? this.contextWindows.lookup(threadId, session.historyModel) },
+                modelContextWindow: session.state.contextWindow ?? this.contextWindows.lookup(threadId, session.historyModel, last.totalTokens) },
             } })
           }
           return withActivity(history.turns, session.state.sidechains)

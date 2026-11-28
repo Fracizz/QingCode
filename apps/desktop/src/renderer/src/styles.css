@@ -4,6 +4,11 @@
    chrome（标题栏）< bg（对话区）< sidebar < panel（卡片/输入框/弹窗）< elevated（菜单浮层），相邻层只差一点明暗，靠细线分割。
    brand 青色表达产品身份与当前上下文，accent 蓝色用于主操作和链接，边框与焦点轮廓使用中性色。 */
 @theme {
+  /* 圆角档位（两端一致，见 docs/design/ui-shell.md §6）：用 px 固定，不随根字号缩放。 */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
   --color-qn-chrome: #141414;
   --color-qn-bg: #181818;
   --color-qn-sidebar: #1b1b1b;
@@ -276,7 +281,7 @@ button:disabled {
   .qn-input {
     width: 100%;
     border: 1px solid var(--color-qn-outline);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     background: var(--color-qn-field);
     color: var(--color-qn-text);
     padding: 7px 10px;
@@ -299,7 +304,7 @@ button:disabled {
   }
 
   .qn-button {
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     background: var(--color-qn-accent);
     color: #fff;
     font-size: 14px;
@@ -313,7 +318,7 @@ button:disabled {
 
   .qn-button-subtle {
     border: 1px solid var(--color-qn-border-strong);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
     background: transparent;
     color: var(--color-qn-text);
     font-size: 14px;
@@ -338,7 +343,7 @@ button:disabled {
    */
   .qn-surface-float {
     border: 1px solid var(--qn-float-edge);
-    border-radius: 12px;
+    border-radius: var(--radius-xl);
     background: var(--color-qn-float);
     color: var(--color-qn-text);
     box-shadow: var(--qn-float-shadow);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hasSkillToken, insertSkillToken, takeSkillTokens } from './skillTokens'
+import { hasSkillToken, insertSkillToken, splitSkillTokens, takeSkillTokens } from './skillTokens'
 
 describe('技能标记', () => {
   it('插入时左右各留一个空格', () => {
@@ -16,6 +16,13 @@ describe('技能标记', () => {
     })
     expect(takeSkillTokens('/review ', picked)).toEqual({ text: '', skills: [picked[0]] })
     expect(takeSkillTokens('第一行\n/plan 第二行', picked)).toEqual({ text: '第一行\n第二行', skills: [picked[1]] })
+  })
+
+  it('按位置标出技能标记且拼回原文', () => {
+    const text = '/plan 看看 a/plan\n/plan'
+    const parts = splitSkillTokens(text, [{ name: 'plan' }])
+    expect(parts.map((part) => part.text).join('')).toBe(text)
+    expect(parts.filter((part) => part.skill).map((part) => part.text)).toEqual(['/plan', '/plan'])
   })
 
   it('不是完整标记时保持原文', () => {

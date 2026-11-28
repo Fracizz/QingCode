@@ -23,7 +23,7 @@ export function ApprovalCard({
   }
   if (plan !== undefined) {
     return (
-      <div className="rounded-xl border border-qn-border-strong bg-qn-panel p-3">
+      <div className="rounded-lg border border-qn-border-strong bg-qn-panel p-3">
         <div className="mb-2 flex items-center gap-2">
           <ListTodo size={15} className="text-qn-accent" aria-hidden />
           <span className="text-ui-md font-medium">{t('计划待批准')}</span>

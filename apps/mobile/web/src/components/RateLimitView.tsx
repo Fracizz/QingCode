@@ -63,26 +63,28 @@ function ClaudeQuotaDetails({ targetId, snapshot, available, label }: {
   }
 
   return (
-    <div className="space-y-1 text-sm">
-      <div className={`flex items-center ${label ? 'justify-between' : 'justify-end'}`}>
-        {label && <div className="qn-label" style={{ marginBottom: 0 }}>{label}</div>}
-        <Button className="px-2 py-1 text-xs" disabled={!available || loading} onClick={() => void refresh()}>
+    <div className="qn-quota">
+      <div className="qn-quota-head">
+        {label && <h3 className="qn-quota-title">{label}</h3>}
+        <Button className="qn-quota-refresh" disabled={!available || loading} onClick={() => void refresh()}>
           {loading ? t('刷新中…') : t('刷新')}
         </Button>
       </div>
       {readFailed && available && <p className="text-xs text-qn-danger">{t('读取额度失败')}</p>}
-      {live ? (
-        <>
-          {snapshot?.primary && <WindowRow label={t('5 小时')} window={snapshot.primary} now={now} />}
-          {snapshot?.secondary && <WindowRow label={t('每周')} window={snapshot.secondary} now={now} />}
-        </>
-      ) : (
-        <>
-          <p className={toneText(severity(snapshot))}>{claudeQuotaSummary(snapshot) ?? CLAUDE_WAITING_FOR_QUOTA}</p>
-          {reset !== null && <p className="text-xs text-qn-muted">{formatReset(reset, now)}</p>}
-        </>
-      )}
-      <p className="text-xs text-qn-muted">
+      <div className="qn-surface qn-quota-card">
+        {live ? (
+          <>
+            {snapshot?.primary && <WindowRow label={t('5 小时')} window={snapshot.primary} now={now} />}
+            {snapshot?.secondary && <WindowRow label={t('每周')} window={snapshot.secondary} now={now} />}
+          </>
+        ) : (
+          <div>
+            <p className={`text-sm ${toneText(severity(snapshot))}`}>{claudeQuotaSummary(snapshot) ?? CLAUDE_WAITING_FOR_QUOTA}</p>
+            {reset !== null && <p className="qn-quota-sub">{formatReset(reset, now)}</p>}
+          </div>
+        )}
+      </div>
+      <p className="qn-quota-foot">
         {[source, claudeQuotaReportedAt(snapshot) ?? t('暂无上报时间')].filter(Boolean).join(' · ')}
       </p>
     </div>
@@ -158,14 +160,13 @@ export function AgentQuota({ targetId, agent, showUsage }: { targetId: string; a
   if (agent === 'codex') {
     return (
       <section className="mb-3" aria-label={t('Codex 额度')}>
-        <div className="qn-label">{t('额度')}</div>
-        <RateLimitDetails targetId={targetId} available={opened} showUsage={showUsage} />
+        <RateLimitDetails targetId={targetId} available={opened} showUsage={showUsage} label={t('额度')} />
       </section>
     )
   }
   if (agent !== 'claude') return null
   return (
-    <section className="mb-3 text-sm" aria-label={t('Claude 额度')}>
+    <section className="mb-3" aria-label={t('Claude 额度')}>
       <ClaudeQuotaDetails targetId={targetId} snapshot={claude} available={claudeAvailable} label={t('额度')} />
     </section>
   )
@@ -175,10 +176,10 @@ function WindowRow({ label, window, now }: { label: string; window: RateLimitWin
   const level = severityForPercent(window.usedPercent)
   const remaining = remainingQuotaPercent(window.usedPercent)
   return (
-    <div className="mb-3">
-      <div className="mb-1 flex items-center justify-between text-xs">
+    <div className="qn-quota-window">
+      <div className="qn-quota-window-head">
         <span>{label}</span>
-        <span className={toneText(level)}>{t('剩余 {percent}%', { percent: Math.round(remaining) })}</span>
+        <span className={`tabular-nums ${toneText(level)}`}>{t('剩余 {percent}%', { percent: Math.round(remaining) })}</span>
       </div>
       <div className="qn-bar">
         <div
@@ -187,13 +188,19 @@ function WindowRow({ label, window, now }: { label: string; window: RateLimitWin
         />
       </div>
       {window.resetsAt !== null && (
-        <div className="mt-1 text-[11px] text-qn-muted">{formatReset(window.resetsAt, now)}</div>
+        <div className="qn-quota-sub">{formatReset(window.resetsAt, now)}</div>
       )}
     </div>
   )
 }
 
-export function RateLimitDetails({ targetId, available, showUsage }: { targetId: string; available: boolean; showUsage?: boolean }) {
+export function RateLimitDetails({ targetId, available, showUsage, label }: {
+  targetId: string
+  available: boolean
+  showUsage?: boolean
+  /** 嵌在模型弹层时显示「额度」小标题，与刷新按钮同一行。 */
+  label?: string
+}) {
   const entry = useApp((s) => s.rateLimits[targetId])
   const session = useApp((s) => s.sessions[sessionKey(targetId, 'codex')])
   const [now, setNow] = useState(() => Date.now())
@@ -209,6 +216,10 @@ export function RateLimitDetails({ targetId, available, showUsage }: { targetId:
   const tightest = tightestPercent(snapshot)
   const loading = entry?.loading || session?.opening
   const error = session?.openError ?? entry?.error
+  const windows = Boolean(snapshot?.primary || snapshot?.secondary)
+  const empty = !windows && !loading && !error
+  const credits = snapshot?.credits?.hasCredits === true
+  const reached = Boolean(snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true)
 
   function refresh() {
     const app = useApp.getState()
@@ -222,37 +233,41 @@ export function RateLimitDetails({ targetId, available, showUsage }: { targetId:
   }
 
   return (
-    <div>
-      <div className="mb-2 flex items-center gap-2">
+    <div className="qn-quota">
+      <div className="qn-quota-head">
+        {label && <h3 className="qn-quota-title">{label}</h3>}
         {tightest !== null && (
           <Badge tone={level === 'ok' ? 'muted' : level}>
             {t('最低剩余 {percent}%', { percent: Math.round(remainingQuotaPercent(tightest)) })}
           </Badge>
         )}
-        <Button className="ml-auto px-2 py-1 text-xs" onClick={refresh} disabled={!available || loading}>
+        <Button className="qn-quota-refresh" onClick={refresh} disabled={!available || loading}>
           {loading ? t('刷新中…') : t('刷新')}
         </Button>
       </div>
-      {error && <p className="mb-2 text-xs text-qn-danger">{translateMessage(error)}</p>}
-      {snapshot?.primary && (
-        <WindowRow label={windowLabel(snapshot.primary.windowDurationMins ?? 300)} window={snapshot.primary} now={now} />
-      )}
-      {snapshot?.secondary && (
-        <WindowRow label={windowLabel(snapshot.secondary.windowDurationMins ?? 10080)} window={snapshot.secondary} now={now} />
-      )}
-      {!snapshot?.primary && !snapshot?.secondary && !loading && !error && (
-        <p className="mb-2 text-sm text-qn-muted">{t('暂无额度数据')}</p>
-      )}
-      {snapshot?.credits?.hasCredits && (
-        <p className="mb-2 text-xs text-qn-muted">{t('积分：{value}', { value: snapshot.credits.unlimited ? t('不限量') : (snapshot.credits.balance ?? t('有余额')) })}</p>
-      )}
-      {(snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true) && (
-        <p className="mb-2 text-xs text-qn-danger">{snapshot.rateLimitReachedType
-          ? t('已达额度上限（{type}）', { type: snapshot.rateLimitReachedType }) : t('已达额度上限')}</p>
+      {error && <p className="text-xs text-qn-danger">{translateMessage(error)}</p>}
+      {/* 额度窗口、积分与上限提示收进一张卡片，与下方重置卡、总用量同一层级。 */}
+      {(windows || empty || credits || reached) && (
+        <div className="qn-surface qn-quota-card">
+          {snapshot?.primary && (
+            <WindowRow label={windowLabel(snapshot.primary.windowDurationMins ?? 300)} window={snapshot.primary} now={now} />
+          )}
+          {snapshot?.secondary && (
+            <WindowRow label={windowLabel(snapshot.secondary.windowDurationMins ?? 10080)} window={snapshot.secondary} now={now} />
+          )}
+          {empty && <p className="text-sm text-qn-muted">{t('暂无额度数据')}</p>}
+          {credits && (
+            <p className="text-xs text-qn-muted">{t('积分：{value}', { value: snapshot?.credits?.unlimited ? t('不限量') : (snapshot?.credits?.balance ?? t('有余额')) })}</p>
+          )}
+          {reached && (
+            <p className="text-xs text-qn-danger">{snapshot?.rateLimitReachedType
+              ? t('已达额度上限（{type}）', { type: snapshot.rateLimitReachedType }) : t('已达额度上限')}</p>
+          )}
+        </div>
       )}
       <ResetCreditsSummary targetId={targetId} available={available} now={now} />
       {showUsage && <AccountUsageSummary targetId={targetId} available={available} />}
-      <div className="mt-2 border-t border-qn-border pt-2 text-[11px] text-qn-muted">
+      <div className="qn-quota-foot">
         {account ? (
           <>
             <div>{t('账号：{value}', { value: account.email ?? account.type })}</div>
@@ -286,32 +301,36 @@ function ResetCreditsSummary({ targetId, available, now }: { targetId: string; a
   const disabled = !available || !ready || busy
 
   const redeemButton = (credit: ResetCredit | null, label: string) => (
-    <Button className="shrink-0 px-3 py-1 text-xs" disabled={disabled || credit?.redeeming === true}
+    <Button className="qn-quota-action" disabled={disabled || credit?.redeeming === true}
       onClick={() => setConfirm({ targetId, credit })}>
       {busy || credit?.redeeming ? t('使用中…') : label}
     </Button>
   )
 
   return (
-    <section className="mt-3 border-t border-qn-border pt-2" aria-label={t('重置卡')}>
-      <div className="flex items-center justify-between text-xs">
-        <span>{t('重置卡')}</span>
-        {summary && <span className="text-qn-muted">{t('可用 {count} 张', { count: summary.availableCount })}</span>}
+    <section className="qn-quota-section" aria-label={t('重置卡')}>
+      <div className="qn-quota-section-head">
+        <h3 className="qn-quota-title">{t('重置卡')}</h3>
+        {summary && <span className="tabular-nums">{t('可用 {count} 张', { count: summary.availableCount })}</span>}
       </div>
-      {summary?.credits.map((credit) => (
-        <div key={credit.id} className="mt-2 flex items-center justify-between gap-2">
-          <div className="min-w-0 text-xs">
-            <div className="break-words">{credit.title ?? t('额度重置卡')}</div>
-            {credit.description && <div className="break-words text-qn-muted">{credit.description}</div>}
-            <div className="text-qn-muted">{resetCreditExpiry(credit.expiresAt, now)}</div>
-          </div>
-          {redeemButton(credit, t('使用'))}
-        </div>
-      ))}
-      {summary && unlisted > 0 && (summary.credits.length === 0
-        ? <div className="mt-2 flex justify-end">{redeemButton(null, t('使用一张'))}</div>
-        : <p className="mt-2 text-xs text-qn-muted">{t('另有 {count} 张未列出明细', { count: unlisted })}</p>)}
-      {notice && <p role="status" className={`mt-2 text-xs ${notice.tone === 'ok' ? 'text-qn-ok' : toneText(notice.tone)}`}>{notice.text}</p>}
+      {summary && (summary.credits.length > 0 || unlisted > 0) && (
+        <ul className="qn-surface qn-quota-list">
+          {summary.credits.map((credit) => (
+            <li key={credit.id} className="qn-quota-item">
+              <div className="min-w-0 flex-1">
+                <div className="qn-quota-item-title">{credit.title ?? t('额度重置卡')}</div>
+                {credit.description && <div className="qn-quota-sub">{credit.description}</div>}
+                <div className="qn-quota-sub">{resetCreditExpiry(credit.expiresAt, now)}</div>
+              </div>
+              {redeemButton(credit, t('使用'))}
+            </li>
+          ))}
+          {unlisted > 0 && (summary.credits.length === 0
+            ? <li className="qn-quota-item justify-end">{redeemButton(null, t('使用一张'))}</li>
+            : <li className="qn-quota-item qn-quota-sub">{t('另有 {count} 张未列出明细', { count: unlisted })}</li>)}
+        </ul>
+      )}
+      {notice && <p role="status" className={`text-xs ${notice.tone === 'ok' ? 'text-qn-ok' : toneText(notice.tone)}`}>{notice.text}</p>}
       {pending && (
         <Dialog title={t('使用重置卡？')} onClose={() => setConfirm(null)}>
           <p className="text-sm">{t('将消耗 1 张重置卡来重置当前账号的 Codex 额度，使用后无法撤销。')}</p>
@@ -355,14 +374,14 @@ function AccountUsageSummary({ targetId, available }: { targetId: string; availa
   }, [ready, loaded, refreshUsage, targetId])
 
   return (
-    <section className="mt-3 border-t border-qn-border pt-2" aria-label={t('Codex 总用量')}>
-      <div className="mb-1 flex items-center justify-between text-xs">
-        <span>{t('总用量')}</span>
-        {loading && <span className="text-qn-muted">{t('刷新中…')}</span>}
+    <section className="qn-quota-section" aria-label={t('Codex 总用量')}>
+      <div className="qn-quota-section-head">
+        <h3 className="qn-quota-title">{t('总用量')}</h3>
+        {loading && <span>{t('刷新中…')}</span>}
       </div>
-      {error && <p className="mb-1 text-xs text-qn-danger">{translateMessage(error)}</p>}
-      {usage ? <UsageStats usage={usage} /> : !loading && !error && (
-        <p className="text-xs text-qn-muted">{ready ? t('暂无用量数据') : t('打开 Codex 后可查看')}</p>
+      {error && <p className="text-xs text-qn-danger">{translateMessage(error)}</p>}
+      {usage ? <div className="qn-surface qn-quota-card"><UsageStats usage={usage} /></div> : !loading && !error && (
+        <p className="qn-quota-sub px-1">{ready ? t('暂无用量数据') : t('打开 Codex 后可查看')}</p>
       )}
     </section>
   )
@@ -382,23 +401,23 @@ function UsageStats({ usage }: { usage: AccountUsage }) {
   }
   return (
     <>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+      <dl className="qn-quota-stats">
         {rows.map(([label, value]) => (
           <div key={label} className="contents">
-            <dt className="text-qn-muted">{label}</dt>
-            <dd className="text-right tabular-nums">{value}</dd>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
           </div>
         ))}
       </dl>
       {days.length > 1 && (
-        <div className="mt-2 flex h-10 items-end gap-1" role="img"
+        <div className="qn-quota-chart" role="img"
           aria-label={t('近 {days} 天每日用量：{list}', {
             days: days.length,
             list: days.map((day) => `${day.date.slice(5)} ${formatTokens(day.tokens)}`).join(', '),
           })}>
           {days.map((day) => (
-            <div key={day.date} className="flex-1 rounded-sm"
-              style={{ height: `${Math.max(4, (day.tokens / max) * 100)}%`, background: day.tokens > 0 ? 'var(--color-qn-accent)' : 'var(--color-qn-border)' }} />
+            <div key={day.date} className="qn-quota-bar" data-empty={day.tokens > 0 ? undefined : 'true'}
+              style={{ height: `${Math.max(6, (day.tokens / max) * 100)}%` }} />
           ))}
         </div>
       )}
