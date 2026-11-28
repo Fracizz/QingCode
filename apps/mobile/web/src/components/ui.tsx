@@ -153,11 +153,13 @@ export function Dialog({
   children,
   onClose,
   placement = 'bottom',
+  className = '',
 }: {
   title: string
   children: ReactNode
   onClose: () => void
   placement?: 'bottom' | 'full'
+  className?: string
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const close = useRef(onClose)
@@ -200,7 +202,7 @@ export function Dialog({
   }
 
   return (
-    <dialog ref={ref} className="qn-dialog" data-placement={placement} aria-label={title}
+    <dialog ref={ref} className={`qn-dialog ${className}`} data-placement={placement} aria-label={title}
       // 嵌套弹层（如设置页里的选项面板）取消时只关自己，不冒泡到外层。
       onCancel={(event) => { event.preventDefault(); event.stopPropagation(); onClose() }}
       onClick={(event) => {

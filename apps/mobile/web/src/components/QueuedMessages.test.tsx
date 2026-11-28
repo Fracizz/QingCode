@@ -3,7 +3,9 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { useApp } from '../store'
+import { clearToasts } from '../toast'
 import { QueuedMessages } from './QueuedMessages'
+import { Toaster } from './Toaster'
 
 it('行内只留引导、更多、移除，新会话入口在更多面板中且需确认后发送', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -30,7 +32,7 @@ it('行内只留引导、更多、移除，新会话入口在更多面板中且�
         eventsConnected: true, queuedSends: { [key('codex')]: [message], [key('claude')]: [message] },
         beginQueuedEdit: () => release, sendQueuedInNewThread: send,
       })
-      root.render(<QueuedMessages running canSteer />)
+      root.render(<><QueuedMessages running canSteer /><Toaster /></>)
     })
     expect([...host.querySelectorAll('li button')].slice(0, 3)
       .map((item) => item.getAttribute('aria-label') ?? item.textContent))
@@ -57,8 +59,20 @@ it('行内只留引导、更多、移除，新会话入口在更多面板中且�
     await act(() => button('新对话继续').click())
     expect(host.querySelector('dialog')?.textContent).toContain('继承已结束轮次的上下文')
     expect(button('在新会话发送').disabled).toBe(false)
+
+    vi.useFakeTimers()
+    send.mockResolvedValueOnce('no-finished-turn')
+    await act(() => button('在新会话发送').click())
+    expect(host.querySelector('dialog')).toBeNull()
+    expect(host.querySelector('.qn-toaster')?.textContent).toContain('当前还没有已结束的一轮')
+    expect(host.querySelector('.qn-queue')?.textContent).not.toContain('当前还没有已结束的一轮')
+    expect(host.querySelector('.qn-queue')?.textContent).toContain('排队正文')
+    await act(() => vi.advanceTimersByTime(8000))
+    expect(host.querySelector('.qn-toaster')).toBeNull()
   } finally {
     await act(() => root.unmount())
+    clearToasts()
+    vi.useRealTimers()
     for (const name of ['showModal', 'close']) {
       if (methods[name]) Object.defineProperty(prototype, name, methods[name])
       else Reflect.deleteProperty(prototype, name)

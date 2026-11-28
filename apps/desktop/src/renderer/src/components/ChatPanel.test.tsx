@@ -3,14 +3,77 @@ import { act, Profiler } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { applyNotification, CodexRpc, type ItemView, type ThreadView } from '@qn/codex-client'
+import { useComposerShortcuts } from '../features/composer/shortcuts'
 import { sessionKey } from '../lib/agents'
 import { BackendCodexTransport } from '../lib/codexTransport'
 import { currentChatKey, useCodex } from '../store/codex'
 import { skillsKey, useSkills } from '../store/skills'
+import { useTargets } from '../store/targets'
 import { ChatPanel } from './ChatPanel'
 import { TooltipProvider } from './primitives'
 import { RenderBoundary } from './RenderBoundary'
 import { SideChat } from './SideChat'
+
+it.each(['draft', 'running', 'disconnected'] as const)('从主对话快捷标签提交普通文字（%s）', async (initialMode) => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const initialState = useCodex.getState()
+  const initialTargets = useTargets.getState()
+  const initialShortcuts = useComposerShortcuts.getState()
+  const targetId = 'local'
+  const agent = 'codex'
+  const key = sessionKey(targetId, agent)
+  const transport = new BackendCodexTransport(targetId, agent)
+  const rpc = new CodexRpc(transport)
+  const body = '用 review 技能检查当前改动\n把结论写出来'
+  const view: ThreadView = { id: 'thread', status: 'running', activeTurnId: 'turn', pendingApprovals: [], items: [] }
+  let finish!: (accepted: boolean) => void
+  const send = vi.fn<typeof initialState.send>().mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+  const currentThreadId = initialMode === 'running' ? view.id : null
+  useCodex.setState({
+    currentTargetId: targetId, currentAgent: agent, currentCwd: '/work', currentThreadId, send,
+    sessions: { [key]: {
+      key, targetId, agent, rpc, transport, state: { threads: { [view.id]: view } },
+      threadsAwaitingResume: new Set(), opened: false, openedConfig: null,
+      opening: false, openError: null, openFailure: null, agentVersion: null, lastSeq: null,
+    } },
+  })
+  useTargets.setState({ states: { [targetId]: { id: targetId, state: initialMode === 'disconnected' ? 'idle' : 'ready' } } })
+  useComposerShortcuts.setState({ shortcuts: [{ id: 'review', name: '检查', text: body, send: true }] })
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  try {
+    await act(() => root.render(<TooltipProvider><ChatPanel onConnect={() => {}} onAddTarget={() => {}} /></TooltipProvider>))
+    const action = initialMode === 'running' ? '排队' : initialMode === 'draft' ? '发送' : '填入文字'
+    const shortcut = host.querySelector<HTMLButtonElement>(`button[aria-label="检查 · ${action}"]`)!
+    const area = host.querySelector('textarea')!
+    await act(() => {
+      shortcut.click()
+      if (initialMode !== 'disconnected') shortcut.click()
+    })
+    expect(area.value).toBe(body)
+    if (initialMode === 'disconnected') {
+      expect(send).not.toHaveBeenCalled()
+      return
+    }
+    expect(shortcut.disabled).toBe(true)
+    expect(send).toHaveBeenCalledExactlyOnceWith(body, expect.objectContaining({ mode: 'queue', input: [
+      { type: 'text', text: body, text_elements: [] },
+    ] }))
+    await act(() => finish(initialMode === 'running'))
+    expect(area.value).toBe(initialMode === 'running' ? '' : body)
+    expect(shortcut.disabled).toBe(false)
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    rpc.dispose()
+    transport.dispose()
+    useCodex.setState(initialState, true)
+    useTargets.setState(initialTargets, true)
+    useComposerShortcuts.setState(initialShortcuts, true)
+    vi.unstubAllGlobals()
+  }
+})
 
 it.each(['codex', 'claude', 'pi'] as const)('从 %s 的已结束回复创建新对话，当前轮次不可用', async (agent) => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -337,6 +400,13 @@ it.each(['paste', 'drop', 'picker'])('图片占位可以预览且随附件单独
   const initialState = useCodex.getState()
   const send = vi.fn<typeof initialState.send>().mockResolvedValue(true)
   useCodex.setState({ currentTargetId: 'local', currentAgent: 'codex', currentThreadId: null, send })
+  const dialogPrototype = HTMLDialogElement.prototype
+  const dialogMethods = Object.getOwnPropertyDescriptors(dialogPrototype)
+  const showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true })
+  Object.defineProperties(dialogPrototype, {
+    showModal: { configurable: true, value: showModal },
+    close: { configurable: true, value(this: HTMLDialogElement) { this.open = false } },
+  })
   const host = document.body.appendChild(document.createElement('div'))
   const root = createRoot(host)
 
@@ -376,13 +446,14 @@ it.each(['paste', 'drop', 'picker'])('图片占位可以预览且随附件单独
     expect([...highlighted].map((node) => node.textContent)).toEqual(['[image.png]'])
     expect(highlighted[0]?.parentElement?.textContent).toBe(area.value)
 
-    const dialog = host.querySelector<HTMLDialogElement>('dialog[aria-label="图片预览 image.png"]')!
-    const showModal = vi.fn()
-    Object.assign(dialog, { showModal })
     const token = host.querySelector<HTMLElement>('[role="button"][aria-label="预览 image.png"]')!
     await act(() => token.click())
+    const dialog = host.querySelector<HTMLDialogElement>('dialog[open][aria-label="图片预览 image.png"]')!
+    expect(dialog.querySelector('[aria-label="切换图片"]')).toBeNull()
+    await act(() => dialog.querySelector<HTMLButtonElement>('[aria-label="关闭图片预览"]')!.click())
     await act(() => token.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
     expect(showModal).toHaveBeenCalledTimes(2)
+    await act(() => host.querySelector<HTMLButtonElement>('dialog[open] [aria-label="关闭图片预览"]')!.click())
     expect(send).not.toHaveBeenCalled()
 
     if (source === 'paste') {
@@ -401,6 +472,10 @@ it.each(['paste', 'drop', 'picker'])('图片占位可以预览且随附件单独
     }))
   } finally {
     await act(() => root.unmount())
+    for (const method of ['showModal', 'close'] as const) {
+      if (dialogMethods[method]) Object.defineProperty(dialogPrototype, method, dialogMethods[method])
+      else Reflect.deleteProperty(dialogPrototype, method)
+    }
     host.remove()
     useCodex.setState(initialState, true)
     vi.unstubAllGlobals()

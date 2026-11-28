@@ -9,7 +9,8 @@ import { MessageItem, ToolGroup, TurnProgress, TurnStopped, WorkGroup } from './
 const renderCodeBlock = vi.hoisted(() => vi.fn())
 
 vi.mock('../features/files', () => ({
-  createMarkdownLink: () => 'a', FileChangeActions: () => null, PathText: () => null, qnUrlTransform: (url: string) => url,
+  createMarkdownLink: () => ({ children, href }: { children: ReactNode; href?: string }) => <a href={href}>{children}</a>,
+  FileChangeActions: () => null, PathText: () => null, qnUrlTransform: (url: string) => url,
 }))
 vi.mock('../lib/cn', () => ({ cn: (...classes: unknown[]) => classes.filter(Boolean).join(' ') }))
 vi.mock('../store/codex', () => ({ useCodex: () => null }))
@@ -23,8 +24,10 @@ vi.mock('./MessageActions', () => ({ MessageActions: () => null }))
 vi.mock('./SubagentDetails', () => ({ SubagentDetails: () => null }))
 vi.mock('./ui', () => ({
   Badge: ({ children }: { children: ReactNode }) => <span>{children}</span>,
-  IconButton: ({ label, children, onClick }: { label: string; children: ReactNode; onClick?: () => void }) => (
-    <button type="button" aria-label={label} onClick={onClick}>{children}</button>
+  IconButton: ({ label, children, onClick, 'aria-disabled': disabled }: {
+    label: string; children: ReactNode; onClick?: () => void; 'aria-disabled'?: boolean
+  }) => (
+    <button type="button" aria-label={label} aria-disabled={disabled} onClick={onClick}>{children}</button>
   ),
 }))
 
@@ -220,27 +223,52 @@ it('不改内容也能直接重发原文和附件', async () => {
   }
 })
 
-it('对话中的虚拟图片名打开相应图片的预览', async () => {
+it('对话图片从点中的缩略图打开，方向键只在同一条消息内切换', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.body.appendChild(document.createElement('div'))
   const root = createRoot(host)
   const images = ['data:image/png;base64,AAAA', 'data:image/webp;base64,BBBB']
+  const dialogPrototype = HTMLDialogElement.prototype
+  const dialogMethods = Object.getOwnPropertyDescriptors(dialogPrototype)
+  Object.defineProperties(dialogPrototype, {
+    showModal: { configurable: true, value(this: HTMLDialogElement) { this.open = true } },
+    close: { configurable: true, value(this: HTMLDialogElement) { this.open = false } },
+  })
   try {
-    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'original', text: '看看这两张图', images }} />))
+    await act(() => root.render(<>
+      <MessageItem item={{ kind: 'user', id: 'original', text: '看看这两张图', images }} />
+      <MessageItem item={{ kind: 'agent', id: 'reply', streaming: true,
+        text: `![甲](${images[0]})\n\n[![链接图](${images[0]})](https://example.invalid)\n\n![乙](${images[1]})` }} />
+    </>))
     const thumbnails = Array.from(host.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="dialog"]'))
-    expect(thumbnails.map((button) => button.textContent)).toEqual(['[image.png]', '[image-2.webp]'])
-    const dialogs = Array.from(host.querySelectorAll('dialog'))
-    const first = vi.fn()
-    const second = vi.fn()
-    Object.assign(dialogs[0]!, { showModal: first })
-    Object.assign(dialogs[1]!, { showModal: second })
+    expect(thumbnails.slice(0, 2).map((button) => button.textContent)).toEqual(['[image.png]', '[image-2.webp]'])
+    expect(thumbnails).toHaveLength(4)
+    expect(host.querySelector('.qn-markdown a img')?.getAttribute('alt')).toBe('链接图')
     await act(() => thumbnails[1]!.click())
-    expect(first).not.toHaveBeenCalled()
-    expect(second).toHaveBeenCalledOnce()
-    expect(dialogs[1]?.querySelector('img')?.getAttribute('src')).toBe(images[1])
+    const dialog = host.querySelector('dialog[open]')!
+    const press = (key: string) => act(() => dialog.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })))
+    const position = () => dialog.querySelector('[aria-label="图片位置"]')?.textContent
+    expect(position()).toBe('2 / 2')
+    expect(dialog.querySelector('img')?.getAttribute('src')).toBe(images[1])
+    await press('ArrowRight')
+    expect(position()).toBe('2 / 2')
+    await press('ArrowLeft')
+    expect(position()).toBe('1 / 2')
+    expect(dialog.querySelector('img')?.getAttribute('src')).toBe(images[0])
+    await act(() => dialog.querySelector<HTMLButtonElement>('[aria-label="关闭图片预览"]')!.click())
+
+    await act(() => thumbnails[2]!.click())
+    const replyPreview = host.querySelector('dialog[open]')!
+    expect(replyPreview.querySelector('[aria-label="图片位置"]')?.textContent).toBe('1 / 2')
+    await act(() => replyPreview.querySelector<HTMLButtonElement>('[aria-label="下一张图片"]')!.click())
+    expect(replyPreview.querySelector('img')?.getAttribute('alt')).toBe('乙')
     expect(host.textContent).toContain('看看这两张图')
   } finally {
     await act(() => root.unmount())
+    for (const method of ['showModal', 'close'] as const) {
+      if (dialogMethods[method]) Object.defineProperty(dialogPrototype, method, dialogMethods[method])
+      else Reflect.deleteProperty(dialogPrototype, method)
+    }
     host.remove()
     vi.unstubAllGlobals()
   }

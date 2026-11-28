@@ -59,6 +59,54 @@ it('用户消息把技能写在正文开头，附件显示成标签', async () =
   }
 })
 
+it('图片预览按单条消息分组，并保持 Markdown 链接的点击动作', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const dialogPrototype = HTMLDialogElement.prototype
+  const dialogMethods = Object.getOwnPropertyDescriptors(dialogPrototype)
+  Object.defineProperties(dialogPrototype, {
+    showModal: { configurable: true, value(this: HTMLDialogElement) { this.open = true } },
+    close: { configurable: true, value(this: HTMLDialogElement) { this.open = false } },
+  })
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const image = 'data:image/png;base64,AA=='
+  const otherImage = 'data:image/png;base64,AQ=='
+  const click = (label: string) => act(() => host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click())
+  const current = () => host.querySelector('dialog[open]')
+  try {
+    await act(() => root.render(<>
+      <MessageItem item={{ kind: 'user', id: 'user', text: '附件', images: [image, otherImage] }} />
+      <MessageItem item={{ kind: 'agent', id: 'agent', streaming: true,
+        text: `![甲](${image})\n\n[![链接图](${image})](https://example.invalid)\n\n![乙](${otherImage})` }} />
+      <MessageItem item={{ kind: 'user', id: 'another', text: '单张', images: [otherImage] }} />
+    </>))
+    expect(host.querySelector('.qn-markdown a img')?.getAttribute('alt')).toBe('链接图')
+    await click('查看图片：附件图片 2')
+    expect(current()?.querySelector('[aria-label="图片位置"]')?.textContent).toBe('2 / 2')
+    await click('上一张图片')
+    expect(current()?.querySelector('img')?.getAttribute('src')).toBe(image)
+    await click('关闭')
+
+    await click('查看图片：甲')
+    expect(current()?.querySelector('[aria-label="图片位置"]')?.textContent).toBe('1 / 2')
+    await click('下一张图片')
+    expect(current()?.querySelector('img')?.getAttribute('alt')).toBe('乙')
+    await click('关闭')
+
+    const lastThumbnail = [...host.querySelectorAll<HTMLButtonElement>('.qn-image-thumbnail')].at(-1)!
+    await act(() => lastThumbnail.click())
+    expect(current()?.querySelector('[aria-label="切换图片"]')).toBeNull()
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    for (const method of ['showModal', 'close'] as const) {
+      if (dialogMethods[method]) Object.defineProperty(dialogPrototype, method, dialogMethods[method])
+      else Reflect.deleteProperty(dialogPrototype, method)
+    }
+    vi.unstubAllGlobals()
+  }
+})
+
 it('后台任务摘要过长时标题只占两行，全文收进展开区', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.createElement('div')

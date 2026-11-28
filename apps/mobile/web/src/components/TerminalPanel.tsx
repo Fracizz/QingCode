@@ -1,29 +1,33 @@
 import { t } from '@qn/codex-client'
-import { ChevronDown, ChevronUp, Ellipsis, Keyboard, Plus, Send } from 'lucide-react'
+import { ArrowDownToLine, ArrowUp, BookOpen, Check, ChevronDown, ChevronUp, ClipboardPaste, Copy, Ellipsis, Keyboard, Minus, Pencil, Plus, Search, Terminal as TerminalIcon, Type, X } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Terminal } from '@xterm/xterm'
 import type { TermAttachResult, TermExitInfo, TermInfo, TermOpenResult, TermOutputChunk } from '@qn/protocol'
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction } from 'react'
 import { callDevice, getGateway } from '../client'
 import { getWindowNativePort } from '../native'
 import { projectRpc } from '../projectApi'
 import { errorCode, friendlyError } from '../state'
 import { useApp } from '../store'
 import { subscribeTerminalEvents } from '../terminalEvents'
+import { MAX_TERMINAL_FONT, MIN_TERMINAL_FONT, readTerminalFont, readTerminalPreferences, readTerminalQuickKeys, saveTerminalFont, saveTerminalPreferences, saveTerminalQuickKeys } from '../terminalPreferences'
 import { decodeTerminalOutput, encodeTerminalInput, planMobileTerminalReplay } from '../terminalReplay'
 import type { Project } from '../types'
 import { registerBackHandler } from '../workspace'
-import { Button, Dialog, Loading, Note } from './ui'
-import './terminal.css'
+import { Button, Dialog, Loading, LoadingIcon, Note, SheetAction } from './ui'
 import { toast } from '../toast'
 
-const controlKeys = [
-  ['Esc', '\x1b', 'Esc'], ['Tab', '\t', 'Tab'], ['^C', '\x03', 'Ctrl+C'],
-  ['⇧Tab', '\x1b[Z', 'Shift+Tab'], ['↑', '\x1b[A', t('上方向键')], ['↓', '\x1b[B', t('下方向键')],
-  ['⌫', '\x7f', t('退格')], ['←', '\x1b[D', t('左方向键')], ['→', '\x1b[C', t('右方向键')],
+const quickKeys = () => [
+  ['Esc', '\x1b', 'Esc'], ['Tab', '\t', 'Tab'], ['^C', '\x03', 'Ctrl+C'], ['⇧Tab', '\x1b[Z', 'Shift+Tab'],
+  ['↑', '\x1b[A', t('上方向键')], ['↓', '\x1b[B', t('下方向键')], ['⌫', '\x7f', t('退格')],
+  ['←', '\x1b[D', t('左方向键')], ['→', '\x1b[C', t('右方向键')],
+] as const
+const extraKeys = [
+  ['Enter', '\r'], ['Home', '\x1b[H'], ['End', '\x1b[F'], ['PgUp', '\x1b[5~'], ['PgDn', '\x1b[6~'],
+  ['Ctrl+D', '\x04'], ['Ctrl+L', '\x0c'], ['Ctrl+U', '\x15'], ['Ctrl+Z', '\x1a'], ['Shift+←', '\x1b[1;2D'],
 ] as const
 const encoder = new TextEncoder()
 const MAX_INPUT = 128 * 1024
@@ -44,8 +48,17 @@ type TerminalControls = {
   search: (query: string, backwards?: boolean) => boolean
   readText: () => string
   write: (text: string) => Promise<boolean>
+  sendKey: (value: string) => void
+  setFont: (size: number) => void
+  scrollToBottom: () => void
   attach: () => void
   online: (connected: boolean) => void
+}
+
+function terminalTheme(host: HTMLElement) {
+  const { backgroundColor, color, caretColor } = getComputedStyle(host)
+  // xterm 使用实际色值绘制，避免画布与手机版主题的颜色脱节。
+  return { background: backgroundColor, foreground: color, cursor: caretColor, cursorAccent: backgroundColor, selectionBackground: caretColor }
 }
 
 function mountTerminal(
@@ -54,6 +67,7 @@ function mountTerminal(
   project: Project,
   info: TermInfo,
   onStatus: (status: TerminalStatus) => void,
+  onScrolledUp: (scrolledUp: boolean) => void,
 ) {
   const terminal = new Terminal({
     cols: info.cols,
@@ -61,10 +75,11 @@ function mountTerminal(
     cursorBlink: true,
     disableStdin: true,
     allowProposedApi: true,
-    fontSize: 13,
+    fontSize: readTerminalFont(),
     fontFamily: 'ui-monospace, Consolas, monospace',
     scrollback: 2500,
-    theme: { background: '#161816', foreground: '#f2f3f1', cursor: '#65ddc9' },
+    minimumContrastRatio: 4.5,
+    theme: terminalTheme(host),
     linkHandler: {
       activate: (event, uri) => {
         if (!/^https?:\/\//i.test(uri)) return
@@ -80,6 +95,8 @@ function mountTerminal(
   terminal.loadAddon(new Unicode11Addon())
   terminal.unicode.activeVersion = '11'
   terminal.open(host)
+  const themeObserver = new MutationObserver(() => { terminal.options.theme = terminalTheme(host) })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 
   const { termId } = info
   let status: TerminalStatus = { attaching: false, writable: false, historyLost: false, exit: info.exit, error: null }
@@ -231,6 +248,12 @@ function mountTerminal(
   })
   const keyboard = terminal.onData((text) => void write(encoder.encode(text)))
   const binary = terminal.onBinary((text) => void write(Uint8Array.from(text, (character) => character.charCodeAt(0))))
+  const updateScroll = () => {
+    const { baseY, viewportY } = terminal.buffer.active
+    onScrolledUp(viewportY < baseY)
+  }
+  const scroll = terminal.onScroll(updateScroll)
+  const parsed = terminal.onWriteParsed(updateScroll)
   const observer = new ResizeObserver(scheduleFit)
   observer.observe(host)
 
@@ -259,6 +282,17 @@ function mountTerminal(
       return lines.join('\n').trimEnd()
     },
     write: (text) => write(encoder.encode(text)),
+    sendKey: (value) => {
+      // 全屏程序可切到应用光标模式，快捷键与实体键盘发送相同序列。
+      const data = terminal.modes.applicationCursorKeysMode && /^\x1b\[[A-DFH]$/.test(value)
+        ? `\x1bO${value.at(-1)}` : value
+      void write(encoder.encode(data))
+    },
+    setFont: (size) => {
+      terminal.options.fontSize = size
+      scheduleFit()
+    },
+    scrollToBottom: () => terminal.scrollToBottom(),
     attach,
     online: (connected) => {
       if (online === connected) return
@@ -276,23 +310,30 @@ function mountTerminal(
     ++generation
     unsubscribe()
     observer.disconnect()
+    themeObserver.disconnect()
     clearTimeout(fitTimer)
     keyboard.dispose()
     binary.dispose()
+    scroll.dispose()
+    parsed.dispose()
     terminal.dispose()
     void rpc('detach').catch(() => undefined)
   }
   return { api, dispose }
 }
 
-function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTerminal, busy }: {
+function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTerminal, onRename, onExit, busy, draft, setDraft }: {
   desktopId: string
   project: Project
   info: TermInfo
   menu: boolean
   onCloseMenu: () => void
   onCloseTerminal: () => void
+  onRename: () => void
+  onExit: (termId: string, exit: TermExitInfo) => void
   busy: boolean
+  draft: string
+  setDraft: Dispatch<SetStateAction<string>>
 }) {
   const host = useRef<HTMLDivElement>(null)
   const projectRef = useRef(project)
@@ -303,7 +344,10 @@ function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTe
   const requestConnect = useApp((s) => s.requestConnect)
   const ready = connected && (targetState === undefined || targetState === 'ready')
   const [status, setStatus] = useState<TerminalStatus>({ attaching: false, writable: false, historyLost: false, exit: info.exit, error: null })
-  const [draft, setDraft] = useState('')
+  const [font, setFont] = useState(readTerminalFont)
+  const [extra, setExtra] = useState<'keys' | 'font' | 'keySettings' | null>(null)
+  const [preferredKeys, setPreferredKeys] = useState(() => readTerminalQuickKeys() ?? quickKeys().map(([name]) => name))
+  const [scrolledUp, setScrolledUp] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [found, setFound] = useState(true)
@@ -312,11 +356,14 @@ function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTe
 
   useEffect(() => {
     if (!host.current) return
-    const mounted = mountTerminal(host.current, desktopId, projectRef.current, infoRef.current, setStatus)
+    const mounted = mountTerminal(host.current, desktopId, projectRef.current, infoRef.current, setStatus, setScrolledUp)
     controls.current = mounted.api
     return () => { controls.current = null; mounted.dispose() }
   }, [desktopId])
   useEffect(() => controls.current?.online(ready), [ready])
+  useEffect(() => {
+    if (status.exit) onExit(info.termId, status.exit)
+  }, [info.termId, onExit, status.exit])
   useEffect(() => {
     if (!searchOpen) return
     return registerBackHandler(() => {
@@ -346,6 +393,16 @@ function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTe
     void submit()
   }
   const find = (value: string, backwards = false) => setFound(controls.current?.search(value, backwards) ?? false)
+  const changeFont = (size: number) => {
+    setFont(size)
+    saveTerminalFont(size)
+    controls.current?.setFont(size)
+  }
+  const changeKeys = (keys: string[]) => {
+    setPreferredKeys(keys)
+    saveTerminalQuickKeys(keys)
+  }
+  const keys = [...quickKeys(), ...extraKeys]
 
   return (
     <>
@@ -362,45 +419,94 @@ function TerminalScreen({ desktopId, project, info, menu, onCloseMenu, onCloseTe
         onAction={() => controls.current?.attach()} />}
 
       {menu && <Dialog title={t('终端操作')} onClose={onCloseMenu}>
-        <div className="grid gap-1">
-          <Button variant="ghost" disabled={!status.writable} onClick={() => { onCloseMenu(); paste() }}>{t('粘贴到终端')}</Button>
-          <Button variant="ghost" onClick={() => { onCloseMenu(); copy() }}>{t('复制选区')}</Button>
-          <Button variant="ghost" onClick={() => { onCloseMenu(); setSearchOpen(true) }}>{t('搜索输出')}</Button>
-          <Button variant="ghost" onClick={() => { onCloseMenu(); setSelectableText(controls.current?.readText() ?? '') }}>{t('阅读输出')}</Button>
-          <Button variant="ghost" disabled={!connected || busy} onClick={onCloseTerminal}>{t('关闭终端')}</Button>
+        <div className="qn-sheet-actions">
+          <SheetAction icon={Pencil} onClick={onRename}>{t('重命名终端')}</SheetAction>
+          <SheetAction icon={ClipboardPaste} disabled={!status.writable} onClick={() => { onCloseMenu(); paste() }}>{t('粘贴到终端')}</SheetAction>
+          <SheetAction icon={Copy} onClick={() => { onCloseMenu(); copy() }}>{t('复制选区')}</SheetAction>
+          <SheetAction icon={Search} onClick={() => { onCloseMenu(); setSearchOpen(true) }}>{t('搜索输出')}</SheetAction>
+          <SheetAction icon={BookOpen} onClick={() => { onCloseMenu(); setSelectableText(controls.current?.readText() ?? '') }}>{t('阅读输出')}</SheetAction>
+          <SheetAction icon={Type} onClick={() => { onCloseMenu(); setExtra('font') }}>{t('终端字号')}</SheetAction>
+          <SheetAction icon={Keyboard} onClick={() => { onCloseMenu(); setExtra('keySettings') }}>{t('设置常用快捷键')}</SheetAction>
+          <SheetAction icon={X} danger disabled={!connected || busy} onClick={onCloseTerminal}>{t('关闭终端')}</SheetAction>
         </div>
       </Dialog>}
       {searchOpen && (
-        <div className="flex items-center gap-2">
-          <input className="qn-input min-w-0 flex-1" type="search" aria-label={t('搜索终端输出')} value={query}
-            onChange={(event) => { setQuery(event.target.value); find(event.target.value) }} />
-          <Button aria-label={t('上一个匹配')} disabled={!query} onClick={() => find(query, true)}><ChevronUp size={17} /></Button>
-          <Button aria-label={t('下一个匹配')} disabled={!query} onClick={() => find(query)}><ChevronDown size={17} /></Button>
-          <Button variant="ghost" onClick={() => { setQuery(''); find(''); setSearchOpen(false) }}>{t('关闭')}</Button>
-          {query && !found && <span role="status" className="text-xs text-qn-muted">{t('无匹配')}</span>}
+        <div>
+          <div className="flex items-center gap-1">
+            <input className="qn-input min-w-0 flex-1" type="search" aria-label={t('搜索终端输出')} value={query}
+              onChange={(event) => { setQuery(event.target.value); find(event.target.value) }} />
+            <div className="qn-header-island">
+              <Button variant="ghost" className="qn-header-icon size-[44px]" aria-label={t('上一个匹配')} disabled={!query} onClick={() => find(query, true)}><ChevronUp size={18} aria-hidden /></Button>
+              <Button variant="ghost" className="qn-header-icon size-[44px]" aria-label={t('下一个匹配')} disabled={!query} onClick={() => find(query)}><ChevronDown size={18} aria-hidden /></Button>
+              <Button variant="ghost" className="qn-header-icon size-[44px]" aria-label={t('关闭')} onClick={() => { setQuery(''); find(''); setSearchOpen(false) }}><X size={18} aria-hidden /></Button>
+            </div>
+          </div>
+          {query && !found && <p role="status" className="mt-1 text-xs text-qn-muted">{t('无匹配')}</p>}
         </div>
       )}
       <div className="qn-terminal-surface">
         <div ref={host} className="qn-terminal-host" aria-label={t('终端输出')} />
+        {scrolledUp && <Button className="qn-terminal-follow size-[44px]" aria-label={t('回到最新输出')}
+          onClick={() => controls.current?.scrollToBottom()}><ArrowDownToLine size={18} aria-hidden /></Button>}
       </div>
-      {selectableText !== null && <Dialog title={t('阅读终端输出')} placement="full" onClose={() => setSelectableText(null)}>
+      {selectableText !== null && <Dialog title={t('阅读终端输出')} placement="full" className="qn-terminal-page" onClose={() => setSelectableText(null)}>
         <pre className="qn-terminal-readable" tabIndex={0}>{selectableText || t('暂无终端输出')}</pre>
       </Dialog>}
-      <div className="qn-terminal-tools qn-terminal-keys" aria-label={t('终端快捷键')}>
-        {controlKeys.map(([name, value, label]) => (
-          <Button key={name} aria-label={t('发送 {key}', { key: label })} onClick={() => void controls.current?.write(value)} disabled={!status.writable}>{name}</Button>
-        ))}
-      </div>
-      <div className="flex items-end gap-2">
-        <Button variant="ghost" aria-label={t('终端键盘')} disabled={!status.writable} onClick={() => controls.current?.focus()}>
-          <Keyboard size={18} aria-hidden />
-        </Button>
-        <textarea className="qn-textarea min-w-0 flex-1" rows={1} aria-label={t('终端草稿')} value={draft}
-          onChange={(event) => setDraft(event.target.value)} onKeyDown={sendWithKeyboard} placeholder={t('输入命令后发送')} />
-        <Button variant="primary" aria-label={writing ? t('发送中') : t('发送命令')} onClick={() => void submit()} disabled={!status.writable || writing}>
-          <Send size={17} aria-hidden />
-        </Button>
-      </div>
+      <footer className="qn-terminal-footer">
+        <div className="qn-terminal-keys" role="group" aria-label={t('终端快捷键')}>
+          <div className="qn-terminal-quick-keys">
+            {keys.filter(([name]) => preferredKeys.includes(name)).map(([name, value, label = name]) => (
+              <Button key={name} aria-label={t('发送 {key}', { key: label })} onMouseDown={(event) => event.preventDefault()}
+                onClick={() => controls.current?.sendKey(value)} disabled={!status.writable}>{name}</Button>
+            ))}
+          </div>
+          <Button className="qn-terminal-more" aria-label={t('更多终端快捷键')} aria-haspopup="dialog" disabled={!status.writable}
+            onClick={() => setExtra('keys')}><Ellipsis size={20} aria-hidden /></Button>
+        </div>
+        <div className="qn-terminal-composer">
+          <Button className="qn-terminal-keyboard size-[44px]" aria-label={t('终端键盘')} disabled={!status.writable} onClick={() => controls.current?.focus()}>
+            <Keyboard size={20} strokeWidth={1.75} aria-hidden />
+          </Button>
+          <textarea className="qn-textarea min-w-0 flex-1" rows={1} aria-label={t('终端草稿')} value={draft}
+            onChange={(event) => setDraft(event.target.value)} onKeyDown={sendWithKeyboard} placeholder={t('输入命令后发送')} />
+          <Button variant="primary" className="qn-send-button" aria-label={writing ? t('发送中') : t('发送命令')} aria-busy={writing}
+            onClick={() => void submit()} disabled={!status.writable || writing}>
+            {writing ? <LoadingIcon size={16} /> : <ArrowUp size={18} strokeWidth={2.5} aria-hidden />}
+          </Button>
+        </div>
+      </footer>
+      {extra === 'keys' && <Dialog title={t('更多终端快捷键')} onClose={() => setExtra(null)}>
+        <div className="qn-terminal-extra-keys">
+          {keys.map(([name, value, label = name]) => (
+            <Button key={name} aria-label={t('发送 {key}', { key: label })} disabled={!status.writable}
+              onClick={() => { controls.current?.sendKey(value); setExtra(null) }}>{name}</Button>
+          ))}
+        </div>
+      </Dialog>}
+      {extra === 'font' && <Dialog title={t('终端字号')} onClose={() => setExtra(null)}>
+        <div className="flex items-center justify-center gap-4">
+          <Button className="size-[44px]" aria-label={t('缩小终端字号')} disabled={font <= MIN_TERMINAL_FONT} onClick={() => changeFont(font - 1)}>
+            <Minus size={18} aria-hidden />
+          </Button>
+          <output className="min-w-16 text-center tabular-nums" aria-label={t('终端字号')}>{font} px</output>
+          <Button className="size-[44px]" aria-label={t('放大终端字号')} disabled={font >= MAX_TERMINAL_FONT} onClick={() => changeFont(font + 1)}>
+            <Plus size={18} aria-hidden />
+          </Button>
+        </div>
+      </Dialog>}
+      {extra === 'keySettings' && <Dialog title={t('设置常用快捷键')} onClose={() => setExtra(null)}>
+        <div className="grid grid-cols-2 gap-1">
+          {keys.map(([name, , label = name]) => (
+            <label key={name} className="flex min-h-[44px] items-center gap-2 px-2 text-sm">
+              <input className="size-4 accent-qn-accent" type="checkbox" checked={preferredKeys.includes(name)}
+                aria-label={label} onChange={(event) => changeKeys(event.target.checked
+                  ? [...preferredKeys, name] : preferredKeys.filter((key) => key !== name))} />
+              {name}
+            </label>
+          ))}
+        </div>
+        <Button className="mt-2" onClick={() => changeKeys(quickKeys().map(([name]) => name))}>{t('恢复默认快捷键')}</Button>
+      </Dialog>}
     </>
   )
 }
@@ -410,16 +516,23 @@ export function TerminalPanel({ project }: { project: Project }) {
   const connected = useApp((s) => s.eventsConnected)
   const connectionWarning = useApp((s) => s.eventsError)
   const targetState = useApp((s) => s.targetStates[project.targetId]?.state)
+  const preferenceKey = `qn.mobile.terminals:${JSON.stringify([desktopId, project.targetId, project.id, project.path])}`
+  const [preferences] = useState(() => readTerminalPreferences(preferenceKey))
   const [list, setList] = useState<TermInfo[] | null>(null)
-  const [termId, setTermId] = useState<string | null>(null)
+  const [termId, setTermId] = useState<string | null>(preferences.selectedId ?? null)
+  const [names, setNames] = useState(preferences.names)
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [loadingList, setLoadingList] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<{ message: string; action: 'list' | 'open' | 'connect' } | null>(null)
+  const [error, setError] = useState<{ message: string; action: 'list' | 'open' | 'connect' | 'close' } | null>(null)
   const needsTarget = error?.action === 'connect'
   const requestConnect = useApp((s) => s.requestConnect)
   const [refresh, setRefresh] = useState(0)
-  const [closing, setClosing] = useState(false)
-  const [menu, setMenu] = useState(false)
-  const openOnEntry = useRef(true)
+  const [sheet, setSheet] = useState<'switch' | 'actions' | 'rename' | 'close' | null>(null)
+  const [search, setSearch] = useState('')
+  const [name, setName] = useState('')
+
+  useEffect(() => saveTerminalPreferences(preferenceKey, { selectedId: termId ?? undefined, names }), [preferenceKey, termId, names])
 
   const open = useCallback(async () => {
     setError(null)
@@ -429,10 +542,8 @@ export function TerminalPanel({ project }: { project: Project }) {
       if (!terminal.termId) throw new Error(t('电脑返回了无效的终端信息'))
       setList((items) => [...(items ?? []).filter((item) => item.termId !== terminal.termId), terminal])
       setTermId(terminal.termId)
-      return true
     } catch (error) {
       setError({ message: friendlyError(error, t('新建项目终端失败')), action: 'open' })
-      return false
     } finally {
       setBusy(false)
     }
@@ -441,31 +552,49 @@ export function TerminalPanel({ project }: { project: Project }) {
   useEffect(() => {
     if (!desktopId || !connected) return
     let current = true
+    setLoadingList(true)
     void projectRpc<{ terminals: TermInfo[] }>(project, 'mobile.term.list', {}, desktopId).then((result) => {
       if (!current) return
-      if (!Array.isArray(result?.terminals)) throw new Error(t('电脑未提供手机终端，请检查桌面版设置。'))
+      if (!Array.isArray(result?.terminals)) throw new Error(t('当前电脑版本不支持手机终端，请更新电脑端。'))
       setError(null)
       const terminals = [...result.terminals].sort((a, b) => a.startedAt - b.startedAt)
       setList(terminals)
       const defaultId = terminals.find((item) => item.alive)?.termId ?? terminals[0]?.termId ?? null
-      if (openOnEntry.current) {
-        openOnEntry.current = false
-        void open().then((created) => {
-          if (!created && current) setTermId((id) => id ?? defaultId)
-        })
-        return
-      }
-      setTermId((id) => terminals.find((item) => item.termId === id)?.termId
-        ?? defaultId)
+      setTermId((id) => terminals.some((item) => item.termId === id) ? id : defaultId)
     }).catch((error: unknown) => {
       if (!current) return
-      setError({ message: friendlyError(error, t('读取终端失败')), action: errorCode(error) === 'not_connected' ? 'connect' : 'list' })
+      const code = errorCode(error)
+      const message = friendlyError(error, t('读取终端失败'))
+      if (code === 'terminal_disabled') {
+        setError({ message: t('请在电脑「设置 → 手机连接」中启用项目终端，然后重试。'), action: 'list' })
+      } else if (code === 'method') {
+        setError({ message: t('项目主机的服务版本不支持终端。请从电脑重新连接项目主机后重试。'), action: 'list' })
+      } else if (code === 'forbidden' && (error instanceof Error && error.message.includes('网关白名单') || message === t('该方法不在手机网关白名单内'))) { // i18n-ignore: 子串用于匹配旧网关的固定错误文本。
+        setError({ message: t('当前电脑版本不支持手机终端，请更新电脑端。'), action: 'list' })
+      } else {
+        setError({ message, action: code === 'not_connected' ? 'connect' : 'list' })
+      }
       setList((existing) => existing ?? [])
+    }).finally(() => {
+      if (current) setLoadingList(false)
     })
     return () => { current = false }
-  }, [desktopId, project, connected, targetState, refresh, open])
+  }, [desktopId, project, connected, targetState, refresh])
 
-  const selected = list?.find((item) => item.termId === termId)
+  const selectedIndex = list?.findIndex((item) => item.termId === termId) ?? -1
+  const selected = list?.[selectedIndex]
+  const label = (item: TermInfo, index: number) => names[item.termId] || t('终端 {index}', { index: index + 1 })
+  const needle = search.trim().toLocaleLowerCase()
+  const visibleTerms = (list ?? []).flatMap((item, index) => {
+    const title = label(item, index)
+    const shell = item.shell.split(/[\\/]/).at(-1) ?? item.shell
+    return !needle || `${title} ${shell}`.toLocaleLowerCase().includes(needle) ? [{ item, title, shell }] : []
+  })
+  const canOpen = connected && !busy && !loadingList && list !== null && (!error || error.action === 'open' || error.action === 'close')
+
+  const onExit = useCallback((id: string, exit: TermExitInfo) => {
+    setList((items) => items?.map((item) => item.termId === id && item.alive ? { ...item, alive: false, exit } : item) ?? null)
+  }, [])
 
   const terminate = async () => {
     if (!selected || busy) return
@@ -476,9 +605,12 @@ export function TerminalPanel({ project }: { project: Project }) {
       setList((items) => (items ?? []).filter((item) => item.termId !== selected.termId))
       setTermId(list?.find((item) => item.termId !== selected.termId && item.alive)?.termId
         ?? list?.find((item) => item.termId !== selected.termId)?.termId ?? null)
-      setClosing(false)
+      const { [selected.termId]: _name, ...remainingNames } = names
+      setNames(remainingNames)
+      setDrafts(({ [selected.termId]: _draft, ...remaining }) => remaining)
+      setSheet(null)
     } catch (error) {
-      setError({ message: friendlyError(error, t('关闭终端失败')), action: 'list' })
+      setError({ message: friendlyError(error, t('关闭终端失败')), action: 'close' })
     } finally {
       setBusy(false)
     }
@@ -498,31 +630,77 @@ export function TerminalPanel({ project }: { project: Project }) {
     }
   }
 
+  function saveName() {
+    if (!selected || !name.trim()) return
+    setNames((current) => ({ ...current, [selected.termId]: name.trim() }))
+    setSheet(null)
+  }
+
+  function dismissClose() {
+    if (busy) return
+    setSheet(null)
+    if (error?.action === 'close') setError(null)
+  }
+
   return (
     <section className="qn-terminal-panel">
-      <div className="flex items-center gap-1" aria-label={t('项目终端')}>
-        {selected && <select className="qn-input min-w-0 flex-1 truncate" aria-label={t('切换终端')} value={termId ?? ''}
-          disabled={busy} onChange={(event) => { setTermId(event.target.value); setClosing(false); setMenu(false) }}>
-          {list?.map((item, index) => <option key={item.termId} value={item.termId}>{t('终端 {index}', { index: index + 1 })}{item.alive ? '' : t(' · 已退出')}</option>)}
-        </select>}
-        <Button variant={selected ? 'ghost' : 'primary'} aria-label={t('新建终端')} disabled={!connected || busy || list === null || needsTarget}
-          onClick={() => void open()}><Plus size={19} aria-hidden />{!selected && t('新建终端')}</Button>
-        {selected && <Button variant="ghost" aria-label={t('终端操作')} onClick={() => setMenu(true)}><Ellipsis size={19} aria-hidden /></Button>}
-      </div>
-      {closing && selected && (
-        <div className="flex items-center gap-2 qn-surface px-2 text-sm">
-          <span className="flex-1">{t('关闭会终止该终端。')}</span>
-          <Button variant="ghost" disabled={busy} onClick={() => setClosing(false)}>{t('取消')}</Button>
-          <Button variant="danger" disabled={busy} onClick={() => void terminate()}>{t('关闭')}</Button>
+      <div className="qn-terminal-toolbar" role="group" aria-label={t('项目终端')}>
+        {selected && <Button className="qn-terminal-picker" aria-label={t('切换终端')} aria-haspopup="dialog" aria-expanded={sheet === 'switch'}
+          disabled={busy} onClick={() => { setSearch(''); setSheet('switch') }}>
+          <TerminalIcon size={18} strokeWidth={1.75} aria-hidden />
+          <span className="min-w-0 truncate">{label(selected, selectedIndex)}{!selected.alive && t(' · 已退出')}</span>
+          <ChevronDown size={16} aria-hidden />
+        </Button>}
+        <div className={selected ? 'qn-header-island' : undefined}>
+          <Button variant={selected ? 'ghost' : 'primary'} className={selected ? 'qn-header-icon size-[44px]' : 'min-h-[44px] rounded-full'}
+            aria-label={t('新建终端')} disabled={!canOpen}
+            onClick={() => void open()}><Plus size={20} aria-hidden />{!selected && t('新建终端')}</Button>
+          {selected && <Button variant="ghost" className="qn-header-icon size-[44px]" aria-label={t('终端操作')}
+            aria-haspopup="dialog" aria-expanded={sheet === 'actions'} onClick={() => setSheet('actions')}><Ellipsis size={20} aria-hidden /></Button>}
         </div>
-      )}
-      {error && <Note message={error.message} tone="error" actionLabel={needsTarget ? t('连接目标') : t('重试')} onAction={retry} />}
+      </div>
+      {sheet === 'switch' && selected && <Dialog title={t('切换终端')} onClose={() => setSheet(null)}>
+        <div className="grid gap-2">
+          {(list?.length ?? 0) > 1 && <input type="search" className="qn-input" value={search} aria-label={t('搜索终端会话')}
+            placeholder={t('搜索终端会话')} onChange={(event) => setSearch(event.target.value)} />}
+          {visibleTerms.map(({ item, title, shell }) => (
+            <button key={item.termId} type="button" className="qn-row qn-surface gap-3 px-3 py-2" aria-pressed={item.termId === termId}
+              disabled={busy} onClick={() => { setTermId(item.termId); setSheet(null) }}>
+              <TerminalIcon size={18} strokeWidth={1.75} className="shrink-0 text-qn-muted" aria-hidden />
+              <span className="min-w-0 flex-1 text-left">
+                <span className="block truncate text-sm">{title}</span>
+                <span className="block truncate text-xs text-qn-muted">{shell}{!item.alive && t(' · 已退出')}</span>
+              </span>
+              {item.termId === termId && <Check size={18} className="shrink-0 text-qn-accent" aria-hidden />}
+            </button>
+          ))}
+          {!visibleTerms.length && <p role="status" className="text-sm text-qn-muted">{t('无匹配')}</p>}
+        </div>
+      </Dialog>}
+      {sheet === 'rename' && selected && <Dialog title={t('重命名终端')} onClose={() => setSheet(null)}>
+        <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); saveName() }}>
+          <input className="qn-input" aria-label={t('终端名称')} value={name} maxLength={60} onChange={(event) => setName(event.target.value)} />
+          <p className="text-xs text-qn-muted">{t('终端名称只保存在此手机。')}</p>
+          <Button variant="primary" type="submit" disabled={!name.trim()}>{t('保存')}</Button>
+        </form>
+      </Dialog>}
+      {sheet === 'close' && selected && <Dialog title={t('关闭终端')} onClose={dismissClose}>
+        <p className="mb-3 text-sm text-qn-muted">{t('关闭会终止该终端。')}</p>
+        {error?.action === 'close' && <Note message={error.message} tone="error" />}
+        <div className="flex justify-end gap-2">
+          <Button disabled={busy} onClick={dismissClose}>{t('取消')}</Button>
+          <Button variant="danger" disabled={busy || !connected} onClick={() => void terminate()}>{t('关闭')}</Button>
+        </div>
+      </Dialog>}
+      {error && !(sheet === 'close' && error.action === 'close') && <Note message={error.message} tone="error" actionLabel={needsTarget ? t('连接目标') : t('重试')} onAction={retry} />}
       {list === null && connected && <Loading text={t('正在读取可接回的项目终端…')} />}
       {list !== null && !selected && busy && <Loading text={t('正在新建终端…')} />}
       {!connected && connectionWarning && <Note message={connectionWarning} tone="warn" />}
       {list?.length === 0 && !error && !busy && <p className="py-5 text-center text-sm text-qn-muted">{t('该项目还没有手机终端。')}</p>}
       {desktopId && selected && <TerminalScreen key={`${desktopId}:${selected.termId}`} desktopId={desktopId} project={project} info={selected}
-        menu={menu} busy={busy} onCloseMenu={() => setMenu(false)} onCloseTerminal={() => { setMenu(false); setClosing(true) }} />}
+        menu={sheet === 'actions'} busy={busy} onCloseMenu={() => setSheet(null)} onCloseTerminal={() => setSheet('close')}
+        onRename={() => { setName(label(selected, selectedIndex)); setSheet('rename') }} onExit={onExit} draft={drafts[selected.termId] ?? ''}
+        setDraft={(update) => setDrafts((current) => ({ ...current, [selected.termId]: typeof update === 'function' ? update(current[selected.termId] ?? '') : update }))} />}
     </section>
   )
 }

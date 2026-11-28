@@ -363,6 +363,10 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
       const prompt = await (query.prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]().next()
       const uuid = prompt.value.uuid as string
       transcript.push(message(uuid, 'user', '下一轮'), message('live-reply', 'assistant', '这一轮回答'))
+      request(h, 'fork-history', 'thread/turns/list', { threadId, sortDirection: 'desc', itemsView: 'notLoaded' })
+      expect((await response(h, 'fork-history')).result).toMatchObject({ data: [
+        { id: liveTurnId, status: 'inProgress', items: [] }, { id: 'turn-old-1-0', status: 'completed', items: [] },
+      ] })
       request(h, 'past-fork', 'thread/fork', { threadId, lastTurnId: 'turn-old-1-0' })
       expect(await response(h, 'past-fork')).toMatchObject({
         result: { thread: { id: 'branch', turns: [{ items: [expect.anything(), { text: '前一轮回答' }] }] } },

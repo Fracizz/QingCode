@@ -9,6 +9,7 @@ import { sessionKey } from '../lib/agents'
 import { basename } from '../lib/attachments'
 import { pendingSendKey, useCodex } from '../store/codex'
 import { canContinueQueued, type PendingThreadMode } from '../store/pendingQueue'
+import { ImagePreviewGroup } from './ImagePreview'
 import { MessageImage } from './MessageImage'
 import { IconButton, Modal } from './ui'
 
@@ -145,7 +146,7 @@ export function SendQueue({
                     {(text || !attachments.length) && <span className="min-w-0 truncate" title={text || undefined}>{text || t('附件或技能')}</span>}
                     {attachments.length > 0 && (
                       <div className={`flex shrink-0 flex-wrap gap-1 py-0.5 ${text ? 'max-w-1/2' : 'max-w-full'}`}>
-                        {attachments}
+                        <ImagePreviewGroup>{attachments}</ImagePreviewGroup>
                       </div>
                     )}
                   </div>

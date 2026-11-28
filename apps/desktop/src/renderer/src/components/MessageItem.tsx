@@ -1,4 +1,4 @@
-import { Children, Fragment, isValidElement, memo, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { Children, createContext, Fragment, isValidElement, memo, useContext, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, RotateCcw } from 'lucide-react'
@@ -18,6 +18,7 @@ import { LoadingIcon } from './LoadingIcon'
 import { TerminalIcon } from './TerminalIcon'
 import { MessageActions } from './MessageActions'
 import { MessageImage } from './MessageImage'
+import { ImagePreviewGroup } from './ImagePreview'
 import { SubagentDetails } from './SubagentDetails'
 import { Badge, IconButton } from './ui'
 
@@ -34,10 +35,22 @@ function useLinkContext(): LinkContext | null {
   return useMemo(() => (targetId ? { targetId, cwd: cwd ?? '' } : null), [targetId, cwd])
 }
 
+const LinkedImageContext = createContext(false)
+const RASTER_IMAGE_URL = /^data:image\/(?:jpeg|png|gif|webp);base64,/i
+
+function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const linked = useContext(LinkedImageContext)
+  return src && !linked && RASTER_IMAGE_URL.test(src)
+    ? <MessageImage src={src} label={alt || t('图片')} inline />
+    : <img src={src} alt={alt} />
+}
+
 function markdownComponents(streaming: boolean, context: LinkContext | null): Components {
+  const MarkdownLink = createMarkdownLink(() => context)
   return {
     // 本地文件链接在文件面板打开；外链仍走系统浏览器（main 的 setWindowOpenHandler）。
-    a: createMarkdownLink(() => context),
+    a: (props) => <LinkedImageContext.Provider value><MarkdownLink {...props} /></LinkedImageContext.Provider>,
+    img: ({ src, alt }) => <MarkdownImage src={src} alt={alt} />,
     // 围栏代码块交给 CodeBlock（语言条 + 复制 + shiki 高亮）；行内代码走下面的 code。
     pre: ({ children }) => {
       const child = Children.toArray(children)[0]
@@ -298,7 +311,8 @@ const remarkPlugins = [remarkGfm]
 /** 单块 Markdown：memo 后文本和组件不变就跳过重新解析。 */
 const MarkdownBlock = memo(function MarkdownBlock({ text, components }: { text: string; components: Components }) {
   return (
-    <ReactMarkdown remarkPlugins={remarkPlugins} components={components} urlTransform={qnUrlTransform}>
+    <ReactMarkdown remarkPlugins={remarkPlugins} components={components}
+      urlTransform={(value, key) => key === 'src' && RASTER_IMAGE_URL.test(value) ? value : qnUrlTransform(value)}>
       {text}
     </ReactMarkdown>
   )
@@ -316,12 +330,14 @@ export const ReplyMarkdown = memo(function ReplyMarkdown({ text, streaming }: { 
   const components = useMemo(() => markdownComponents(streaming, context), [streaming, context])
   return (
     // 流式解析失败后继续显示原文，最后一帧再尝试格式化。
-    <RenderBoundary
-      key={streaming ? 'streaming' : 'complete'}
-      fallback={<div className="whitespace-pre-wrap wrap-anywhere">{text}</div>}
-    >
-      {streaming ? <StreamingMarkdown text={text} components={components} /> : <MarkdownBlock text={text} components={components} />}
-    </RenderBoundary>
+    <ImagePreviewGroup>
+      <RenderBoundary
+        key={streaming ? 'streaming' : 'complete'}
+        fallback={<div className="whitespace-pre-wrap wrap-anywhere">{text}</div>}
+      >
+        {streaming ? <StreamingMarkdown text={text} components={components} /> : <MarkdownBlock text={text} components={components} />}
+      </RenderBoundary>
+    </ImagePreviewGroup>
   )
 })
 
@@ -516,13 +532,9 @@ function UserMessage({ item, onEdit, editNote, onRewind }: {
   const skills = item.skills?.length ? item.skills : parsed.skills
   // 消息内嵌的图片可以直接预览；目标机路径仅用于显示附件名。
   const images = item.images ?? []
-  const visible = images.filter((src) => src.startsWith('data:image/'))
+  const visible = images.flatMap((src, index) => src.startsWith('data:image/') ? [{ src, name: parsed.images[index] }] : [])
   const named = images.filter((src) => !src.startsWith('data:image/'))
   // 发送时带了附图编号就用原文件名，和输入框里的蓝色标签一致；旧消息按格式和序号生成。
-  const imageLabel = (src: string, index: number) => {
-    const name = parsed.images[images.indexOf(src)]
-    return name ? `[${name}]` : embeddedImageLabel(src, index)
-  }
   const revisedText = edit === null || edit === parsed.text ? item.text : editUserText(item.text, edit)
   const hasText = Boolean(revisedText.trim())
   const canSave = Boolean(onEdit) && edit !== null && (hasText || Boolean(item.inputExtras?.length))
@@ -550,9 +562,11 @@ function UserMessage({ item, onEdit, editNote, onRewind }: {
       </span>}
       {visible.length > 0 && (
         <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
-          {visible.map((src, index) => (
-            <MessageImage key={index} src={src} label={imageLabel(src, index)} />
-          ))}
+          <ImagePreviewGroup>
+            {visible.map(({ src, name }, index) => (
+              <MessageImage key={index} src={src} label={name ? `[${name}]` : embeddedImageLabel(src, index)} />
+            ))}
+          </ImagePreviewGroup>
         </div>
       )}
       {(files.length > 0 || named.length > 0) && (

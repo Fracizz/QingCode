@@ -1,71 +1,185 @@
+@layer components {
+.qn-dialog.qn-terminal-page[data-placement="full"] > .qn-dialog-panel {
+  background: var(--color-qn-bg);
+  padding-block-start: calc(var(--qn-top) + 8px);
+  padding-block-end: max(18px, env(safe-area-inset-bottom), calc(var(--qn-corner-gap, 0px) * 1.125));
+  padding-inline: max(16px, env(safe-area-inset-left), calc((100% - 760px) / 2))
+    max(16px, env(safe-area-inset-right), calc((100% - 760px) / 2));
+}
+
+.qn-terminal-page > .qn-dialog-panel > :first-child > .qn-title {
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.qn-terminal-page > .qn-dialog-panel > :first-child > .qn-header-icon {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-qn-composer);
+  box-shadow: 0 6px 28px var(--qn-composer-shadow);
+}
+
+.qn-terminal-page > .qn-dialog-panel > :first-child > .qn-header-icon:active {
+  background: var(--color-qn-control-active);
+}
+
 .qn-terminal-panel {
   display: flex;
-  flex: 1;
+  flex: 1 0 auto;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
 }
 
-.qn-terminal-panel > * {
-  flex-shrink: 0;
-}
+.qn-terminal-panel > * { flex-shrink: 0; }
+.qn-terminal-panel > .qn-note { margin-bottom: 0; }
 
-.qn-terminal-tools {
+.qn-terminal-toolbar {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.qn-terminal-picker.qn-button {
   min-width: 0;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
-  scrollbar-width: thin;
-}
-
-.qn-terminal-tools .qn-button {
-  flex: 0 0 auto;
-  padding-inline: 8px;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.qn-terminal-keys .qn-button {
-  min-width: 44px;
   min-height: 44px;
-  box-shadow: inset 0 1px rgb(255 255 255 / 8%), inset 0 -2px rgb(0 0 0 / 35%);
+  border-radius: 999px;
+  padding-inline: 12px;
+  font-weight: 600;
 }
 
-.qn-terminal-keys .qn-button:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: inset 0 1px rgb(255 255 255 / 8%);
-}
+.qn-terminal-picker svg { flex-shrink: 0; }
 
 .qn-terminal-surface {
   position: relative;
-  flex: 1 0 140px;
+  /* 键盘弹出时优先缩小输出区，极矮的窗口仍可滚动到输入栏。 */
+  flex: 1 0 64px;
   overflow: hidden;
-  border: 1px solid var(--color-qn-border);
-  border-radius: var(--qn-radius);
-  background: #161816;
+  border-radius: var(--qn-float-radius);
+  background: var(--color-qn-panel);
+  box-shadow: var(--qn-float-shadow);
 }
 
 .qn-terminal-host {
   position: absolute;
-  inset: 0;
-  padding: 6px;
+  inset: 8px;
+  background: inherit;
+  color: var(--color-qn-text);
+  caret-color: var(--color-qn-accent);
+}
+
+.qn-terminal-host .xterm { height: 100%; }
+
+.qn-terminal-follow.qn-button {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 6;
+  padding: 0;
+  border-radius: 50%;
 }
 
 .qn-terminal-readable {
+  flex: 1;
+  min-height: 0;
   margin: 0;
   overflow: auto;
-  padding: 8px;
-  background: #161816;
+  padding: 12px;
+  border-radius: var(--qn-float-radius);
+  background: var(--color-qn-panel);
   color: var(--color-qn-text);
   font: 13px/1.5 ui-monospace, Consolas, monospace;
   user-select: text;
 }
 
-.qn-terminal-host .xterm {
-  height: 100%;
+.qn-terminal-footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.qn-terminal-keys {
+  display: flex;
+  gap: 4px;
+}
+
+.qn-terminal-quick-keys {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+  gap: 4px;
+}
+
+.qn-terminal-extra-keys {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
+  gap: 4px;
+}
+
+.qn-terminal-keys .qn-button,
+.qn-terminal-extra-keys .qn-button {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: 6px;
+  border-radius: 999px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.qn-terminal-composer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--qn-float-radius);
+  background: var(--color-qn-composer);
+  box-shadow: 0 6px 24px var(--qn-composer-shadow);
+}
+
+.qn-terminal-composer:focus-within { box-shadow: 0 8px 30px var(--qn-composer-shadow-focus); }
+
+.qn-terminal-composer .qn-textarea { padding-inline: 8px; }
+
+.qn-terminal-keyboard.qn-button {
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: 50%;
+}
+
+@media (max-height: 420px) {
+  .qn-dialog.qn-terminal-page[data-placement="full"] > .qn-dialog-panel {
+    padding-block-start: calc(var(--qn-top) + 4px);
+    padding-block-end: max(8px, env(safe-area-inset-bottom), calc(var(--qn-corner-gap, 0px) * 1.125));
+  }
+
+  .qn-terminal-page > .qn-dialog-panel > :first-child { margin-block-end: 4px; }
+
+  .qn-terminal-footer {
+    position: sticky;
+    z-index: 1;
+    inset-block-end: env(safe-area-inset-bottom, 0px);
+    background: var(--color-qn-bg);
+  }
 }
 
 @media (orientation: landscape) and (max-height: 500px) {
-  .qn-terminal-surface { flex-basis: 105px; }
+  .qn-terminal-panel { gap: 4px; }
+  .qn-terminal-footer { display: flex; gap: 4px; }
+  .qn-terminal-keys { flex: 1; min-width: 0; align-items: center; }
+  .qn-terminal-composer { flex: 1 1 12rem; min-width: 0; }
+}
+}
+
+/* xterm 的样式不分层，视口空白和输入法候选文字也需要使用终端主题。 */
+.qn-terminal-host .xterm .xterm-viewport,
+.qn-terminal-host .xterm .composition-view {
+  background: var(--color-qn-panel);
+  color: var(--color-qn-text);
 }

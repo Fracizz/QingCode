@@ -22,13 +22,15 @@ describe('手机发送队列', () => {
       { ...item, id: 'in-flight', sending: true, accessMode: 'auto' },
       { ...item, id: 'paused', error: '上一轮未完成，队列已暂停' },
       { ...item, id: 'relay', relayPending: true },
+      { ...item, id: 'legacy-fork', error: '当前还没有已结束的一轮，可用「新会话开始」' },
     ] }, [conn])
-    const [first, waiting, inFlight, paused, relay] = restoreQueues(raw, [conn], {})[key] ?? []
+    const [first, waiting, inFlight, paused, relay, legacyFork] = restoreQueues(raw, [conn], {})[key] ?? []
     expect(first).toMatchObject({ ...item, sending: false, error: undefined })
     expect(waiting?.error).toBeUndefined()
     expect(inFlight).toMatchObject({ id: 'in-flight', accessMode: 'auto', sending: false, error: UNCONFIRMED_QUEUED_SEND })
     expect(paused?.error).toBe('上一轮未完成，队列已暂停')
     expect(relay).toMatchObject({ relayPending: true, error: undefined })
+    expect(legacyFork).toMatchObject({ ...item, id: 'legacy-fork', sending: false, error: '队列已暂停' })
     expect(restoreQueues(raw, [{ ...conn, fp: 'cd'.repeat(32) }], {})).toEqual({})
     const archived = archivedThreadKey(conn.id, 'local', { id: 'thread', agent: 'codex' })
     expect(restoreQueues(raw, [conn], { [archived]: true })).toEqual({})

@@ -5,7 +5,7 @@ export function ProgressRing({ percent, size, fillBounds = false }: {
 }) {
   const diameter = fillBounds ? size : 13
   const center = diameter / 2
-  const strokeWidth = fillBounds ? 2 : 1.5
+  const strokeWidth = fillBounds ? 2.5 : 1.5
   const radius = fillBounds ? center - strokeWidth / 2 : 5
   return (
     <svg width={size} height={size} viewBox={`0 0 ${diameter} ${diameter}`} className="shrink-0 -rotate-90"

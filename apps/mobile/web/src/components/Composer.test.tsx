@@ -189,10 +189,36 @@ it('选图在光标处插入可预览的省略标签，移除与发送都对应�
     const dialog = host.querySelector('dialog[open]')!
     expect(dialog.getAttribute('aria-label')).toBe(name)
     expect(dialog.querySelector('img')?.src).toBe(first.dataUrl)
+    const navigate = (direction: string) => dialog.querySelector<HTMLButtonElement>(`[aria-label="${direction}张图片"]`)!
+    const position = () => dialog.querySelector('[aria-label="图片位置"]')?.textContent
+    const swipeLeft = () => {
+      const stage = dialog.querySelector('.qn-image-stage')!
+      const touch = (clientX: number) => ({ identifier: 1, clientX, clientY: 40 })
+      stage.dispatchEvent(Object.assign(new Event('touchstart', { bubbles: true }), { touches: [touch(150)] }))
+      stage.dispatchEvent(Object.assign(new Event('touchend', { bubbles: true, cancelable: true }), {
+        touches: [], changedTouches: [touch(50)],
+      }))
+    }
+    expect(position()).toBe('1 / 2')
+    expect(navigate('上一').disabled).toBe(true)
+    await act(() => dialog.querySelector('img')!.dispatchEvent(new Event('load')))
+    await act(() => dialog.querySelector<HTMLButtonElement>('[aria-label="放大"]')!.click())
+    await act(swipeLeft)
+    expect(position()).toBe('1 / 2')
+    await act(() => dialog.querySelector<HTMLButtonElement>('[aria-label="适应窗口"]')!.click())
+    await act(swipeLeft)
+    expect(position()).toBe('2 / 2')
+    expect(dialog.querySelector('img')?.src).toBe(second.dataUrl)
+    expect(navigate('下一').disabled).toBe(true)
+    await act(() => navigate('上一').click())
+    expect(dialog.querySelector('img')?.src).toBe(first.dataUrl)
     await act(() => dialog.querySelector<HTMLButtonElement>('[aria-label="关闭"]')!.click())
 
     await act(() => host.querySelector<HTMLButtonElement>('[aria-label="移除 短图.png"]')!.click())
     expect(area.value).toBe('看 [12345678…abcdefg.png] 这里')
+    await act(() => host.querySelector<HTMLButtonElement>('.qn-image-thumbnail')!.click())
+    expect(host.querySelector('dialog[open] [aria-label="切换图片"]')).toBeNull()
+    await act(() => host.querySelector<HTMLButtonElement>('dialog[open] [aria-label="关闭"]')!.click())
     await act(() => host.querySelector<HTMLButtonElement>('.qn-send-button')!.click())
     expect(onSend).toHaveBeenCalledWith(`看 [${name}] 这里\n\n附图编号（按本条消息中图片的先后顺序）：\n1. [${name}]`,
       [{ type: 'image', url: first.dataUrl }], 'queue')

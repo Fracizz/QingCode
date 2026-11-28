@@ -287,7 +287,7 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
             <RowIcon icon={ALargeSmall} />
             <RowText title={t('对话字号')} hint={(
               <>
-                {t('同时调整消息与输入框，也可在对话里双指缩放。')}
+                {t('同时调整消息与输入框的字号。')}
                 {chatFont !== DEFAULT_CHAT_FONT && (
                   <button type="button" className="qn-setting-inline" onClick={() => changeChatFont(DEFAULT_CHAT_FONT)}>
                     {t('恢复默认')}

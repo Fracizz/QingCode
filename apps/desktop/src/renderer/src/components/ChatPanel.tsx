@@ -27,6 +27,7 @@ import { readImage, uploadToTarget } from '../lib/attachmentIo'
 import { getAccessMode } from '../features/access/accessModel'
 import { useCwdUntrusted } from '../store/projectTrust'
 import { screenFiles, useImageSupport } from '../features/composer'
+import { useComposerShortcuts } from '../features/composer/shortcuts'
 import { useSettings } from '../features/settings/settingsStore'
 import { copyText } from '../lib/clipboard'
 import { isAtBottom } from '../lib/diff'
@@ -142,6 +143,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
   const selectedProjectId = useProjects((s) => s.selectedId)
   const projects = useProjects((s) => s.projects)
   const chatWidth = useUi((s) => s.chatWidth)
+  const shortcuts = useComposerShortcuts((s) => s.shortcuts)
   const contentWidthClassName = chatWidth === 'wide' ? 'max-w-5xl' : 'max-w-3xl'
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -362,12 +364,17 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
     const newDraft = currentThreadId === null
     if (input.length === 0 || (newDraft && sendingDraftKey.current)) return false
     let createdKey: string | null = null
-    let accepted: boolean
+    let accepted = false
     if (newDraft) sendingDraftKey.current = draftKey
     try {
       accepted = await sendAndFollow(message, { input, mode, onThreadCreated: (threadId) => {
         createdKey = JSON.stringify([currentTargetId, currentCwd, currentAgent, threadId])
       } })
+    } catch (error) {
+      const state = useCodex.getState()
+      if (composerDraftKey(state) === (createdKey ?? draftKey)) {
+        useCodex.setState({ error: friendlyError(error, t('发送消息失败')) })
+      }
     } finally {
       if (newDraft) sendingDraftKey.current = null
     }
@@ -881,6 +888,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
         onChange={setDraft}
         agent={currentAgent}
         annotationCount={annotations.length}
+        shortcuts={{ entries: shortcuts, sendBlocked: targetState !== 'ready' || !!openingThread || !!openError, queued }}
         attach={{
           attachments,
           imageSupport,

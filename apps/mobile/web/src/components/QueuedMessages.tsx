@@ -6,6 +6,7 @@ import { CornerDownRight, GitBranch, ListOrdered, MessageSquarePlus, MoreHorizon
 import { useEffect, useRef, useState } from 'react'
 import { UNCONFIRMED_QUEUED_SEND } from '../queuedSends'
 import { selectedAccessPreference, selectedQueuedSends, useApp, type QueuedThreadMode } from '../store'
+import { toast } from '../toast'
 import { MODE_ICONS } from './AccessModePicker'
 import { Badge, Button, Dialog, Note, SheetAction } from './ui'
 
@@ -69,8 +70,13 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
     setMoving(true)
     setMoveError(null)
     try {
-      if (await sendInNewThread(destination.id, destination.mode)) setDestination(null)
-      else {
+      const result = await sendInNewThread(destination.id, destination.mode)
+      if (result) {
+        setDestination(null)
+        if (result === 'no-finished-turn') {
+          toast(t('当前还没有已结束的一轮，可用「新会话开始」'), { tone: 'warn' })
+        }
+      } else {
         unlock.current = beginEdit(destination.id)
         setMoveError(useApp.getState().error ?? t('暂时无法在新会话发送，请重试。'))
       }

@@ -5,6 +5,7 @@ import {
   listSkills,
   listThreads,
   openThreadHistory,
+  readLatestEndedTurnId,
   readSubagentThread,
   readThread,
   readThreadHistoryPage,
@@ -194,6 +195,35 @@ describe('codex api', () => {
       thread: { id: 'legacy', turns: [{ id: 'turn' }] }, earlier: null,
     })
     expect(calls.at(-1)).toEqual({ method: 'thread/read', params: { threadId: 'legacy', includeTurns: true } })
+  })
+
+  it('找分叉点时跳过未结束轮次，必要时继续读取更早的页', async () => {
+    const calls: Call[] = []
+    const rpc = {
+      request: async (method: string, params: { cursor: string | null }) => {
+        calls.push({ method, params })
+        return params.cursor
+          ? { data: [{ id: 'ended', status: 'interrupted' }], nextCursor: 'oldest' }
+          : { data: [{ id: 'active', status: 'inProgress' }], nextCursor: 'older' }
+      },
+    } as unknown as CodexRpcLike
+    await expect(readLatestEndedTurnId(rpc, 'history')).resolves.toBe('ended')
+    expect(calls).toMatchObject([
+      { method: 'thread/turns/list', params: { cursor: null, sortDirection: 'desc', itemsView: 'notLoaded' } },
+      { method: 'thread/turns/list', params: { cursor: 'older', sortDirection: 'desc', itemsView: 'notLoaded' } },
+    ])
+  })
+
+  it('旧版服务从全量历史中选出最后一个已结束的轮次', async () => {
+    const rpc = {
+      request: async (method: string) => {
+        if (method === 'thread/turns/list') throw new CodexRpcError('未知方法', -32601)
+        return { thread: { id: 'legacy', turns: [
+          { id: 'old', status: 'completed' }, { id: 'latest', status: 'completed' }, { id: 'active', status: 'inProgress' },
+        ] } }
+      },
+    } as unknown as CodexRpcLike
+    await expect(readLatestEndedTurnId(rpc, 'legacy')).resolves.toBe('latest')
   })
 
   it('用只读请求加载指定子代理的对话记录', async () => {

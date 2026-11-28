@@ -635,7 +635,7 @@ export function messagesToThread(
     if (role === 'user' && echo.length === 0) continue
     const timestamp = role === 'user' ? finite(message.timestamp) : null
     const identity = timestamp === null ? null : uniqueUserIds.get(String(timestamp))
-    if (!current || (role === 'user' && !identity?.steering)) {
+    if (!current || (role === 'user' && identity?.steering !== 'currentTurn')) {
       current = { id: `turn-${meta.id}-${index}`, itemIds: [] }
       open.push(current)
     }

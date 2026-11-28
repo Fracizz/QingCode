@@ -99,6 +99,19 @@ interface OpenDialog {
   timer: ReturnType<typeof setTimeout> | null
 }
 
+function historyTurnHasUserItem(turn: Json, itemId: string): boolean {
+  return Array.isArray(turn.items) && turn.items.some((item) => asRecord(item)?.id === itemId)
+}
+
+function activeHistoryTurnIndex(session: PiSession, turns: readonly Json[]): number {
+  if (!session.turnId) return -1
+  const openingUser = session.state.order.find((id) => {
+    const item = session.state.items[id]
+    return item?.type === 'userMessage' && item.steering !== 'currentTurn'
+  })
+  return openingUser ? turns.findIndex((turn) => historyTurnHasUserItem(turn, openingUser)) : -1
+}
+
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000
 // 停止流程里的各步等待上限：任何一步卡住都不能拖住 abort。
 const STEER_SETTLE_MS = 1_000
@@ -378,8 +391,12 @@ export class PiHost extends JsonRpcAgentHost {
       : load())
     this.touch(session)
     const turnId = session.turnId
-    // 运行中条目同时经事件流推送，保留 active turn 的 ID 供中断和审批状态对齐。
-    const turns = turnId ? [...saved, buildTurn(turnId, [], 'inProgress')] : saved
+    const activeIndex = activeHistoryTurnIndex(session, saved)
+    // pi 会在轮次结束前将消息写入历史，当前轮只由实时轮次表示，避免把它作为已结束轮次分叉。
+    const history = activeIndex < 0 ? saved : saved.slice(0, activeIndex)
+    const turns = turnId ? [...history, buildTurn(turnId,
+      session.state.order.map((id) => session.state.items[id]).filter(isRecord), 'inProgress')]
+      : history
     if (method === 'thread/turns/list') return listHistoryTurns(threadId, turns, params)
     if (method === 'thread/items/list') return listHistoryItems(threadId, turns, params)
     const thread = piThread(meta, turns, config)
@@ -438,9 +455,12 @@ export class PiHost extends JsonRpcAgentHost {
   private async piForkEntry(rpc: PiRpcProcess, source: PiSession, turnId: string): Promise<string | undefined> {
     const messages = await this.readMessages(rpc)
     const turns = messagesToThread(source.meta, messages, source.userItemIds).turns
-    const index = turns.findIndex((turn) =>
-      turn.id === turnId || (Array.isArray(turn.items) && turn.items.some((item) => asRecord(item)?.id === `${turnId}-user`)))
+    const index = turns.findIndex((turn) => turn.id === turnId || historyTurnHasUserItem(turn, `${turnId}-user`))
     if (index < 0) throw new PiRpcError(-32602, '在 pi 历史中找不到所选轮次')
+    const activeIndex = activeHistoryTurnIndex(source, turns)
+    if (activeIndex >= 0 && index >= activeIndex) {
+      throw new PiRpcError(-32602, '请选择已保存且已结束的 pi 会话轮次')
+    }
     const prefix = `turn-${source.meta.id}-`
     // fork 排除传入的用户消息，按历史轮次找下一轮开头，跳过当前轮内的引导消息。
     const next = turns[index + 1]

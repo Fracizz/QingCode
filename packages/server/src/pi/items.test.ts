@@ -258,6 +258,21 @@ describe('用量与历史', () => {
     expect(turns[1]).toMatchObject({ status: 'completed', error: null })
   })
 
+  it('历史按引导实际送达的轮次切分', () => {
+    const { turns } = messagesToThread({ id: 's1', cwd: '/work' }, [
+      { role: 'user', content: '首轮', timestamp: 1 },
+      { role: 'user', content: '补充到首轮', timestamp: 2 },
+      { role: 'user', content: '下一轮的输入', timestamp: 3 },
+    ], new Map([
+      ['2', { id: 'current', clientId: null, steering: 'currentTurn' }],
+      ['3', { id: 'next', clientId: null, steering: 'nextTurn' }],
+    ]))
+    expect(turns).toMatchObject([
+      { id: 'turn-s1-0', items: [{ type: 'userMessage' }, { id: 'current' }] },
+      { id: 'turn-s1-2', items: [{ id: 'next' }] },
+    ])
+  })
+
   it('历史里展开的技能和 @文件收回成标签', () => {
     const history = messagesToThread({ id: 's1', cwd: '/work' }, [
       { role: 'user', content: '<skill name="review" location="/s/SKILL.md">\nReferences are relative to /s.\n\n正文\n</skill>\n\n看看' },

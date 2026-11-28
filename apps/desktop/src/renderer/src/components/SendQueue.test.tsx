@@ -18,6 +18,7 @@ it('排队消息用带标签的缩略图打开图片预览，用图标查看附�
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const chat = { targetId: 'remote', agent: 'codex', threadId: 'thread' } as const
   const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l7sAAAAASUVORK5CYII='
+  const secondImage = 'data:image/png;base64,AQ=='
   const notePath = '/tmp/note#1.txt'
   const openFile = vi.fn()
   const stopListening = subscribeOpen(openFile)
@@ -28,29 +29,41 @@ it('排队消息用带标签的缩略图打开图片预览，用图标查看附�
       { type: 'text', text: '排队正文', text_elements: [] },
       { type: 'image', url: image },
       { type: 'mention', name: 'note#1.txt', path: notePath },
+      { type: 'image', url: secondImage },
       { type: 'skill', name: 'review', path: '.codex/skills/review/SKILL.md' },
     ] }, { id: 2, text: '', overrides: {}, input: [{ type: 'image', url: image }] }],
   } })
   const host = document.body.appendChild(document.createElement('div'))
   const root = createRoot(host)
+  const dialogPrototype = HTMLDialogElement.prototype
+  const dialogMethods = Object.getOwnPropertyDescriptors(dialogPrototype)
+  const showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true })
+  const close = vi.fn(function (this: HTMLDialogElement) { this.open = false })
+  Object.defineProperties(dialogPrototype, {
+    showModal: { configurable: true, value: showModal },
+    close: { configurable: true, value: close },
+  })
   try {
     await act(() => root.render(<SendQueue {...chat} running />))
     const [row, imageOnly] = Array.from(host.querySelectorAll('li'))
     const thumbnail = row!.querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"]')!
-    const dialog = row!.querySelector('dialog')!
-    const showModal = vi.fn()
-    const close = vi.fn()
-    Object.assign(dialog, { showModal, close })
     expect(row?.textContent).toContain('排队正文')
     expect(thumbnail.textContent).toBe('图片 1')
     expect(thumbnail.querySelector('img')?.getAttribute('src')).toBe(image)
     expect(imageOnly?.querySelector('button[aria-haspopup="dialog"]')).not.toBeNull()
     expect(imageOnly?.textContent).not.toContain('附件或技能')
 
-    thumbnail.click()
+    await act(() => thumbnail.click())
     expect(showModal).toHaveBeenCalledOnce()
-    dialog.querySelector<HTMLButtonElement>('[aria-label="关闭图片预览"]')!.click()
+    const dialog = row!.querySelector('dialog[open]')!
+    expect(dialog.querySelector('[aria-label="图片位置"]')?.textContent).toBe('1 / 2')
+    await act(() => dialog.querySelector<HTMLButtonElement>('[aria-label="下一张图片"]')!.click())
+    expect(dialog.querySelector('img')?.getAttribute('src')).toBe(secondImage)
+    await act(() => dialog.querySelector<HTMLButtonElement>('[aria-label="关闭图片预览"]')!.click())
     expect(close).toHaveBeenCalledOnce()
+    await act(() => imageOnly!.querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"]')!.click())
+    expect(imageOnly!.querySelector('dialog[open] [aria-label="切换图片"]')).toBeNull()
+    await act(() => imageOnly!.querySelector<HTMLButtonElement>('[aria-label="关闭图片预览"]')!.click())
     row!.querySelector<HTMLButtonElement>('[aria-label="打开附件 note#1.txt"]')!.click()
     row!.querySelector<HTMLButtonElement>('[aria-label="查看技能 review"]')!.click()
     expect(openFile.mock.calls).toEqual([
@@ -62,6 +75,10 @@ it('排队消息用带标签的缩略图打开图片预览，用图标查看附�
     expect(remove).toHaveBeenCalledExactlyOnceWith(chat, 1)
   } finally {
     await act(() => root.unmount())
+    for (const method of ['showModal', 'close'] as const) {
+      if (dialogMethods[method]) Object.defineProperty(dialogPrototype, method, dialogMethods[method])
+      else Reflect.deleteProperty(dialogPrototype, method)
+    }
     host.remove()
     stopListening()
     useCodex.setState(previous)

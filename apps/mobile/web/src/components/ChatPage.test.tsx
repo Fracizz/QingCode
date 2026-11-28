@@ -3,11 +3,48 @@ import { applyNotification, CodexRpc, emptyState, parseAsyncQuestionReply, type 
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
+import { readChatFont, saveChatFont } from '../chatFont'
 import { type AgentSession, useApp } from '../store'
 import { clearToasts, useToasts } from '../toast'
 import { MobileCodexTransport } from '../transport'
 import { closeTopSheet } from '../workspace'
 import { ChatPage } from './ChatPage'
+
+it('对话使用保存的字号，双指张合不会改变字号', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const preference = 'qn.mobile.chatFontSize'
+  const previous = localStorage.getItem(preference)
+  try {
+    saveChatFont(21)
+    await act(() => root.render(<ChatPage />))
+    const surface = host.querySelector<HTMLElement>('.qn-chat-surface')!
+    const font = () => surface.style.getPropertyValue('--chat-font')
+    const touch = (type: string, positions: number[]) => surface.dispatchEvent(
+      Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
+        touches: positions.map((clientX, identifier) => ({ identifier, clientX, clientY: 0, target: surface })),
+      }),
+    )
+    expect(font()).toBe('21px')
+    await act(() => {
+      touch('touchstart', [10, 110])
+      touch('touchmove', [10, 250])
+      expect(font()).toBe('21px')
+      touch('touchmove', [10, 30])
+      expect(font()).toBe('21px')
+      touch('touchend', [])
+    })
+    expect(readChatFont()).toBe(21)
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    if (previous === null) localStorage.removeItem(preference)
+    else localStorage.setItem(preference, previous)
+    vi.unstubAllGlobals()
+  }
+})
 
 it('输入斜杠后可触摸执行命令，命令文本不会作为消息发送', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)

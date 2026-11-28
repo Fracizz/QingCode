@@ -3,7 +3,7 @@ import {
   insertImagePlaceholders, insertSkillToken, isSlashDraft, matchingChatCommands, removePlaceholder, runningSendMode, splitSkillTokens, t,
   takeSkillTokens, translateMessage, uniqueImageName, type ChatCommandId, type SlashCommandView, type UserInput,
 } from '@qn/codex-client'
-import { ArrowUp, ChevronDown, ChevronUp, FileText, Image, ListTodo, Wand2, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, ListTodo, Wand2, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
 import { attachmentBytes, IMAGE_BYTES, insertFileMention, isDraftImage, MAX_IMAGES, mentionAt, type DraftImage } from '../composerLogic'
@@ -14,7 +14,7 @@ import type { SendMode } from '../store'
 import { matchingSkills, type SkillItem } from '../skills'
 import { matchingSlashCommands } from '../slashCommands'
 import type { AgentKind, Project } from '../types'
-import { ImageThumbnail } from './ImageThumbnail'
+import { ImagePreviewGroup, ImageThumbnail } from './ImageThumbnail'
 import { Button, Dialog, LoadingIcon } from './ui'
 import { toast } from '../toast'
 
@@ -439,22 +439,24 @@ export function Composer({
         )}
         {/* 附件放进输入框内：方形缩略图 + 右上角移除角标，与常见聊天应用一致。 */}
         {images.length > 0 && (
-          <ul className="qn-composer-images" aria-label={t('图片附件')}>
-            {images.map((image) => (
-              <li className="qn-composer-image" key={image.name}>
-                <ImageThumbnail src={image.dataUrl} alt={image.name} className="qn-composer-image-img" buttonRef={(button) => {
-                  const token = imagePlaceholder(image.name)
-                  if (button) imagePreviewTriggers.current.set(token, button)
-                  else imagePreviewTriggers.current.delete(token)
-                }} />
-                <button type="button" className="qn-composer-image-remove" disabled={sending || picking}
-                  onClick={() => onChangeText(removePlaceholder(text, image.name), images.filter((item) => item !== image))}
-                  aria-label={t('移除 {name}', { name: image.name })}>
-                  <X size={12} strokeWidth={2.5} aria-hidden />
-                </button>
-              </li>
-            ))}
-          </ul>
+          <ImagePreviewGroup key={draftKey}>
+            <ul className="qn-composer-images" aria-label={t('图片附件')}>
+              {images.map((image) => (
+                <li className="qn-composer-image" key={image.name}>
+                  <ImageThumbnail src={image.dataUrl} alt={image.name} className="qn-composer-image-img" buttonRef={(button) => {
+                    const token = imagePlaceholder(image.name)
+                    if (button) imagePreviewTriggers.current.set(token, button)
+                    else imagePreviewTriggers.current.delete(token)
+                  }} />
+                  <button type="button" className="qn-composer-image-remove" disabled={sending || picking}
+                    onClick={() => onChangeText(removePlaceholder(text, image.name), images.filter((item) => item !== image))}
+                    aria-label={t('移除 {name}', { name: image.name })}>
+                    <X size={12} strokeWidth={2.5} aria-hidden />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </ImagePreviewGroup>
         )}
         <div className="relative">
           <textarea
@@ -500,7 +502,7 @@ export function Composer({
                 className="pointer-events-auto flex min-h-11 min-w-0 items-center gap-2 rounded-sm text-left text-[length:var(--chat-font,16px)] leading-5 text-qn-muted focus-visible:outline focus-visible:outline-qn-outline-hover"
               >
                 <span className="line-clamp-2 min-w-0 wrap-anywhere">{suggestedText}</span>
-                <span className="shrink-0 rounded-sm border border-qn-border px-1 text-xs" aria-hidden>{t('填入')}</span>
+                <span className="shrink-0 rounded-sm bg-qn-raised px-1.5 py-0.5 text-xs" aria-hidden>{t('填入')}</span>
               </button>
             </div>
           )}
@@ -513,7 +515,7 @@ export function Composer({
             <Button variant="ghost" className="qn-icon-button" aria-label={t('添加图片')}
               title={imageUnavailable ?? (images.length >= MAX_IMAGES ? t('一条消息最多 {max} 张图片', { max: MAX_IMAGES }) : undefined)}
               onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
-              <Image size={22} strokeWidth={2} absoluteStrokeWidth aria-hidden />
+              <ImagePlus size={20} strokeWidth={1.75} absoluteStrokeWidth aria-hidden />
             </Button>
             {/* 停止与发送共用一个位置（参考 Orca 手机版）：没有可发送内容时是停止键，一输入就换成发送键（排队）。 */}
             {running && !canSend && !sending && (

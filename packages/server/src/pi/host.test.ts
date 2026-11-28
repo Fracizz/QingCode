@@ -271,6 +271,62 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
     }
   })
 
+  it('当前轮已写入 pi 历史时仍只允许从上一轮分支', async () => {
+    const threadId = 'fake-session'
+    const { host, sent, rpc, state } = harness([
+      { meta: { id: threadId, cwd: '/work' }, sessionFile: '/tmp/fake-session.jsonl' },
+    ])
+    const activeUser = { role: 'user', content: '正在运行', timestamp: 3000 }
+    state.messages = [
+      { role: 'user', content: '已结束', timestamp: 1000 },
+      { role: 'assistant', content: [{ type: 'text', text: '回答' }], timestamp: 2000 },
+      activeUser,
+      { role: 'assistant', content: [], stopReason: 'toolUse', timestamp: 4000 },
+    ]
+    try {
+      await host.open({})
+      host.handleClientMessage(1, {
+        id: 1, method: 'turn/start', params: { threadId, input: [{ type: 'text', text: '正在运行' }] },
+      })
+      await flush()
+      const { turn } = responseFor(sent, 1)?.result as { turn: { id: string } }
+      rpc().emit({ type: 'message_start', message: activeUser })
+      host.handleClientMessage(1, {
+        id: 2, method: 'thread/turns/list', params: { threadId, sortDirection: 'desc', itemsView: 'notLoaded' },
+      })
+      await flush()
+      expect(responseFor(sent, 2)?.result).toMatchObject({ data: [
+        { id: turn.id, status: 'inProgress' }, { id: 'turn-fake-session-0', status: 'completed' },
+      ] })
+
+      host.handleClientMessage(1, { id: 3, method: 'thread/fork', params: { threadId, lastTurnId: 'turn-fake-session-2' } })
+      await flush()
+      expect(responseFor(sent, 3)?.error).toMatchObject({ code: -32602 })
+      expect(state.commands).not.toContain('clone')
+
+      state.handleCommand = (type, payload) => {
+        if (type === 'get_entries') return { success: true, data: {
+          leafId: 'active', entries: [{ id: 'active', type: 'message', message: activeUser }],
+        } }
+        if (type === 'fork') {
+          expect(payload).toEqual({ entryId: 'active' })
+          return { success: true }
+        }
+        if (type === 'get_state' && state.commands.includes('fork')) {
+          return { success: true, data: { sessionId: 'pi-branch', sessionFile: '/tmp/pi-branch.jsonl' } }
+        }
+      }
+      host.handleClientMessage(1, {
+        id: 4, method: 'thread/fork', params: { threadId, lastTurnId: 'turn-fake-session-0', excludeTurns: true },
+      })
+      await flush()
+      expect(responseFor(sent, 4)?.result).toMatchObject({ thread: { id: 'pi-branch', turns: [] } })
+      expect(host.activeTurns).toBe(1)
+    } finally {
+      host.shutdown()
+    }
+  })
+
   it('实时回显和 get_messages 识别同一次带图提交，其他相同内容保持独立', async () => {
     const threadId = 'fake-session'
     const { host, sent, broadcasts, rpc, state } = harness([
@@ -292,7 +348,7 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
       })
       await flush()
       const echo = { type: 'userMessage', id: expect.any(String), clientId, content: expect.arrayContaining(input) }
-      const result = responseFor(sent, 1)?.result as { turn: { items: RpcRecord[] } }
+      const result = responseFor(sent, 1)?.result as { turn: { id: string; items: RpcRecord[] } }
       expect(result).toMatchObject({ turn: { items: [echo] } })
       expect(broadcasts.find(({ msg }) => msg.method === 'turn/started')?.msg.params)
         .toMatchObject({ turn: { items: [echo] } })
@@ -304,8 +360,16 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
       expect(responseFor(sent, 2)?.result).toMatchObject({
         thread: { turns: [
           { items: [{ ...echo, id: 'turn-fake-session-0-user', clientId: null }] },
-          { items: [{ ...echo, id: result.turn.items[0]?.id }] },
-          { status: 'inProgress', items: [] },
+          { id: result.turn.id, status: 'inProgress', items: [{ ...echo, id: result.turn.items[0]?.id }] },
+        ] },
+      })
+      rpc().emit({ type: 'agent_settled' })
+      host.handleClientMessage(2, { id: 3, method: 'thread/read', params: { threadId } })
+      await flush()
+      expect(responseFor(sent, 3)?.result).toMatchObject({
+        thread: { turns: [
+          { status: 'completed', items: [{ ...echo, id: 'turn-fake-session-0-user', clientId: null }] },
+          { status: 'completed', items: [{ ...echo, id: result.turn.items[0]?.id }] },
         ] },
       })
     } finally {

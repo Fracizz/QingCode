@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type Ref, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import {
   accessOptions, AGENT_CAPABILITIES, alternateSendMode, attachmentTextPattern, exactChatCommand, hasSkillToken, insertSkillToken, isSlashDraft, resolveAccessMode,
   runningSendMode, t, takeSkillTokens, translateMessage,
@@ -33,6 +33,8 @@ import {
 } from '../features/composer'
 import { appendProjectMention } from '../features/composer/mentions'
 import { receiveProjectMentions } from '../features/composer/projectMention'
+import { ComposerShortcutBar, type ShortcutAction } from '../features/composer/ComposerShortcutBar'
+import type { ComposerShortcut } from '../features/composer/shortcuts'
 import { useDock } from '../store/dock'
 import { ImageAttachmentChip } from '../features/composer/ImageAttachmentChip'
 import { Suggestions } from '../features/composer/Suggestions'
@@ -40,6 +42,7 @@ import { pendingSendKey, useCodex } from '../store/codex'
 import { cn } from '../lib/cn'
 import type { SendMode } from '../store/codex'
 import { ListOption } from './ListOption'
+import { ImagePreviewGroup } from './ImagePreview'
 import { LoadingIcon } from './LoadingIcon'
 import { Tip } from './primitives'
 import { EmptyState, ErrorNote, IconButton } from './ui'
@@ -116,6 +119,7 @@ export function Composer({
   footer,
   attach,
   slash,
+  shortcuts,
   promptSuggestion,
   suggestionBoundaryRef,
 }: {
@@ -149,6 +153,7 @@ export function Composer({
   footer?: ReactNode
   attach?: AttachmentProps
   slash?: SlashProps
+  shortcuts?: { entries: readonly ComposerShortcut[]; sendBlocked: boolean; queued: boolean }
   promptSuggestion?: string
   suggestionBoundaryRef: RefObject<HTMLDivElement | null>
 }) {
@@ -156,6 +161,9 @@ export function Composer({
   const fontSize = useSetting((settings) => settings.general.composerFontSize)
   const composing = useRef(false)
   const areaRef = useRef<HTMLTextAreaElement>(null)
+  const hasFocusedArea = useRef(false)
+  const submittingShortcut = useRef<string | null>(null)
+  const [pendingShortcutId, setPendingShortcutId] = useState<string | null>(null)
   const imageTextRef = useRef<HTMLDivElement>(null)
   const imagePreviewTriggers = useRef(new Map<string, HTMLButtonElement>())
   const fileRef = useRef<HTMLInputElement>(null)
@@ -332,6 +340,40 @@ export function Composer({
     }
     if (!canSend) return
     void onSend(value, mode)
+  }
+
+  const shortcutAction = (shortcut: ComposerShortcut): ShortcutAction => {
+    if (!shortcut.send || value || hasDraft || slash?.skills.length || sending || blocked || shortcuts?.sendBlocked ||
+      pendingShortcutId || (slash && exactChatCommand(shortcut.text))) return 'fill'
+    return busy || shortcuts?.queued ? 'queue' : 'send'
+  }
+
+  const activateShortcut = (shortcut: ComposerShortcut) => {
+    if (disabled || composing.current || submittingShortcut.current === shortcut.id) return false
+    const area = areaRef.current
+    if (!area) return false
+    const action = submittingShortcut.current ? 'fill' : shortcutAction(shortcut)
+    const position = hasFocusedArea.current ? area.selectionEnd : value.length
+    const text = value.slice(0, position) + shortcut.text + value.slice(position)
+    const nextCaret = position + shortcut.text.length
+    pendingCaret.current = nextCaret
+    setCaret(nextCaret)
+    setDismissed(true)
+    onChange(text)
+    if (action !== 'fill') {
+      // 先落入草稿，再走正常的发送流程，失败时沿用草稿保留和重试行为。
+      submittingShortcut.current = shortcut.id
+      setPendingShortcutId(shortcut.id)
+      void (async () => {
+        try {
+          await onSend(text, 'queue')
+        } finally {
+          submittingShortcut.current = null
+          setPendingShortcutId(null)
+        }
+      })()
+    }
+    return true
   }
 
   const choose = (item: SlashItem | undefined) => {
@@ -515,6 +557,10 @@ export function Composer({
             {imageBlock && imageSupport.allowed && <span className="text-qn-warn">{translateMessage(imageBlock)}</span>}
           </div>
         )}
+        {shortcuts && shortcuts.entries.length > 0 && (
+          <ComposerShortcutBar shortcuts={shortcuts.entries} disabled={!!disabled || imeActive} pendingId={pendingShortcutId}
+            actionFor={shortcutAction} onActivate={activateShortcut} />
+        )}
         <div
           className={cn(
             'rounded-xl border border-qn-composer-outline bg-qn-composer shadow-[var(--qn-composer-shadow)] transition-colors focus-within:border-qn-outline',
@@ -522,21 +568,23 @@ export function Composer({
           )}
         >
           {hasAttachments && (
-            <div className="qn-scroll flex max-h-[clamp(4.25rem,12cqh,6rem)] flex-wrap items-center gap-2 overflow-y-auto px-3 pt-3">
-              {attach && attachments.map((item) => (
-                <AttachmentChip
-                  key={item.id}
-                  item={item}
-                  problem={item.kind === 'image' && !imageSupport.allowed ? imageSupport.reason : null}
-                  onRemove={() => attach.onRemoveAttachment(item.id)}
-                  previewButtonRef={item.kind === 'image' ? (button) => {
-                    const token = imagePlaceholder(item.name)
-                    if (button) imagePreviewTriggers.current.set(token, button)
-                    else imagePreviewTriggers.current.delete(token)
-                  } : undefined}
-                />
-              ))}
-            </div>
+            <ImagePreviewGroup copyable>
+              <div className="qn-scroll flex max-h-[clamp(4.25rem,12cqh,6rem)] flex-wrap items-center gap-2 overflow-y-auto px-3 pt-3">
+                {attach && attachments.map((item) => (
+                  <AttachmentChip
+                    key={item.id}
+                    item={item}
+                    problem={item.kind === 'image' && !imageSupport.allowed ? imageSupport.reason : null}
+                    onRemove={() => attach.onRemoveAttachment(item.id)}
+                    previewButtonRef={item.kind === 'image' ? (button) => {
+                      const token = imagePlaceholder(item.name)
+                      if (button) imagePreviewTriggers.current.set(token, button)
+                      else imagePreviewTriggers.current.delete(token)
+                    } : undefined}
+                  />
+                ))}
+              </div>
+            </ImagePreviewGroup>
           )}
           {context}
           <div className="relative">
@@ -604,6 +652,7 @@ export function Composer({
                 setDismissed(false)
               }}
               onSelect={syncCaret}
+              onFocus={() => { hasFocusedArea.current = true }}
               onScroll={(event) => {
                 if (imageTextRef.current) imageTextRef.current.scrollTop = event.currentTarget.scrollTop
               }}
@@ -755,7 +804,7 @@ function AttachmentChip({
   /** 不能随消息发送的原因（如当前模型不支持图片），有值时标红提示。 */
   problem?: string | null
   onRemove: () => void
-  previewButtonRef?: Ref<HTMLButtonElement>
+  previewButtonRef?: (button: HTMLButtonElement | null) => void
 }) {
   if (item.kind === 'image') {
     return <ImageAttachmentChip item={item} problem={problem} onRemove={onRemove} previewButtonRef={previewButtonRef} />

@@ -1,8 +1,8 @@
 import { ArrowDown, ChevronDown, ListChecks, MessageCirclePlus, Network, Play, Plug } from 'lucide-react'
 import { AGENT_CAPABILITIES, asyncQuestionReply, availablePromptSuggestion, branchPoint, canReviseMessage, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, parseAsyncQuestionReply, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, revisionNote, turnOpeningMessages, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
-import { bindChatPinch } from '../chatFont'
+import { readChatFont } from '../chatFont'
 import { toast } from '../toast'
 import { copyText } from '../client'
 import { nearBottom } from '../composerLogic'
@@ -102,15 +102,8 @@ export function ChatPage() {
   const [historyStart, setHistoryStart] = useState<{ key: string; index: number } | null>(null)
   const [historyLoad, setHistoryLoad] = useState<{ key: string; error?: string } | null>(null)
   const loadEarlierHistory = useApp((s) => s.loadEarlierHistory)
-  const chatSurface = useRef<HTMLDivElement>(null)
+  const [chatFont] = useState(readChatFont)
   const [selection, setSelection] = useState<{ key: string; text: string } | null>(null)
-  useLayoutEffect(() => {
-    const root = chatSurface.current
-    // 缩放中同一条提示原地刷新字号，松手后自动消失。
-    if (root) return bindChatPinch(root, (size) => {
-      if (size !== null) toast(t('对话字号 {size}px', { size }), { key: 'chat-font', duration: 1500 })
-    })
-  }, [])
   useLayoutEffect(() => {
     const capture = () => {
       const range = window.getSelection()
@@ -486,7 +479,7 @@ export function ChatPage() {
           <span className="min-w-0 flex-1 truncate text-qn-muted">{translateMessage(approvals[0]?.title ?? '')}</span><ChevronDown size={16} aria-hidden />
         </button>
       )}
-      <div ref={chatSurface} className="qn-chat-surface">
+      <div className="qn-chat-surface" style={{ '--chat-font': `${chatFont}px` } as CSSProperties}>
         <div className="relative flex min-h-0 flex-1 flex-col">
           <div ref={scrollRef} className="qn-body qn-scroll" onScroll={updateScroll}>
             {session?.openError && (

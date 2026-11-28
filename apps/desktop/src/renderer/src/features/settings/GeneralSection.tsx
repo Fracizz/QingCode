@@ -5,6 +5,7 @@ import { Checkbox, Modal } from '../../components/ui'
 import { DEFAULT_FONT_SIZES, FONT_SIZES, isFontSize } from '../../../../shared/fontSizes'
 import { AUTO_ARCHIVE_DAYS, isAutoArchiveDays } from '../../../../shared/backendApi'
 import { useFiles } from '../files/filesStore'
+import { ComposerShortcutsSetting } from './ComposerShortcutsSetting'
 import { RUNNING_SEND_SETTING_OPTIONS, useRunningSend } from './runningSend'
 import { useSettings } from './settingsStore'
 import {
@@ -86,6 +87,8 @@ export function GeneralSection({ visible }: { visible: (itemId: string) => boole
           />
         </SettingRow>
       )}
+
+      {visible('composerShortcuts') && <ComposerShortcutsSetting />}
 
       {visible('autoConnectLast') && (
         <SettingRow title={t('启动时自动连接上次使用的目标')} description={t('在后台尝试连接，并通过 SSH 检查远端 Server 更新。')}>

@@ -573,7 +573,7 @@ export function WorkspaceHome() {
               <button type="button" className="qn-row qn-project-filter"
                 aria-haspopup="dialog" aria-expanded={projectFilterOpen} onClick={() => setProjectFilterOpen(true)}>
                 <Monitor size={17} className="shrink-0 text-qn-muted" aria-hidden />
-                <span className="shrink-0 text-qn-muted">{t('主机')}</span>
+                <span className="shrink-0">{t('主机')}</span>
                 <span className="min-w-0 flex-1 truncate text-right">{selectedProjectTarget?.name ?? t('全部主机')}</span>
                 <ChevronDown size={16} className="shrink-0 text-qn-muted" aria-hidden />
               </button>
@@ -635,7 +635,7 @@ export function WorkspaceHome() {
             ) : (
               <Empty>
                 <p>{query ? t('没有匹配的会话。') : t('还没有最近访问的会话。')}</p>
-                <button type="button" className="qn-dashed-action qn-pressable" onClick={() => { setQuery(''); setTab('projects') }}>{t('选择项目')}</button>
+                <button type="button" className="qn-empty-action qn-pressable" onClick={() => { setQuery(''); setTab('projects') }}>{t('选择项目')}</button>
               </Empty>
             )
           ) : (

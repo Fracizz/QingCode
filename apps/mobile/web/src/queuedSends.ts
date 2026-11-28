@@ -25,6 +25,8 @@ export const QUEUE_STORAGE_KEY = 'queuedSends'
 export const UNCONFIRMED_QUEUED_SEND = '上次发送结果未确认，请核对对话后再继续'
 // i18n-ignore: 兼容旧版持久化的恢复提示
 const LEGACY_RESTORED_QUEUE = '已恢复排队消息，等待继续发送'
+// i18n-ignore: 兼容旧版误存为暂停原因的分支提示
+const LEGACY_QUEUE_FORK_UNAVAILABLE = '当前还没有已结束的一轮，可用「新会话开始」'
 
 type Queues = Record<string, QueuedSend[]>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -131,13 +133,16 @@ export function restoreQueues(raw: string | null, connections: readonly Connecti
     // 普通待发项继续排队。正在直发的消息没有可供收回的回执，需要保留原文供核对。
     queues[key] = items.map((item) => {
       const accessMode = accessOptions[agent].find((option) => option.mode === item.accessMode)?.mode
+      let error = typeof item.error === 'string' && item.error !== LEGACY_RESTORED_QUEUE ? item.error : undefined
+      // 保留旧记录的暂停状态，避免升级后把用户想带到新会话的消息自动发回原会话。
+      // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
+      if (error === LEGACY_QUEUE_FORK_UNAVAILABLE) error = '队列已暂停'
       return {
         ...item,
         accessMode,
         sending: false,
         relayPending: item.relayPending === true ? true : undefined,
-        error: item.sending ? UNCONFIRMED_QUEUED_SEND
-          : typeof item.error === 'string' && item.error !== LEGACY_RESTORED_QUEUE ? item.error : undefined,
+        error: item.sending ? UNCONFIRMED_QUEUED_SEND : error,
       }
     })
   }

@@ -21,6 +21,7 @@ import type {
 } from './codex-types'
 import { CodexRpcError, type CodexRpc } from './rpc'
 import { emptyState, loadRecentThreadHistory } from './conversation'
+import { isThreadOutcome } from './threadStatus'
 
 export type CodexRpcLike = Pick<CodexRpc, 'request'>
 
@@ -171,6 +172,39 @@ export type ThreadHistoryPage = { turns: Turn[]; earlier: ThreadHistoryCursor | 
 
 function assertHistoryCurrent(isCurrent?: () => boolean): void {
   if (isCurrent && !isCurrent()) throw new Error(t('已取消加载会话历史'))
+}
+
+export async function readLatestEndedTurnId(
+  rpc: CodexRpcLike,
+  threadId: string,
+  isCurrent?: () => boolean,
+): Promise<string | null> {
+  const seenCursors = new Set<string>()
+  let cursor: string | null = null
+  do {
+    assertHistoryCurrent(isCurrent)
+    let page: ThreadTurnsListResponse
+    try {
+      // 分叉只需要轮次 ID；大段命令输出和附件不应影响分叉点查找。
+      page = await rpc.request('thread/turns/list', {
+        threadId, cursor, limit: 8, sortDirection: 'desc', itemsView: 'notLoaded',
+      })
+    } catch (error) {
+      if (cursor || !(error instanceof CodexRpcError) || error.code !== -32601) throw error
+      assertHistoryCurrent(isCurrent)
+      const { thread } = await readThread(rpc, threadId, isCurrent)
+      assertHistoryCurrent(isCurrent)
+      if (thread?.id !== threadId) throw new Error(t('返回的会话与所选会话不一致，请重试'))
+      return thread.turns?.findLast((turn) => isThreadOutcome(turn.status))?.id ?? null
+    }
+    assertHistoryCurrent(isCurrent)
+    const turn = page.data.find((turn) => isThreadOutcome(turn.status))
+    if (turn) return turn.id
+    cursor = page.nextCursor
+    if (cursor && seenCursors.has(cursor)) throw new Error(t('会话历史分页未前进，请重试'))
+    if (cursor) seenCursors.add(cursor)
+  } while (cursor)
+  return null
 }
 
 async function fitHistoryPage<T>(limit: number, request: (limit: number) => Promise<T>, isCurrent?: () => boolean): Promise<T> {

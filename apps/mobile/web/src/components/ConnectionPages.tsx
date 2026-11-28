@@ -88,7 +88,7 @@ export function ConnectionsPage() {
               <li><span>3</span>{t('回到这里导入，输入配对密码')}</li>
             </ol>
             <Button variant="primary" className="w-full" onClick={addFromClipboard}>{t('从剪贴板导入')}</Button>
-            <button type="button" className="qn-dashed-action qn-pressable" onClick={openAddForm}>
+            <button type="button" className="qn-empty-action qn-pressable" onClick={openAddForm}>
               <Plus size={17} aria-hidden />{t('扫码或手动添加')}
             </button>
           </div>

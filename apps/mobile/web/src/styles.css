@@ -15,8 +15,8 @@
   --color-qn-panel: #222222;
   --color-qn-card: #222222;
   --color-qn-raised: #2e2e2e;
-  --color-qn-control: #38393d;
-  --color-qn-control-edge: #565656;
+  --color-qn-control: #3e3f43;
+  --color-qn-control-active: color-mix(in srgb, var(--color-qn-bg) 20%, var(--color-qn-control));
   --color-qn-control-danger: #ffac9e;
   --color-qn-nav-selected: #254442;
   --color-qn-card-highlight: var(--color-qn-raised);
@@ -82,13 +82,11 @@
   --qn-radius: var(--radius-lg);
   --qn-accent-surface: var(--color-qn-accent-surface);
   --qn-press: rgb(255 255 255 / 5%);
-  /* 表面层级：靠 1px 边缘高光与投影分层，不靠更多边框或卡片套卡片。 */
+  /* 边缘色留给分隔线，悬浮表面靠底色和投影区分。 */
   --qn-edge: rgb(255 255 255 / 6%);
-  --qn-edge-top: rgb(255 255 255 / 10%);
   --qn-elev-1: 0 1px 2px rgb(0 0 0 / 35%), 0 6px 18px rgb(0 0 0 / 18%);
   --qn-elev-3: 0 -8px 32px rgb(0 0 0 / 45%);
-  /* 悬浮在对话上的控件（顶栏按钮组、输入框、回到底部）：柔和投影加 1px 边缘，浅色下也分得清边界。 */
-  --qn-float-shadow: 0 0 0 1px var(--qn-edge), 0 4px 16px rgb(0 0 0 / 32%);
+  --qn-float-shadow: 0 4px 16px rgb(0 0 0 / 32%);
   --qn-float-radius: var(--radius-xl);
   --qn-composer-shadow: rgb(0 0 0 / 40%);
   --qn-composer-shadow-focus: rgb(0 0 0 / 52%);
@@ -113,7 +111,6 @@
   --color-qn-card: #343538;
   --color-qn-raised: #3c3d40;
   --color-qn-control: #4a4b4f;
-  --color-qn-control-edge: var(--color-qn-border-strong);
   --color-qn-nav-selected: #2a4e49;
   --color-qn-field: #252629;
   --color-qn-border: #54555a;
@@ -138,7 +135,7 @@
   --color-qn-panel: #fafafa;
   --color-qn-card: #e8e8e8;
   --color-qn-raised: #eaeaea;
-  --color-qn-control: var(--color-qn-raised);
+  --color-qn-control: #cccccc;
   --color-qn-control-danger: var(--color-qn-danger);
   --color-qn-nav-selected: var(--qn-accent-surface);
   --color-qn-card-highlight: color-mix(in srgb, var(--color-qn-text) 5%, var(--color-qn-card));
@@ -172,8 +169,7 @@
   --qn-accent-surface: color-mix(in srgb, var(--color-qn-accent) 9%, transparent);
   --qn-press: color-mix(in srgb, var(--color-qn-text) 5%, transparent);
   --qn-edge: color-mix(in srgb, var(--color-qn-text) 14%, transparent);
-  --qn-edge-top: color-mix(in srgb, var(--color-qn-bg) 78%, transparent);
-  --qn-float-shadow: 0 0 0 1px color-mix(in srgb, var(--color-qn-text) 6%, transparent), 0 4px 18px rgb(0 0 0 / 8%);
+  --qn-float-shadow: 0 4px 18px rgb(0 0 0 / 8%);
   --qn-composer-shadow: rgb(0 0 0 / 10%);
   --qn-composer-shadow-focus: rgb(0 0 0 / 16%);
 }
@@ -187,6 +183,8 @@ body,
   color: var(--color-qn-text);
   -webkit-tap-highlight-color: transparent;
 }
+
+html { touch-action: pan-x pan-y; }
 
 /* 在 React 挂载前绘制，复用电脑版标志的三段入场和淡出节奏。 */
 .qn-splash {
@@ -525,8 +523,7 @@ input[type="radio"] {
   min-height: 42px;
   min-width: 42px;
   padding: 6px 14px;
-  /* 可点击控件用独立底色，装饰性抬高表面仍使用 raised。 */
-  border: 1px solid transparent;
+  border: 0;
   border-radius: var(--qn-radius);
   background: var(--color-qn-control);
   color: var(--color-qn-text);
@@ -536,7 +533,6 @@ input[type="radio"] {
 }
 
 .qn-button-primary {
-  border-color: transparent;
   background: var(--color-qn-accent);
   color: var(--color-qn-primary-text);
   font-weight: 600;
@@ -551,12 +547,8 @@ input[type="radio"] {
   background: transparent;
 }
 
-:root:not([data-theme="light"]) .qn-button:not(.qn-button-ghost, .qn-button-primary, .qn-button-danger) {
-  border-color: var(--color-qn-control-edge);
-}
-
-:root:not([data-theme="light"]) .qn-button:not(:disabled, .qn-button-ghost, .qn-button-primary, .qn-button-danger):is(:active, [aria-expanded="true"]) {
-  box-shadow: inset 0 0 0 1px var(--color-qn-outline);
+.qn-button:where(:enabled:not(.qn-button-ghost, .qn-button-primary, .qn-button-danger)):is(:active, [aria-expanded="true"]) {
+  background-color: var(--color-qn-control-active);
 }
 
 .qn-button:disabled {
@@ -705,7 +697,6 @@ input[type="radio"] {
   max-height: 90%;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--color-qn-border);
   border-radius: var(--qn-float-radius) var(--qn-float-radius) 0 0;
   background: var(--color-qn-panel);
   padding: 12px max(14px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
@@ -720,7 +711,7 @@ input[type="radio"] {
   max-height: none;
   border: 0;
   border-radius: 0;
-  /* 铺满屏幕后不需要弹层的顶边高光。 */
+  /* 全屏页独占画面，无需投影。 */
   box-shadow: none;
   padding-top: max(12px, var(--qn-top));
 }
@@ -916,8 +907,7 @@ input[type="radio"] {
   align-items: center;
   padding: 2px;
   border-radius: var(--qn-radius);
-  background: var(--color-qn-field);
-  box-shadow: inset 0 0 0 1px var(--color-qn-border-strong);
+  background: var(--color-qn-control);
 }
 
 .qn-stepper button {
@@ -1232,7 +1222,6 @@ input[type="radio"] {
   font-size: 12px;
   line-height: 1.6;
   background: var(--color-qn-field);
-  border: 1px solid var(--color-qn-border);
   border-radius: var(--qn-radius);
   overflow-x: auto;
   padding: 4px 0;
@@ -1520,25 +1509,23 @@ input[type="radio"] {
 .qn-project-filter {
   margin-top: 8px;
   padding: 0 10px;
-  border: 1px solid var(--color-qn-border-strong);
   border-radius: var(--qn-radius);
-  background: var(--color-qn-card);
+  background: var(--color-qn-control);
   font-size: 14px;
 }
 
 .qn-project-filter-option {
   padding: 8px 10px;
-  border: 1px solid transparent;
   border-radius: var(--radius-md);
 }
 
 .qn-project-filter-option[aria-pressed="true"] {
-  border-color: var(--color-qn-border-strong);
   background: var(--qn-accent-surface);
   font-weight: 650;
 }
 
-.qn-project-filter:active,
+.qn-project-filter:is(:active, [aria-expanded="true"]) { background: var(--color-qn-control-active); }
+
 .qn-project-filter-option:active {
   background: var(--qn-press);
 }
@@ -1653,8 +1640,9 @@ input[type="radio"] {
 }
 
 .qn-list-group {
+  position: relative;
   overflow: hidden;
-  border: 1px solid var(--color-qn-border);
+  isolation: isolate;
   border-radius: var(--qn-radius);
   background: var(--color-qn-card);
 }
@@ -1670,8 +1658,18 @@ input[type="radio"] {
   border-top: 1px solid var(--color-qn-divider);
 }
 
+:is(.qn-list-plain, .qn-quota-list) {
+  --qn-card-divider: color-mix(in srgb, var(--color-qn-text) var(--qn-card-divider-strength, 12%), var(--color-qn-card));
+}
+
+.qn-quota-list { --qn-card-divider-strength: 13%; }
+
+:root[data-theme="light"] :is(.qn-list-plain, .qn-quota-list) {
+  --qn-card-divider-strength: 20%;
+}
+
 :where(.qn-list-plain, .qn-list-plain > .qn-sortable) > .qn-sortable-item + .qn-sortable-item {
-  border-top-color: color-mix(in srgb, var(--color-qn-text) 17%, var(--color-qn-card));
+  border-top-color: var(--qn-card-divider);
 }
 
 /* 长按排序：禁止长按弹出系统菜单/选中文字；拖动中的行浮起，其余行平滑让位。 */
@@ -1694,10 +1692,6 @@ input[type="radio"] {
   box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
 }
 
-.qn-session-more {
-  border-top: 1px solid var(--color-qn-divider);
-}
-
 /* 会话页的项目分组排序：分组间距放进行内以便计算让位距离；只在标题上禁用选字，分组内的弹层不受影响。 */
 .qn-group-sort > .qn-sortable-item {
   border: 0;
@@ -1717,6 +1711,12 @@ input[type="radio"] {
 .qn-group-sort[data-collapsed] .qn-group-heading { margin-bottom: 0; }
 .qn-group-sort[data-collapsed] .qn-list-group { display: none; }
 .qn-group-sort[data-dropping] > .qn-sortable-item { transition: none; }
+
+/* 浅色下给分组多留一点空隙，拖动收起时仍用紧凑间距。 */
+:root[data-theme="light"] .qn-group-sort:not([data-collapsed]) > .qn-sortable-item + .qn-sortable-item {
+  padding-top: 18px;
+}
+:root[data-theme="light"] .qn-group-sort:not([data-collapsed]) .qn-group-heading { margin-bottom: 8px; }
 
 /* 会话列表的排序区嵌在分组卡片里，拖动时卡片也不能裁掉浮起的行。 */
 .qn-list-group:has(> .qn-sortable[data-sorting="true"]) {
@@ -1740,10 +1740,13 @@ input[type="radio"] {
   gap: 6px;
   width: 100%;
   min-height: 44px;
+  border-top: 1px solid var(--qn-card-divider);
   color: var(--color-qn-accent);
   font-size: 13px;
   font-weight: 600;
 }
+
+.qn-session-more svg { transition: transform var(--qn-motion-short) ease-out; }
 
 .qn-session-more[aria-expanded="true"] svg {
   transform: rotate(180deg);
@@ -1757,7 +1760,7 @@ input[type="radio"] {
 .qn-thread-swipe {
   position: relative;
   overflow: hidden;
-  touch-action: pan-y pinch-zoom;
+  touch-action: pan-y;
 }
 
 .qn-thread-content {
@@ -1989,7 +1992,6 @@ input[type="radio"] {
   display: block;
   width: 56px;
   height: 56px;
-  border: 1px solid var(--color-qn-border);
   border-radius: var(--qn-radius);
   object-fit: cover;
 }
@@ -2165,16 +2167,12 @@ input[type="radio"] {
   content: '';
 }
 
-.qn-composer-tools :is(.qn-access-chip, .qn-composer-model > .qn-button):not(:disabled):active {
+.qn-composer-tools :is(.qn-access-chip, .qn-composer-model > .qn-button):enabled:is(:active, [aria-expanded="true"]) {
   background: transparent;
 }
 
-:root[data-theme="light"] .qn-composer-tools :is(.qn-access-chip, .qn-composer-model > .qn-button):not(:disabled):active::before {
-  background: color-mix(in srgb, var(--color-qn-text) 12%, var(--color-qn-raised));
-}
-
-:root:not([data-theme="light"]) .qn-composer-tools :is(.qn-access-chip, .qn-composer-model > .qn-button):not(:disabled):is(:active, [aria-expanded="true"])::before {
-  box-shadow: inset 0 0 0 1px var(--color-qn-outline);
+.qn-composer-tools :is(.qn-access-chip, .qn-composer-model > .qn-button):enabled:is(:active, [aria-expanded="true"])::before {
+  background: var(--color-qn-control-active);
 }
 
 .qn-composer-model > .qn-button {
@@ -2216,7 +2214,6 @@ input[type="radio"] {
   gap: 8px;
   margin: 6px 6px 0;
   padding: 0 0 0 10px;
-  border: 1px solid color-mix(in srgb, var(--color-qn-accent) 35%, transparent);
   border-radius: var(--radius-md);
   background: var(--qn-accent-surface);
   color: var(--color-qn-text);
@@ -2575,18 +2572,9 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 
 .qn-thinking.qn-replying > svg { color: var(--color-qn-accent); }
 
-/* ===== 表面层级 ===== */
-.qn-list-group {
-  border: 0;
-  background: var(--color-qn-card);
-  position: relative;
-  isolation: isolate;
-}
-
-/* 深色系卡片底色接近相邻表面，细边缘和短投影一起区分层级。 */
-:root:not([data-theme="light"]) :is(.qn-card, .qn-surface, .qn-settings-group, .qn-list-group, .qn-usage-host, .qn-usage-card, .qn-usage-window) {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-qn-text) 14%, var(--color-qn-card)),
-    0 3px 12px color-mix(in srgb, var(--qn-composer-shadow) 50%, transparent);
+/* 底色接近相邻表面时，用短投影分开卡片和内容块。 */
+:is(.qn-card, .qn-surface, .qn-settings-group, .qn-list-group, .qn-usage-host, .qn-usage-card, .qn-usage-window, .qn-code, .qn-terminal-surface) {
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--qn-composer-shadow) 65%, transparent);
 }
 
 .qn-connection-list {
@@ -2699,10 +2687,6 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   content: '';
 }
 
-.qn-card {
-  border-color: transparent;
-}
-
 .qn-header {
   border-bottom-color: var(--qn-edge);
   background: color-mix(in srgb, var(--color-qn-bg) 82%, transparent);
@@ -2787,8 +2771,8 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 
 .qn-text-action:active { background: var(--qn-press); }
 
-/* 空状态操作区：虚线框，不套卡片。 */
-.qn-dashed-action {
+/* 空状态的操作沿用普通按钮填充，保留整行触控区。 */
+.qn-empty-action {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2796,11 +2780,13 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   width: 100%;
   min-height: 52px;
   margin-top: 14px;
-  border: 1.5px dashed var(--color-qn-border-strong);
   border-radius: var(--qn-radius);
+  background: var(--color-qn-control);
   color: var(--color-qn-text);
   font-size: 14px;
 }
+
+.qn-empty-action::after { border-radius: inherit; }
 
 /* ===== 按下反馈 ===== */
 /* 整行可点：只叠一层淡状态色，按下 150ms 淡入、松手 260ms 淡出，不缩放、不做涟漪。 */
@@ -2884,7 +2870,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 
 .qn-dialog-panel {
   border: 0;
-  box-shadow: var(--qn-elev-3), inset 0 1px 0 var(--qn-edge-top);
+  box-shadow: var(--qn-elev-3);
 }
 
 /* 底部弹层顶部拖动条，提示可下滑关闭。 */
@@ -2975,8 +2961,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   align-items: center;
   border-radius: 999px;
   background: var(--qn-island-bg, var(--color-qn-composer));
-  /* 比其他悬浮控件的描边更淡、投影更散，按钮像浮在页面上而不是被框住。 */
-  box-shadow: var(--qn-island-shadow, 0 0 0 1px color-mix(in srgb, var(--color-qn-text) 4%, transparent), 0 6px 28px var(--qn-composer-shadow));
+  box-shadow: var(--qn-island-shadow, 0 6px 28px var(--qn-composer-shadow));
 }
 .qn-header-island > .qn-header-icon,
 .qn-header-island .qn-header-icon { border-radius: 999px; }
@@ -3003,7 +2988,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
  */
 :root[data-theme="light"] .qn-chat-header {
   --qn-island-bg: #ffffff;
-  --qn-island-shadow: 0 0 0 0.5px rgb(0 0 0 / 4%), 0 1px 3px rgb(0 0 0 / 4%), 0 8px 28px rgb(0 0 0 / 7%);
+  --qn-island-shadow: 0 1px 3px rgb(0 0 0 / 4%), 0 8px 28px rgb(0 0 0 / 7%);
 }
 :root[data-theme="light"] .qn-chat-header .qn-title { color: #111114; }
 :root[data-theme="light"] .qn-chat-header .qn-header-icon { color: #18181b; }
@@ -3111,14 +3096,13 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   line-height: 1.6;
 }
 
-/* 已发出、等待 Agent 读取的引导：虚线半透明气泡排在对话末尾，回显到达后由真正的消息接替。 */
+/* 引导状态用浅色气泡配合下方状态文字，回显到达后由正式消息接替。 */
 .qn-user-bubble-pending {
-  border: 1px dashed var(--color-qn-border-strong);
-  background: transparent;
+  background: color-mix(in srgb, var(--color-qn-accent) 8%, var(--color-qn-card));
   color: var(--color-qn-muted);
 }
 .qn-user-bubble-pending[data-stale] {
-  border-color: color-mix(in srgb, var(--color-qn-warn) 60%, transparent);
+  background: color-mix(in srgb, var(--color-qn-warn) 10%, var(--color-qn-card));
 }
 .qn-steer-status {
   margin-top: 6px;
@@ -3159,22 +3143,35 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   color: var(--color-qn-text);
 }
 
-/* 提问卡片选项：标题加说明两行；选中加深描边（内阴影补粗，不改尺寸）并在右上角打勾。 */
+/* 提问选项用填充和右上角的选择指示区分状态。 */
 .qn-choice {
   position: relative;
   min-width: 0;
   min-height: 44px;
   padding: 7px 26px 7px 11px;
-  border: 1px solid var(--color-qn-outline);
   border-radius: var(--qn-radius);
+  background: var(--color-qn-segment-track);
   text-align: left;
-  transition: border-color var(--qn-motion-short) ease, background-color var(--qn-motion-short) ease;
+  transition: background-color var(--qn-motion-short) ease;
 }
-/* 选中只换成青色细描边加浅青底，不加粗外框、不改高度，点选时卡片不跳动。 */
+
 .qn-choice[aria-checked="true"] {
-  border-color: var(--color-qn-accent);
   background: var(--qn-accent-surface);
 }
+
+.qn-choice[aria-checked="false"]::after {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--color-qn-outline-hover);
+  border-radius: var(--radius-sm);
+  content: "";
+}
+
+.qn-choice[role="radio"]::after { border-radius: 50%; }
+
 .qn-choice-check {
   position: absolute;
   top: 8px;
@@ -3433,7 +3430,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   font-weight: 700;
 }
 
-.qn-onboard .qn-dashed-action { margin-top: 0; }
+.qn-onboard .qn-empty-action { margin-top: 0; }
 
 .qn-imported {
   display: flex;
@@ -3482,7 +3479,6 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   min-width: 0;
   min-height: 28px;
   padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--color-qn-accent) 35%, transparent);
   border-radius: var(--radius-md);
   background: var(--qn-accent-surface);
   color: var(--color-qn-accent);
@@ -3993,7 +3989,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   padding: 12px 14px;
 }
 
-.qn-quota-item + .qn-quota-item { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-qn-text) 8%, transparent); }
+.qn-quota-item + .qn-quota-item { border-top: 1px solid var(--qn-card-divider); }
 
 .qn-quota-item-title {
   font-size: 14px;

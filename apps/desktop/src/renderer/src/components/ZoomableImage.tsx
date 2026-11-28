@@ -1,5 +1,5 @@
-import { useState, type MouseEvent, type ReactNode, type Ref, type RefObject } from 'react'
-import { Minus, Plus, X } from 'lucide-react'
+import { useState, type MouseEvent, type ReactNode, type Ref } from 'react'
+import { Minus, Plus } from 'lucide-react'
 import { t } from '@qn/codex-client'
 import { cn } from '../lib/cn'
 import { IconButton } from './ui'
@@ -73,33 +73,5 @@ export function ZoomableImage({ src, alt, className, imageRef, allowOriginalSize
         </div>
       </div>
     </div>
-  )
-}
-
-export function ImagePreviewDialog({ dialogRef, src, alt, label, imageRef, actions }: {
-  dialogRef: RefObject<HTMLDialogElement | null>
-  src: string
-  alt: string
-  label: string
-  imageRef?: Ref<HTMLImageElement>
-  actions?: ReactNode
-}) {
-  const [previewId, setPreviewId] = useState(0)
-  const close = () => dialogRef.current?.close()
-  return (
-    <dialog ref={dialogRef} aria-label={label}
-      className="qn-no-drag fixed inset-0 m-0 h-dvh max-h-none w-dvw max-w-none bg-transparent p-3 backdrop:bg-qn-code/90 open:flex"
-      onClose={() => setPreviewId((value) => value + 1)} onClick={(event) => {
-        if (event.target === event.currentTarget) event.currentTarget.close()
-      }}>
-      <ZoomableImage key={previewId} src={src} alt={alt} imageRef={imageRef}
-        onBlankClick={close}
-        actions={<>
-          {actions}
-          <IconButton label={t('关闭图片预览')} tooltip={false} className="bg-qn-panel text-qn-text" onClick={close}>
-            <X size={16} aria-hidden />
-          </IconButton>
-        </>} />
-    </dialog>
   )
 }

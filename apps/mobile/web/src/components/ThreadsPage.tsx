@@ -51,7 +51,7 @@ export function ThreadsPage() {
         onBack={goBack}
         right={
           <>
-            {project && <ProjectTools project={project} compact />}
+            {project && <ProjectTools key={`${desktopId}:${project.id}`} project={project} compact terminalShortcut className="qn-header-icon" />}
             <Button variant="ghost" className="qn-header-icon" onClick={() => void refreshThreads()} disabled={loading} aria-label={t('刷新会话')}>
               <WorkspaceIcon name="refresh" />
             </Button>

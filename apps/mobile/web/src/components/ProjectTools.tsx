@@ -12,6 +12,7 @@ import { formatBytes } from '../viewer'
 import { threadPreferenceKey, toggleProjectPin, useWorkspace, useWorkspacePreferences, workspaceProjectKey } from '../workspace'
 import { AgentTag, Button, Dialog, Empty, Loading, LoadingIcon, Note, SheetAction } from './ui'
 import { toast } from '../toast'
+import './terminal.css'
 
 const TerminalPanel = lazy(async () => ({ default: (await import('./TerminalPanel')).TerminalPanel }))
 
@@ -22,10 +23,11 @@ export interface ProjectToolAction {
   onClick: () => void
 }
 
-export function ProjectTools({ project, compact = false, sortable = false, className = 'qn-list-action', actions = [] }: {
+export function ProjectTools({ project, compact = false, sortable = false, terminalShortcut = false, className = 'qn-list-action', actions = [] }: {
   project: Project
   compact?: boolean
   sortable?: boolean
+  terminalShortcut?: boolean
   /** 菜单按钮样式：列表行用默认值，页面顶栏传顶栏图标样式。 */
   className?: string
   actions?: readonly ProjectToolAction[]
@@ -40,6 +42,10 @@ export function ProjectTools({ project, compact = false, sortable = false, class
           <Folder size={19} strokeWidth={1.75} aria-hidden />
         </Button>
       )}
+      {terminalShortcut && <Button variant="ghost" className={className} onClick={() => setTool('terminal')}
+        aria-label={t('打开项目终端')} aria-haspopup="dialog" title={t('项目终端')}>
+        <Terminal size={19} strokeWidth={1.75} aria-hidden />
+      </Button>}
       <Button variant="ghost" className={className} onClick={() => setTool('menu')}
         aria-label={t('{name} 的项目工具', { name: project.name })} aria-haspopup="dialog" title={t('项目工具')}>
         <Ellipsis size={19} strokeWidth={1.75} aria-hidden />
@@ -66,7 +72,7 @@ export function ProjectTools({ project, compact = false, sortable = false, class
       {tool === 'files' && <ProjectFileBrowser key={`${desktopId}:${project.id}`} desktopId={desktopId} project={project} onClose={() => setTool(null)} />}
       {tool === 'archive' && desktopId && <ArchivedConversations key={`${desktopId}:${project.id}`} desktopId={desktopId} project={project} onClose={() => setTool(null)} />}
       {tool === 'terminal' && (
-        <Dialog title={t('终端 · {name}', { name: project.name })} placement="full" onClose={() => setTool(null)}>
+        <Dialog title={t('终端 · {name}', { name: project.name })} placement="full" className="qn-terminal-page" onClose={() => setTool(null)}>
           <Suspense fallback={<p className="py-4 text-center text-sm text-qn-muted" role="status">{t('正在加载终端…')}</p>}>
             <TerminalPanel key={`${desktopId}:${project.id}`} project={project} />
           </Suspense>

@@ -86,7 +86,6 @@ export function UserInputCard({ approval, submitting, offline, onSubmit, allowSk
                         onClick={() => update(question, (value) => pickUserInputOption(question, value, option.label))}
                         className="qn-choice"
                       >
-                        {/* 选中换青色描边、浅青底并打勾，样式见 .qn-choice。 */}
                         {selected && <Check size={14} strokeWidth={2.25} className="qn-choice-check" aria-hidden />}
                         <div className="text-compact break-words">{question.localizedOptions ? translateMessage(option.label) : option.label}</div>
                         {/* 说明始终显示全文：选中时再展开会让卡片高度跳动。 */}

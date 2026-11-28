@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
-import { bindChatPinch } from '../chatFont'
+import { readChatFont } from '../chatFont'
 import { setGateway } from '../client'
 import { useMobileAppearance, useMobilePreferences } from '../mobilePreferences'
 import { Composer } from './Composer'
@@ -60,10 +60,8 @@ it('常用设置即时应用并保存，对话继承原有字号且选词时不�
     await act(() => root.render(<Harness settings />))
     expect(host.querySelector('output')?.textContent).toBe('21 px')
     await click('放大对话字号')
-    const transcript = document.createElement('div')
-    const unbind = bindChatPinch(transcript)
-    expect(transcript.style.getPropertyValue('--chat-font')).toBe('22px')
-    unbind()
+    expect(host.querySelector('output')?.textContent).toBe('22 px')
+    expect(readChatFont()).toBe(22)
     await choose('主题', '浅色')
     await choose('界面动效', '减少动效')
     expect(document.documentElement.dataset.theme).toBe('light')

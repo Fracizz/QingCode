@@ -26,9 +26,14 @@ it('在空白会话或历史分支发送指定排队消息，原会话继续运�
   const actualRpc = gateway.rpc.bind(gateway)
   let rejectStart = false
   const rpc = vi.spyOn(gateway, 'rpc').mockImplementation(async (...args) => {
-    const [, method, params] = args
-    const request = (params as { msg?: { method?: string } })?.msg
+    const [connection, method, params] = args
+    const payload = params as { msg?: { method?: string; params?: { threadId?: string; includeTurns?: boolean } } }
+    const request = payload?.msg
     if (rejectStart && method === 'codex.send' && request?.method === 'thread/start') throw new Error('测试：会话创建失败')
+    // 模拟历史需要分页读取的源会话，旧的整段读取不会拿到轮次。
+    if (method === 'codex.send' && request?.method === 'thread/read' && request.params?.threadId === 't-demo') {
+      return actualRpc(connection, method, { ...payload, msg: { ...request, params: { ...request.params, includeTurns: false } } })
+    }
     return actualRpc(...args)
   })
 
@@ -79,7 +84,13 @@ it('在空白会话或历史分支发送指定排队消息，原会话继续运�
     expect(continuedId).not.toBe(startedId)
     expect(texts(continuedId)).toEqual(['你好', '分支消息'])
     expect(texts('t-demo')).toEqual(['你好', '原会话正在运行'])
+    expect(state().sessions['codex:local']?.state.threads['t-demo']?.status).toBe('running')
     expect(state().queuedSends[sourceKey]).toBeUndefined()
+    expect(rpc.mock.calls).toContainEqual([
+      conn, 'codex.send', expect.objectContaining({ msg: expect.objectContaining({
+        method: 'thread/turns/list', params: expect.objectContaining({ threadId: 't-demo', sortDirection: 'desc', itemsView: 'notLoaded' }),
+      }) }),
+    ])
     expect(rpc.mock.calls).toContainEqual([
       conn, 'codex.send', expect.objectContaining({ msg: expect.objectContaining({
         method: 'thread/fork', params: { threadId: 't-demo', lastTurnId: 'turn-history-t-demo', excludeTurns: true },
@@ -106,7 +117,20 @@ it('在空白会话或历史分支发送指定排队消息，原会话继续运�
     expect(queue()[0]).toMatchObject({ id: queued.id, sending: false, error: '测试：会话创建失败' })
     rejectStart = false
     await expect(advance(state().sendQueuedInNewThread(queued.id, 'start'), 65)).resolves.toBe(true)
-    expect(texts(state().selectedThreadId!, 'claude')).toEqual(['Claude 排队消息'])
+    const freshId = state().selectedThreadId!
+    expect(texts(freshId, 'claude')).toEqual(['Claude 排队消息'])
+
+    await expect(advance(state().send('首轮结束后发送'), 30)).resolves.toBe(true)
+    const waiting = queue()[0]!
+    await expect(advance(state().sendQueuedInNewThread(waiting.id, 'continue'), 30)).resolves.toBe('no-finished-turn')
+    expect(state().selectedThreadId).toBe(freshId)
+    expect(state().error).toBeNull()
+    expect(queue()).toEqual([waiting])
+    expect(rpc.mock.calls.filter(([, method, params]) =>
+      method === 'codex.send' && (params as { msg?: { method?: string } })?.msg?.method === 'thread/fork')).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(texts(freshId, 'claude')).toEqual(['Claude 排队消息', '首轮结束后发送'])
+    expect(queue()).toEqual([])
   } finally {
     controller.stop()
     await advance(state().removeConnection(conn.id))

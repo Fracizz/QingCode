@@ -21,7 +21,6 @@ import {
   branchPoint,
   canReviseMessage,
   turnOpeningMessages,
-  isThreadOutcome,
   listBackgroundTasks,
   listModels,
   listThreads,
@@ -38,7 +37,7 @@ import {
   planSteer,
   prependThreadHistory,
   readEarlierPlan,
-  readThread,
+  readLatestEndedTurnId,
   readThreadHistoryPage,
   resolveServerRequest,
   resolveAccessMode,
@@ -439,7 +438,7 @@ type AppState = {
   /** 插入：打断当前一轮后立即发送这条排队消息，其余消息继续排队。 */
   interruptQueuedSend: (id: string) => Promise<boolean>
   dropPendingSteers: (ids: string[]) => void
-  sendQueuedInNewThread: (id: string, mode: QueuedThreadMode) => Promise<boolean>
+  sendQueuedInNewThread: (id: string, mode: QueuedThreadMode) => Promise<boolean | 'no-finished-turn'>
   retryQueuedSend: () => Promise<void>
   interrupt: () => Promise<void>
   respondApproval: (requestId: RequestId, decision: MobileApprovalDecision) => Promise<boolean>
@@ -4341,20 +4340,19 @@ export const useApp = create<AppState>((set, get) => {
       submitting.add(key)
       set({ error: null })
       try {
+        const lastTurnId = mode === 'continue' ? await readLatestEndedTurnId(session.rpc, threadId, isCurrent) : null
+        if (!isCurrent() || !get().queuedSends[key]?.some((entry) => entry.id === id)) return false
+        checkConnection()
+        if (mode === 'continue' && !lastTurnId) return 'no-finished-turn'
+
         // 先持久化发送状态，防止断线或进程重开后在原队列再次自动发送。
         await updateQueue(key, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: true } : entry))
         if (!isCurrent()) return false
         checkConnection()
         let result: { thread: Thread }
-        if (mode === 'continue') {
-          const { thread: source } = await readThread(session.rpc, threadId, isCurrent)
-          if (!isCurrent()) return false
-          checkConnection()
-          const lastTurn = source?.id === threadId && source.turns?.filter((turn) => isThreadOutcome(turn.status)).at(-1)
-          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
-          if (!lastTurn) throw new Error('当前还没有已结束的一轮，可用「新会话开始」')
+        if (lastTurnId) {
           // 指定已结束的轮次，分支时不会带入原会话正在执行的工作。
-          result = await session.rpc.request('thread/fork', { threadId, lastTurnId: lastTurn.id, excludeTurns: true })
+          result = await session.rpc.request('thread/fork', { threadId, lastTurnId, excludeTurns: true })
         } else {
           const cwd = currentCwd(state)
           result = await startThread(session.rpc, cwd ? { cwd } : {})

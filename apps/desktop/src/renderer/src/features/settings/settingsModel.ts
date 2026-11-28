@@ -341,6 +341,12 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
     keywords: ['运行中', '引导', '排队', '打断', 'steer', 'queue', 'interrupt', '运行中发送', 'send while running'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
   },
   {
+    id: 'composerShortcuts',
+    section: 'general',
+    title: t('输入框快捷标签'),
+    keywords: ['快捷标签', '常用文字', '一键发送', 'composer shortcuts', 'quick text'], // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  },
+  {
     id: 'autoConnectLast',
     section: 'general',
     title: t('启动时自动连接上次使用的目标'),

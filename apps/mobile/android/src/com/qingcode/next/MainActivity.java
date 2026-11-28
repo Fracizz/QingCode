@@ -371,6 +371,7 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
     WebSettings settings = view.getSettings();
     settings.setJavaScriptEnabled(true);
     settings.setDomStorageEnabled(true);
+    settings.setSupportZoom(false);
     settings.setAllowFileAccess(false);
     settings.setAllowContentAccess(false);
     settings.setAllowFileAccessFromFileURLs(false);

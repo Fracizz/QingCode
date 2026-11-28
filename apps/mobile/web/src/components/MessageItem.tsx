@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm'
 import { toolStatus, toolSummary, type ToolStatus, type WorkGroupEntry } from '../chatGroups'
 import { allowLocalUrl, isImagePath, parseFileHref, resolvePath, segmentPaths, type FileLocation } from '../fileLinks'
 import { copyText } from '../client'
-import { ImageThumbnail } from './ImageThumbnail'
+import { ImagePreviewGroup, ImageThumbnail } from './ImageThumbnail'
 import { SubagentDetails } from './SubagentDetails'
 import { TerminalIcon } from './TerminalIcon'
 import { Badge, Button, Dialog, LoadingIcon, SheetAction } from './ui'
@@ -181,8 +181,12 @@ export const Markdown = memo(function Markdown({ text, streaming }: { text: stri
   const actions = useContext(FileActionsContext)
   const components = useMemo(() => markdownComponents(actions, streaming), [actions, streaming])
   const blocks = useMemo(() => streaming ? splitMarkdownBlocks(text) : null, [streaming, text])
-  if (!blocks) return <MarkdownBlock text={text} components={components} />
-  return blocks.map((block, index) => <MarkdownBlock key={index} text={block} components={components} />)
+  return (
+    <ImagePreviewGroup>
+      {blocks ? blocks.map((block, index) => <MarkdownBlock key={index} text={block} components={components} />)
+        : <MarkdownBlock text={text} components={components} />}
+    </ImagePreviewGroup>
+  )
 })
 
 function DiffBlock({ text }: { text: string }) {
@@ -539,7 +543,9 @@ function UserMessage({ item, onQuote, onResend, resendNote }: {
           </button>
         )}
         {item.images && item.images.length > 0 && <div className="mt-1 flex flex-wrap gap-2">
-          {item.images.map((url, index) => <MessageImage key={index} src={url} alt={t('附件图片 {index}', { index: index + 1 })} />)}
+          <ImagePreviewGroup>
+            {item.images.map((url, index) => <MessageImage key={index} src={url} alt={t('附件图片 {index}', { index: index + 1 })} />)}
+          </ImagePreviewGroup>
         </div>}
       </div>
       {/* 与电脑版一致：气泡下常驻复制、编辑；能否编辑由会话状态决定（运行中不可改）。长按仍打开完整菜单。 */}

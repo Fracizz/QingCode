@@ -131,11 +131,13 @@ export function ContextUsage({ tokenUsage, agent, thread, compact, panel: contro
 
 /** 描边向内加粗，外径保持 26px。 */
 function ProgressRing({ percent }: { percent: number }) {
+  const strokeWidth = 2.5
+  const radius = 13 - strokeWidth / 2
   return (
     <svg width={26} height={26} viewBox="0 0 26 26" className="-rotate-90" data-testid="context-ring"
-      fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="13" cy="13" r="12" opacity="0.25" />
-      <circle cx="13" cy="13" r="12" pathLength="100" strokeDasharray={`${percent} 100`} />
+      fill="none" stroke="currentColor" strokeWidth={strokeWidth}>
+      <circle cx="13" cy="13" r={radius} opacity="0.25" />
+      <circle cx="13" cy="13" r={radius} pathLength="100" strokeDasharray={`${percent} 100`} />
     </svg>
   )
 }

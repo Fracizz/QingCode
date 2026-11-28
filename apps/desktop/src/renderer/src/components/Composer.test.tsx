@@ -3,10 +3,53 @@ import { act, createRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { rememberAccessMode } from '../features/access/accessModel'
+import type { Attachment } from '../lib/attachments'
 import { useRunningSend } from '../features/settings/runningSend'
 import { useCodex } from '../store/codex'
 import { Composer } from './Composer'
 import { TooltipProvider } from './primitives'
+
+it.each(['selection', 'annotation', 'attachment'] as const)('快捷标签保留已有草稿（%s）', async (draftType) => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const host = document.body.appendChild(document.createElement('div'))
+  const root = createRoot(host)
+  const onSend = vi.fn()
+  const boundary = createRef<HTMLDivElement>()
+  const text = '检查\n继续'
+  const entries = [{ id: 'review', name: '检查', text, send: true }]
+  const attachments: Attachment[] = draftType === 'attachment'
+    ? [{ id: 'a', name: 'a.txt', kind: 'file', size: 1, localPath: '/a.txt', targetPath: '/a.txt', status: 'ready' }]
+    : []
+  function Harness() {
+    const [value, onChange] = useState(draftType === 'selection' ? 'abcDEF' : '')
+    return <Composer agent="codex" suggestionBoundaryRef={boundary} value={value} onChange={onChange}
+      shortcuts={{ entries, sendBlocked: false, queued: false }}
+      annotationCount={draftType === 'annotation' ? 1 : 0}
+      attach={{ attachments, imageSupport: { allowed: true, reason: null }, onAddFiles: () => [], onRemoveAttachment: vi.fn() }}
+      onSend={onSend} onInterrupt={vi.fn()} running={false} sending={false} error={null} onClearError={vi.fn()} />
+  }
+  try {
+    await act(() => root.render(<TooltipProvider><Harness /></TooltipProvider>))
+    const area = host.querySelector('textarea')!
+    const shortcut = host.querySelector<HTMLButtonElement>('button[aria-label="检查 · 填入文字"]')!
+    await act(() => {
+      if (draftType === 'selection') {
+        area.focus()
+        area.setSelectionRange(1, 3)
+      }
+      shortcut.focus()
+      shortcut.click()
+    })
+    expect(area.value).toBe(draftType === 'selection' ? `abc${text}DEF` : text)
+    expect(area.selectionStart).toBe((draftType === 'selection' ? 3 : 0) + text.length)
+    expect(document.activeElement).toBe(area)
+    expect(onSend).not.toHaveBeenCalled()
+  } finally {
+    await act(() => root.unmount())
+    host.remove()
+    vi.unstubAllGlobals()
+  }
+})
 
 it('空草稿用 Tab 填入提示词建议，发送仍走原来的操作', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
