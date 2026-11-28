@@ -98,7 +98,6 @@ export function Composer({
   const [images, setImages] = useState(() => photoDrafts.get(draftKey) ?? NO_IMAGES)
   const [pickedSkills, setPickedSkills] = useState(() => skillDrafts.get(draftKey) ?? NO_SKILLS)
   const [picking, setPicking] = useState(false)
-  const [expanded, setExpanded] = useState(false)
   const [caret, setCaret] = useState<number | null>(null)
   const [imeActive, setImeActive] = useState(false)
   const [activeCommand, setActiveCommand] = useState(0)
@@ -141,14 +140,13 @@ export function Composer({
     return () => { mounted.current = false }
   }, [])
   useEffect(() => setComment(''), [quoteDraft])
-  // 收起态只留一行（添加图片、输入、发送/停止）；聚焦输入或已有内容时展开出工具行。
-  const compact = !expanded && !text.trim() && images.length === 0 && !planMode && !picking
   useLayoutEffect(() => {
     const input = textarea.current
     if (!input) return
     input.style.height = 'auto'
-    input.style.height = `${Math.min(input.scrollHeight, 126)}px`
-  }, [text, compact])
+    // 上限交给 CSS 的 max-height（约 8 行、且不超过可视高度 35%），超出后内部滚动。
+    input.style.height = `${input.scrollHeight}px`
+  }, [text])
   useEffect(() => {
     if (!project || query === undefined) return
     let current = true
@@ -391,15 +389,8 @@ export function Composer({
         </div>
       )}
       {images.length > 0 && imageUnavailable && <div className="mb-2 text-xs text-qn-warn">{imageUnavailable}</div>}
-      <div className="qn-composer" data-compact={compact ? 'true' : undefined}
-        // 有内容时本来就展开，只在空输入框聚焦时改状态，避免程序聚焦（选完命令回填后）多一次渲染。
-        onFocus={(event) => { if ((event.target as EventTarget) === textarea.current && !text.trim()) setExpanded(true) }}
-        onBlur={(event) => {
-          const box = event.currentTarget
-          // 焦点留在输入框内（工具按钮、弹层）时保持展开；弹层开着时也不收起，免得弹层随工具行一起被隐藏。
-          if (box.contains(event.relatedTarget as Node | null) || box.querySelector('dialog[open]')) return
-          setExpanded(false)
-        }}>
+      {/* 固定两行：上面书写区，下面工具行（访问模式、模型 | 上下文、图片、发送/停止）。 */}
+      <div className="qn-composer">
         {planMode && (
           <div className="qn-plan-mode" role="status">
             <ListTodo size={15} aria-hidden />
@@ -433,12 +424,7 @@ export function Composer({
           enterKeyHint={sendKey === 'send' ? 'send' : 'enter'}
           placeholder={!busy ? placeholder : actualMode === 'steer' ? t('输入补充内容，发送后引导当前一轮')
             : actualMode === 'immediate' ? t('输入下一条，发送后打断本轮') : t('输入下一条，发送后排队')}
-          onChange={(event) => {
-            onChangeText(event.target.value)
-            setCaret(event.target.selectionStart)
-            // 输入中删空内容也保持展开，键盘还在时不收成一行。
-            setExpanded(true)
-          }}
+          onChange={(event) => { onChangeText(event.target.value); setCaret(event.target.selectionStart) }}
           onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
           onBlur={(event) => { if (!commandList.current?.contains(event.relatedTarget)) setCaret(null) }}
           onKeyDown={onKeyDown}
@@ -447,7 +433,7 @@ export function Composer({
         />
         <div className="qn-composer-toolbar">
           <div className="qn-composer-tools">{toolbar}</div>
-          {/* 常用操作靠右、离拇指近：上下文环、添加图片、发送/停止；低频的访问模式与模型在左，收起时隐藏。 */}
+          {/* 常用操作靠右、离拇指近：上下文环、添加图片、发送/停止；低频的访问模式与模型在左。 */}
           <div className="qn-composer-actions">
             {trailing}
             <Button variant="ghost" className="qn-icon-button" aria-label={t('添加图片')}

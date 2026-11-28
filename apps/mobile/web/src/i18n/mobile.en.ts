@@ -502,6 +502,8 @@ export default {
   '放回输入框': 'Put back in composer',
   '移除引导消息': 'Remove steering message',
   '移除': 'Remove',
+  '远端 · {host}': 'Remote · {host}',
+  '直连 · {host}': 'Direct · {host}',
   '已下载 {name}，保存在 下载/QingCode': 'Downloaded {name} to Downloads/QingCode',
   '已下载 {name}': 'Downloaded {name}',
   '{name} 下载失败：{reason}': 'Couldn’t download {name}: {reason}',

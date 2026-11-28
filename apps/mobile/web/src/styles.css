@@ -73,6 +73,8 @@
   --qn-float-radius: 16px;
   /* 分段控件选中滑块：比轨道亮一档，深色下也能看出浮起。 */
   --qn-thumb: #3a3b3f;
+  --qn-composer-shadow: rgb(0 0 0 / 40%);
+  --qn-composer-shadow-focus: rgb(0 0 0 / 52%);
   /* 动效：时长与曲线同旧版手机规范（mobile/android/design.md「动效」）。 */
   --qn-motion-short: 150ms;
   --qn-motion-medium: 260ms;
@@ -142,6 +144,8 @@
   --qn-edge-top: color-mix(in srgb, var(--color-qn-bg) 78%, transparent);
   --qn-float-shadow: 0 0 0 1px color-mix(in srgb, var(--color-qn-text) 6%, transparent), 0 4px 18px rgb(0 0 0 / 8%);
   --qn-thumb: #ffffff;
+  --qn-composer-shadow: rgb(0 0 0 / 10%);
+  --qn-composer-shadow-focus: rgb(0 0 0 / 16%);
 }
 
 html,
@@ -1378,7 +1382,13 @@ input[type="radio"] {
 }
 
 .qn-source-tag {
-  flex-shrink: 0;
+  /* 带地址后可能较长：与项目名一起收缩，放不下时截断，不把计数和按钮挤出去。 */
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 0 6px;
   border: 1px solid var(--color-qn-border-strong);
   border-radius: 6px;
@@ -1690,42 +1700,13 @@ input[type="radio"] {
 }
 
 .qn-composer {
-  border: 1px solid var(--color-qn-composer-outline);
-  /* 悬浮输入框：外框保证 3:1 对比度，投影只用来从对话上浮起；圆角 18px，比常见聊天应用的胶囊小，工具多时也放得下。 */
-  border-radius: 18px;
+  /* 参照简约聊天应用：不画外框和边缘圈，只靠底色与柔和投影从对话上浮起。圆角 20px，比胶囊小，工具多时也放得下。 */
+  border: 0;
+  border-radius: 20px;
   background: var(--color-qn-composer);
-  box-shadow: var(--qn-float-shadow);
-  transition: border-color var(--qn-motion-short) ease;
+  box-shadow: 0 6px 24px var(--qn-composer-shadow);
+  transition: box-shadow var(--qn-motion-short) ease;
 }
-
-/*
- * 收起态：输入框、添加图片、发送/停止排成一行，工具行打散进同一行；
- * 访问模式只在非默认档位时保留图标（data-pinned），模型等低频设置聚焦输入后再出现。
- */
-.qn-composer[data-compact] {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  min-height: 60px;
-  padding: 6px 6px 6px 4px;
-}
-.qn-composer[data-compact] .qn-composer-toolbar { display: contents; }
-.qn-composer[data-compact] .qn-composer-tools { order: -1; flex: 0 0 auto; }
-.qn-composer[data-compact] .qn-composer-tools > :not([data-pinned], dialog) { display: none; }
-.qn-composer[data-compact] .qn-textarea {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 46px;
-  /* 左侧 10px + 外层 4px，与展开态输入文字的 14px 起点对齐。 */
-  padding: 12px 6px 12px 10px;
-}
-/* 收起态占位文字只占一行，过长省略，不再折出被裁掉的第二行。 */
-.qn-composer[data-compact] .qn-textarea::placeholder {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.qn-composer[data-compact] .qn-composer-actions { order: 1; margin-inline-start: 0; }
 
 /* 对话页底栏与页面同底、去掉分隔线：输入框直接浮在对话上，不再是「灰带里套灰框」。 */
 .qn-footer.qn-composer-footer {
@@ -1815,14 +1796,16 @@ input[type="radio"] {
 }
 
 .qn-composer:focus-within {
-  border-color: var(--color-qn-composer-focus);
+  box-shadow: 0 8px 30px var(--qn-composer-shadow-focus);
 }
 
 .qn-composer .qn-textarea {
   display: block;
-  /* 展开态默认留出约两行的书写区，不必一输入就挤在一行里。 */
-  min-height: 52px;
-  padding: 12px 14px 4px;
+  /* 默认留出约两行的书写区；内容多时长高到约 8 行，键盘弹起时不超过可视高度的 35%，再多就内部滚动。 */
+  min-height: 56px;
+  max-height: min(220px, 35dvh);
+  overflow-y: auto;
+  padding: 14px 16px 4px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1836,11 +1819,12 @@ input[type="radio"] {
 /* 空间不足时让右侧操作整组换行，给模型和访问模式留出空间。 */
 .qn-composer-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  /* 工具行始终一行：左侧胶囊可收缩截断，右侧操作不被挤到下一行。 */
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 2px;
-  /* 左右 4px：图标按钮 36px 宽、图标 18px，图标左缘约落在 13px，与输入文字的 14px 内边距对齐。 */
-  padding: 0 4px 4px;
+  gap: 4px;
+  /* 左右 8px：首个胶囊左缘与上方 16px 起的输入文字大致对齐，底部留 8px 不贴边。 */
+  padding: 2px 6px 8px 10px;
 }
 
 .qn-composer-tools {
@@ -1852,30 +1836,43 @@ input[type="radio"] {
   white-space: nowrap;
 }
 
+.qn-composer-tools {
+  flex: 1 1 0;
+  gap: 6px;
+  overflow: hidden;
+}
+/* ghost 按钮会把边框设成透明，这里提高优先级恢复胶囊描边。 */
+.qn-composer .qn-access-chip { border-color: var(--color-qn-border); }
+
 .qn-composer-tools > .qn-composer-model {
-  flex: 1 1 auto;
-  width: 5rem;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 14rem;
 }
 
+/* 模型做成描边胶囊（参照「深度思考」芯片）：一眼看出可点，名称过长时截断。 */
 .qn-composer-model > .qn-button {
   width: 100%;
   min-width: 44px;
-  min-height: 44px;
+  min-height: 36px;
   justify-content: flex-start;
-  gap: 3px;
-  padding: 0 2px;
-  color: var(--color-qn-muted);
-  font-size: 12.5px;
+  gap: 4px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--color-qn-border);
+  border-radius: 999px;
+  color: var(--color-qn-text);
+  font-size: 13px;
 }
 
 /* 只显示图标的访问模式按钮：与工具栏其他图标按钮同为 36×44 触控区，颜色区分档位。 */
 .qn-access-chip {
   gap: 4px;
+  width: 36px;
   min-width: 36px;
-  min-height: 44px;
+  min-height: 36px;
   padding: 0;
+  /* 与模型胶囊同一套描边，成组出现在工具行左侧。 */
+  border: 1px solid var(--color-qn-border);
   border-radius: 999px;
   color: var(--color-qn-muted);
   font-size: 12.5px;

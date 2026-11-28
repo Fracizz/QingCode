@@ -126,11 +126,12 @@ export function ProjectOrigin({ target }: { target?: Target }) {
   return <span className="qn-origin" title={target?.kind === 'local' ? undefined : target?.host}>{name}</span>
 }
 
-/** 会话分组标题里的来源小标签（rust 版样式）：只写种类，主机名放在悬停提示里。 */
+/** 会话分组标题里的来源小标签（rust 版样式）：远端与直连带上主机地址，同名项目也能分清在哪台机器。 */
 function SourceTag({ target }: { target?: Target }) {
   if (!target) return <span className="qn-source-tag">{t('目标已移除')}</span>
-  const label = target.kind === 'ssh' ? t('远端') : target.kind === 'direct' ? t('直连') : t('本机')
-  return <span className="qn-source-tag" data-kind={target.kind} title={target.kind === 'local' ? undefined : target.name}>{label}</span>
+  const label = target.kind === 'ssh' ? t('远端 · {host}', { host: target.host })
+    : target.kind === 'direct' ? t('直连 · {host}', { host: target.host }) : t('本机')
+  return <span className="qn-source-tag" data-kind={target.kind} title={target.kind === 'local' ? undefined : `${target.name} · ${target.host}:${target.port}`}>{label}</span>
 }
 
 export function WorkspaceThreadRow({

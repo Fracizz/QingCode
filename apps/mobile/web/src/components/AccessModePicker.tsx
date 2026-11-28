@@ -42,8 +42,6 @@ export function AccessModePicker({ agent, mode, effectiveMode, inheritedMode, su
     <>
       <Button variant="ghost" className="qn-access-chip"
         data-tone={current.warning ? undefined : effectiveMode === 'plan' ? 'accent' : effectiveMode !== 'default' ? 'warn' : undefined}
-        // 非默认档位关系到安全，输入框收起时也保留这个图标。
-        data-pinned={effectiveMode !== 'default' ? 'true' : undefined}
         aria-label={t('访问模式：{label}', { label })} aria-haspopup="dialog" aria-expanded={open}
         title={label} disabled={disabled} onClick={() => setOpen(true)}>
         <Icon size={18} strokeWidth={1.75} className="shrink-0" aria-hidden />
@@ -103,7 +101,7 @@ export function NoApprovalNotice() {
   const label = t('无审批：工具直接执行')
   return (
     <>
-      <Button variant="ghost" className="qn-access-chip" data-tone="danger" data-pinned="true"
+      <Button variant="ghost" className="qn-access-chip" data-tone="danger"
         aria-label={label} aria-haspopup="dialog" aria-expanded={open} title={label} onClick={() => setOpen(true)}>
         <ShieldOff size={18} strokeWidth={1.75} className="shrink-0" aria-hidden />
       </Button>
