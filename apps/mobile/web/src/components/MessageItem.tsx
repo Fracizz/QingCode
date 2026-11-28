@@ -1,6 +1,6 @@
-import { Check, ChevronDown, ChevronRight, CircleX, Copy, Ellipsis, FileCode, FilePen, FileText, GitCompare, Image, ListChecks, Pencil, Quote, Split, Terminal, Wand2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, CircleX, Copy, Ellipsis, FileCode, FilePen, FileText, GitCompare, Image, ListChecks, Pencil, Quote, Split, Terminal } from 'lucide-react'
 import { backgroundTaskLabel, editUserText, formatReplyTime, localReplyDay, splitMarkdownBlocks, splitUserText, subscribeToReplyDay, workSummaryLabel, type ItemView, type UserInput, getLocale, t, translateMessage } from '@qn/codex-client'
-import { createContext, memo, useContext, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, Fragment, memo, useContext, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { toolStatus, toolSummary, type ToolStatus, type WorkGroupEntry } from '../chatGroups'
@@ -229,7 +229,7 @@ function MessageActions({ text, onQuote, getPlainText, onEdit, onFork, open: con
       {!hideTrigger && <Button variant="ghost" className="qn-icon-button qn-message-more" aria-label={t('消息操作')} onClick={() => { setStatus(''); setOpen(true) }}><Ellipsis size={16} /></Button>}
       {open && (
         <Dialog title={t('消息操作')} onClose={() => setOpen(false)}>
-          <div className="grid gap-1">
+          <div className="qn-sheet-actions">
             {hasText && <SheetAction icon={Copy} onClick={() => void copy(getPlainText ? getPlainText() : text)}>{getPlainText ? t('复制纯文本') : t('复制文本')}</SheetAction>}
             {hasText && getPlainText && <SheetAction icon={FileCode} onClick={() => void copy(text)}>{t('复制 Markdown 源文')}</SheetAction>}
             {hasText && onQuote && <SheetAction icon={Quote} onClick={() => { onQuote(text.slice(0, 4000)); setOpen(false) }}>{t('引用到对话')}</SheetAction>}
@@ -466,6 +466,7 @@ function UserMessage({ item, onQuote, onResend }: {
   // 与电脑版一致：发送中的气泡和 Codex 用 skill 输入项，Claude 回显把技能写在正文开头。
   const skills = item.skills?.length ? item.skills : parsed.skills
   const files = [...new Set([...(item.files ?? []), ...parsed.files])]
+  const hasBody = Boolean(parsed.text) || skills.length > 0
   const long = isLongUserText(parsed.text)
   const attachments = item.inputExtras ?? []
   const localImage = attachments.some((item) => item.type === 'localImage')
@@ -495,20 +496,20 @@ function UserMessage({ item, onQuote, onResend }: {
         navigator.vibrate?.(10)
         setMenu(true)
       }}>
-        {/* 标签放在气泡内：只发技能时气泡仍在，长按操作不丢。 */}
-        {(skills.length > 0 || files.length > 0) && <div className={`flex flex-wrap gap-1.5${parsed.text ? ' mb-1' : ''}`}>
-          {skills.map((name, index) => (
-            <span key={`s-${index}`} className="qn-user-skill inline-flex max-w-full items-center gap-1 rounded-md bg-qn-accent-surface px-2 text-xs leading-6 text-qn-accent">
-              <Wand2 size={12} className="shrink-0" aria-hidden /> <span className="truncate">{name}</span>
-            </span>
-          ))}
+        {files.length > 0 && <div className={`flex flex-wrap gap-1.5${hasBody ? ' mb-1' : ''}`}>
           {files.map((path) => (
             <span key={`f-${path}`} title={path} className="inline-flex max-w-full items-center gap-1 rounded-md bg-qn-bg px-2 text-xs leading-6 text-qn-muted">
               <FileText size={12} className="shrink-0" aria-hidden /> <span className="truncate">{path.split(/[\\/]/).pop() || path}</span>
             </span>
           ))}
         </div>}
-        {parsed.text && <div className={`whitespace-pre-wrap break-words${long && !expanded ? ' line-clamp-8' : ''}`}>{parsed.text}</div>}
+        {/* 技能与正文连在一起，和输入框里的 /名字 写法一致；只发技能时气泡仍在，长按操作不丢。 */}
+        {hasBody && <div className={`whitespace-pre-wrap break-words${long && !expanded ? ' line-clamp-8' : ''}`}>
+          {skills.map((name, index) => (
+            <Fragment key={name}>{index > 0 && ' '}<span className="qn-user-skill font-medium text-qn-accent">/{name}</span></Fragment>
+          ))}
+          {skills.length > 0 && parsed.text && ' '}{parsed.text}
+        </div>}
         {long && (
           <button type="button" className="qn-fold-toggle" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
             {expanded ? t('收起') : t('展开全文')}

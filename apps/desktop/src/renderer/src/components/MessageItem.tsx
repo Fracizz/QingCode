@@ -1,7 +1,7 @@
-import { Children, isValidElement, memo, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { Children, Fragment, isValidElement, memo, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, RotateCcw, Wand2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, FileDiff, FileText, ImageIcon, Lightbulb, ListChecks, Pencil, RotateCcw } from 'lucide-react'
 import { backgroundTaskLabel, formatReplyTime, getLocale, localReplyDay, splitMarkdownBlocks, subscribeToReplyDay, t, workSummaryLabel, type ItemView, type ThreadActivity, type UserInput } from '@qn/codex-client'
 import { basename, editUserText, embeddedImageLabel, splitUserText } from '../lib/attachments'
 import { copyText } from '../lib/clipboard'
@@ -484,7 +484,7 @@ export const WorkGroup = memo(function WorkGroup({
   )
 })
 
-/** 用户消息：右侧灰色气泡；图片缩略图与附件/技能标签放在气泡上方。 */
+/** 用户消息：右侧灰色气泡，技能以 /名字 写在正文开头；图片缩略图与附件标签放在气泡上方。 */
 function UserMessage({ item, onEdit, editNote, onRewind }: {
   item: Extract<ItemView, { kind: 'user' }>
   /** 从这条消息开始重来：原地回退后发送，或分出新会话发送（editNote 说明）。 */
@@ -540,13 +540,8 @@ function UserMessage({ item, onEdit, editNote, onRewind }: {
           ))}
         </div>
       )}
-      {(skills.length > 0 || files.length > 0 || named.length > 0) && (
+      {(files.length > 0 || named.length > 0) && (
         <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
-          {skills.map((name) => (
-            <span key={'s-' + name} className="inline-flex h-6 items-center gap-1 rounded-md bg-qn-brand/10 px-2 text-ui-sm text-qn-brand">
-              <Wand2 size={12} /> {name}
-            </span>
-          ))}
           {named.map((path) => (
             <span key={'i-' + path} title={path} className="inline-flex h-6 max-w-[16rem] items-center gap-1 rounded-md bg-qn-fg/[0.06] px-2 text-ui-sm text-qn-muted">
               <ImageIcon size={12} className="shrink-0" /> <span className="truncate">{basename(path)}</span>
@@ -583,6 +578,7 @@ function UserMessage({ item, onEdit, editNote, onRewind }: {
               if (event.key === 'Escape' && !event.nativeEvent.isComposing && !saving) setEdit(null)
             }}
           />
+          {skills.length > 0 && <div className="px-1 text-ui-sm text-qn-brand">{skills.map((name) => '/' + name).join(' ')}</div>}
           {editNote && <div className="px-1 text-ui-sm text-qn-muted">{editNote}</div>}
           {editFailed && <div role="status" className="px-1 text-ui-sm text-qn-warn">{t('发送失败，修改已保留')}</div>}
           <div className="mt-2 flex flex-wrap justify-end gap-1.5 text-ui-sm">
@@ -591,9 +587,12 @@ function UserMessage({ item, onEdit, editNote, onRewind }: {
             <button type="submit" disabled={!canSave || saving} className="rounded-md border border-transparent bg-qn-text px-2.5 py-1 text-qn-bg disabled:opacity-40">{saving ? t('提交中…') : editNote ? t('在新分支发送') : t('重新发送')}</button>
           </div>
         </form>
-      ) : parsed.text.trim() && (
+      ) : (skills.length > 0 || parsed.text.trim()) && (
         <div className="max-w-[80%] whitespace-pre-wrap wrap-anywhere rounded-2xl rounded-br-md border border-qn-fg/[0.06] bg-qn-bubble px-4 py-2.5 text-[length:var(--qn-chat-font-size,15px)] leading-[1.7] text-qn-text">
-          {parsed.text}
+          {skills.map((name, index) => (
+            <Fragment key={name}>{index > 0 && ' '}<span className="font-medium text-qn-brand">/{name}</span></Fragment>
+          ))}
+          {skills.length > 0 && parsed.text && ' '}{parsed.text}
         </div>
       )}
       {edit === null && (timestamp || parsed.text.trim() || onEdit || onRewind) && (

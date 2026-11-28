@@ -139,7 +139,6 @@ export function FileViewer() {
             </div>
             {kind === 'image' && (
               <ZoomableImage key={file.path} src={imageDataUrl(file.content, file.path)} alt={title}
-                className="rounded-lg border border-qn-border bg-qn-field p-2"
                 error={<Note message={t('无法显示这张图片，文件内容可能不完整')} tone="warn" />} />
             )}
             {kind === 'binary' && (

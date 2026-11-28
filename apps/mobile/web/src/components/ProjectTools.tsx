@@ -46,7 +46,7 @@ export function ProjectTools({ project, compact = false, sortable = false, class
       {tool === 'menu' && (
         <Dialog title={project.name} onClose={() => setTool(null)}>
           <p className="qn-mono -mt-1 mb-2 break-all text-xs text-qn-muted">{project.path}</p>
-          <div className="qn-project-tools-menu">
+          <div className="qn-sheet-actions">
             {desktopId && (
               <SheetAction icon={pinned ? PinOff : Pin} onClick={() => { toggleProjectPin(desktopId, project); setTool(null) }}>
                 {pinned ? t('取消置顶（仅此手机）') : t('置顶（仅此手机）')}

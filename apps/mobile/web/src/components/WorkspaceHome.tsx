@@ -365,7 +365,7 @@ export function WorkspaceThreadRow({
       {archiveError && <p className="qn-thread-archive-error" role="alert">{archiveError}</p>}
       {menu && desktopId && (
         <Dialog title={menu === 'rename' ? t('重命名会话') : thread.title} onClose={() => { if (!renaming) setMenu(null) }}>
-          {menu === 'actions' ? <>
+          {menu === 'actions' ? <div className="qn-sheet-actions">
             <SheetAction icon={preference?.pinned ? PinOff : Pin} onClick={() => {
               changeThreadPreference(desktopId, thread, { pinned: !preference?.pinned })
               setMenu(null)
@@ -376,7 +376,7 @@ export function WorkspaceThreadRow({
             <SheetAction icon={Archive} disabled={archiving} onClick={() => { setMenu(null); void archive() }}>
               {t('归档')}
             </SheetAction>
-          </> : <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); void rename() }}>
+          </div> : <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); void rename() }}>
             <input className="qn-input" aria-label={t('会话名称')} value={name} onChange={(event) => setName(event.target.value)} disabled={renaming} />
             {renameError && <Note tone="error" message={renameError} />}
             <Button variant="primary" type="submit" disabled={renaming || !name.trim()}>{renaming ? t('保存中…') : t('保存')}</Button>

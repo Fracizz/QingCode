@@ -109,8 +109,8 @@ export function ModelPicker({ targetId, agent, open: controlledOpen, onOpenChang
 
           <AgentQuota targetId={targetId} agent={agent} />
 
-          {/* 推理强度与完成按钮吸底：模型再多也不用滚到底才能调强度。负外边距盖住面板底部留白。 */}
-          <div className="sticky bottom-0 -mb-[max(16px,env(safe-area-inset-bottom))] border-t border-qn-border bg-qn-panel pt-3 pb-[max(16px,env(safe-area-inset-bottom))]">
+          {/* 推理强度与完成按钮吸底：模型再多也不用滚到底才能调强度。 */}
+          <div className="qn-sheet-footer">
             {selection.model && selection.model.efforts.length > 0 && (
               <div className="mb-3">
                 <div className="qn-label">{t('推理强度')}</div>

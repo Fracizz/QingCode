@@ -132,7 +132,7 @@ export function ConnectionsPage() {
       {selected && (
         <Dialog title={connectionName(selected.name)} onClose={() => setMenu(null)}>
           <p className="mb-3 text-xs text-qn-muted">{formatAddress(selected.host, selected.port)}</p>
-          <div className="grid">
+          <div className="qn-sheet-actions">
             <SheetAction icon={Pencil} onClick={() => { setMenu(null); openEditForm(selected.id) }}>{t('编辑连接')}</SheetAction>
             <SheetAction icon={KeyRound} onClick={() => { setMenu(null); beginRepair(selected.id) }}>{t('重新配对')}</SheetAction>
             <SheetAction icon={Trash2} danger onClick={() => { setMenu(null); setPendingDelete(selected.id) }}>{t('删除连接')}</SheetAction>

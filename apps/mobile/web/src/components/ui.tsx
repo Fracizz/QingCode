@@ -242,7 +242,7 @@ export function AgentTag({ agent }: { agent: AgentKind }) {
   return <span className={`qn-agent-tag ${cls}`}>{agentLabel(agent)}</span>
 }
 
-/** 底部弹层里的菜单行：文字 + 圆形图标靠右排，右手拇指不用横跨屏幕，整行可点。 */
+/** 底部弹层里的菜单行：圆形图标 + 文字，整行可点；需放在 .qn-sheet-actions 容器内。 */
 export function SheetAction({ icon: Icon, children, onClick, danger = false, disabled }: {
   icon: LucideIcon; children: ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean
 }) {

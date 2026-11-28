@@ -29,7 +29,7 @@ it('后台任务卡片支持触摸展开 Markdown 结果，只有摘要时直接
   }
 })
 
-it('用户消息把技能和附件显示成标签，正文不重复技能名', async () => {
+it('用户消息把技能写在正文开头，附件显示成标签', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.createElement('div')
   const root = createRoot(host)
@@ -39,13 +39,13 @@ it('用户消息把技能和附件显示成标签，正文不重复技能名', a
     // Claude 回显与历史：技能写在正文开头，附件说明在末尾。
     await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'u',
       text: '/commit-push all 打包\n\n附件文件（请按需读取）：\n- a.ts: /work/src/a.ts' }} />))
-    expect(tags()).toEqual(['commit-push'])
-    expect(body()).toBe('all 打包')
+    expect(tags()).toEqual(['/commit-push'])
+    expect(body()).toBe('/commit-push all 打包')
     expect(host.querySelector('[title="/work/src/a.ts"]')?.textContent?.trim()).toBe('a.ts')
-    // 发送中的气泡：技能来自 skill 输入项；只发技能时没有空正文。
+    // 发送中的气泡：技能来自 skill 输入项；只发技能时气泡里只有技能名。
     await act(() => root.render(<MessageItem item={{ kind: 'user', id: 's', text: '', skills: ['pdf'] }} />))
-    expect(tags()).toEqual(['pdf'])
-    expect(body()).toBeUndefined()
+    expect(tags()).toEqual(['/pdf'])
+    expect(body()).toBe('/pdf')
     await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'p', text: '打开 /tmp/a' }} />))
     expect(tags()).toEqual([])
     expect(body()).toBe('打开 /tmp/a')

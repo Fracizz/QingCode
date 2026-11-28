@@ -90,7 +90,7 @@ export function TargetsPage() {
           {selected.kind !== 'local' && <p className="mb-2 text-xs text-qn-muted">
             {selected.kind === 'ssh' ? `${selected.username}@` : t('直连 · ')}{formatAddress(selected.host, selected.port)}
           </p>}
-          <div className="grid">
+          <div className="qn-sheet-actions">
             <SheetAction icon={FolderOpen} onClick={() => { setMenu(null); void selectTarget(selected.id) }}>{t('查看项目')}</SheetAction>
             {states[selected.id]?.state === 'ready' ? (
               <SheetAction icon={Unplug} onClick={() => { setMenu(null); void disconnectTarget(selected.id) }}>{t('断开目标')}</SheetAction>

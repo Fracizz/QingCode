@@ -11,6 +11,8 @@
   --color-qn-card: #222222;
   --color-qn-raised: #2e2e2e;
   --color-qn-field: #181818;
+  /* 看图舞台底色：比任何界面表面都深，深色截图的边缘才分得出来。 */
+  --color-qn-stage: #000000;
   --color-qn-border: #3a3a3a;
   --color-qn-border-strong: #4d4d4d;
   /* 分组列表行间细线，比外框更淡（rust 版 --divider）。 */
@@ -86,6 +88,7 @@
   --color-qn-card: #343538;
   --color-qn-raised: #3c3d40;
   --color-qn-field: #252629;
+  --color-qn-stage: #141517;
   --color-qn-border: #54555a;
   --color-qn-border-strong: #65666b;
   --color-qn-divider: #3c3d40;
@@ -106,6 +109,7 @@
   --color-qn-card: #f4f4f4;
   --color-qn-raised: #eaeaea;
   --color-qn-field: #ffffff;
+  --color-qn-stage: #dcdcdc;
   --color-qn-border: #c6c6c6;
   --color-qn-border-strong: #a0a0a0;
   --color-qn-divider: #e2e2e2;
@@ -801,16 +805,6 @@ input[type="radio"] {
   flex-shrink: 0;
 }
 
-.qn-project-tools-menu {
-  display: grid;
-  gap: 4px;
-}
-
-.qn-project-tools-menu .qn-button {
-  justify-content: flex-start;
-  gap: 8px;
-}
-
 .qn-switcher-list {
   flex: 1;
   min-height: 0;
@@ -963,6 +957,37 @@ input[type="radio"] {
 .qn-scroll::-webkit-scrollbar-thumb {
   background: var(--color-qn-border);
   border-radius: 4px;
+}
+
+/* 看图区：深色舞台四周留白，图片自带细框，截图与应用界面分得开。 */
+.qn-image-stage {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  container-type: size;
+  padding: 12px;
+  border: 1px solid var(--color-qn-border);
+  border-radius: var(--qn-radius);
+  background: var(--color-qn-stage);
+}
+
+.qn-image-stage > img { outline: 1px solid var(--color-qn-outline); }
+
+/* 缩放工具条：收进一个浮条、按钮不描边，避免和截图里的按钮混在一起。 */
+.qn-zoom-bar {
+  display: flex;
+  flex-shrink: 0;
+  align-self: center;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 4px;
+  border: 1px solid var(--color-qn-border-strong);
+  border-radius: 16px;
+  background: var(--color-qn-raised);
+  box-shadow: var(--qn-elev-1);
 }
 
 /* 消息里的可点击路径：保持行内排版，只加下划线与强调色。 */
@@ -1911,12 +1936,11 @@ input[type="radio"] {
   content: "";
 }
 
-/* 底部弹层的菜单行：图标在前、整行水平居中，左右手操作都顺手；按下只叠状态色。 */
+/* 底部弹层的菜单行：图标在前、行内左对齐，整组由 .qn-sheet-actions 居中；按下只叠状态色。 */
 .qn-sheet-action {
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 14px;
   width: 100%;
   min-height: 56px;
@@ -1924,7 +1948,7 @@ input[type="radio"] {
   border-radius: var(--qn-radius);
   color: var(--color-qn-text);
   font-size: 15px;
-  text-align: center;
+  text-align: left;
   transition: background-color var(--qn-motion-short) ease;
 }
 
@@ -1949,11 +1973,25 @@ input[type="radio"] {
   transition: background-color var(--qn-motion-short) ease, transform var(--qn-motion-short) ease;
 }
 
-/* 底部动作面板：动作行之间留细缝，按压态各自成块。 */
+/* 底部动作面板：宽度随最长一行并整体居中，各行图标对齐成一列；行间留细缝，按压态各自成块。 */
 .qn-sheet-actions {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px;
-  margin: 0 -6px;
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+/* 弹层吸底区：面板底部留白交给吸底区自己承担，否则下方会露出滚动内容。 */
+.qn-dialog[data-placement] .qn-dialog-panel:has(> .qn-sheet-footer) { padding-bottom: 0; }
+
+.qn-sheet-footer {
+  position: sticky;
+  bottom: 0;
+  border-top: 1px solid var(--color-qn-border);
+  background: var(--color-qn-panel);
+  padding: 12px 0 max(16px, env(safe-area-inset-bottom));
 }
 
 /* 面板顶部被操作对象的摘要：浅底圆角块与下方动作区分开，最多三行。 */
