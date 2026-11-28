@@ -160,7 +160,8 @@ export function groupTurns(
         out.push(entry)
         continue
       }
-      if (entry.item.kind === 'backgroundTask') {
+      // 异步提问在轮次结束后仍可回答，需要留在可见消息流里。
+      if (entry.item.kind === 'backgroundTask' || (entry.item.kind === 'agent' && entry.item.asyncQuestions?.length)) {
         flushSegment()
         out.push(entry)
         continue

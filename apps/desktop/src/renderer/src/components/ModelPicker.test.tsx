@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, it, vi } from 'vitest'
 import { useModels } from '../store/models'
+import { ContextUsageDetails } from './ContextUsageDetails'
 import { ContextRing, ModelPicker, formatTokensPrecise } from './ModelPicker'
 
 const { session } = vi.hoisted(() => ({ session: { opened: true, rpc: { request: vi.fn() } } }))
@@ -61,6 +62,19 @@ it.each([0, 100])('上下文占用为 %i%% 时保留环心读数', (percent) => 
 it('会话暂无用量时仍显示圆环，草稿无用量时不显示', () => {
   expect(renderToStaticMarkup(<ContextRing tokenUsage={undefined} onClick={() => undefined} />)).toContain('暂无会话用量')
   expect(renderToStaticMarkup(<ContextRing tokenUsage={undefined} />)).toBe('')
+})
+
+it('会话用量详情展示工具调用次数，并删除使用建议', () => {
+  const host = document.createElement('div')
+  host.innerHTML = renderToStaticMarkup(<ContextUsageDetails agent="claude" thread={{
+    id: 'thread', status: 'idle', activeTurnId: null, pendingApprovals: [],
+    tokenUsage: { last: { inputTokens: 4, totalTokens: 4 }, modelContextWindow: 100 },
+    items: [{ kind: 'command', id: 'command', command: 'pwd', output: '', status: 'completed' }],
+    turns: [{ id: 'turn', itemIds: ['command'], startedAtMs: null, durationMs: null }],
+  }} />)
+  expect(host.querySelector('[aria-label="最近一轮工具调用"]')?.textContent).toContain('命令执行1')
+  expect(host.textContent).toContain('最近上报明细')
+  expect(host.textContent).not.toContain('使用建议')
 })
 
 it('详情数字保留一位小数', () => {

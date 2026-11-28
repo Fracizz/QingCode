@@ -1,5 +1,5 @@
 import { RUNNING_SEND_PREFERENCES, type RunningSendPreference } from '@qn/codex-client'
-import { useLayoutEffect } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import { create } from 'zustand'
 import { callDevice } from './client'
 import { getWindowNativePort } from './native'
@@ -13,6 +13,7 @@ export const SESSION_PREVIEW_COUNTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
 type SessionPreviewCount = (typeof SESSION_PREVIEW_COUNTS)[number]
 type MobilePreferences = {
   theme: MobileTheme
+  followSystemDark: boolean
   reduceMotion: boolean
   sessionPreviewCount: SessionPreviewCount
   sendKey: 'newline' | 'send'
@@ -28,7 +29,7 @@ const storageKey = 'qn.mobile.preferences'
  */
 const MOBILE_RUNNING_SEND: RunningSendPreference = 'queue'
 const defaults: MobilePreferences = {
-  theme: 'dark', reduceMotion: false, sessionPreviewCount: 6,
+  theme: 'dark', followSystemDark: false, reduceMotion: false, sessionPreviewCount: 6,
   sendKey: 'newline', runningSend: MOBILE_RUNNING_SEND, imageCompression: 'medium',
 }
 
@@ -56,6 +57,7 @@ function readPreferences(): MobilePreferences {
     const value: Partial<Record<keyof MobilePreferences | 'runningSendMode', unknown>> | null = JSON.parse(window.localStorage.getItem(storageKey) ?? 'null')
     return {
       theme: parseTheme(value?.theme),
+      followSystemDark: value?.followSystemDark === true,
       reduceMotion: value?.reduceMotion === true,
       sessionPreviewCount: parseSessionPreviewCount(value?.sessionPreviewCount),
       sendKey: value?.sendKey === 'send' ? 'send' : defaults.sendKey,
@@ -72,8 +74,8 @@ export const useMobilePreferences = create<MobilePreferences & {
 }>((set, get) => ({
   ...readPreferences(),
   update: (values) => {
-    const { theme, reduceMotion, sessionPreviewCount, sendKey, runningSend, imageCompression } = get()
-    const next = { theme, reduceMotion, sessionPreviewCount, sendKey, runningSend, imageCompression, ...values }
+    const { theme, followSystemDark, reduceMotion, sessionPreviewCount, sendKey, runningSend, imageCompression } = get()
+    const next = { theme, followSystemDark, reduceMotion, sessionPreviewCount, sendKey, runningSend, imageCompression, ...values }
     set(next)
     try {
       const { runningSend: runningSendMode, ...rest } = next
@@ -89,16 +91,45 @@ let systemBarsSync = Promise.resolve()
 
 export function useMobileAppearance() {
   const theme = useMobilePreferences((state) => state.theme)
+  const followSystemDark = useMobilePreferences((state) => state.followSystemDark)
   const reduceMotion = useMobilePreferences((state) => state.reduceMotion)
+  const [systemDark, setSystemDark] = useState(false)
+  const effectiveTheme = followSystemDark && systemDark ? 'dark' : theme
 
   useLayoutEffect(() => {
-    document.documentElement.dataset.theme = theme
+    if (getWindowNativePort()) {
+      let awaitingInitial = true
+      const onSystemTheme = (light: boolean) => {
+        awaitingInitial = false
+        setSystemDark(!light)
+      }
+      window.__qnSystemTheme = onSystemTheme
+      void callDevice<boolean>('appearance.systemTheme').then((light) => {
+        // 读取期间系统可能已切换主题，优先使用原生层主动推送的值。
+        if (awaitingInitial && typeof light === 'boolean') onSystemTheme(light)
+      }).catch(() => undefined)
+      return () => {
+        awaitingInitial = false
+        if (window.__qnSystemTheme === onSystemTheme) delete window.__qnSystemTheme
+      }
+    }
+
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
+    if (!media) return
+    const onChange = () => setSystemDark(media.matches)
+    onChange()
+    media.addEventListener('change', onChange)
+    return () => media.removeEventListener('change', onChange)
+  }, [])
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = effectiveTheme
     if (!getWindowNativePort()) return
     // 原生桥并行处理请求，按设置顺序更新系统栏图标。
     systemBarsSync = systemBarsSync.then(async () => {
-      await callDevice('appearance.systemBars', { light: theme === 'light' })
+      await callDevice('appearance.systemBars', { light: effectiveTheme === 'light' })
     }).catch(() => undefined)
-  }, [theme])
+  }, [effectiveTheme])
 
   useLayoutEffect(() => {
     document.documentElement.toggleAttribute('data-reduce-motion', reduceMotion)

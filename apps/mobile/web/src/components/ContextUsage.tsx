@@ -1,10 +1,11 @@
-import { contextUsage, contextUsageDetails, estimatedTurnUsage, formatTokenCount, t, type AgentKind } from '@qn/codex-client'
+import { contextUsage, contextUsageDetails, estimatedTurnUsage, formatTokenCount, t, type AgentKind, type ThreadView } from '@qn/codex-client'
 import { useState } from 'react'
 import { Button, Dialog, LoadingIcon } from './ui'
 
-export function ContextUsage({ tokenUsage, agent, compact, panel: controlledPanel, onPanelChange }: {
+export function ContextUsage({ tokenUsage, agent, thread, compact, panel: controlledPanel, onPanelChange }: {
   tokenUsage: unknown
   agent: AgentKind
+  thread?: ThreadView
   /** 压缩不再二次确认：点按钮即关闭面板并开始压缩。 */
   compact?: { busy: boolean; blockedReason: string | null; willQueue?: boolean; onCompact: () => void }
   panel?: 'usage' | null
@@ -24,7 +25,7 @@ export function ContextUsage({ tokenUsage, agent, compact, panel: controlledPane
   // 进度条正常时用品牌色，接近上限才换成警示色。
   const meterColor = percent >= 90 ? 'text-qn-danger' : percent >= 75 ? 'text-qn-warn' : 'text-qn-accent'
   const busy = compact?.busy === true
-  const details = panel ? contextUsageDetails(tokenUsage, agent) : null
+  const details = panel ? contextUsageDetails(tokenUsage, agent, thread) : null
   return (
     <>
       <Button variant="ghost" className="qn-icon-button"
@@ -68,7 +69,7 @@ export function ContextUsage({ tokenUsage, agent, compact, panel: controlledPane
               </section>
             )}
             {details.recent && (
-              <section className="space-y-2">
+              <section className="space-y-1.5">
                 <div className="qn-ctx-head flex-wrap">
                   <h3>{details.recent.title}</h3>
                   <span className="text-xs font-normal tabular-nums text-qn-muted">
@@ -87,10 +88,25 @@ export function ContextUsage({ tokenUsage, agent, compact, panel: controlledPane
                 )}
               </section>
             )}
-            <div className="qn-settings-group px-3 py-2">
-              {(details.overview || details.recent) && <h3 className="mb-1 text-sm font-medium">{t('使用建议')}</h3>}
-              <p className="text-sm leading-5 text-qn-muted">{details.guidance}</p>
-            </div>
+            {details.tools && (
+              <section className="space-y-1.5" aria-label={details.tools.title}>
+                <div className="qn-ctx-head">
+                  <h3>{details.tools.title}</h3>
+                  <span className="tabular-nums">{formatTokenCount(details.tools.total)}</span>
+                </div>
+                <dl className="qn-settings-group grid grid-cols-2 gap-x-3 gap-y-1 px-3 py-2 text-xs">
+                  {details.tools.rows.map(({ label, count }, index) => (
+                    <div key={`${label}-${index}`} className="flex min-w-0 items-baseline justify-between gap-2">
+                      <dt className="line-clamp-2 min-w-0 wrap-anywhere text-qn-muted" title={label}>{label}</dt>
+                      <dd className="shrink-0 tabular-nums">{formatTokenCount(count)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            )}
+            {!details.overview && !details.recent && !details.tools && (
+              <p className="qn-ctx-note">{t('尚无用量数据')}</p>
+            )}
             {compact && (
               <div className="grid gap-2">
                 <Button disabled={busy || !!compact.blockedReason} onClick={() => {

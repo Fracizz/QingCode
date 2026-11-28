@@ -462,6 +462,62 @@ describe('server 端到端（daemon + connect --stdio + codex 中继）', () => 
     }
   }, 90_000)
 
+  it('Codex 定时会话等待用户审批，客户端断开后继续由 daemon 托管', async () => {
+    const scheduledState = path.join(root, 'schedule-state')
+    const windows = process.platform === 'win32'
+    const executable = path.join(root, windows ? 'scheduled-codex.cmd' : 'scheduled-codex')
+    const quote = (value: string) => windows
+      ? '"' + value.replace(/%/g, '%%') + '"'
+      : "'" + value.replace(/'/g, "'\\''") + "'"
+    const command = [process.execPath, fakeCodex].map(quote).join(' ')
+    fs.writeFileSync(executable, windows ? '@echo off\r\n' + command + ' %*\r\n'
+      : '#!/bin/sh\nexec ' + command + ' "$@"\n', { mode: 0o700 })
+
+    const started = spawnSync(process.execPath, [bundle, 'ensure', '--state-dir', scheduledState], {
+      encoding: 'utf8', timeout: 15_000, windowsHide: true,
+    })
+    expect(started.status).toBe(0)
+    const info = JSON.parse(started.stdout) as { pid: number; token: string }
+    const creator = new Bridge(bundle, scheduledState)
+    let viewer: Bridge | undefined
+    try {
+      await creator.hello(info.token)
+      const task = await creator.req('schedule.upsert', {
+        cwd: root, name: '检查报告', agent: 'codex', prompt: 'Run the test prompt', enabled: false,
+        cadence: { frequency: 'daily', time: '09:00', timeZone: 'UTC' }, runtime: { codexPath: executable },
+      })
+      const params = { cwd: root, id: task.id }
+      const run = await creator.req('schedule.runNow', params)
+      expect(run.runId).toBeTypeOf('string')
+      creator.close()
+
+      viewer = new Bridge(bundle, scheduledState)
+      const client = viewer
+      await client.hello(info.token)
+      await until(async () => {
+        const runs = await client.req('schedule.runs', params) as unknown as Array<{ status: string }>
+        return runs[0]?.status === 'waiting'
+      })
+      await expect(client.req('server.shutdown', { whenIdle: true })).rejects.toThrow('有进行中的')
+      await client.req('codex.open', { codexPath: executable })
+      await client.req('codex.attach', { sinceSeq: 0 })
+      await client.take((frame) => frame.t === 'codex.recv' && recvMsg(frame).id === 'scheduled-approval')
+      client.send({ t: 'codex.send', msg: { id: 'scheduled-approval', result: { decision: 'decline' } } })
+      await client.take((frame) => frame.t === 'codex.recv' && recvMsg(frame).method === 'turn/completed')
+      expect(await client.req('schedule.runs', params)).toMatchObject([
+        { id: run.runId, agent: 'codex', threadId: 'scheduled-thread', status: 'succeeded' },
+      ])
+    } finally {
+      creator.close()
+      if (viewer) {
+        await viewer.req('server.shutdown').catch(() => undefined)
+        viewer.close()
+      }
+      await until(() => !alive(info.pid), 1000).catch(() => undefined)
+      if (alive(info.pid)) process.kill(info.pid)
+    }
+  }, 30_000)
+
   it('token 错 / protocol 不符 / 第二个 daemon 自动退出 / server.shutdown', async () => {
     const badToken = new Bridge(bundle, stateDir)
     expect(await badToken.hello('b'.repeat(64))).toMatchObject({ t: 'error', code: 'auth' })

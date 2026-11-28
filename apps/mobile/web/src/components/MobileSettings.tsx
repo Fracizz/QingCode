@@ -1,6 +1,6 @@
 import { readLocalePreference, saveLocalePreference, t, type LocalePreference } from '@qn/codex-client'
 import {
-  ALargeSmall, Check, ChevronRight, CornerDownLeft, CornerDownRight, Download, ImageDown, Info, Languages, List, Minus, Palette, Plus, Sparkles,
+  ALargeSmall, Check, ChevronRight, CornerDownLeft, CornerDownRight, Download, ImageDown, Info, Languages, List, Minus, Moon, Palette, Plus, Sparkles,
   Sun, Wifi, type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
@@ -144,6 +144,7 @@ function SwitchRow({ icon, title, hint, checked, onChange, disabled }: {
 
 export function MobileSettings({ onClose }: { onClose: () => void }) {
   const theme = useMobilePreferences((state) => state.theme)
+  const followSystemDark = useMobilePreferences((state) => state.followSystemDark)
   const reduceMotion = useMobilePreferences((state) => state.reduceMotion)
   const sessionPreviewCount = useMobilePreferences((state) => state.sessionPreviewCount)
   const sendKey = useMobilePreferences((state) => state.sendKey)
@@ -271,6 +272,9 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
             disabled={busy !== null} onChange={changeLanguage} />
           <ChoiceRow icon={Palette} title={t('主题')} value={theme} options={themes}
             onChange={(value) => reportLocalSave(update({ theme: value }))} />
+          <SwitchRow icon={Moon} title={t('跟随系统深色模式')} checked={followSystemDark}
+            hint={t('系统退出深色模式后，恢复上面选的主题。')}
+            onChange={(value) => reportLocalSave(update({ followSystemDark: value }))} />
           <ChoiceRow icon={Sparkles} title={t('界面动效')} value={reduceMotion}
             options={[{ value: false, label: t('跟随系统') }, { value: true, label: t('减少动效') }]}
             onChange={(value) => reportLocalSave(update({ reduceMotion: value }))} />

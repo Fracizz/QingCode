@@ -3,5 +3,6 @@ import { initLocale } from '../../../../../../packages/codex-client/src/i18n/loc
 import components from './components.en'
 import core from './core.en'
 import features from './features.en'
+import schedule from './schedule.en'
 
-initLocale([core, components, features])
+initLocale([core, components, features, schedule])

@@ -3,12 +3,15 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { bindChatPinch } from '../chatFont'
+import { setGateway } from '../client'
 import { useMobileAppearance, useMobilePreferences } from '../mobilePreferences'
 import { Composer } from './Composer'
 import { MobileSettings } from './MobileSettings'
 
 it('常用设置即时应用并保存，对话继承原有字号且选词时不发送', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const systemScheme = Object.assign(new EventTarget(), { matches: true })
+  vi.stubGlobal('matchMedia', vi.fn(() => systemScheme))
   const initial = useMobilePreferences.getState()
   const dialog = HTMLDialogElement.prototype
   const originalDialog = Object.getOwnPropertyDescriptors(dialog)
@@ -66,10 +69,27 @@ it('常用设置即时应用并保存，对话继承原有字号且选词时不�
     expect(document.documentElement.dataset.theme).toBe('light')
     expect(document.documentElement.hasAttribute('data-reduce-motion')).toBe(true)
 
+    const followSystem = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="跟随系统深色模式"]')!
+    expect(followSystem.getAttribute('aria-checked')).toBe('false')
+    await act(() => followSystem.click())
+    expect(followSystem.getAttribute('aria-checked')).toBe('true')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(JSON.parse(localStorage.getItem('qn.mobile.preferences') ?? 'null')).toMatchObject({ theme: 'light', followSystemDark: true })
+    const changeSystemDark = (matches: boolean) => act(() => {
+      systemScheme.matches = matches
+      systemScheme.dispatchEvent(new Event('change'))
+    })
+    await changeSystemDark(false)
+    expect(document.documentElement.dataset.theme).toBe('light')
+    await changeSystemDark(true)
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    await act(() => followSystem.click())
+    expect(document.documentElement.dataset.theme).toBe('light')
+
     await choose('每个项目默认显示的会话数', '10')
     await choose('发送按键', '回车发送')
     expect(JSON.parse(localStorage.getItem('qn.mobile.preferences') ?? 'null')).toEqual({
-      theme: 'light', reduceMotion: true, sendKey: 'send', runningSendMode: 'queue', imageCompression: 'medium',
+      theme: 'light', followSystemDark: false, reduceMotion: true, sendKey: 'send', runningSendMode: 'queue', imageCompression: 'medium',
       sessionPreviewCount: 10,
     })
     await choose('图片压缩', '高（体积最小）')
@@ -110,4 +130,61 @@ it('常用设置即时应用并保存，对话继承原有字号且选词时不�
     }
     vi.unstubAllGlobals()
   }
+})
+
+it.each([false, true])('Android 启动和主题回调同步页面与系统栏（先收到回调：%s）', async (pushBeforeReply) => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const initial = useMobilePreferences.getState()
+  const previousCallback = window.__qnNativeCallback
+  let themeRequestId: number | undefined
+  const setBars = vi.fn()
+  const reply = (id: number, result: boolean) => window.__qnNativeCallback?.(JSON.stringify({ id, ok: true, result }))
+  vi.stubGlobal('QnNative', {
+    request(json: string) {
+      const { id, method, params } = JSON.parse(json)
+      if (method === 'appearance.systemTheme') themeRequestId = id
+      if (method === 'appearance.systemBars') {
+        setBars(params.light)
+        queueMicrotask(() => reply(id, params.light))
+      }
+      return '{"queued":true}'
+    },
+  })
+  setGateway(null)
+  useMobilePreferences.setState({ theme: 'light', followSystemDark: true })
+  const root = createRoot(document.createElement('div'))
+
+  function Harness() {
+    useMobileAppearance()
+    return null
+  }
+
+  try {
+    await act(() => root.render(<Harness />))
+    expect(themeRequestId).toBeDefined()
+    if (pushBeforeReply) await act(() => window.__qnSystemTheme?.(false))
+    await act(() => reply(themeRequestId!, pushBeforeReply))
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(setBars).toHaveBeenLastCalledWith(false)
+
+    await act(() => window.__qnSystemTheme?.(true))
+    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(setBars).toHaveBeenLastCalledWith(true)
+    await act(() => window.__qnSystemTheme?.(false))
+    await act(() => useMobilePreferences.setState({ theme: 'gray' }))
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    await act(() => window.__qnSystemTheme?.(true))
+    expect(document.documentElement.dataset.theme).toBe('gray')
+    expect(setBars).toHaveBeenLastCalledWith(false)
+  } finally {
+    await act(() => root.unmount())
+    setGateway(null)
+    if (previousCallback) window.__qnNativeCallback = previousCallback
+    else delete window.__qnNativeCallback
+    useMobilePreferences.setState(initial)
+    delete document.documentElement.dataset.theme
+    document.documentElement.removeAttribute('data-reduce-motion')
+    vi.unstubAllGlobals()
+  }
+  expect(window.__qnSystemTheme).toBeUndefined()
 })

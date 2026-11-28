@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { CodexRpc, type ThreadView } from '@qn/codex-client'
+import { applyNotification, CodexRpc, emptyState, parseAsyncQuestionReply, type ServerNotification, type ThreadView } from '@qn/codex-client'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
@@ -37,6 +37,70 @@ it('输入斜杠后可触摸执行命令，命令文本不会作为消息发送'
   } finally {
     await act(() => root.unmount())
     host.remove()
+    useApp.setState(initial)
+    vi.unstubAllGlobals()
+  }
+})
+
+it('轮次结束后仍可回答 Codex 异步提问，回显后显示已发送的答案', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  const initial = useApp.getState()
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const transport = new MobileCodexTransport('local', async () => undefined)
+  const rpc = new CodexRpc(transport)
+  const send = vi.fn<(text: string) => Promise<boolean>>().mockResolvedValue(true)
+  const threadId = 'async-question-thread'
+  const turnId = 'turn'
+  const title = '你说的「三端」具体指哪三个？'
+  const choices = ['Windows、Linux 桌面和 Android', 'Windows、macOS 桌面和 Android', 'Codex、Claude、pi 三个 Agent']
+  const question = {
+    type: 'agentMessage', id: 'question', text: [title, ...choices].join('\n\n'),
+    delivery: 'async', questions: [{ title, options: choices }],
+  }
+  const history = [
+    { type: 'userMessage', id: 'hello', content: [{ type: 'text', text: '支持三端' }] },
+    { type: 'reasoning', id: 'thinking', summary: ['检查范围'] },
+    question,
+    { type: 'agentMessage', id: 'final', text: '等你选好后继续。' },
+  ]
+  const note = (method: string, params: object) => ({ method, params: { threadId, turnId, ...params } }) as ServerNotification
+  const finished = applyNotification(emptyState(), note('turn/completed', {
+    turn: { id: turnId, items: history, status: 'completed' },
+  }))
+  const session: AgentSession = {
+    key: 'codex:local', agent: 'codex', targetId: 'local', rpc, transport,
+    opened: true, opening: false, openError: null, lastSeq: null,
+    resumedCodexThreads: new Set(), loadedThreads: new Set(), state: finished,
+  }
+  try {
+    await act(() => {
+      useApp.setState({ selectedTargetId: 'local', selectedAgent: 'codex', selectedThreadId: threadId,
+        eventsConnected: true, sessions: { [session.key]: session }, send })
+      root.render(<ChatPage />)
+    })
+    const options = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')]
+    expect(options.map((option) => option.textContent)).toEqual(choices)
+    const submit = [...host.querySelectorAll('button')].find((button) => button.textContent === '提交回答')!
+    expect(submit.disabled).toBe(true)
+    await act(() => options[0]!.click())
+    await act(() => submit.click())
+    const reply = send.mock.calls[0]![0]
+    expect(parseAsyncQuestionReply(reply)).toEqual([{
+      questionItemId: '["request_user_input_async","question",0]', question: title, answer: choices[0],
+    }])
+    expect(send).toHaveBeenCalledExactlyOnceWith(reply, [], false, 'steer', { keepDraft: true })
+
+    await act(() => useApp.setState({ sessions: { [session.key]: { ...session, state: applyNotification(finished,
+      note('item/completed', { item: { type: 'userMessage', id: 'answer', content: [{ type: 'text', text: reply }] } })),
+    } } }))
+    expect(host.querySelector('[role="radio"]')).toBeNull()
+    expect([...host.querySelectorAll('.qn-user-bubble')].at(-1)?.textContent).toContain(choices[0])
+    expect(host.textContent).not.toContain('send_user_message_question_reply')
+  } finally {
+    await act(() => root.unmount())
+    rpc.dispose()
     useApp.setState(initial)
     vi.unstubAllGlobals()
   }
@@ -147,7 +211,7 @@ it('长会话先显示最新消息，可以逐批查看完整历史', async () =
   }
 })
 
-it('中断请求失败可重试，确认中断后只显示一条状态，真正的轮次失败仍保留详情', async () => {
+it('中断失败可重试，最近一次中断可继续，轮次失败仍保留详情', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   const initial = useApp.getState()
@@ -169,6 +233,10 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
     resumedCodexThreads: new Set(), loadedThreads: new Set(), state: { threads: { thread } },
   }
   const interrupt = vi.fn<() => Promise<void>>()
+  const send = vi.fn<typeof initial.send>().mockImplementation(async () => {
+    useApp.setState({ sending: true })
+    return true
+  })
   let rejectStop: (error: Error) => void
   interrupt.mockImplementation(() => new Promise((_, reject) => { rejectStop = reject }))
 
@@ -181,15 +249,18 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
     if (!button) throw new Error(`缺少按钮 ${label}`)
     return button
   }
+  const continueButton = () => host.querySelector<HTMLButtonElement>('.qn-turn-continue')
 
   try {
     await act(() => {
-      useApp.setState({ selectedTargetId: 'local', selectedThreadId: 'thread', eventsConnected: true, interrupt })
+      useApp.setState({ activeId: 'desktop', selectedTargetId: 'local', selectedThreadId: 'thread', eventsConnected: true,
+        draftText: '', interrupt, send })
       setTurn(thread)
       root.render(<ChatPage />)
     })
     const progress = () => host.querySelector('.qn-thinking[role="status"]')?.textContent
     expect(progress()).toContain('Codex 正在思考…')
+    expect(continueButton()).toBeNull()
     await act(() => setTurn({ ...thread, activity: 'input' }))
     expect(progress()).toContain('等待输入…')
     await act(() => setTurn(thread))
@@ -208,6 +279,12 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
     expect(host.textContent).not.toMatch(/Turn interrupted|本轮失败|未能中断本轮/)
     expect(host.querySelector('[role="alert"]')).toBeNull()
     expect(toasts()).toBe('')
+    expect(continueButton()?.textContent).toBe('继续')
+    await act(() => useApp.setState({ eventsConnected: false }))
+    expect(continueButton()?.disabled).toBe(true)
+    await act(() => continueButton()?.click())
+    expect(send).not.toHaveBeenCalled()
+    await act(() => useApp.setState({ eventsConnected: true, draftText: '未发送的草稿' }))
 
     // 接着停掉还没回复的一轮，它的消息没有留下：两次停止仍只提示一条。
     const stopped = { startedAtMs: null, durationMs: null, outcome: 'interrupted' as const }
@@ -219,12 +296,20 @@ it('中断请求失败可重试，确认中断后只显示一条状态，真正�
       turns: [{ id: 'turn', ...stopped, itemIds: ['message', 'reply', 'command'] }, { id: 'retry', ...stopped, itemIds: [] }],
     }))
     expect(host.textContent?.match(/本轮已中断/g)).toHaveLength(1)
+    await act(() => {
+      continueButton()?.click()
+      continueButton()?.click()
+    })
+    expect(send).toHaveBeenCalledExactlyOnceWith('继续', [], false, 'queue', { keepDraft: true })
+    expect(continueButton()?.disabled).toBe(true)
+    expect(host.querySelector('textarea')?.value).toBe('未发送的草稿')
 
     await act(() => setTurn({ ...thread, status: 'error', activity: 'failed', activeTurnId: null, error: '503: upstream down',
       items: [...thread.items, { kind: 'user', id: 'next', text: '开始下一轮' }],
       turns: [{ id: 'turn', outcome: 'interrupted', startedAtMs: null, durationMs: null, itemIds: ['message', 'reply', 'command'] }],
     }))
     expect(host.textContent?.match(/本轮已中断/g)).toHaveLength(1)
+    expect(continueButton()).toBeNull()
     expect(host.textContent!.indexOf('本轮已中断')).toBeLessThan(host.textContent!.indexOf('开始下一轮'))
     const error = host.querySelector('[role="alert"]')?.textContent
     expect(error).toContain('模型服务暂时不可用（503）')
@@ -330,7 +415,7 @@ it('会话切换常驻顶栏，出现子代理时也可从顶栏查看记录和�
 
     await act(() => useApp.setState({ sessions: { [session.key]: session } }))
     const dockButton = '.qn-status-dock[data-state="open"] button[aria-label="子代理"]'
-    expect(host.querySelector(`${dockButton} svg.lucide-bot`)).toBeTruthy()
+    expect(host.querySelector(`${dockButton} svg.lucide-network`)).toBeTruthy()
     expect(host.querySelector('header button[aria-label="子代理"]')).toBeNull()
     expect(host.querySelector('header button[aria-label="返回"]')).toBeNull()
     expect(host.querySelector('.qn-body')?.textContent).not.toContain('启动子代理')

@@ -8,6 +8,7 @@ import {
   type AgentKind,
   type FramedConnection,
   type Req,
+  type ScheduleChangedEvent,
   type ServerMessage,
   AGENT_CAPABILITIES,
 } from '@qn/protocol'
@@ -37,6 +38,8 @@ import { checkHello } from './validation'
 import { WorkspaceError, findWorkspaceHandler, type WorkspaceContext } from './workspace/index'
 import { terminalManager } from './terminal/index'
 import { UnreadStore } from './unreadStore'
+import { isScheduleClient, ScheduleRunner } from './schedule/runner'
+import { ScheduleService } from './schedule/service'
 
 export interface DaemonOptions {
   stateDir?: string
@@ -102,6 +105,10 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   // 每个 agent 的 codex.recv 必须带上自己的 agent（缺省等同 codex），否则客户端无法分流。
   const hubFor = (agent: AgentKind): AgentHostHub => ({
     send(clientId, msg) {
+      if (isScheduleClient(clientId) && msg.t === 'codex.recv') {
+        runner.receiveResponse(agent, msg.msg)
+        return
+      }
       const session = clients.get(clientId)
       if (session?.hello) {
         session.conn.send(
@@ -110,6 +117,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
       }
     },
     broadcastRecv(seq, msg) {
+      runner.receive(agent, msg)
       // 先广播未读事件再转发 turn/completed，正在查看该会话的客户端随后会回写已读。
       if (msg.method === 'turn/completed') {
         const params = asRecord(msg.params)
@@ -124,6 +132,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
       }
     },
     broadcastEvt(name, payload) {
+      if (name === 'codex.exited') runner.exited(agent)
       broadcastAll({ t: 'evt', name, payload: payload ?? null })
     },
     log(message) {
@@ -138,6 +147,10 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     pi: createPiHost(hubFor('pi'), options.version, { stateDir: paths.stateDir }),
   }
   const allHosts = [hosts.codex, hosts.claude, hosts.pi]
+  const runner = new ScheduleRunner(hosts)
+  const schedule = new ScheduleService(paths.stateDir, runner,
+    (cwd) => broadcastAll({ t: 'evt', name: 'schedule.changed', payload: { cwd } satisfies ScheduleChangedEvent }),
+    (message) => logger.warn(message))
   const direct = new DirectListener({
     stateDir: paths.stateDir,
     log: (message) => logger.info(message),
@@ -215,6 +228,11 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
             ...(agent === 'codex' ? { codexHome: p?.codexHome } : {}),
             ...(agent === 'claude' ? { claudeConfigDir: p?.claudeConfigDir } : {}),
           }
+          if (!runner.matchesOpen(agent, {
+            codexPath, claudePath, piPath,
+            codexHome: parseAgentConfigDir(openOptions.codexHome, 'CODEX_HOME'),
+            claudeConfigDir: parseAgentConfigDir(openOptions.claudeConfigDir, 'CLAUDE_CONFIG_DIR'),
+          })) return sendErr(session, id, 'config_dir_busy', '定时任务正在运行，请稍后切换 Agent 配置')
           const opened = await hosts[agent].open(openOptions)
           return sendOk(session, id, {
             initialize: opened.initialize ?? null,
@@ -239,6 +257,15 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
         }
         case 'codex.status':
           return sendOk(session, id, hosts[agent].status())
+        case 'schedule.list':
+        case 'schedule.preview':
+        case 'schedule.upsert':
+        case 'schedule.setEnabled':
+        case 'schedule.runNow':
+        case 'schedule.runs':
+        case 'schedule.delete':
+        case 'schedule.pauseProject':
+          return sendOk(session, id, schedule.request(method, p ?? {}))
         case 'thread.unread.list':
           return sendOk(session, id, { threads: unread.list() })
         case 'thread.unread.set': {
@@ -295,6 +322,8 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
     shuttingDown = true
     logger.info(`daemon 退出: ${reason}`) // i18n-ignore: 仅进日志
     clearInterval(idleTimer)
+    schedule.stop()
+    runner.stop()
     for (const host of allHosts) host.shutdown()
     terminalManager().shutdown()
     server.close()
@@ -308,7 +337,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   }
 
   const hasActiveWork = (): boolean =>
-    allHosts.some((host) => host.activeTurns > 0 || !!host.backgroundTasks) || terminalManager().activeCount > 0
+    runner.blocksUpgrade || allHosts.some((host) => host.activeTurns > 0 || !!host.backgroundTasks) || terminalManager().activeCount > 0
 
   const scheduleShutdown = (reason: string, whenIdle = false): void => {
     // 先让 shutdown 的 res 帧送达调用方（ensure --replace 会等这个响应）。
@@ -322,7 +351,7 @@ export async function runDaemon(options: DaemonOptions): Promise<DaemonOutcome> 
   const idleTimer = setInterval(() => {
     // 开着直连时 daemon 就是对外服务，不能空闲退出（否则远端客户端无处可连）。
     // 终端归 daemon 所有：还有运行中的终端时不回收，否则断线期间的会话会丢。
-    const idle = clients.size === 0 && !direct.listening && !hasActiveWork()
+    const idle = clients.size === 0 && !direct.listening && !schedule.keepAlive && !hasActiveWork()
     if (!idle) {
       idleSince = null
       return

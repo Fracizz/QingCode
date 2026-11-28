@@ -1,5 +1,5 @@
-import { ArrowDown, Bot, ChevronDown, ListChecks, MessageCirclePlus, Plug } from 'lucide-react'
-import { AGENT_CAPABILITIES, availablePromptSuggestion, branchPoint, canReviseMessage, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, revisionNote, turnOpeningMessages, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
+import { ArrowDown, ChevronDown, ListChecks, MessageCirclePlus, Network, Play, Plug } from 'lucide-react'
+import { AGENT_CAPABILITIES, asyncQuestionReply, availablePromptSuggestion, branchPoint, canReviseMessage, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, parseAsyncQuestionReply, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, revisionNote, turnOpeningMessages, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { bindChatPinch } from '../chatFont'
@@ -76,7 +76,8 @@ export function ChatPage() {
   const compactConversation = useApp((s) => s.compactConversation)
   const compactionBlockedReason = useApp(selectedCompactionBlockedReason)
   const compactionStarting = useApp(selectedCompactionStarting)
-  const queuedCount = useApp((s) => selectedQueuedSends(s)?.length ?? 0)
+  const queuedSends = useApp(selectedQueuedSends)
+  const queuedCount = queuedSends?.length ?? 0
   const respondApproval = useApp((s) => s.respondApproval)
   const respondUserInput = useApp((s) => s.respondUserInput)
   const approvalSubmitting = useApp((s) => s.approvalSubmitting)
@@ -127,11 +128,16 @@ export function ChatPage() {
   const following = useRef(true)
   const contentRef = useRef<HTMLDivElement>(null)
   const [awayFromBottom, setAwayFromBottom] = useState(false)
-  const pendingSteerCount = useApp((s) => selectedPendingSteers(s)?.length ?? 0)
+  const pendingSteers = useApp(selectedPendingSteers)
+  const pendingSteerCount = pendingSteers?.length ?? 0
   const previousChat = useRef(chatKey)
 
   const view = selectedThreadId ? session?.state.threads[selectedThreadId] : undefined
   const items = view?.items ?? NO_ITEMS
+  const answeredQuestions = useMemo(() => new Set(items.flatMap((item) =>
+    item.kind === 'user' ? item.answeredQuestionIds ?? [] : [])), [items])
+  const pendingAnswers = useMemo(() => new Set([...(queuedSends ?? []), ...(pendingSteers ?? [])].flatMap(({ text }) =>
+    parseAsyncQuestionReply(text)?.map(({ questionItemId }) => questionItemId) ?? [])), [queuedSends, pendingSteers])
   const subagents = useMemo(() => collectSubagents(items, selectedThreadId ?? undefined, session?.state.threads),
     [items, selectedThreadId, session?.state.threads])
   const approvals = view?.pendingApprovals ?? []
@@ -153,11 +159,17 @@ export function ChatPage() {
   const compacting = compactionStarting || items.some((item) => item.kind === 'other' &&
     item.type === 'contextCompaction' && item.status === 'inProgress' && activeItemIds?.includes(item.id))
   const canSteer = running && turnSteerBlock(selectedAgent, view, compactionStarting) === null
-  const compactionWillQueue = running || sending || approvals.length > 0 || queuedCount > 0
+  const turnBusy = running || sending || approvals.length > 0 || queuedCount > 0
+  const canContinue = interrupted && !!activeId && eventsConnected && session?.opened === true
+    && !session.linkInterrupted && !compacting && !turnBusy
   const timeline = useMemo(() => chatTimeline(withoutErrorEcho(items, view?.error, running), view?.turns, running, activeItemIds),
     [items, view?.error, view?.turns, running, activeItemIds])
-  const latestStop = interrupted && view?.turns?.at(-1)?.outcome === 'interrupted' ? view.turns.at(-1)?.id : undefined
-  const latestStopKey = latestStop ? `stopped-${latestStop}` : undefined
+  const latestTurn = view?.turns?.at(-1)
+  const latestStopKey = latestTurn?.outcome === 'interrupted' ? `stopped-${latestTurn.id}` : undefined
+  const lastEntry = timeline.at(-1)
+  // 最新一轮可能没有可见条目，沿用合并后的末尾中断标记。
+  const currentStopEntry = interrupted ? timeline.find((entry) => entry.kind === 'stopped' && entry.key === latestStopKey)
+    ?? (lastEntry?.kind === 'stopped' ? lastEntry : undefined) : undefined
   const defaultStart = Math.max(0, timeline.length - HISTORY_BATCH_SIZE)
   const firstVisible = includeWorkSummary(timeline, historyStart?.key === chatKey ? Math.min(historyStart.index, defaultStart) : defaultStart)
   const historyLoading = historyLoad?.key === chatKey && historyLoad.error === undefined
@@ -328,11 +340,16 @@ export function ChatPage() {
     }
   }
 
+  async function continueTurn() {
+    if (!canContinue || useApp.getState().sending) return
+    if (await send(t('继续'), [], false, 'queue', { keepDraft: true })) jumpToLatest()
+  }
+
   const changeDockSheet = useCallback((sheet: DockSheet | null) => setDockSheet(sheet ? { key: chatKey, sheet } : null), [chatKey])
   const mcpRpc = selectedThreadId && eventsConnected && session?.opened && session.mcpStatusSupported ? session.rpc : null
   // 状态胶囊收回后，历史子代理与任务清单仍可从顶栏“⋯”菜单查看。
   const dockActions = [
-    ...(subagents.length ? [{ icon: Bot, label: `${t('子代理')} · ${subagents.length}`, onClick: () => changeDockSheet('subagents') }] : []),
+    ...(subagents.length ? [{ icon: Network, label: `${t('子代理')} · ${subagents.length}`, onClick: () => changeDockSheet('subagents') }] : []),
     ...(view?.plan?.steps.length ? [{ icon: ListChecks, label: planLabel(view.plan), onClick: () => changeDockSheet('plan') }] : []),
     ...(mcpRpc ? [{ icon: Plug, label: t('MCP 服务状态'), onClick: () => setMcpOpen(chatKey) }] : []),
   ]
@@ -490,13 +507,26 @@ export function ChatPage() {
                   const onQuote = (text: string) => setQuote({ key: chatKey, text })
                   if (entry.kind === 'work') return <WorkGroup key={entry.key} work={entry} onQuote={onQuote} />
                   if (entry.kind === 'stopped') return <TurnInterrupted key={entry.key}
-                    announce={entry.key === latestStopKey || (interrupted && index === timeline.length - 1)} />
+                    onContinue={entry === currentStopEntry ? continueTurn : undefined} disabled={!canContinue} />
                   const { block, trail, finalReply } = entry
+                  const questions = block.kind === 'item' && block.item.kind === 'agent'
+                    ? block.item.asyncQuestions?.filter(({ id }) => !answeredQuestions.has(id))
+                    : undefined
                   const previous = offset > 0 ? timeline[index - 1] : undefined
                   return (
                     <div key={entry.key}
                       className={baseline.current.key === chatKey && index >= baseline.current.count ? 'qn-message-enter' : undefined}>
-                      {block.kind === 'item'
+                      {questions?.length
+                        ? <UserInputCard key={questions.map(({ id }) => id).join('\n')}
+                          approval={{ title: t('Agent 需要你的回答'), questions }}
+                          submitting={questions.some(({ id }) => pendingAnswers.has(id))}
+                          offline={!eventsConnected || !session?.opened || !!session.linkInterrupted || sending}
+                          allowSkip={false}
+                          onSubmit={(answers) => {
+                            const reply = asyncQuestionReply(questions, answers)
+                            if (reply) void send(reply, [], false, 'steer', { keepDraft: true })
+                          }} />
+                        : block.kind === 'item'
                         ? <MessageItem item={block.item} onQuote={onQuote} agentName={agentLabel(selectedAgent)}
                           active={activeItemIds?.includes(block.item.id)}
                           showStreamingDots={block.item.id === streamingId}
@@ -521,8 +551,7 @@ ${text}` : text)
                 <div className="qn-thinking qn-replying" role="status"><LoadingIcon aria-hidden />{progress}</div>
               )}
               {/* 刚停掉的一轮没留下任何内容时补一条提示；末尾已经是停止提示就不再重复。 */}
-              {interrupted && timeline.at(-1)?.kind !== 'stopped'
-                && !timeline.some((entry) => entry.kind === 'stopped' && entry.key === latestStopKey) && <TurnInterrupted announce />}
+              {interrupted && !currentStopEntry && <TurnInterrupted onContinue={continueTurn} disabled={!canContinue} />}
               {turnError && <TurnErrorCard message={turnError} />}
               {approvals.length > 0 && (
                 <div ref={approvalsRef} className="space-y-3">
@@ -619,13 +648,13 @@ ${text}` : text)
             </>
           }
           trailing={
-            <ContextUsage key={`context:${chatKey}`} tokenUsage={view?.tokenUsage} agent={selectedAgent}
+            <ContextUsage key={`context:${chatKey}`} tokenUsage={view?.tokenUsage} agent={selectedAgent} thread={view}
               panel={contextPanel?.key === chatKey ? contextPanel.panel : null}
               onPanelChange={(panel) => setContextPanel(panel ? { key: chatKey, panel } : null)}
               compact={selectedThreadId ? {
                 busy: compacting,
                 blockedReason: compactionBlockedReason,
-                willQueue: compactionWillQueue,
+                willQueue: turnBusy,
                 onCompact: () => void compactConversation(),
               } : undefined} />
           }
@@ -673,8 +702,19 @@ function MenuLinesIcon() {
   )
 }
 
-function TurnInterrupted({ announce }: { announce: boolean }) {
-  return <div className="qn-turn-interrupted" role={announce ? 'status' : undefined}><span className="qn-turn-interrupted-icon" aria-hidden />{t('本轮已中断')}</div>
+function TurnInterrupted({ onContinue, disabled }: { onContinue?: () => Promise<void>; disabled: boolean }) {
+  return (
+    <div className="qn-turn-interrupted">
+      <span className="inline-flex items-center gap-2" role={onContinue ? 'status' : undefined}>
+        <span className="qn-turn-interrupted-icon" aria-hidden />{t('本轮已中断')}
+      </span>
+      {onContinue && (
+        <Button variant="ghost" className="qn-turn-continue" disabled={disabled} onClick={() => void onContinue()}>
+          <Play size={14} aria-hidden />{t('继续')}
+        </Button>
+      )}
+    </div>
+  )
 }
 
 /** Claude 会把失败原因同时作为一条普通回复发出；交给错误卡片统一显示，不重复两遍。 */

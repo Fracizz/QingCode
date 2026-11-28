@@ -28,6 +28,8 @@ export type SubagentItemView = {
   title: string
   status: string
   detail: string
+  /** 实际的委派或协作调用；子代理状态事件没有此标记。 */
+  toolCall?: true
   name?: string
   role?: string
   model?: string
@@ -243,7 +245,7 @@ export function describeSubagentItem(
         return { threadId, label: '', status: label(agentStatuses, state.status), result: string(state.message) }
       })
     return {
-      kind: 'subagent', id, title: label(toolLabels, item.tool) || t('子代理协作'),
+      kind: 'subagent', id, toolCall: true, title: label(toolLabels, item.tool) || t('子代理协作'),
       status: label(callStatuses, item.status), detail: string(item.prompt),
       ...(string(item.model) ? { model: string(item.model) } : {}),
       ...(agents.length ? { agents } : {}),
@@ -276,7 +278,7 @@ export function describeSubagentItem(
       }
     })
     return {
-      kind: 'subagent', id, title: t('委派给子代理'), status: label(callStatuses, item.status), detail,
+      kind: 'subagent', id, toolCall: true, title: t('委派给子代理'), status: label(callStatuses, item.status), detail,
       ...(string(args.description) ? { name: string(args.description) } : {}),
       ...(string(args.subagent_type) ? { role: string(args.subagent_type) } : {}),
       ...(result ? { result } : {}),

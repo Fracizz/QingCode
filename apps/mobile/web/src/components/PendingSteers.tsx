@@ -1,4 +1,4 @@
-import { formatDuration, t, type ItemView } from '@qn/codex-client'
+import { displayAsyncQuestionReply, formatDuration, parseAsyncQuestionReply, t, type ItemView } from '@qn/codex-client'
 import { CircleAlert, Clock3, Undo2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { echoedSteerIds } from '../pendingSteers'
@@ -63,13 +63,13 @@ export function PendingSteers({ items, running, agentName, onRestore }: {
           <li key={steer.id} className="flex flex-col items-end">
             <div className="qn-user-bubble qn-user-bubble-pending" data-stale={waiting ? undefined : 'true'}>
               <p className="whitespace-pre-wrap break-words">
-                {steer.text.trim() || t('附件或引用')}
+                {displayAsyncQuestionReply(steer.text).trim() || t('附件或引用')}
                 {steer.attachments > 0 && <span className="text-qn-muted"> · {t('{count} 个附件', { count: steer.attachments })}</span>}
               </p>
             </div>
             {!waiting && (
               <div className="qn-steer-actions">
-                {steer.text.trim() && (
+                {steer.text.trim() && !parseAsyncQuestionReply(steer.text) && (
                   <Button variant="ghost" className="qn-steer-action" onClick={() => { onRestore(steer.text); drop([steer.id]) }}>
                     <Undo2 size={14} aria-hidden />{t('放回输入框')}
                   </Button>

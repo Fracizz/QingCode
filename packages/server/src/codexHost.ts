@@ -33,6 +33,7 @@ export interface AgentOpenOptions {
   claudePath?: unknown
   codexHome?: unknown
   claudeConfigDir?: unknown
+  requireSameConfiguration?: boolean
 }
 
 export interface AgentHost {
@@ -399,6 +400,7 @@ export class CodexHost extends JsonRpcAgentHost {
   private readonly threadAccess = new Map<string, AccessSettings>()
   private readonly managedAccess = new Set<string>()
   private codexHome: string | undefined
+  private configuredPath: string | undefined
   private openQueue: Promise<unknown> = Promise.resolve()
   private replacingChild = false
   private shuttingDown = false
@@ -410,6 +412,11 @@ export class CodexHost extends JsonRpcAgentHost {
   protected openAgent(options: AgentOpenOptions): Promise<AgentRuntimeOpen> {
     const open = this.openQueue.then(async () => {
       const directory = parseAgentConfigDir(options.codexHome, 'CODEX_HOME')
+      const executable = typeof options.codexPath === 'string' ? options.codexPath.trim() || undefined : undefined
+      if (options.requireSameConfiguration && this.child &&
+        (this.codexHome !== directory || this.configuredPath !== executable)) {
+        throw new AgentHostError('config_dir_busy', 'Codex 当前进程使用了不同的定时任务配置')
+      }
       if (this.initCounter > 0 && this.codexHome !== directory) {
         if (this.child) {
           if (this.activeTurns > 0 || this.startingTurns.size > 0 || this.acknowledgedTurns.size > 0) {
@@ -420,7 +427,10 @@ export class CodexHost extends JsonRpcAgentHost {
         this.clearReplay()
       }
       if (this.shuttingDown) throw new Error('server 正在退出')
-      if (!this.child) this.start(options.codexPath, directory)
+      if (!this.child) {
+        this.start(options.codexPath, directory)
+        this.configuredPath = executable
+      }
       const init = this.init
       if (!init) throw new Error('codex 初始化状态异常')
       try {

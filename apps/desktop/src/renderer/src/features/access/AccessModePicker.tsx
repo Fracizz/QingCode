@@ -2,7 +2,6 @@ import { useRef, useState } from 'react'
 import { Check, ListTodo, Shield, ShieldOff } from 'lucide-react'
 import { Menu, MenuContent, MenuItem, MenuTrigger, Tip } from '../../components/primitives'
 import { Modal } from '../../components/ui'
-import { cn } from '../../lib/cn'
 import type { AgentKind } from '../../../../shared/backendApi'
 import { t, sessionAccessOptions, type AccessMode, type SessionAccessMode, type SessionAccessSelection } from '@qn/codex-client'
 
@@ -49,11 +48,8 @@ export function AccessModePicker({
               type="button"
               aria-label={tip}
               disabled={disabled || Boolean(lockedReason)}
-              className={cn(
-                'inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-qn-fg/[0.06] outline-none enabled:hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover data-[state=open]:bg-qn-hover',
-                current.warning ? 'text-qn-danger' : effectiveMode === 'plan' ? 'text-qn-accent'
-                  : effectiveMode !== 'default' ? 'text-qn-warn' : 'text-qn-muted',
-              )}
+              data-tone={current.warning ? 'danger' : effectiveMode === 'plan' ? 'accent' : effectiveMode !== 'default' ? 'warn' : 'muted'}
+              className="qn-composer-control inline-flex size-8 shrink-0 items-center justify-center rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover"
             >
               <Icon size={18} strokeWidth={1.75} absoluteStrokeWidth aria-hidden />
             </button>

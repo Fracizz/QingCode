@@ -117,6 +117,7 @@ export function createPiHost(
 export class PiHost extends JsonRpcAgentHost {
   private opened = false
   private pi: PiExecutable | null = null
+  private configuredPath: string | undefined
   private readonly sessions = new Map<string, PiSession>()
   private readonly metas = new Map<string, PiSessionMeta>()
   private readonly historyPages = new HistoryPageCache()
@@ -151,11 +152,16 @@ export class PiHost extends JsonRpcAgentHost {
   }
 
   protected async openAgent(options: AgentOpenOptions): Promise<{ initialize: unknown; agentVersion?: string }> {
-    if (this.opened) return { initialize: null, agentVersion: this.pi?.version }
     const explicit =
       typeof (options as { piPath?: unknown }).piPath === 'string'
-        ? ((options as { piPath: string }).piPath).trim()
+        ? ((options as { piPath: string }).piPath).trim() || undefined
         : undefined
+    if (this.opened) {
+      if (options.requireSameConfiguration && this.configuredPath !== explicit) {
+        throw new AgentHostError('config_dir_busy', 'pi 当前进程使用了不同的定时任务配置')
+      }
+      return { initialize: null, agentVersion: this.pi?.version }
+    }
     // 默认路径下版本号异步读取，不用 spawnSync 阻塞 daemon（Windows 上 .ps1 经 powershell 尤其慢）。
     const resolved = this.options.resolve
       ? this.options.resolve(explicit)
@@ -164,6 +170,7 @@ export class PiHost extends JsonRpcAgentHost {
       resolved.version = await readVersionAsync(resolved)
     }
     this.pi = resolved
+    this.configuredPath = explicit
     this.opened = true
     this.hub.log(`pi 桥已就绪 ${resolved.version}`) // i18n-ignore: 仅进日志
     // initialize 由 daemon 负责，pi 桥没有 app-server 握手结果可缓存。

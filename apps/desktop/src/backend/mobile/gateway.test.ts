@@ -301,6 +301,9 @@ describe('手机网关纯逻辑', () => {
       'git.show',
       'run.start',
       'run.stop',
+      'schedule.list',
+      'schedule.upsert',
+      'schedule.runNow',
       'agent.probe',
       'direct.reload',
     ]) {
@@ -426,8 +429,8 @@ describe('手机网关纯逻辑', () => {
     expect(mobileEventFromRouter('secret.internal', {})).toBeNull()
   })
 
-  it('拦截桌面终端事件并保留其他服务端事件', () => {
-    for (const name of ['term.data', 'term.exit', 'term.resized', 'term.error']) {
+  it('拦截桌面终端和定时任务事件并保留其他服务端事件', () => {
+    for (const name of ['term.data', 'term.exit', 'term.resized', 'term.error', 'schedule.changed']) {
       expect(mobileEventFromRouter('server.evt', { targetId: 'local', name, payload: {} })).toBeNull()
     }
     const payload = { targetId: 'local', name: 'fs.changed', payload: { path: '/project/file' } }

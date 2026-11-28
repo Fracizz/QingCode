@@ -1,5 +1,6 @@
 import { getLocale, t } from '../../protocol/src/i18n'
 import type { AgentKind } from '../../protocol/src/messages'
+import type { ItemView, ThreadView } from './conversation'
 
 export type ContextUsage = { percent: number; used: number; window: number }
 
@@ -31,7 +32,7 @@ export function contextUsage(value: unknown): ContextUsage | null {
 
 type UsageReport = Partial<Record<'totalTokens' | 'inputTokens' | 'cachedInputTokens' | 'cacheWriteInputTokens' | 'outputTokens' | 'reasoningOutputTokens', unknown>>
 
-export function contextUsageDetails(value: unknown, agent: AgentKind) {
+export function contextUsageDetails(value: unknown, agent: AgentKind, thread?: ThreadView) {
   const usage = contextUsage(value)
   const report = typeof value === 'object' && value !== null
     ? value as { last?: UsageReport; total?: UsageReport; estimated?: unknown }
@@ -65,15 +66,48 @@ export function contextUsageDetails(value: unknown, agent: AgentKind) {
       estimated: report?.estimated === true,
     },
     recent,
-    guidance: !usage
-      ? recent ? t('当前没有窗口占用读数，处理长日志时可以先发送报错附近的片段。')
-        : t('发送消息后，收到模型上报的用量就会显示在这里。')
-      : usage.percent >= 90
-        ? t('继续当前任务时，可先压缩会话，并在下一条消息重申关键约束。要换任务，可以另开会话。')
-        : usage.percent >= 75
-          ? t('下一轮要分析长日志或大文件时，可先贴报错附近的片段，或按文件分批处理。')
-          : t('继续修同一个问题时，可以沿用这段对话。要排查另一项故障时，可以另开会话。'),
+    tools: thread ? turnToolUsage(thread) : null,
   }
+}
+
+function toolName(item: ItemView): string | undefined {
+  if (item.kind === 'command') return t('命令执行')
+  if (item.kind === 'fileChange') return t('文件修改')
+  if (item.kind === 'subagent' && item.toolCall) return t('子代理')
+  if (item.kind !== 'other') return
+  switch (item.type) {
+    case 'webSearch': return t('网页搜索')
+    case 'imageView': return t('查看图片')
+    case 'imageGeneration': return t('生成图片')
+    case 'mcpToolCall': return item.toolDetails?.name || t('MCP 工具')
+    case 'dynamicToolCall': return item.toolDetails?.name || item.summary || t('工具调用')
+  }
+}
+
+function turnToolUsage(thread: ThreadView) {
+  const activeId = thread.activeTurnId
+  const turn = activeId ? thread.turns?.findLast(({ id }) => id === activeId) : thread.turns?.at(-1)
+  if (!turn?.itemIds.length) return null
+  // 只统计这一轮实际收到的调用条目，重放、结束通知与子代理状态更新不重复计数。
+  const ids = new Set(turn.itemIds)
+  const counts = new Map<string, number>()
+  let total = 0
+  for (const item of thread.items) {
+    if (!ids.delete(item.id)) continue
+    const name = toolName(item)
+    if (!name) continue
+    counts.set(name, (counts.get(name) ?? 0) + 1)
+    total++
+  }
+  if (!total) return null
+  const rows = [...counts].sort(([, a], [, b]) => b - a).map(([label, count]) => ({ label, count }))
+  const limit = 6
+  const visible = rows.slice(0, rows.length > limit ? limit - 1 : limit)
+  if (rows.length > limit) {
+    const count = total - visible.reduce((shown, row) => shown + row.count, 0)
+    visible.push({ label: t('其余工具'), count })
+  }
+  return { title: activeId ? t('本轮工具调用') : t('最近一轮工具调用'), total, rows: visible }
 }
 
 export function formatTokenCount(value: number): string {

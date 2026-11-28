@@ -153,10 +153,9 @@ export function checkRpcWhitelist(method: unknown, params: unknown): RpcWhitelis
 export function mobileEventFromRouter(name: string, payload: unknown): GatewayEvent | null {
   // 点对点回复由 router 匹配请求归属后直接投递，旁路只转发通知和审批。
   if (name === 'codex.recv' && isRecord(payload) && payload.seq === null) return null
-  // 桌面连接订阅的终端输出可能含敏感内容，不能通过共享事件总线转给手机。
-  if (name === 'server.evt' && isRecord(payload) && typeof payload.name === 'string' && payload.name.startsWith('term.')) {
-    return null
-  }
+  // 桌面终端由网关另行按设备分发，定时任务管理事件只供电脑版使用。
+  if (name === 'server.evt' && isRecord(payload) && typeof payload.name === 'string' &&
+    (payload.name.startsWith('term.') || payload.name === 'schedule.changed')) return null
   if (FORWARDED_EVENTS.has(name)) return { name, payload }
   if (name === 'hostKey.prompt') {
     const source = isRecord(payload) ? payload : {}

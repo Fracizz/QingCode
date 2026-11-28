@@ -12,12 +12,14 @@ import {
   detectPathStyle,
   dirsToRefresh,
   isExpanded,
+  isHiddenName,
   isSamePath,
   isWithinPath,
   joinPath,
   parentPath,
   parseListResult,
   pruneDirs,
+  relativePath,
   setDirError,
   setDirLoading,
   setDirReady,
@@ -41,6 +43,7 @@ export type ExplorerActions = {
   setHidden(targetId: string, root: string, value: boolean): void
   collapse(targetId: string, root: string): void
   refresh(targetId: string, root: string, path?: string): Promise<void>
+  locateFile(targetId: string, root: string, path: string): Promise<{ path: string } | { error: string }>
   createEntry(
     targetId: string,
     root: string,
@@ -62,11 +65,13 @@ export type ExplorerStore = {
 }
 
 const STORAGE_PREFIX = 'qn-explorer:'
-const seqByRequest = new Map<string, number>()
+const pendingDirs = new Map<string, Promise<void>>()
 
 export function explorerScopeKey(targetId: string, root: string): string {
   return JSON.stringify([targetId, root])
 }
+
+const dirRequestKey = (scope: string, path: string): string => JSON.stringify([scope, path])
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -135,27 +140,31 @@ export const useExplorer = create<ExplorerStore>((set, get) => {
     })
   }
 
-  const loadDir = async (targetId: string, root: string, path: string): Promise<void> => {
+  const loadDir = (targetId: string, root: string, path: string): Promise<void> => {
     const key = explorerScopeKey(targetId, root)
-    if (!get().scopes[key]) return
-    const requestKey = `${key}::${path}`
-    const seq = (seqByRequest.get(requestKey) ?? 0) + 1
-    seqByRequest.set(requestKey, seq)
+    if (!get().scopes[key]) return Promise.resolve()
+    const requestKey = dirRequestKey(key, path)
+    const request = Promise.resolve().then(async () => {
+      try {
+        // fs.list 不在 WorkspaceMethods 里，按任务卡约定直接透传 backend。
+        const result = await call('server.req', { targetId, method: 'fs.list', params: { path } })
+        // 并发刷新时只接受最后一次响应，避免旧数据覆盖新数据。
+        if (pendingDirs.get(requestKey) !== request) return
+        const parsed = parseListResult(result)
+        changeTree(key, (tree) => setDirReady(tree, path, parsed.entries, parsed.truncated))
+        if (get().scopes[key]?.error) setScopeError(key, null)
+      } catch (err) {
+        if (pendingDirs.get(requestKey) !== request) return
+        const message = describeWorkspaceError(err, t('读取目录失败'))
+        changeTree(key, (tree) => setDirError(tree, path, message))
+        setScopeError(key, message)
+      } finally {
+        if (pendingDirs.get(requestKey) === request) pendingDirs.delete(requestKey)
+      }
+    })
+    pendingDirs.set(requestKey, request)
     changeTree(key, (tree) => setDirLoading(tree, path))
-    try {
-      // fs.list 不在 WorkspaceMethods 里，按任务卡约定直接透传 backend。
-      const result = await call('server.req', { targetId, method: 'fs.list', params: { path } })
-      // 并发刷新时只接受最后一次响应，避免旧数据覆盖新数据。
-      if (seqByRequest.get(requestKey) !== seq) return
-      const parsed = parseListResult(result)
-      changeTree(key, (tree) => setDirReady(tree, path, parsed.entries, parsed.truncated))
-      if (get().scopes[key]?.error) setScopeError(key, null)
-    } catch (err) {
-      if (seqByRequest.get(requestKey) !== seq) return
-      const message = describeWorkspaceError(err, t('读取目录失败'))
-      changeTree(key, (tree) => setDirError(tree, path, message))
-      setScopeError(key, message)
-    }
+    return request
   }
 
   const refresh = async (targetId: string, root: string, path?: string): Promise<void> => {
@@ -224,6 +233,46 @@ export const useExplorer = create<ExplorerStore>((set, get) => {
     },
 
     refresh,
+
+    async locateFile(targetId, root, path) {
+      const style = detectPathStyle(root)
+      if (!isWithinPath(path, root, style)) return { error: t('文件不在当前项目内') }
+      const names = relativePath(root, path, style).split(style === 'windows' ? '\\' : '/')
+      if (names.some((name) => name === '.' || name === '..')) return { error: t('文件不在当前项目内') }
+      const key = explorerScopeKey(targetId, root)
+      const ancestors: string[] = []
+      let dir = root
+      for (const [index, name] of names.entries()) {
+        const requestKey = dirRequestKey(key, dir)
+        const matchesName = (item: { name: string }) => style === 'windows'
+          ? item.name.toLowerCase() === name.toLowerCase()
+          : item.name === name
+        const cached = get().scopes[key]?.tree.dirs[dir]
+        if (!pendingDirs.has(requestKey) && (cached?.status !== 'ready' || !cached.entries.some(matchesName))) {
+          void loadDir(targetId, root, dir)
+        }
+        // 初始化或监听刷新已经在列目录时，等最新的一次响应再检查子项。
+        let pending: Promise<void> | undefined
+        while ((pending = pendingDirs.get(requestKey))) await pending
+        const tree = get().scopes[key]?.tree
+        const listing = tree?.dirs[dir]
+        if (!tree || listing?.status !== 'ready') return { error: t('定位文件时无法读取目录') }
+        const entry = listing.entries.find(matchesName)
+        if (!entry) return { error: listing.truncated ? t('目录列表已截断，无法定位文件') : t('未在文件树中找到文件') }
+        if (!tree.showHidden && isHiddenName(entry.name)) return { error: t('请先显示隐藏文件再定位') }
+        if (index < names.length - 1 && entry.kind === 'file') return { error: t('未在文件树中找到文件') }
+        dir = joinPath(dir, entry.name, style)
+        if (index < names.length - 1) ancestors.push(dir)
+      }
+      const tree = get().scopes[key]?.tree
+      if (!tree) return { error: t('未在文件树中找到文件') }
+      const next = { ...tree, expanded: [...tree.expanded, ...ancestors.filter((path) => !isExpanded(tree, path, style))] }
+      if (next.expanded.length !== tree.expanded.length) {
+        writePersisted(targetId, root, next)
+        setTree(key, next)
+      }
+      return { path: dir }
+    },
 
     async createEntry(targetId, root, parent, name, kind) {
       const style = detectPathStyle(root)

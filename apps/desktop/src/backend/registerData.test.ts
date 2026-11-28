@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { backendConfig } from './config'
 import { registerDataMethods } from './registerData'
-import { BackendRouter, type WirePort } from './router'
+import { BackendRouter, RouterError, type WirePort } from './router'
+import { scheduleProjectMutation } from './scheduleProjects'
 import { readSecretStore } from './secretStore'
 
 class FakePort implements WirePort {
@@ -69,6 +70,42 @@ describe('registerDataMethods', () => {
       .toMatchObject({ ok: true })
     expect(await call(port, router, 5, 'projects.list', {}))
       .toMatchObject({ ok: true, result: [] })
+  })
+
+  it('撤销信任前暂停已配置的定时任务，目标离线时保留项目和信任状态', async () => {
+    const router = new BackendRouter()
+    registerDataMethods(router)
+    const project = await router.invoke('projects.save', {
+      targetId: 'ssh-test', path: '/workspace/demo', trusted: true,
+    }) as { id: string }
+    const calls: unknown[] = []
+    let online = false
+    router.register('server.req', (params) => {
+      if (!online) throw new RouterError('not_connected', 'Target disconnected')
+      calls.push(params)
+      return { paused: 1 }
+    })
+    await scheduleProjectMutation('ssh-test', 'schedule.upsert', {
+      cwd: '/workspace/demo', agent: 'codex', runtime: { codexPath: '/untrusted' },
+    }, async (params) => {
+      expect(params).toMatchObject({ runtime: { codexPath: undefined } })
+    })
+
+    const revoke = () => router.invoke('projects.save', {
+      id: project.id, targetId: 'ssh-test', path: '/workspace/demo', trusted: false,
+    })
+    await expect(revoke()).rejects.toMatchObject({ code: 'not_connected' })
+    expect(await router.invoke('projects.list', { targetId: 'ssh-test' })).toMatchObject([
+      { id: project.id, trusted: true, hasSchedules: true },
+    ])
+    online = true
+    await revoke()
+    expect(calls).toEqual([{
+      targetId: 'ssh-test', method: 'schedule.pauseProject', params: { cwd: '/workspace/demo' },
+    }])
+    expect(await router.invoke('projects.list', { targetId: 'ssh-test' })).toMatchObject([
+      { id: project.id, trusted: false },
+    ])
   })
 
   it('参数校验与旧库缺失给出结构化错误', async () => {

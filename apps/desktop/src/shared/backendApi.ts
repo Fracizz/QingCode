@@ -100,6 +100,8 @@ export type HostKeyPrompt = {
 }
 
 export type Project = {
+  /** 本机曾为该项目保存定时任务，目标离线时无法确认任务已暂停。 */
+  hasSchedules?: true
   id: string
   targetId: string
   name: string

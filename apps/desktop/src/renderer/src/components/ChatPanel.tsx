@@ -942,7 +942,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
       {activeCommand === 'status' && currentTargetId && <Modal title={t('账号额度')} onClose={closeCommand}>
         <RateLimitDetails targetId={currentTargetId} agent={currentAgent} />
       </Modal>}
-      {activeCommand === 'context' && <Modal title={t('会话用量')} onClose={closeCommand}
+      {activeCommand === 'context' && <Modal title={t('会话用量')} onClose={closeCommand} width="max-w-md"
         footer={currentThreadId && (
           <div className="flex items-center justify-between gap-3">
             <p className="text-ui-xs leading-4 text-qn-muted">{compactBlocked ?? (compactWillQueue ? t('当前一轮和已排队的内容处理完后开始压缩。')
@@ -953,7 +953,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
             </button>
           </div>
         )}>
-        <ContextUsageDetails tokenUsage={view?.tokenUsage} agent={currentAgent} />
+        <ContextUsageDetails thread={view} agent={currentAgent} />
       </Modal>}
       {activeCommand === 'permissions' && <Modal title={t('会话访问权限')} onClose={closeCommand}>
         <p>{access?.label ?? t('pi 不经审批直接执行工具')}</p>

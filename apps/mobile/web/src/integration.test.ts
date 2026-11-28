@@ -1317,6 +1317,7 @@ describe('模拟网关全链路', () => {
       }
       return rpc(...args)
     })
+    const beforeStartup = state().unanimatedNavigation
     state().init()
     try {
       await vi.waitFor(() => expect(requests.mock.calls.some(([, method]) => method === 'mobile.queue.take')).toBe(true))
@@ -1325,6 +1326,7 @@ describe('模拟网关全链路', () => {
       await vi.waitFor(() => {
         expect(state()).toMatchObject({
           page: 'chat', selectedThreadId: chat.threadId, activeId: conn.id, draftText: '冷启动草稿',
+          unanimatedNavigation: beforeStartup + 2,
         })
         expect(selectedQueuedSends(state())).toMatchObject([
           { ...unconfirmed, sending: false, error: UNCONFIRMED_QUEUED_SEND },
@@ -1343,6 +1345,7 @@ describe('模拟网关全链路', () => {
       expect(requests.mock.calls.filter(([, method]) => method === 'target.connect')).toHaveLength(1)
       expect(state().goBack()).toBe(true)
       expect(state().page).toBe('workspace')
+      expect(state().unanimatedNavigation).toBe(beforeStartup + 2)
     } finally {
       releaseTake()
       await state().removeConnection(conn.id)

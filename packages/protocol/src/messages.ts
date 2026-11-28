@@ -1,5 +1,6 @@
 import type { AgentCapabilities } from './agents'
 import type { WorkspaceMethods } from './workspace'
+import type { ScheduleMethods } from './schedule'
 import { PROTOCOL_VERSION } from './constants'
 import { hasOwn, isErrorMessage, isNumber, isRecord, isString } from './guards'
 
@@ -50,7 +51,7 @@ export type WireMessage = ClientMessage | ServerMessage
 
 export type FsEntry = { name: string; kind: 'dir' | 'file' | 'symlink' }
 
-export interface ServerMethods extends WorkspaceMethods {
+export interface ServerMethods extends WorkspaceMethods, ScheduleMethods {
   ping: { params: void; result: { serverVersion: string; protocol: number } }
   'system.metrics': {
     params: void

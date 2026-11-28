@@ -10,6 +10,7 @@ import {
   writeProjects,
 } from './projectStore'
 import { RouterError, type BackendRouter } from './router'
+import { pauseProjectSchedules, withProjectMutation } from './scheduleProjects'
 import { loadSecret, removeSecret, saveSecret } from './secretStore'
 
 // T8：项目、凭据、旧版导入（projects.*、legacy.*、target.forgetSecret）。
@@ -38,7 +39,7 @@ export function registerDataMethods(router: BackendRouter): void {
     return listProjects(await readProjects(backendConfig.userData), targetId)
   })
 
-  router.register('projects.save', async (params) => {
+  router.register('projects.save', (params) => withProjectMutation(async () => {
     const p = asRecord(params)
     const targetId = typeof p.targetId === 'string' ? p.targetId.trim() : ''
     const path = typeof p.path === 'string' ? p.path.trim() : ''
@@ -54,15 +55,21 @@ export function registerDataMethods(router: BackendRouter): void {
       { id, targetId, name, path, trusted, hidden },
       createProjectId()
     )
+    if (trusted === false) {
+      const previous = current.find((item) => item.id === project.id && item.trusted)
+      if (previous) await pauseProjectSchedules(router, previous)
+    }
     await writeProjects(backendConfig.userData, projects)
     return project
-  })
+  }))
 
-  router.register('projects.remove', async (params) => {
+  router.register('projects.remove', (params) => withProjectMutation(async () => {
     const id = requireId(params)
     const current = await readProjects(backendConfig.userData)
+    const project = current.find((item) => item.id === id)
+    if (project?.trusted || project?.hasSchedules) await pauseProjectSchedules(router, project)
     await writeProjects(backendConfig.userData, removeProject(current, id))
-  })
+  }))
 
   router.register('legacy.detect', (params) => {
     const path = typeof params?.path === 'string' ? params.path : undefined

@@ -325,7 +325,7 @@ describe('子代理条目', () => {
     const state = loadThread(emptyState(), thread as unknown as LoadableThread)
     expect(threadOf(state).items).toEqual([
       { kind: 'subagent', id: 'activity', title: '子代理', status: '已完成', detail: '/root/review' },
-      { kind: 'subagent', id: 'delegate', title: '委派给子代理', status: '调用失败', detail: '核对文档', name: '核对文档' },
+      { kind: 'subagent', id: 'delegate', toolCall: true, title: '委派给子代理', status: '调用失败', detail: '核对文档', name: '核对文档' },
     ])
   })
 

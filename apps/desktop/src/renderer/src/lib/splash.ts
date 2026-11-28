@@ -6,8 +6,8 @@ import { SPLASH_LEAVE_EVENT } from './theme'
 /** 入场动画最晚结束于约 1000ms（光标 400ms 延迟 + 420ms，再留一点品牌停留）。 */
 export const SPLASH_MIN_VISIBLE_MS = 1200
 export const SPLASH_REDUCED_MIN_VISIBLE_MS = 300
-/** 与 index.html 中 .qn-splash 的 transition 时长一致；转场至少保留 0.5s。 */
-export const SPLASH_FADE_MS = 560
+/** 与 index.html 中的 --qn-splash-fade 一致。 */
+export const SPLASH_FADE_MS = 1000
 /** 减少动态效果时的淡出时长，同样不少于 0.5s。 */
 export const SPLASH_REDUCED_FADE_MS = 500
 /** 后台迟迟不就绪也不能把用户挡在进场页外。 */

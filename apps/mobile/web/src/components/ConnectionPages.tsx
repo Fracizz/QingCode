@@ -59,7 +59,7 @@ export function ConnectionsPage() {
   }
   return (
     <>
-      <PullToRefresh className="qn-body qn-scroll qn-workspace qn-rise"
+      <PullToRefresh className="qn-body qn-scroll qn-workspace"
         label={pageName('connections')} disabled={booting || connections.length === 0} onRefresh={refreshStatuses}>
         <header className="qn-workspace-title" data-connected={eventsConnected}>
           <div className="qn-workspace-context">
@@ -94,7 +94,7 @@ export function ConnectionsPage() {
           </div>
         ) : (
           <>
-            <div className="qn-list-group qn-connection-list">
+            <div className="qn-connection-list">
               {connections.map((conn) => {
                 const current = conn.id === activeId
                 const repair = needsRepair[conn.id]
@@ -102,29 +102,32 @@ export function ConnectionsPage() {
                 const tone = repair ? 'danger' : statusTone(status)
                 const latency = !repair && status === 'online' ? latencies[conn.id] : null
                 return (
-                  <div key={conn.id} className="qn-row qn-list-row">
+                  <div key={conn.id} className="qn-connection-card" data-current={current || undefined}>
                     <button type="button" className="qn-row-trigger" onClick={() => void activate(conn.id, 'targets')}>
-                      <StatusDot tone={tone} />
-                      <span className="qn-row-copy">
-                        <span className="qn-list-primary qn-clamp-2">{connectionName(conn.name)}</span>
-                        <span className="qn-subtitle block">{current ? t('当前电脑 · ') : ''}{formatAddress(conn.host, conn.port)}</span>
+                      <span className="qn-connection-icon" aria-hidden>
+                        <WorkspaceIcon name="connections" />
+                        <StatusDot tone={tone} />
                       </span>
-                      <span className="qn-conn-status flex shrink-0 flex-col items-end gap-1">
-                        <Badge tone={tone}>{repair ? t('重新配对') : stateText[status]}</Badge>
-                        {latency != null && <span className="text-[11px] text-qn-muted tabular-nums" title={t('手机到电脑的 HTTPS 探测耗时')}>{latency} ms</span>}
+                      <span className="qn-row-copy qn-connection-details">
+                        <span className="qn-list-primary qn-clamp-2">{connectionName(conn.name)}</span>
+                        <span className="qn-subtitle qn-connection-address">{current ? t('当前电脑 · ') : ''}{formatAddress(conn.host, conn.port)}</span>
+                        <span className="qn-connection-status">
+                          <Badge tone={tone}>{repair ? t('重新配对') : stateText[status]}</Badge>
+                          {latency != null && <span className="text-[11px] text-qn-muted tabular-nums" title={t('手机到电脑的 HTTPS 探测耗时')}>{latency} ms</span>}
+                        </span>
                       </span>
                     </button>
-                    <Button variant="ghost" className="qn-list-action" onClick={() => setMenu(conn.id)} aria-label={t('{name} 的连接操作', { name: connectionName(conn.name) })}>
+                    <Button variant="ghost" className="qn-list-action qn-connection-menu" aria-haspopup="dialog"
+                      onClick={() => setMenu(conn.id)} aria-label={t('{name} 的连接操作', { name: connectionName(conn.name) })}>
                       <WorkspaceIcon name="more" />
                     </Button>
                   </div>
                 )
               })}
             </div>
-            {/* 已有连接时这里不是主操作：只留虚线入口，导入方式在添加页里选。 */}
-            <button type="button" className="qn-dashed-action qn-pressable" onClick={openAddForm}>
+            <Button variant="ghost" className="qn-connection-add" onClick={openAddForm}>
               <Plus size={17} aria-hidden />{t('添加连接')}
-            </button>
+            </Button>
           </>
         )}
       </PullToRefresh>

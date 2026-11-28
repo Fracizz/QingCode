@@ -6,7 +6,7 @@ import type { PaletteCommand } from './types'
 // 宿主没提供的动作对应命令就不生成。
 // 关键词同时收录中英文标题与分类，界面语言之外的叫法也能搜到。
 
-export type DockToolId = 'explorer' | 'search' | 'git' | 'run'
+export type DockToolId = 'explorer' | 'search' | 'git' | 'run' | 'schedule'
 
 /** S 为设置分区 id 类型，宿主可直接传 features/settings 的 openSettings 与 SETTINGS_SECTIONS。 */
 export type DefaultCommandDeps<S extends string = string> = {
@@ -49,6 +49,7 @@ const DOCK_TOOL_COMMANDS: ReadonlyArray<{ tool: DockToolId; title: string; short
   { tool: 'search', title: t('切换搜索'), shortcut: 'Ctrl+Shift+F', keywords: ['search', 'find', '查找', '切换搜索', 'toggle search', '视图', 'view'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
   { tool: 'git', title: t('切换源代码管理'), shortcut: 'Ctrl+Shift+G', keywords: ['git', 'scm', 'source control', '切换源代码管理', 'toggle source control', '视图', 'view'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
   { tool: 'run', title: t('切换运行面板'), shortcut: 'Ctrl+Shift+R', keywords: ['run', '运行配置', 'task', '切换运行面板', 'toggle run panel', '视图', 'view'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
+  { tool: 'schedule', title: t('切换定时任务面板'), shortcut: 'Ctrl+Shift+Y', keywords: ['schedule', '定时任务', 'cron', '视图', 'view'] }, // i18n-ignore: 搜索关键词，两种语言都要能匹配
 ]
 
 export function defaultCommands<S extends string = string>(deps: DefaultCommandDeps<S>): PaletteCommand[] {

@@ -1,5 +1,6 @@
 import {
-  AGENT_CAPABILITIES, isSlashDraft, resolveAccessMode, sessionAccessOptions, type SessionAccessSelection, t, translateMessage,
+  AGENT_CAPABILITIES, displayAsyncQuestionReply, isSlashDraft, parseAsyncQuestionReply, resolveAccessMode, sessionAccessOptions,
+  type SessionAccessSelection, t, translateMessage,
 } from '@qn/codex-client'
 import { CornerDownRight, GitBranch, ListOrdered, MessageSquarePlus, MoreHorizontal, Pencil, X, Zap } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -139,7 +140,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
                   <AccessIcon size={14} strokeWidth={1.9} role="img" aria-label={access.label}
                     className={`shrink-0 ${access.warning ? 'text-qn-danger' : 'text-qn-warn'}`} />
                 )}
-                <p className="min-w-0 flex-1 truncate">{message.compact ? t('压缩会话') : message.text.trim() || t('附件或引用')}</p>
+                <p className="min-w-0 flex-1 truncate">{message.compact ? t('压缩会话') : displayAsyncQuestionReply(message.text).trim() || t('附件或引用')}</p>
                 {message.relayPending || message.sending || message.saving ? <Badge>{message.saving ? t('保存中') : t('发送中')}</Badge> : (
                   <div className="flex shrink-0 items-center gap-0.5">
                     {steerable(message) && (
@@ -147,7 +148,7 @@ export function QueuedMessages({ running, canSteer }: { running: boolean; canSte
                         title={agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
                         onClick={() => void steer(message.id)}>{t('引导')}</Button>
                     )}
-                    {!message.compact && (
+                    {!message.compact && !parseAsyncQuestionReply(message.text) && (
                       <Button variant="ghost" className="qn-icon-button" aria-label={t('更多操作')} aria-haspopup="dialog"
                         onClick={() => setActionsFor(message.id)}>
                         <MoreHorizontal size={17} aria-hidden />

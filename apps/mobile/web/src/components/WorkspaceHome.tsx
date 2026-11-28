@@ -97,7 +97,7 @@ export function WorkspaceNav({ onScrollTop }: { onScrollTop: () => void }) {
   return (
     <nav className="qn-nav" aria-label={t('工作台')}>
       {tabs.map(({ id, title }) => (
-        <button type="button" key={id} className="qn-nav-button" aria-current={id === tab ? 'page' : undefined}
+        <button type="button" key={id} className="qn-nav-button" data-tab={id} aria-current={id === tab ? 'page' : undefined}
           onClick={(event) => navigate(id, event.detail > 0)}>
           <span><WorkspaceIcon name={id} /></span>
           {title}
@@ -541,7 +541,7 @@ export function WorkspaceHome() {
     useApp.setState({ page: 'targets', targetsReturnPage: 'workspace' })
   }
   return (
-    <PullToRefresh className="qn-body qn-scroll qn-workspace qn-workspace-home qn-rise"
+    <PullToRefresh className="qn-body qn-scroll qn-workspace qn-workspace-home"
       label={pageName(isSessions ? 'sessions' : 'projects')} disabled={!desktopId || projectList?.loading} onRefresh={pullRefresh}
       scrollKey={JSON.stringify(['workspace', tab, desktopId])}>
       {/* 大标题、电脑延迟与设置入口统一放在「连接」页，会话和项目页顶部直接从内容开始。 */}

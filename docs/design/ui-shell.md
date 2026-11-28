@@ -19,7 +19,7 @@
 5. **只用档位**：颜色、字号、圆角、尺寸按 §6 的 token 和档位取值，不写临时值。
 6. **克制用色**：品牌青只表示当前上下文，同一屏只突出一处。装饰性的边框、阴影、渐变一律不加。
 7. **对齐与节奏**：同类元素高度、间距一致，按 4px 网格排布。
-8. **动效只表达状态变化**：用于展开、进入、加载，时长短（≤200ms）。开启 `prefers-reduced-motion` 时减弱或关闭。
+8. **动效只表达状态变化**：启动进场页淡出与手机整页转场默认 1 秒。展开与点按等局部反馈保持短促。开启 `prefers-reduced-motion` 时减弱或关闭。
 
 **易用**
 
@@ -88,7 +88,7 @@
 | 选模型 | 输入框右下模型选择器：搜索模型 → 选模型 → 推理强度分段（Low/Med/High/XHigh/Max/极致，按模型支持项显示）→ 速度 Fast 开关（模型有加速档才显示）。偏好按 Agent 存 `localStorage['qn-model-prefs']`，发送时作为 `turn/start` 的 `model / effort / serviceTier` 覆盖；目标上没有该模型时回落默认。模型列表来自 `model/list`，为空（Claude 桥接）时不显示选择器 |
 | 附件 | 粘贴、拖入主区或点输入框左下回形针添加，最多 50 个（图片最多 50 张，超出时提示并忽略多出的部分）。图片（png/jpg/gif/webp）读成 data URL 随消息发送，边长 >2048 或 >5 MB 时缩放转 WebP；其他文件 ≤10 MB：本机目标直接引用本机路径，SSH 目标先经 `fs.write` 上传到目标机 `~/.qingcode-next/uploads/<日期>/`，上传中/失败时不能发送。发送为 `turn/start` 的 `image` / `mention` 输入；Claude 桥接转成图片内容块与"附件文件"说明 |
 | 斜杠菜单 | 桌面与手机在对话输入框输入 `/` 查看内置命令，↑↓ 选择、Enter/Tab 确认、Esc 关闭，也可以点击或触摸。用 `/help` 查看完整清单与不可用原因。桌面同一菜单还列出 Agent 技能，选中技能显示为标签并作为 `skill` 输入发送 |
-| 上下文占用 | `thread/tokenUsage/updated` 的 `last.totalTokens / modelContextWindow`，≥75% 琥珀、≥90% 红。点占用环或用 `/context` 查看会话用量，`/compact` 打开压缩确认。账号额度用 `/status`、`/usage` 或 `/quota` 查看 |
+| 上下文占用 | `thread/tokenUsage/updated` 的 `last.totalTokens / modelContextWindow`，≥75% 琥珀、≥90% 红。点占用环或用 `/context` 查看会话用量以及本轮或最近一轮的工具名称和次数，工具摘要最多六项。`/compact` 打开压缩确认。账号额度用 `/status`、`/usage` 或 `/quota` 查看 |
 | 工具步骤 | 连续 ≥2 个命令/文件改动/思考折叠成"已运行 N 条命令 · M 个失败 · 编辑了 K 个文件"，运行中默认展开 |
 | 代码块 | 顶部语言名 + 复制；生成结束后用 shiki 高亮（JS 正则引擎，按需加载语言，>60K 字符不高亮） |
 | 回复操作 | 悬停回复显出：复制 Markdown、"…"（复制纯文本、从这里开始新会话） |

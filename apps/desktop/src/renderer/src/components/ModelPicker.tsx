@@ -23,7 +23,7 @@ import { PopoverContent, PopoverRoot, PopoverTrigger, Tip } from './primitives'
 import { SearchField } from './SearchField'
 import { EmptyState, ErrorNote, IconButton, Spinner } from './ui'
 
-const triggerClass = 'inline-flex h-8 min-w-0 max-w-[16rem] items-center gap-1 rounded-lg bg-qn-fg/[0.06] px-2 text-ui text-qn-text outline-none hover:bg-qn-hover focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover data-[state=open]:bg-qn-hover'
+const triggerClass = 'qn-composer-control inline-flex h-8 min-w-0 max-w-[16rem] items-center gap-1 rounded-lg px-2 text-ui text-qn-text outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-qn-outline-hover'
 
 /**
  * 输入框里的模型选择器（参考 Codex）：搜索模型 → 选模型 → 推理强度分段 → 速度（Fast）开关。
@@ -263,7 +263,7 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
                         aria-checked={active}
                         className={cn(
                           'h-8 rounded-lg px-2.5 text-ui outline-none focus-visible:ring-1 focus-visible:ring-qn-outline-hover',
-                          active ? 'bg-qn-active font-medium text-qn-text' : 'text-qn-muted hover:bg-qn-hover hover:text-qn-text',
+                          active ? 'qn-model-effort-selected font-semibold text-qn-text' : 'text-qn-muted hover:bg-qn-hover hover:text-qn-text',
                         )}
                         onClick={() => setPrefs(agent, { effort: effort.value }, scope)}
                       >

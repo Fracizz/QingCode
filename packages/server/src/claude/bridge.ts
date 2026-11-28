@@ -247,6 +247,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private readonly modelCache: ModelCache
   private requestCounter = 0
   private readonly skills = new SkillsCatalog()
+  private configuredPath: string | undefined
 
   constructor(
     hub: AgentHostHub,
@@ -267,6 +268,11 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   }> {
     const directory = parseAgentConfigDir(options.claudeConfigDir, 'CLAUDE_CONFIG_DIR')
     const previous = this.opened ? this.currentScope() : undefined
+    const explicit = typeof options.claudePath === 'string' ? options.claudePath.trim() || undefined : undefined
+    if (options.requireSameConfiguration && previous &&
+      (this.configDir !== directory || this.configuredPath !== explicit)) {
+      throw new AgentHostError('config_dir_busy', 'Claude 当前进程使用了不同的定时任务配置')
+    }
     this.configDir = directory
     if (this.opened) {
       const current = this.currentScope()
@@ -278,10 +284,6 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       }
       return { initialize: this.initializeResult, agentVersion: this.claude?.version }
     }
-    const explicit =
-      typeof options.claudePath === 'string' && options.claudePath.trim()
-        ? options.claudePath.trim()
-        : undefined
     // 默认路径下版本号异步读取并与 SDK 加载并行，不用 spawnSync 阻塞 daemon。
     const resolved = this.options.resolve
       ? this.options.resolve(explicit)
@@ -295,6 +297,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
       throw new AgentHostError('agent_unavailable', `Claude SDK 加载失败: ${describe(err)}`)
     }
     this.claude = resolved
+    this.configuredPath = explicit
     this.initializeResult = { userAgent: `claude-bridge/${resolved.version}` }
     this.opened = true
     this.hub.log(`claude 桥已就绪 ${resolved.version}`) // i18n-ignore: 仅进日志

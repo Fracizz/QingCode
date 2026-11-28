@@ -24,6 +24,7 @@ declare global {
     QnNative?: QnNativeLike
     __qnNativeCallback?: (json: string) => void
     __qnBack?: () => boolean
+    __qnSystemTheme?: (light: boolean) => void
   }
 }
 

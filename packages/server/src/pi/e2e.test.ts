@@ -117,7 +117,14 @@ describe('pi 桥端到端（daemon + 假 pi RPC）', () => {
     fs.mkdirSync(stateDir, { recursive: true })
     fs.mkdirSync(sessionsDir, { recursive: true })
     bundle = path.join(root, 'qn-server.cjs')
-    piPath = JSON.stringify([process.execPath, fakePi])
+    const windows = process.platform === 'win32'
+    piPath = path.join(root, windows ? 'fake-pi.cmd' : 'fake-pi')
+    const quote = (value: string) => windows
+      ? '"' + value.replace(/%/g, '%%') + '"'
+      : "'" + value.replace(/'/g, "'\\''") + "'"
+    const command = [process.execPath, fakePi].map(quote).join(' ')
+    fs.writeFileSync(piPath, windows ? '@echo off\r\n' + command + ' %*\r\n'
+      : '#!/bin/sh\nexec ' + command + ' "$@"\n', { mode: 0o700 })
 
     await build({
       entryPoints: [mainEntry],
@@ -173,7 +180,7 @@ describe('pi 桥端到端（daemon + 假 pi RPC）', () => {
     const opened = await client.req('codex.open', { agent: 'pi', piPath })
     expect(opened.initialize).toBeNull()
     expect(opened.capabilities).toEqual(AGENT_CAPABILITIES.pi)
-    expect(opened.agentVersion).toBe('test')
+    expect(opened.agentVersion).toBe('0.0.1')
     expect(opened.lastSeq).toBe(0)
     expect(await client.req('codex.attach', { agent: 'pi', sinceSeq: 0 })).toMatchObject({
       lastSeq: 0,
@@ -298,6 +305,35 @@ describe('pi 桥端到端（daemon + 假 pi RPC）', () => {
     })
     client.close()
   }, 30_000)
+
+  it('定时任务发起独立的 pi 轮次并在断开连接后留下历史', async () => {
+    const creator = new Client(endpoint)
+    const viewer = new Client(endpoint)
+    try {
+      await creator.hello(token)
+      const task = await creator.req('schedule.upsert', {
+        cwd: root, name: 'pi 报告', prompt: '列出当前目录', agent: 'pi', enabled: false,
+        piAcknowledged: true, cadence: { frequency: 'daily', time: '09:00', timeZone: 'UTC' },
+        runtime: { piPath },
+      })
+      const args = { cwd: root, id: task.id }
+      const run = await creator.req('schedule.runNow', args)
+      creator.close()
+
+      await viewer.hello(token)
+      const opened = await viewer.req('codex.open', { agent: 'pi', piPath })
+      await viewer.req('codex.attach', { agent: 'pi', sinceSeq: Number(opened.lastSeq) - 50 })
+      await viewer.wait((frame) => frame.name === 'schedule.changed' ||
+        (frame.msg as Frame)?.method === 'turn/completed')
+      await expect.poll(() => viewer.req('schedule.runs', args)).toMatchObject([
+        { id: run.runId, agent: 'pi', status: 'succeeded', threadId: expect.any(String) },
+      ])
+    } finally {
+      creator.close()
+      viewer.close()
+    }
+  })
+
 })
 
 describe.skipIf(process.env.QN_PI_E2E !== '1')('真实 pi 集成（QN_PI_E2E=1）', () => {

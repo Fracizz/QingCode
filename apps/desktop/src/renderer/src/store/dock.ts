@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 // 右侧工作区停靠栏：工具列（资源管理器 / 搜索 / Git）+ 文件查看面板（features/files 自管 open）。
 
-export type DockTool = 'explorer' | 'search' | 'git' | 'run'
+export type DockTool = 'explorer' | 'search' | 'git' | 'run' | 'schedule'
 type DockView = 'chat' | 'files'
 
 export type DockPrefs = {
@@ -27,7 +27,7 @@ export function parseDockPrefs(raw: string | null | undefined): DockPrefs {
   if (!raw) return DEFAULT_DOCK
   try {
     const x = JSON.parse(raw) as Record<string, unknown>
-    const tool = x.tool === 'explorer' || x.tool === 'search' || x.tool === 'git' || x.tool === 'run' ? x.tool : null
+    const tool = x.tool === 'explorer' || x.tool === 'search' || x.tool === 'git' || x.tool === 'run' || x.tool === 'schedule' ? x.tool : null
     return {
       tool,
       filesWidth: clamp(x.filesWidth, FILES_MIN, FILES_MAX, DEFAULT_DOCK.filesWidth),

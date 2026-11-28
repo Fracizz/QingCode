@@ -12,6 +12,7 @@ import { redactToken } from './remoteCommands'
 import { RouterError, type BackendRouter } from './router'
 import { validateTargetInput } from './targetInput'
 import { readTargets, setSshDirect, writeTargets } from './targetStore'
+import { scheduleProjectMutation } from './scheduleProjects'
 import { TargetManager } from './targets'
 import type { BackendEmit, RemoteServerCommand, TargetCredentials } from './types'
 
@@ -209,7 +210,13 @@ export function registerTargetMethods(router: BackendRouter): void {
         params.targetId === '' || params.method === '') {
       throw new RouterError('invalid_params', 'server.req 参数无效')
     }
-    return manager.request(params.targetId, params.method, params.params)
+    const { targetId, method, params: args } = params
+    const forward = (value: unknown) => manager.request(targetId, method, value)
+    if (method === 'schedule.upsert' || method === 'schedule.runNow' ||
+      (method === 'schedule.setEnabled' && isRecord(args) && args.enabled === true)) {
+      return scheduleProjectMutation(targetId, method, isRecord(args) ? args : {}, forward)
+    }
+    return forward(args)
   })
 
   router.register('codex.send', (params) => {

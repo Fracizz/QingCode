@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -28,6 +29,7 @@ import {
   FolderPlus,
   FolderSymlink,
   Image as ImageIcon,
+  LocateFixed,
   MessageSquarePlus,
   Pencil,
   RotateCw,
@@ -65,6 +67,15 @@ const EMPTY_TREE = createTreeState()
 type Editing = { draft: TreeDraft; name: string; error: string | null }
 type DeleteTarget = { path: string; kind: ExplorerEntryKind }
 type MenuTarget = { path: string | null; dir: string; kind: ExplorerEntryKind | 'placeholder' }
+
+function scrollToRow(element: HTMLDivElement | null, index: number): void {
+  if (!element) return
+  const top = index * ROW_HEIGHT
+  if (top < element.scrollTop) element.scrollTop = top
+  else if (top + ROW_HEIGHT > element.scrollTop + element.clientHeight) {
+    element.scrollTop = Math.max(0, top + ROW_HEIGHT - element.clientHeight)
+  }
+}
 
 async function copyToClipboard(text: string): Promise<boolean> {
   try {
@@ -122,10 +133,12 @@ function entryIcon(name: string, kind: ExplorerEntryKind | 'placeholder', expand
 export function FileExplorer({
   targetId,
   root,
+  activeFilePath,
   className,
 }: {
   targetId: string
   root: string
+  activeFilePath?: string
   className?: string
 }) {
   const key = explorerScopeKey(targetId, root)
@@ -141,6 +154,8 @@ export function FileExplorer({
     [baseRows, editing?.draft, root, style],
   )
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [locating, setLocating] = useState(false)
+  const [pathToSelect, setPathToSelect] = useState<string | null>(null)
   const [menuPath, setMenuPath] = useState<string | null>(null)
   const mentionOnClose = useRef<string | null>(null)
   const menuTarget = useRef<MenuTarget>({ path: null, dir: root, kind: 'dir' })
@@ -180,14 +195,19 @@ export function FileExplorer({
   }, [rows.length])
 
   useEffect(() => {
-    const element = containerRef.current
-    if (!element) return
-    const top = selectedIndex * ROW_HEIGHT
-    if (top < element.scrollTop) element.scrollTop = top
-    else if (top + ROW_HEIGHT > element.scrollTop + element.clientHeight) {
-      element.scrollTop = top + ROW_HEIGHT - element.clientHeight
-    }
+    scrollToRow(containerRef.current, selectedIndex)
   }, [selectedIndex])
+
+  useLayoutEffect(() => {
+    if (!pathToSelect) return
+    const index = rows.findIndex((row) => row.kind === 'node' && row.node.path === pathToSelect)
+    if (index >= 0) {
+      setSelectedIndex(index)
+      scrollToRow(containerRef.current, index)
+      containerRef.current?.focus({ preventScroll: true })
+    }
+    setPathToSelect(null)
+  }, [pathToSelect, rows])
 
   useEffect(() => {
     if (!editing) return
@@ -208,6 +228,18 @@ export function FileExplorer({
     setNotice(text)
     if (noticeTimer.current) clearTimeout(noticeTimer.current)
     noticeTimer.current = setTimeout(() => setNotice(null), 1600)
+  }
+
+  const locateActiveFile = async (): Promise<void> => {
+    if (!activeFilePath) return
+    setLocating(true)
+    try {
+      const result = await actions.locateFile(targetId, root, activeFilePath)
+      if ('error' in result) showNotice(result.error)
+      else setPathToSelect(result.path)
+    } finally {
+      setLocating(false)
+    }
   }
 
   const beginCreate = (parent: string, kind: 'file' | 'dir'): void => {
@@ -461,18 +493,21 @@ export function FileExplorer({
         <IconButton label={t('折叠全部')} onClick={() => actions.collapse(targetId, root)}>
           <ChevronsDownUp size={14} />
         </IconButton>
+        <IconButton label={t('在文件树中定位当前文件')} disabled={!activeFilePath || locating || !!editing}
+          onClick={() => void locateActiveFile()}>
+          <LocateFixed size={14} />
+        </IconButton>
         <IconButton
           label={tree.showHidden ? t('隐藏隐藏文件') : t('显示隐藏文件')}
           onClick={() => actions.setHidden(targetId, root, !tree.showHidden)}
         >
           {tree.showHidden ? <Eye size={14} /> : <EyeOff size={14} />}
         </IconButton>
-        <span className="min-w-0 flex-1" />
-        {notice && <span className="truncate text-ui-xs text-qn-muted">{notice}</span>}
       </div>
       <div className="truncate border-b border-qn-border px-3 py-1 font-mono text-ui-xs text-qn-dim" title={root}>
         {root}
       </div>
+      {notice && <div role="status" className="px-3 py-1 text-ui-xs text-qn-muted">{notice}</div>}
       {scope?.error && (
         <div className="px-2 pt-2">
           <ErrorNote message={scope.error} onClose={() => actions.clearError(targetId, root)} />

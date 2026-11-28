@@ -94,3 +94,8 @@ export type { DirectInfo } from './direct'
 
 export { t, translateMessage, addEnglishMessages, setLocale, getLocale, resolveLocale } from './i18n'
 export type { Locale, LocalePreference, MessageParams } from './i18n'
+
+export type {
+  ScheduleCadence, ScheduleChangedEvent, ScheduleFrequency, ScheduleInput, ScheduleMethods,
+  ScheduleRun, ScheduleRunReason, ScheduleRunStatus, ScheduleRuntime, ScheduleSummary,
+} from './schedule'

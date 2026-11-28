@@ -18,6 +18,7 @@ import { t, translateMessage } from '../../protocol/src/i18n'
 import { PROMPT_SUGGESTION_METHOD } from '../../protocol/src/agents'
 import type { ThreadHistoryCursor, ThreadHistoryPage } from './api'
 import { parseBackgroundTasks, type BackgroundTaskView } from './agentControls'
+import { formatAsyncQuestionReplies, parseAsyncQuestionReply, parseAsyncQuestions } from './asyncQuestions'
 import { parsePlan, type PlanView } from './plan'
 import { planExitText } from './planMode'
 import { describeSubagentItem, subagentThreadMetadata, type SubagentItemView, type SubagentThreadMetadata } from './subagents'
@@ -78,6 +79,7 @@ export type ItemView =
       clientId?: string
       steering?: 'currentTurn' | 'nextTurn'
       text: string
+      answeredQuestionIds?: string[]
       /** 图片：data URL / http URL（可直接显示），或目标机上的本地图片路径（只显示文件名）。 */
       images?: string[]
       /** 用户附加的文件（目标机绝对路径）。 */
@@ -89,7 +91,7 @@ export type ItemView =
       /** 本地先渲染的占位消息，收到服务端回显后替换。 */
       pending?: boolean
     }
-  | { kind: 'agent'; id: string; text: string; streaming: boolean; completedAtMs?: number }
+  | { kind: 'agent'; id: string; text: string; streaming: boolean; completedAtMs?: number; asyncQuestions?: UserInputQuestion[] }
   | { kind: 'reasoning'; id: string; summary: string; streaming: boolean }
   | { kind: 'command'; id: string; command: string; cwd?: string; output: string; exitCode?: number | null; status: string }
   | { kind: 'fileChange'; id: string; changes: { path: string; kind: string; diff?: string }[]; status: string }
@@ -628,6 +630,8 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
   switch (type) {
     case 'userMessage': {
       const clientId = userMessageClientId(item)
+      const text = userText(item.content) || scalarText(item.text)
+      const replies = parseAsyncQuestionReply(text)
       const inputExtras = arrayOf(item.content).filter((value) => {
         const type = asRecord(value)?.type
         return type === 'image' || type === 'localImage' || type === 'audio' || type === 'localAudio' || type === 'mention' || type === 'skill'
@@ -635,7 +639,8 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
       const sentAt = optionalNumber(item.startedAtMs) ?? optionalNumber(item.completedAtMs) ?? timestamp
       const steering = item.steering === 'currentTurn' || item.steering === 'nextTurn' ? item.steering : undefined
       return {
-        kind: 'user', id: clientId || id, text: userText(item.content) || scalarText(item.text), ...userExtras(item.content),
+        kind: 'user', id: clientId || id, text: replies ? formatAsyncQuestionReplies(replies) : text, ...userExtras(item.content),
+        ...(replies ? { answeredQuestionIds: replies.map(({ questionItemId }) => questionItemId) } : {}),
         ...(clientId ? { clientId } : {}),
         ...(steering ? { steering } : {}),
         ...(inputExtras.length ? { inputExtras } : {}),
@@ -644,7 +649,9 @@ function itemViewFromRaw(raw: unknown, index: number, streaming: boolean, timest
     }
     case 'agentMessage': {
       const completedAtMs = positive(item.completedAtMs) ?? completionTime
+      const questions = Array.isArray(item.questions) ? parseAsyncQuestions(id, item.questions) : []
       return { kind: 'agent', id, text: scalarText(item.text), streaming: streaming && !completedAtMs,
+        ...(questions.length ? { asyncQuestions: questions } : {}),
         ...(completedAtMs ? { completedAtMs } : {}) }
     }
     case 'reasoning':

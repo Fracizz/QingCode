@@ -92,6 +92,7 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
     updateConnectionService();
     if (webView != null) {
       webView.onResume();
+      syncSystemTheme(getResources().getConfiguration());
       webView.evaluateJavascript("if (typeof window.__qnResume === 'function') window.__qnResume()", null);
     }
   }
@@ -106,6 +107,10 @@ public final class MainActivity extends Activity implements NativeBridge.Callbac
 
   @Override public void onConfigurationChanged(Configuration config) {
     super.onConfigurationChanged(config);
+    syncSystemTheme(config);
+  }
+
+  private void syncSystemTheme(Configuration config) {
     if (webView == null) return;
     boolean light = (config.uiMode & Configuration.UI_MODE_NIGHT_MASK) != Configuration.UI_MODE_NIGHT_YES;
     webView.evaluateJavascript("if (typeof window.__qnSystemTheme === 'function') window.__qnSystemTheme(" + light + ")", null);

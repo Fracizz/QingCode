@@ -351,6 +351,31 @@ describe('daemon 的 agent 分发与协议扩展', () => {
     }
   }, 15_000)
 
+  it('从 daemon 启动 Claude 定时轮次并写入可回看的运行记录', async () => {
+    const client = new Client(endpoint)
+    try {
+      await client.hello(token)
+      const directory = path.join(root, 'other-claude-profile')
+      const opened = await client.req('codex.open', { agent: 'claude', claudeConfigDir: directory })
+      await client.req('codex.attach', { agent: 'claude', sinceSeq: opened.lastSeq })
+      const task = await client.req('schedule.upsert', {
+        cwd: root, name: '每日总结', prompt: '总结项目', enabled: false, agent: 'claude',
+        runtime: { claudeConfigDir: directory },
+        cadence: { frequency: 'daily', time: '09:00', timeZone: 'UTC' },
+      })
+      const args = { cwd: root, id: task.id }
+      const run = await client.req('schedule.runNow', args)
+      const completion = await client.wait((frame) => frame.t === 'codex.recv' &&
+        frame.agent === 'claude' && (frame.msg as Frame)?.method === 'turn/completed')
+      const threadId = ((completion.msg as Frame).params as Frame).threadId
+      expect(await client.req('schedule.runs', args)).toMatchObject([
+        { id: run.runId, agent: 'claude', status: 'succeeded', threadId },
+      ])
+    } finally {
+      client.close()
+    }
+  })
+
   it('非法 agent 参数返回 params 错误，非法 codex.send.agent 触发协议错误帧', async () => {
     const client = new Client(endpoint)
     expect((await client.hello(token)).t).toBe('welcome')

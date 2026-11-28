@@ -2,7 +2,7 @@ import {
   planProgress, subagentStatusTone, t,
   type CodexRpcLike, type ItemView, type PlanView, type SubagentEntry, type ThreadView,
 } from '@qn/codex-client'
-import { Activity, Bot, ListChecks, type LucideIcon } from 'lucide-react'
+import { Activity, ListChecks, Network, type LucideIcon } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { BackgroundTaskList, useBackgroundTasks } from './BackgroundTasks'
 import { PlanSteps } from './PlanPanel'
@@ -120,7 +120,7 @@ export function StatusDock({ sheet, onSheetChange, scrollRef, plan, running, sub
 
   const entries: DockEntry[] = []
   if (active.length || failed.length) {
-    entries.push({ sheet: 'subagents', icon: Bot, label: t('子代理'), caption: failed.length || active.length,
+    entries.push({ sheet: 'subagents', icon: Network, label: t('子代理'), caption: failed.length || active.length,
       tone: failed.length ? 'danger' : active.some((entry) => subagentStatusTone(entry.status) === 'warn') ? 'warn' : 'accent' })
   }
   if (progress && progress.done < progress.total && (running || seenPlan !== planKey)) {

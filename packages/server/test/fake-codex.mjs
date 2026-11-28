@@ -31,6 +31,30 @@ function handle(msg) {
     process.exit(3)
     return
   }
+  if (msg.method === 'thread/start' && msg.params?.sandbox === 'read-only') {
+    write({ id: msg.id, result: {
+      thread: { id: 'scheduled-thread' },
+      sandbox: { type: 'readOnly', networkAccess: false },
+      approvalPolicy: msg.params.approvalPolicy,
+      approvalsReviewer: msg.params.approvalsReviewer,
+    } })
+    return
+  }
+  if (msg.method === 'turn/start' && msg.params?.threadId === 'scheduled-thread') {
+    const params = { threadId: 'scheduled-thread', turn: { id: 'scheduled-turn', status: 'inProgress' } }
+    write({ id: msg.id, result: { turn: params.turn } })
+    write({ method: 'turn/started', params })
+    write({ id: 'scheduled-approval', method: 'item/commandExecution/requestApproval', params: {
+      threadId: params.threadId, turnId: params.turn.id, command: 'echo hi',
+    } })
+    return
+  }
+  if (msg.id === 'scheduled-approval' && msg.result?.decision === 'decline') {
+    write({ method: 'turn/completed', params: {
+      threadId: 'scheduled-thread', turn: { id: 'scheduled-turn', status: 'completed' },
+    } })
+    return
+  }
   if (msg.method === 'thread/start') {
     write({ id: msg.id, result: { thread: { id: 'thread-1' } } })
     write({ method: 'turn/started', params: { turn: { id: 'turn-1' } } })

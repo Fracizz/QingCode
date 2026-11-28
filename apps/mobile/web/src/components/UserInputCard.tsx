@@ -19,11 +19,12 @@ import { Badge, Button, Card } from './ui'
  * 手机端回答 Agent 的提问（含 Claude 的 AskUserQuestion、pi 扩展对话框与 MCP 表单）。
  * 手机屏幕矮，多个问题分页显示，一次只看一题；"跳过"或"拒绝"提交空答案。
  */
-export function UserInputCard({ approval, submitting, offline, onSubmit }: {
-  approval: ApprovalView
+export function UserInputCard({ approval, submitting, offline, onSubmit, allowSkip = true }: {
+  approval: Pick<ApprovalView, 'title' | 'questions' | 'intro' | 'skipLabel'>
   submitting: boolean
   offline: boolean
   onSubmit: (answers: Record<string, string[]>) => void
+  allowSkip?: boolean
 }) {
   const questions = approval.questions ?? []
   const [drafts, setDrafts] = useState<Record<string, UserInputDraft>>({})
@@ -119,10 +120,10 @@ export function UserInputCard({ approval, submitting, offline, onSubmit }: {
           )
         })}
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-2" aria-busy={submitting}>
-        <Button className="px-2 text-compact" disabled={disabled} onClick={() => onSubmit({})}>
+      <div className={`mt-3 grid gap-2${allowSkip ? ' grid-cols-2' : ''}`} aria-busy={submitting}>
+        {allowSkip && <Button className="px-2 text-compact" disabled={disabled} onClick={() => onSubmit({})}>
           {approval.skipLabel ?? t('跳过')}
-        </Button>
+        </Button>}
         {/* 两个主按钮用不同 key：避免同一次点击先翻到末题、又落在提交按钮上。 */}
         {showNext ? (
           <Button key="next" variant="primary" className="px-2 text-compact" onClick={() => setStep(index + 1)}>

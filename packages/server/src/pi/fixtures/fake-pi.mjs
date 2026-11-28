@@ -4,6 +4,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+if (process.argv.includes('--version')) {
+  process.stdout.write('0.0.1\n')
+  process.exit(0)
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 const events = fs
   .readFileSync(path.join(here, 'real-prompt.jsonl'), 'utf8')

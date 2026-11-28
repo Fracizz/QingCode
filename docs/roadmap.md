@@ -25,10 +25,11 @@
 | [T31](tasks/T31-windows-conpty.md) | 本机 Windows ConPTY | 代码已实现；缺 `@lydell/node-pty` 与同版本 `@lydell/node-pty-win32-x64`，由总管安装后在 10.87 验证 |
 | [T39](tasks/T39-mobile-workspace.md) | 手机工作台与会话恢复 | 已实现；待验双电脑切换、换网、扫码、选图、下载、覆盖安装 |
 | [T40](tasks/T40-paseo-alignment.md) | 对齐 Paseo：引导、轮次、计划、后台任务 | 已实现，在 `0.0.3-beta.7` 中；待用真实 Claude、Codex、pi 验收 |
+| [T41](tasks/T41-scheduled-tasks.md) | 桌面定时任务（Codex、Claude、pi） | 已实现；待 Windows 本机与 Linux SSH 真机验收 |
 
 ## 3. 后续方向
 
-按[产品方向 §3](product-direction.md) 排序：可靠性与实机验收 → 按对话隔离 worktree → 评审闭环 → 手机待处理收件箱。[定时任务方案](scheduled-tasks.md)待审核。
+按[产品方向 §3](product-direction.md) 排序：可靠性与实机验收 → 按对话隔离 worktree → 评审闭环 → 手机待处理收件箱。定时任务由 [T41](tasks/T41-scheduled-tasks.md) 跟踪。
 
 **延后**：远端 server 管理（日志、重启、升级）与系统指标、文件上传和拖放到文件树、桌面自动更新与安装包签名、浅色主题、多窗口、手机 Git 写操作、连接预热。
 

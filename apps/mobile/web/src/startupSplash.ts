@@ -7,7 +7,7 @@ const MIN_VISIBLE_MS = 1000
 const REDUCED_MIN_VISIBLE_MS = 500
 const READY_HOLD_MS = 180
 // 与 styles.css 中进场页的淡出时长一致。
-const FADE_MS = 520
+const FADE_MS = 1000
 const REDUCED_FADE_MS = 500
 
 /** 本地连接读取和动画并行，进场页只在 WebView 初次加载时出现。 */

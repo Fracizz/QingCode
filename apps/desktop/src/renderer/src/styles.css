@@ -24,6 +24,7 @@
   --color-qn-outline-hover: #858585;
   /* 对话输入框：参考 Codex，底色比页面亮一档、外框取 3:1 下限（#181818 上 3.19），不再显得发亮。 */
   --color-qn-composer: #2a2a2a;
+  --color-qn-composer-control: #3e3e42;
   --color-qn-composer-outline: #686868;
   --color-qn-text: #e6e6e6;
   /* 对话正文：原 #d0d0d0 在 #181818 上偏灰、发虚，提亮到接近界面文字，只比 qn-text 暗一点避免纯白刺眼。 */
@@ -153,6 +154,7 @@ html[data-theme="gray"] {
   --color-qn-outline: #838489;
   --color-qn-outline-hover: #9b9ca1;
   --color-qn-composer: #37383b;
+  --color-qn-composer-control: #4a4b4f;
   --color-qn-composer-outline: #76777b;
   --color-qn-text: #ececec;
   --color-qn-prose: #e8e8e8;
@@ -185,6 +187,7 @@ html[data-theme="light"] {
   --color-qn-outline: #858585;
   --color-qn-outline-hover: #5f5f5f;
   --color-qn-composer: #ffffff;
+  --color-qn-composer-control: color-mix(in srgb, var(--color-qn-fg) 6%, var(--color-qn-composer));
   --color-qn-composer-outline: #8f8f8f;
   --color-qn-text: #1a1a1a;
   --color-qn-prose: #242424;
@@ -280,6 +283,31 @@ button:disabled {
     outline: 2px solid var(--color-qn-outline-hover);
     outline-offset: 2px;
   }
+
+  .qn-composer-control {
+    background: var(--color-qn-composer-control);
+  }
+
+  .qn-composer-control:enabled:is(:hover, :active, [data-state="open"]):not(:focus-visible) {
+    box-shadow: inset 0 0 0 1px var(--color-qn-outline);
+  }
+
+  html[data-theme="light"] .qn-composer-control:enabled:is(:hover, :active, [data-state="open"]):not(:focus-visible) {
+    background: var(--color-qn-hover);
+    box-shadow: none;
+  }
+
+  .qn-composer-control[data-tone="muted"] { color: var(--color-qn-text); }
+  .qn-composer-control[data-tone="warn"] { color: var(--color-qn-warn); }
+  .qn-composer-control[data-tone="danger"] { color: color-mix(in srgb, var(--color-qn-danger) 45%, var(--color-qn-text)); }
+  .qn-composer-control[data-tone="accent"] { color: color-mix(in srgb, var(--color-qn-accent) 48%, var(--color-qn-text)); }
+
+  html[data-theme="light"] .qn-composer-control[data-tone="muted"] { color: var(--color-qn-muted); }
+  html[data-theme="light"] .qn-composer-control[data-tone="danger"] { color: var(--color-qn-danger); }
+  html[data-theme="light"] .qn-composer-control[data-tone="accent"] { color: var(--color-qn-accent); }
+
+  .qn-model-effort-selected { background: var(--color-qn-composer-control); }
+  html[data-theme="light"] .qn-model-effort-selected { background: var(--color-qn-active); }
 
   .qn-input {
     width: 100%;
@@ -420,8 +448,8 @@ button:disabled {
 }
 
 .qn-shell[data-entered="true"] .qn-enter {
-  animation: qn-enter 560ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
-  animation-delay: calc(var(--qn-enter-order, 0) * 85ms);
+  --qn-enter-delay: calc(var(--qn-enter-order, 0) * 85ms);
+  animation: qn-enter calc(var(--qn-splash-fade, 1s) - var(--qn-enter-delay)) cubic-bezier(0.22, 1, 0.36, 1) var(--qn-enter-delay) backwards;
 }
 
 @keyframes qn-enter {

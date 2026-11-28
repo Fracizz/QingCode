@@ -1,0 +1,7 @@
+<resources>
+    <style name="QingCodeTheme" parent="QingCodeBaseTheme">
+        <!-- 系统启动窗口只铺底，品牌标志由 WebView 的进场页播放一次。 -->
+        <item name="android:windowSplashScreenBackground">@color/qn_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+    </style>
+</resources>

@@ -37,6 +37,7 @@ declare global {
 export function App() {
   useMobileAppearance()
   const page = useApp((s) => s.page)
+  const unanimatedNavigation = useApp((s) => s.unanimatedNavigation)
   const booting = useApp((s) => s.booting)
   const savingPair = useApp((s) => s.form?.saving)
   const paired = useApp((s) => s.connections.length > 0)
@@ -98,25 +99,31 @@ export function App() {
   }, [activeId])
 
   const workspace = paired && page === 'workspace'
+  const showConnections = page === 'connections' || (workspace && tab === 'connections')
   const showWorkspaceNav = workspace || (page === 'connections' && paired && activeId !== null)
   const pageKey = showWorkspaceNav ? `workspace:${workspace ? tab : 'connections'}` : page
-  // 动效随页面变化一次性算出，避免其他状态更新时重新播放。
-  const [nav, setNav] = useState<{ key: string; motion: PageMotion }>({ key: pageKey, motion: 'none' })
-  if (nav.key !== pageKey) setNav({ key: pageKey, motion: pageMotion(nav.key, pageKey) })
+  // 冷启动恢复工作台或会话时由进场页完成转场，手动导航才播放页面动画。
+  const [nav, setNav] = useState<{ key: string; motion: PageMotion; unanimatedNavigation: number }>(
+    { key: pageKey, motion: 'none', unanimatedNavigation },
+  )
+  if (nav.key !== pageKey || nav.unanimatedNavigation !== unanimatedNavigation) {
+    const motion = nav.key !== pageKey && nav.unanimatedNavigation === unanimatedNavigation ? pageMotion(nav.key, pageKey) : 'none'
+    setNav({ key: pageKey, motion, unanimatedNavigation })
+  }
   const glow = !activeId ? 'off' : eventsConnected ? 'online' : 'connecting'
 
   return (
     <div className="qn-app">
-      {/* 连接页和工作台共用随连接状态变化的顶部光效。 */}
-      {(page === 'connections' || workspace) && <div className="qn-glow" data-state={glow} aria-hidden />}
+      {showConnections && <div className="qn-connection-art" aria-hidden />}
+      {workspace && !showConnections && <div className="qn-glow" data-state={glow} aria-hidden />}
       {connectionWarning && page !== 'form' && (
         <div className="qn-app-banner shrink-0 border-b border-qn-border bg-qn-panel px-3 pt-2" role="status">
           <Note message={connectionWarning} tone="warn" />
         </div>
       )}
       <div key={pageKey} ref={pageRef} className="qn-page" data-motion={nav.key === pageKey ? nav.motion : 'none'}>
-        {page === 'connections' && <ConnectionsPage />}
-        {workspace && (tab === 'connections' ? <ConnectionsPage /> : tab === 'usage' ? <UsageHome /> : <WorkspaceHome />)}
+        {showConnections && <ConnectionsPage />}
+        {workspace && !showConnections && (tab === 'usage' ? <UsageHome /> : <WorkspaceHome />)}
         {page === 'form' && <ConnectionFormPage />}
         {page === 'targets' && <TargetsPage />}
         {page === 'projects' && <ProjectsPage />}

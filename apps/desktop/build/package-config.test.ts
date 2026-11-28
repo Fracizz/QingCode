@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import packageConfig from './package-config.mjs'
+import { pruneReleaseVersions } from './release-retention.mjs'
 
 let root: string
 let projectDir: string
@@ -114,4 +115,35 @@ test('成功出包后按产物时间保留最近两个已生成版本', () => {
   expect(existsSync(file)).toBe(true)
   expect(existsSync(join(release, '0.0.4-beta.1'))).toBe(true)
   expect(existsSync(join(release, 'notes'))).toBe(true)
+})
+
+test('同层产物和旧目录按版本一起计算，整组清理旧版', () => {
+  const release = join(root, 'release')
+  mkdirSync(release)
+  const put = (directory: string, name: string, time: number) => {
+    const file = join(directory, name)
+    writeFileSync(file, 'package')
+    utimesSync(file, time, time)
+    return file
+  }
+  const oldestExe = put(release, 'QingCode-Next-0.0.3-beta.1-x64.exe', 1000)
+  const oldestApk = put(release, 'QingCode-Next-0.0.3-beta.1-android.apk', 1000)
+  const oldestChecksum = put(release, 'SHA256SUMS-0.0.3-beta.1.txt', 1000)
+  const remainingDir = join(release, '0.0.3-beta.2')
+  mkdirSync(remainingDir)
+  const oldLayoutExe = put(remainingDir, 'QingCode-Next-0.0.3-beta.2-x64.exe', 2000)
+  const flatExe = put(release, 'QingCode-Next-0.0.3-beta.3-x64.exe', 3000)
+  const flatApk = put(release, 'QingCode-Next-0.0.3-beta.3-android.apk', 3000)
+  const flatChecksum = put(release, 'SHA256SUMS-0.0.3-beta.3.txt', 3000)
+  const duplicateDir = join(release, '0.0.3-beta.3')
+  mkdirSync(duplicateDir)
+  const duplicate = put(duplicateDir, 'QingCode-Next-0.0.3-beta.3-x64.exe', 3000)
+  const pending = put(release, 'QingCode-Next-0.0.3-beta.4-x64.exe', 4000)
+  const notes = put(release, 'notes.txt', 4000)
+
+  expect(pruneReleaseVersions(release)).toEqual(['0.0.3-beta.1'])
+  for (const file of [oldestExe, oldestApk, oldestChecksum]) expect(existsSync(file)).toBe(false)
+  for (const file of [oldLayoutExe, flatExe, flatApk, flatChecksum, duplicate, pending, notes]) {
+    expect(existsSync(file)).toBe(true)
+  }
 })

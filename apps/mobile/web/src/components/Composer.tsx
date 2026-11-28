@@ -3,7 +3,7 @@ import {
   insertImagePlaceholders, insertSkillToken, isSlashDraft, matchingChatCommands, removePlaceholder, runningSendMode, splitSkillTokens, t,
   takeSkillTokens, translateMessage, uniqueImageName, type ChatCommandId, type SlashCommandView, type UserInput,
 } from '@qn/codex-client'
-import { ArrowUp, ChevronDown, ChevronUp, FileText, ImagePlus, ListTodo, Square, Wand2, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronUp, FileText, Image, ListTodo, Square, Wand2, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { callDevice } from '../client'
 import { attachmentBytes, IMAGE_BYTES, insertFileMention, isDraftImage, MAX_IMAGES, mentionAt, type DraftImage } from '../composerLogic'
@@ -513,7 +513,7 @@ export function Composer({
             <Button variant="ghost" className="qn-icon-button" aria-label={t('添加图片')}
               title={imageUnavailable ?? (images.length >= MAX_IMAGES ? t('一条消息最多 {max} 张图片', { max: MAX_IMAGES }) : undefined)}
               onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
-              <ImagePlus size={20} strokeWidth={1.75} absoluteStrokeWidth aria-hidden />
+              <Image size={22} strokeWidth={2} absoluteStrokeWidth aria-hidden />
             </Button>
             {/* 停止与发送共用一个位置（参考 Orca 手机版）：没有可发送内容时是停止键，一输入就换成发送键（排队）。 */}
             {running && !canSend && !sending && (

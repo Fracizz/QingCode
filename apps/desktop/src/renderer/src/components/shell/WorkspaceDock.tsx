@@ -1,10 +1,12 @@
-import { FolderTree, GitBranch, Play, Search, X } from 'lucide-react'
+import { CalendarClock, FolderTree, GitBranch, Play, Search, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { t } from '@qn/codex-client'
 import { FileExplorer, SearchPanel, toWorkspaceRoot } from '../../features/explorer'
+import { isWithinPath } from '../../features/explorer/treeModel'
 import { FilePane, useFiles } from '../../features/files'
 import { GitPanel } from '../../features/git'
 import { RunPanel } from '../../features/run'
+import { SchedulePanel } from '../../features/schedule/SchedulePanel'
 import { cn } from '../../lib/cn'
 import { useCodex } from '../../store/codex'
 import { FILES_MAX, FILES_MIN, TOOL_MAX, TOOL_MIN, useDock, type DockTool } from '../../store/dock'
@@ -17,6 +19,7 @@ export const DOCK_TOOLS: Array<{ id: DockTool; label: string; hint: string; icon
   { id: 'search', label: t('搜索'), hint: 'Ctrl Shift F', icon: <Search size={15} /> },
   { id: 'git', label: t('源代码管理'), hint: 'Ctrl Shift G', icon: <GitBranch size={15} /> },
   { id: 'run', label: t('运行'), hint: 'Ctrl Shift R', icon: <Play size={15} /> },
+  { id: 'schedule', label: t('定时任务'), hint: 'Ctrl Shift Y', icon: <CalendarClock size={15} /> },
 ]
 
 /** 文件/Git 功能作用于当前项目；未选项目或目标未连接时给出提示。 */
@@ -29,16 +32,24 @@ export function useWorkspaceScope(): { targetId: string; cwd: string } | { reaso
   return { targetId, cwd: toWorkspaceRoot(cwd) }
 }
 
-function ToolBody({ tool }: { tool: DockTool }) {
+function ToolBody({ tool, primary = false }: { tool: DockTool; primary?: boolean }) {
   const scope = useWorkspaceScope()
+  const activeFilePath = useFiles(({ tabs, activeId }) => {
+    if (tool !== 'explorer' || 'reason' in scope) return undefined
+    const inProject = (tab: (typeof tabs)[number]) => tab.targetId === scope.targetId && isWithinPath(toWorkspaceRoot(tab.path), scope.cwd)
+    const visible = primary ? tabs.filter(inProject) : tabs
+    const active = visible.find((tab) => tab.id === activeId) ?? visible[0]
+    return active?.kind === 'file' && inProject(active) ? toWorkspaceRoot(active.path) : undefined
+  })
   if ('reason' in scope) {
     return <div className="px-4 py-6 text-center text-ui text-qn-dim">{scope.reason}</div>
   }
   // key 按项目区分，切换项目时重建内部状态。
   const key = `${scope.targetId}:${scope.cwd}`
-  if (tool === 'explorer') return <FileExplorer key={key} targetId={scope.targetId} root={scope.cwd} className="min-h-0 flex-1" />
+  if (tool === 'explorer') return <FileExplorer key={key} targetId={scope.targetId} root={scope.cwd} activeFilePath={activeFilePath} className="min-h-0 flex-1" />
   if (tool === 'search') return <SearchPanel key={key} targetId={scope.targetId} root={scope.cwd} className="min-h-0 flex-1" />
   if (tool === 'run') return <RunPanel key={key} targetId={scope.targetId} cwd={scope.cwd} />
+  if (tool === 'schedule') return <SchedulePanel key={key} targetId={scope.targetId} cwd={scope.cwd} />
   return <GitPanel key={key} targetId={scope.targetId} cwd={scope.cwd} />
 }
 
@@ -125,7 +136,7 @@ export function ProjectFilesView({ onQuickOpen }: { onQuickOpen: () => void }) {
           <button type="button" className="qn-button-subtle aria-pressed:bg-qn-active" aria-pressed={tool === 'search'}
             onClick={() => useDock.getState().toggleTool('search')}>{t('搜内容')}</button>
         </div>
-        <ToolBody tool={tool} />
+        <ToolBody tool={tool} primary />
         <ResizeHandle orientation="vertical" value={width} min={TOOL_MIN} max={TOOL_MAX}
           label={t('调整文件导航宽度')} className="absolute inset-y-0 -right-1" onChange={useDock.getState().setToolWidth} />
       </aside>

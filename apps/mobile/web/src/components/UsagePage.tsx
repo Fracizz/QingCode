@@ -148,7 +148,7 @@ export function UsageHome() {
   if (selected) return <UsageDetail target={selected} onBack={() => setSelectedId(null)} />
 
   return (
-    <PullToRefresh className="qn-body qn-scroll qn-workspace qn-workspace-home qn-rise" label={pageName('usage')}
+    <PullToRefresh className="qn-body qn-scroll qn-workspace qn-workspace-home" label={pageName('usage')}
       disabled={!activeId} onRefresh={refresh} scrollKey={JSON.stringify(['workspace', 'usage', activeId])}>
       {targets.length === 0 ? (eventsError || error ? <Empty>{t('没有可用的目标。')}</Empty> : <Loading text={t('正在读取目标…')} />) : (
         <>

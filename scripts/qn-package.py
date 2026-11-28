@@ -50,38 +50,50 @@ def build_remote(args, branch, commit, transfer):
     return version
 
 
+def store_artifacts(staged, release, version, names):
+    manifest = staged / "SHA256SUMS"
+    hashes = []
+    for name in names:
+        path = staged / name
+        if not path.stat().st_size:
+            raise ValueError(f"产物为空：{name}")
+        digest = hashlib.sha256()
+        with path.open("rb") as artifact:
+            while chunk := artifact.read(1024 * 1024):
+                digest.update(chunk)
+        hashes.append(f"{digest.hexdigest()}  {name}")
+    if hashes != manifest.read_text(encoding="ascii").splitlines():
+        raise ValueError("本机产物与 SHA256SUMS 不匹配")
+
+    # 同文件系统内放置文件，不覆盖已有产物，最后放入校验清单表示整版齐全。
+    published = []
+    try:
+        for name in names:
+            destination = release / name
+            destination.hardlink_to(staged / name)
+            published.append(destination)
+        (release / f"SHA256SUMS-{version}.txt").hardlink_to(manifest)
+    except BaseException:
+        for path in published:
+            path.unlink()
+        raise
+
+
 def retrieve(version, target, transfer):
     release = ROOT / "release"
     release.mkdir(parents=True, exist_ok=True)
-    destination = release / version
-    if destination.exists():
-        raise FileExistsError(f"本机已有此版本目录：{destination}")
-
     names = []
     if target != "android":
         names.append(f"QingCode-Next-{version}-x64.exe")
     if target != "desktop":
         names.append(f"QingCode-Next-{version}-android.apk")
     with tempfile.TemporaryDirectory(prefix=".qn-package-", dir=release) as work:
-        staged = Path(work) / version
-        staged.mkdir()
+        staged = Path(work)
         for name in [*names, "SHA256SUMS"]:
             run(["agent-cli-x", "get", BUILD_PEER, f"dl:{transfer}/{name}", str(staged / name)])
-        hashes = []
-        for name in names:
-            path = staged / name
-            if not path.stat().st_size:
-                raise ValueError(f"产物为空：{name}")
-            digest = hashlib.sha256()
-            with path.open("rb") as artifact:
-                while chunk := artifact.read(1024 * 1024):
-                    digest.update(chunk)
-            hashes.append(f"{digest.hexdigest()}  {name}")
-        if hashes != (staged / "SHA256SUMS").read_text(encoding="ascii").splitlines():
-            raise ValueError("取回的文件与构建机 SHA256SUMS 不匹配")
-        staged.rename(destination)
+        store_artifacts(staged, release, version, names)
     run(["node", str(ROOT / "apps/desktop/build/release-retention.mjs")])
-    print(f"已取回并校验 {destination}")
+    print(f"已取回并校验 {version}，产物位于 {release}")
 
 
 def main():

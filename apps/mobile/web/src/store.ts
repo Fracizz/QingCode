@@ -315,6 +315,7 @@ type WorkspaceProject = {
 
 type AppState = {
   page: Page
+  unanimatedNavigation: number
   targetsReturnPage: 'connections' | 'workspace'
   projectsReturnPage: 'targets' | 'workspace'
   chatReturnPage: 'workspace' | 'threads'
@@ -387,7 +388,7 @@ type AppState = {
   saveEdit: () => Promise<void>
   closeForm: () => void
   removeConnection: (id: string) => Promise<void>
-  activate: (id: string, page?: 'workspace' | 'targets') => Promise<void>
+  activate: (id: string, page?: 'workspace' | 'targets', options?: { startup?: boolean }) => Promise<void>
   deactivate: () => void
   loadTargets: () => Promise<void>
   loadAgentSettings: () => Promise<void>
@@ -409,7 +410,7 @@ type AppState = {
   refreshThreads: (options?: { skipFailed?: boolean }) => Promise<void>
   discoverWorkspaceSessions: (projects: readonly Project[]) => Promise<DiscoveredThread[]>
   newThread: (agent?: AgentKind, workspace?: WorkspaceProject) => Promise<boolean>
-  openThread: (id: string, agent?: AgentKind, workspace?: WorkspaceProject) => Promise<boolean>
+  openThread: (id: string, agent?: AgentKind, workspace?: WorkspaceProject, options?: { restoring?: boolean }) => Promise<boolean>
   loadEarlierHistory: (beforeApply: () => void) => Promise<void>
   archiveConversation: (targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>) => Promise<void>
   listArchivedConversations: (project: Project) => Promise<{ threads: ThreadSummary[]; error: string | null }>
@@ -1077,7 +1078,7 @@ export const useApp = create<AppState>((set, get) => {
           return
         }
         set({ projects, selectedTargetId: chat.targetId, selectedProjectId: chat.projectId })
-        await get().openThread(chat.threadId, chat.agent)
+        await get().openThread(chat.threadId, chat.agent, undefined, { restoring: true })
         if (epoch === desktopEpoch && get().page === 'chat') pendingRestore = null
       } catch (err) {
         if (isCurrent()) markRepairError(conn, epoch, err)
@@ -2190,6 +2191,7 @@ export const useApp = create<AppState>((set, get) => {
 
   return {
     page: 'connections',
+    unanimatedNavigation: 0,
     targetsReturnPage: 'workspace',
     projectsReturnPage: 'workspace',
     chatReturnPage: 'threads',
@@ -2376,7 +2378,7 @@ export const useApp = create<AppState>((set, get) => {
             .flatMap(([key, value]) => value === true ? [[key, true] as const] : []))
           set({ connections, archivedThreads, queuedSends: restoreQueues(queues, connections, archivedThreads),
             threadAccessModes: restoreAccessPrefs(accessPrefs, connections, archivedThreads), booting: false })
-          if (activeId) await get().activate(activeId)
+          if (activeId) await get().activate(activeId, 'workspace', { startup: true })
           else void get().refreshStatuses()
         } catch (err) {
           set({ booting: false, error: friendlyError(err, t('读取本地连接失败')) })
@@ -2722,7 +2724,7 @@ export const useApp = create<AppState>((set, get) => {
       void get().refreshStatuses()
     },
 
-    activate: async (id, page = 'workspace') => {
+    activate: async (id, page = 'workspace', { startup = false } = {}) => {
       const state = get()
       const conn = state.connections.find((item) => item.id === id)
       if (!conn) return
@@ -2746,6 +2748,7 @@ export const useApp = create<AppState>((set, get) => {
       set({
         activeId: id,
         page,
+        ...(startup ? { unanimatedNavigation: state.unanimatedNavigation + 1 } : {}),
         targetsReturnPage: page === 'targets' ? 'connections' : 'workspace',
         eventsConnected: false,
         eventsError: null,
@@ -3395,7 +3398,7 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    openThread: async (id, agent, workspace) => {
+    openThread: async (id, agent, workspace, { restoring = false } = {}) => {
       const source = get()
       const conn = activeConnection(source)
       const targetId = workspace?.project.targetId ?? source.selectedTargetId
@@ -3421,6 +3424,7 @@ export const useApp = create<AppState>((set, get) => {
           selectedThreadId: id,
           selectedAgent: picked,
           page: 'chat',
+          ...(restoring ? { unanimatedNavigation: get().unanimatedNavigation + 1 } : {}),
           chatReturnPage: chatReturnPage(source),
           error: null,
         })

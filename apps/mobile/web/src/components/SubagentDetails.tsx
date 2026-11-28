@@ -5,7 +5,7 @@ import {
   t,
   translateMessage,
 } from '@qn/codex-client'
-import { ArrowLeft, Atom, Bot, ChevronRight, RotateCw, Compass, Feather, Gem, Leaf, Puzzle, Rocket, Telescope, type LucideIcon } from 'lucide-react'
+import { Aperture, ArrowLeft, ChevronRight, Command, Crosshair, Hexagon, Network, Radio, RotateCw, Shapes, Sparkle, Workflow, type LucideIcon } from 'lucide-react'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { streamingReplyId } from '../chatGroups'
 import { friendlyError } from '../state'
@@ -23,23 +23,19 @@ function AgentBadge({ status }: { status: string }) {
   return <Badge tone={tone === 'active' ? 'accent' : tone}>{status ? translateMessage(status) : t('状态未知')}</Badge>
 }
 
-// 子代理头像：按子代理标识稳定取图标和配色，多个子代理一眼可分；不传标识时用通用机器人图标。
-// 实色底 + 白色图标，与项目首字母头像同一套 avatar token，深浅主题下图标对比度都足够。
+// 两端按相同顺序取图标，头像前景向对应主题的正文色混合以保持对比度。
 const agentSeed = (entry: SubagentEntry) => entry.threadId || entry.key
-const AVATAR_ICONS = [Telescope, Compass, Rocket, Feather, Leaf, Atom, Puzzle, Gem] satisfies LucideIcon[]
-const AVATAR_COLORS = [
-  'bg-qn-avatar-1', 'bg-qn-avatar-2', 'bg-qn-avatar-3', 'bg-qn-avatar-4',
-  'bg-qn-avatar-5', 'bg-qn-avatar-6', 'bg-qn-avatar-7', 'bg-qn-avatar-8',
-]
+const AVATAR_ICONS = [Aperture, Command, Crosshair, Shapes, Radio, Workflow, Sparkle, Hexagon] satisfies LucideIcon[]
 
-function AgentAvatar({ seed, size = 17, className = 'size-8' }: { seed?: string; size?: number; className?: string }) {
-  if (!seed) return <span className={`grid shrink-0 place-items-center rounded-lg bg-violet-400/12 text-violet-300 ${className}`}>
-    <Bot size={size} strokeWidth={1.8} aria-hidden />
-  </span>
+function AgentAvatar({ seed, size = 17, className = 'size-8 rounded-lg' }: { seed: string; size?: number; className?: string }) {
   const { icon, color } = subagentAvatar(seed)
   const Icon = AVATAR_ICONS[icon % AVATAR_ICONS.length]!
-  return <span className={`grid shrink-0 place-items-center rounded-lg text-white ${AVATAR_COLORS[color % AVATAR_COLORS.length]} ${className}`}>
-    <Icon size={size} strokeWidth={1.9} aria-hidden />
+  const tint = `var(--color-qn-avatar-${color + 1})`
+  return <span className={`grid shrink-0 place-items-center ${className}`} aria-hidden style={{
+    backgroundColor: `color-mix(in srgb, ${tint} 18%, transparent)`,
+    color: `color-mix(in srgb, ${tint} 52%, var(--color-qn-text))`,
+  }}>
+    <Icon size={size} strokeWidth={2} />
   </span>
 }
 
@@ -243,7 +239,7 @@ export function SubagentDetails({ item, renderItem }: {
         onClick={() => setSelected(entries[0]?.key ?? '')}>
         {entries.length === 1
           ? <AgentAvatar seed={agentSeed(entries[0]!)} size={12} className="size-5 rounded-md" />
-          : <Bot size={16} strokeWidth={1.8} className="shrink-0 text-violet-300" aria-hidden />}
+          : <Network size={16} strokeWidth={2} className="shrink-0 text-qn-muted" aria-hidden />}
         <span className="min-w-0 flex-1 truncate">{translateMessage(item.title)}{entries.length > 1 ? ` · ${entries.length}` : ''}</span>
         {item.status && <AgentBadge status={item.status} />}
         <ChevronRight size={15} className="shrink-0 text-qn-dim" aria-hidden />

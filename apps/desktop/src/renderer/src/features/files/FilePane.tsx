@@ -8,6 +8,7 @@ import {
   Download,
   FileText,
   LockKeyhole,
+  MessageSquarePlus,
   PanelRightClose,
   RotateCw,
   Save,
@@ -18,7 +19,9 @@ import { t } from '@qn/codex-client'
 import { ErrorNote, IconButton, Spinner } from '../../components/ui'
 import { cn } from '../../lib/cn'
 import { copyText } from '../../lib/clipboard'
-import { isWithinPath } from '../explorer/treeModel'
+import { useTargets } from '../../store/targets'
+import { addProjectMention } from '../composer/projectMention'
+import { isWithinPath, relativePath, toWorkspaceRoot } from '../explorer/treeModel'
 import { downloadProjectFile } from '../workspace/download'
 import { openFile } from '../workspace/openers'
 import { CodeEditor } from './editor/CodeEditor'
@@ -136,7 +139,7 @@ export function FilePane({ className, scope, primary = false }: {
     useFiles()
   const editorRef = useRef<EditorView>(null)
   if (!open && !primary) return null
-  const inProject = (tab: Tab) => scope && tab.targetId === scope.targetId && isWithinPath(tab.path, scope.cwd)
+  const inProject = (tab: Tab) => scope && tab.targetId === scope.targetId && isWithinPath(toWorkspaceRoot(tab.path), scope.cwd)
   const tabs = primary ? allTabs.filter(inProject) : allTabs
   const active = tabs.find((tab) => tab.id === activeId) ?? tabs[0] ?? null
   const markdown = active?.kind === 'file' && fileKind(active.path) === 'markdown'
@@ -158,6 +161,16 @@ export function FilePane({ className, scope, primary = false }: {
                 >
                   <LockKeyhole size={12} />
                 </span>
+              )}
+              {scope && inProject(active) && active.kind === 'file' && active.status === 'ready' && (
+                <IconButton label={t('添加到对话')} size="sm" onClick={() => {
+                  const path = relativePath(scope.cwd, toWorkspaceRoot(active.path))
+                  if (!addProjectMention(scope.targetId, scope.cwd, path)) {
+                    useTargets.setState({ notice: t('请先打开当前项目的对话') })
+                  }
+                }}>
+                  <MessageSquarePlus size={13} />
+                </IconButton>
               )}
               {scope && inProject(active) && active.kind === 'file' && active.targetId !== 'local' && (
                 <IconButton label={t('下载远程磁盘文件到本机')} size="sm"
