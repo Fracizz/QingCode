@@ -1,5 +1,5 @@
 import { ArrowDown, Bot, ChevronDown, ListChecks, PanelLeft, Square } from 'lucide-react'
-import { AGENT_CAPABILITIES, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
+import { AGENT_CAPABILITIES, branchPoint, canReviseMessage, chatCommands, chatCommandUnavailable, collectSubagents, includeWorkSummary, interruptTurnIdOf, mergeSlashCommands, planApproval, resolveAccessMode, sessionAccessOptions, sessionStatus, sessionStatusLabels, revisionNote, turnOpeningMessages, turnSteerBlock, type ChatCommandId, type ItemView, type UserInput, t, translateMessage } from '@qn/codex-client'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentLabel, agentPlaceholder, sessionKey } from '../agents'
 import { bindChatPinch } from '../chatFont'
@@ -69,6 +69,7 @@ export function ChatPage() {
   const needsRepair = useApp((s) => (activeId ? s.needsRepair[activeId] : undefined))
   const beginRepair = useApp((s) => s.beginRepair)
   const send = useApp((s) => s.send)
+  const sendRevision = useApp((s) => s.sendRevision)
   const interrupt = useApp((s) => s.interrupt)
   const compactConversation = useApp((s) => s.compactConversation)
   const compactionBlockedReason = useApp(selectedCompactionBlockedReason)
@@ -80,8 +81,6 @@ export function ChatPage() {
   const updateAnnotation = useApp((s) => s.updateAnnotation)
   const removeAnnotation = useApp((s) => s.removeAnnotation)
   const ensureOpen = useApp((s) => s.ensureOpen)
-  const claudeCost = useApp((s) => selectedAgent === 'claude'
-    ? s.claudeCosts[JSON.stringify([selectedTargetId, selectedThreadId])] : undefined)
 
   const chatKey = JSON.stringify([activeId, fingerprint, selectedTargetId, selectedAgent, selectedProjectId, selectedThreadId])
   const [quote, setQuote] = useState<{ key: string; text: string } | null>(null)
@@ -290,10 +289,24 @@ export function ChatPage() {
     setAwayFromBottom(false)
   }
 
-  async function resend(text: string, attachments: UserInput[]) {
-    const sent = await send(text, attachments, false, 'queue', { keepDraft: true })
-    if (sent) jumpToLatest()
-    return sent
+  // 编辑并重发与电脑版同一套规则：能回退的原地改写，只能分支的从上一轮分出新会话；运行中不能改。
+  const revisionCaps = AGENT_CAPABILITIES[selectedAgent]
+  const turnOpeners = useMemo(() => turnOpeningMessages(view), [view?.items, view?.turns])
+  // 整个会话的第一条消息分支重发时开新会话，说明文字不同。
+  const startingMessage = useMemo(() => {
+    const first = turnOpeners.keys().next().value
+    return first && branchPoint(view, first)?.kind === 'start' ? first : null
+  }, [turnOpeners, view?.historyCursor])
+  const revisionFor = (itemId: string) => {
+    if (!selectedThreadId || !canReviseMessage(revisionCaps, running, itemId, turnOpeners)) return {}
+    return {
+      onResend: async (text: string, attachments: UserInput[]) => {
+        const sent = await sendRevision(itemId, text, attachments)
+        if (sent) jumpToLatest()
+        return sent
+      },
+      resendNote: revisionNote(revisionCaps, itemId === startingMessage),
+    }
   }
 
   async function stopTurn() {
@@ -404,7 +417,7 @@ export function ChatPage() {
         className="qn-chat-header"
         title={threadTitle || project?.name || t('对话')}
         icon={
-          <Button variant="ghost" className="qn-header-icon qn-header-island size-[44px] shrink-0" onClick={() => setSwitching(true)}
+          <Button variant="ghost" className="qn-header-icon qn-header-island size-[40px] shrink-0" onClick={() => setSwitching(true)}
             aria-label={t('切换会话')} aria-haspopup="dialog" aria-expanded={switching}>
             <PanelLeft size={20} strokeWidth={1.75} aria-hidden />
           </Button>
@@ -421,9 +434,9 @@ export function ChatPage() {
           // 右侧操作收进一个悬浮按钮组，与左侧会话切换按钮呼应，标题区不再被分隔线截断。
           <div className="qn-header-island">
             {/* 常驻新建入口：不必先回到会话列表；无当前项目时由按钮内弹出项目选择。 */}
-            <NewSessionButton project={project} projects={projects} iconOnly className="qn-header-icon size-[44px] shrink-0" />
+            <NewSessionButton project={project} projects={projects} iconOnly className="qn-header-icon h-[40px] w-[46px] shrink-0" />
             {/* 对话中直接进入项目文件、终端等页面，不必先退回项目列表。 */}
-            {project && <ProjectTools key={project.id} project={project} compact className="qn-header-icon size-[44px] shrink-0"
+            {project && <ProjectTools key={project.id} project={project} compact className="qn-header-icon h-[40px] w-[46px] shrink-0"
               actions={dockActions} />}
           </div>
         }
@@ -441,7 +454,9 @@ export function ChatPage() {
       {approvals.length > 0 && (
         <button className="qn-row border-b border-qn-divider bg-qn-panel px-3 text-sm" type="button"
           onClick={() => approvalsRef.current?.scrollIntoView({ block: 'nearest' })}>
-          <Badge tone="warn">{approvals.length === 1 ? t('1 项待审批') : t('{count} 项待审批', { count: approvals.length })}</Badge>
+          <Badge tone="warn">{approvals.every((item) => item.questions?.length)
+            ? approvals.length === 1 ? t('1 项待回答') : t('{count} 项待回答', { count: approvals.length })
+            : approvals.length === 1 ? t('1 项待审批') : t('{count} 项待审批', { count: approvals.length })}</Badge>
           <span className="min-w-0 flex-1 truncate text-qn-muted">{translateMessage(approvals[0]?.title ?? '')}</span><ChevronDown size={16} aria-hidden />
         </button>
       )}
@@ -477,7 +492,7 @@ export function ChatPage() {
                           showStreamingDots={block.item.id === streamingId}
                           showActions={finalReply}
                           replyTimeInSummary={previous?.kind === 'work' && previous.reply?.id === block.item.id}
-                          onResend={selectedThreadId ? resend : undefined}
+                          {...(block.item.kind === 'user' ? revisionFor(block.item.id) : {})}
                           onFork={forkAction(block.item.id)} />
                         : <ToolGroup items={block.items} onQuote={onQuote} />}
                       {trail && <ToolGroup trail items={trail} onQuote={onQuote} />}
@@ -590,7 +605,7 @@ ${text}` : text)
             </>
           }
           trailing={
-            <ContextUsage key={`context:${chatKey}`} tokenUsage={view?.tokenUsage} estimatedCostUsd={claudeCost}
+            <ContextUsage key={`context:${chatKey}`} tokenUsage={view?.tokenUsage}
               panel={contextPanel?.key === chatKey ? contextPanel.panel : null}
               onPanelChange={(panel) => setContextPanel(panel ? { key: chatKey, panel } : null)}
               compact={selectedThreadId ? {

@@ -109,7 +109,7 @@ export function ConnectionsPage() {
                         <span className="qn-list-primary qn-clamp-2">{connectionName(conn.name)}</span>
                         <span className="qn-subtitle block">{current ? t('当前电脑 · ') : ''}{formatAddress(conn.host, conn.port)}</span>
                       </span>
-                      <span className="flex shrink-0 flex-col items-end gap-1">
+                      <span className="qn-conn-status flex shrink-0 flex-col items-end gap-1">
                         <Badge tone={tone}>{repair ? t('重新配对') : stateText[status]}</Badge>
                         {latency != null && <span className="text-[11px] text-qn-muted tabular-nums" title={t('手机到电脑的 HTTPS 探测耗时')}>{latency} ms</span>}
                       </span>

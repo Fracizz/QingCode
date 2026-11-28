@@ -85,11 +85,11 @@ export function UserInputCard({ approval, submitting, offline, onSubmit }: {
                         onClick={() => update(question, (value) => pickUserInputOption(question, value, option.label))}
                         className="qn-choice"
                       >
-                        {/* 选中只加深描边并打勾，不铺强调色底：同一屏的品牌色留给提交按钮。 */}
+                        {/* 选中换青色描边、浅青底并打勾，样式见 .qn-choice。 */}
                         {selected && <Check size={14} strokeWidth={2.25} className="qn-choice-check" aria-hidden />}
                         <div className="text-compact break-words">{question.localizedOptions ? translateMessage(option.label) : option.label}</div>
-                        {/* 说明默认最多两行，选中后展开全文。 */}
-                        {option.description && <div className={`text-xs text-qn-muted break-words${selected ? '' : ' line-clamp-2'}`}>{option.description}</div>}
+                        {/* 说明始终显示全文：选中时再展开会让卡片高度跳动。 */}
+                        {option.description && <div className="text-xs text-qn-muted break-words">{option.description}</div>}
                       </button>
                     )
                   })}

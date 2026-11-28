@@ -2,6 +2,7 @@
 // 桌面与手机的模型选项形状一致，这里只依赖用得到的字段。
 import { t } from '../../protocol/src/i18n'
 import type { AgentKind } from '../../protocol/src/messages'
+import type { TurnOverrides } from './api'
 
 export type ModelOptionLike = {
   model: string
@@ -23,6 +24,19 @@ export type ModelConfig = { model: string | null; effort: string | null }
  * 之后历史与它不同，说明另一端用别的模型发过消息。
  */
 export type ThreadModelPrefs = { model: string | null; effort: string | null; fast: boolean; seen?: ModelConfig }
+
+/**
+ * 从原会话开出新会话时沿用的选择：以原会话当前选择为底，叠上首轮实际发送的覆盖项（排队消息按排队时的配置发送）。
+ * seen 属于原会话的历史，不带过去。
+ */
+export function inheritedModelPrefs(source: ThreadModelPrefs, overrides: TurnOverrides = {}): ThreadModelPrefs {
+  const { model, effort, fast } = source
+  return {
+    model: overrides.model || model,
+    effort: overrides.effort || effort,
+    fast: overrides.serviceTier === undefined ? fast : overrides.serviceTier !== null,
+  }
+}
 
 /**
  * 历史回报的模型 → 选择器里的选项。精确匹配优先；Claude 历史记的是完整模型 ID（如 claude-opus-5-5），

@@ -438,7 +438,7 @@ export function Composer({
             onCompositionStart={() => { composing.current = true; setImeActive(true) }}
             onCompositionEnd={() => { composing.current = false; setImeActive(false) }}
           />
-          {/* textarea 不能给部分文字上色：叠一层同排版的透明副本，只让技能标记显形并盖住原字。 */}
+          {/* textarea 不能给部分文字上色：叠一层同排版的副本代为显示文字，技能标记在副本里上色。 */}
           {tokenParts.some((part) => part.skill) && (
             <div ref={mirror} className="qn-textarea qn-composer-mirror" aria-hidden>
               {tokenParts.map((part, index) => part.skill
@@ -455,7 +455,8 @@ export function Composer({
             <Button variant="ghost" className="qn-icon-button" aria-label={t('添加图片')}
               title={imageUnavailable ?? (images.length >= MAX_IMAGES ? t('一条消息最多 {max} 张图片', { max: MAX_IMAGES }) : undefined)}
               onClick={() => void pickImages()} disabled={Boolean(disabled || picking || sending || imageUnavailable || images.length >= MAX_IMAGES)}>
-              <ImagePlus size={19} strokeWidth={1.75} aria-hidden />
+              {/* 22px 配合固定线宽：19px 缩放后线条落在半像素上，细节发虚。 */}
+              <ImagePlus size={22} strokeWidth={1.75} absoluteStrokeWidth aria-hidden />
             </Button>
             {/* 停止与发送共用一个位置（参考 Orca 手机版）：没有可发送内容时是停止键，一输入就换成发送键（排队）。 */}
             {running && !canSend && !sending && (

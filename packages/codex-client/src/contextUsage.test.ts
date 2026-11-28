@@ -15,15 +15,15 @@ describe('上下文占用', () => {
 })
 
 describe('单轮用量', () => {
-  it('可读取无上下文大小的单轮统计，同时保留零费用', () => {
+  it('可读取无上下文大小的单轮统计，不带出费用', () => {
     const usage = { estimated: true, modelContextWindow: null, last: { totalTokens: 128 }, estimatedCostUsd: 0 }
     expect(contextUsage(usage)).toBeNull()
-    expect(estimatedTurnUsage(usage)).toEqual({ tokens: 128, costUsd: 0 })
+    expect(estimatedTurnUsage(usage)).toEqual({ tokens: 128 })
   })
 
   it('忽略标准上下文统计和无效字段', () => {
     expect(estimatedTurnUsage({ last: { totalTokens: 10 } })).toBeNull()
     expect(estimatedTurnUsage({ estimated: true, last: { totalTokens: -1 }, estimatedCostUsd: Infinity })).toBeNull()
-    expect(estimatedTurnUsage({ estimated: true, last: { totalTokens: 5 } })).toEqual({ tokens: 5, costUsd: null })
+    expect(estimatedTurnUsage({ estimated: true, last: { totalTokens: 5 } })).toEqual({ tokens: 5 })
   })
 })

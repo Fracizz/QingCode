@@ -1,4 +1,4 @@
-import { CLAUDE_WAITING_FOR_QUOTA, claudeQuotaSummary, t, type RateLimitSnapshot } from '@qn/codex-client'
+import { CLAUDE_WAITING_FOR_QUOTA, claudeQuotaSummary, type RateLimitSnapshot } from '@qn/codex-client'
 
 export type ClaudeCostEvent = { threadId: string; usd: number; estimated: boolean }
 
@@ -28,32 +28,6 @@ export function costFromNotification(msg: unknown): ClaudeCostEvent | null {
   return { threadId, usd, estimated: usage?.estimated !== false }
 }
 
-/** 传入 threadId 时只统计本会话；否则汇总目标上的所有会话。 */
-export function sumCost(
-  costByThread: Readonly<Record<string, number>> | undefined,
-  threadId?: string | null,
-): number {
-  if (!costByThread) return 0
-  const values =
-    threadId === undefined || threadId === null
-      ? Object.values(costByThread)
-      : [costByThread[threadId] ?? 0]
-  return values.reduce((total, value) => total + (Number.isFinite(value) ? value : 0), 0)
-}
-
-export function formatCost(usd: number): string {
-  if (!Number.isFinite(usd) || usd <= 0) return '$0'
-  if (usd < 0.01) return `$${Number(usd.toFixed(4))}`
-  if (usd < 1) return `$${Number(usd.toFixed(3))}`
-  return `$${Number(usd.toFixed(2))}`
-}
-
 export function claudeRateLimitStatus(snapshot: RateLimitSnapshot | null): string {
   return claudeQuotaSummary(snapshot) ?? CLAUDE_WAITING_FOR_QUOTA
-}
-
-export function claudeCompactText(snapshot: RateLimitSnapshot | null, costUsd: number): string {
-  const limit = claudeRateLimitStatus(snapshot)
-  const cost = costUsd > 0 ? t('≈{cost}（估算）', { cost: formatCost(costUsd) }) : ''
-  return cost ? `${limit} · ${cost}` : limit
 }

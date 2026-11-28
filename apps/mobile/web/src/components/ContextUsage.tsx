@@ -1,10 +1,9 @@
-import { contextUsage, estimatedTurnUsage, formatTokens, getLocale, t } from '@qn/codex-client'
+import { contextUsage, estimatedTurnUsage, formatTokens, t } from '@qn/codex-client'
 import { useState } from 'react'
 import { Button, Dialog, LoadingIcon } from './ui'
 
-export function ContextUsage({ tokenUsage, estimatedCostUsd, compact, panel: controlledPanel, onPanelChange }: {
+export function ContextUsage({ tokenUsage, compact, panel: controlledPanel, onPanelChange }: {
   tokenUsage: unknown
-  estimatedCostUsd?: number
   /** 压缩不再二次确认：点按钮即关闭面板并开始压缩。 */
   compact?: { busy: boolean; blockedReason: string | null; onCompact: () => void }
   panel?: 'usage' | null
@@ -15,19 +14,17 @@ export function ContextUsage({ tokenUsage, estimatedCostUsd, compact, panel: con
   const setPanel = onPanelChange ?? setOwnPanel
   const usage = contextUsage(tokenUsage)
   const turn = estimatedTurnUsage(tokenUsage)
-  if (!usage && !turn && !compact && estimatedCostUsd == null && !panel) return null
+  if (!usage && !turn && !compact && !panel) return null
 
   const percent = usage?.percent ?? 0
   const label = usage ? t('上下文已用 {percent}%', { percent }) : t('暂无上下文用量')
-  const sessionUsage = turn !== null || estimatedCostUsd != null
+  const sessionUsage = turn !== null
   const color = percent >= 90 ? 'text-qn-danger' : percent >= 75 ? 'text-qn-warn' : 'text-qn-muted'
   // 进度条正常时用品牌色，接近上限才换成警示色。
   const meterColor = percent >= 90 ? 'text-qn-danger' : percent >= 75 ? 'text-qn-warn' : 'text-qn-accent'
   const busy = compact?.busy === true
   const stats: { label: string; value: string }[] = []
-  if (turn?.tokens != null) stats.push({ label: t('最近上报的单轮用量'), value: `${formatTokens(turn.tokens)} tokens` })
-  if (turn?.costUsd != null) stats.push({ label: t('单轮费用估算'), value: formatCost(turn.costUsd) })
-  if (estimatedCostUsd != null) stats.push({ label: t('本设备已收到的会话费用估算'), value: formatCost(estimatedCostUsd) })
+  if (turn) stats.push({ label: t('最近上报的单轮用量'), value: `${formatTokens(turn.tokens)} tokens` })
   return (
     <>
       <Button variant="ghost" className="qn-icon-button px-1!"
@@ -94,8 +91,4 @@ function ProgressRing({ percent, size }: { percent: number; size: number }) {
         strokeDasharray={`${percent} 100`} />
     </svg>
   )
-}
-
-function formatCost(usd: number): string {
-  return new Intl.NumberFormat(getLocale() === 'en' ? 'en-US' : 'zh-CN', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(usd)
 }

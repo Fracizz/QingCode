@@ -1,5 +1,6 @@
 // 按用户消息定位轮次：文件回滚与“从上一轮分支后重发”共用。
 
+import { t } from '../../protocol/src/i18n'
 import type { ThreadView, TurnMeta } from './conversation'
 
 /** 条目 → 所属轮次。重新载入后同一条目可能同时有实时记录和历史记录，后写入的（历史）优先。 */
@@ -60,4 +61,24 @@ export function branchPoint(
   }
   if (view.historyCursor) return { kind: 'earlier' }
   return unknown ? null : { kind: 'start' }
+}
+
+/** 编辑重发需要的 Agent 能力：能回退的原地改写，只能分支的从上一轮分出新会话。 */
+export type RevisionCapabilities = { revert: boolean; fork: boolean }
+
+/**
+ * 用户消息能否“编辑并重发”，电脑版与手机版共用。
+ * 运行中不能改（截断历史会打断本轮）；能回退的 Agent 任意消息都可以，只能分支的只限开启一轮的消息。
+ */
+export function canReviseMessage(
+  caps: RevisionCapabilities, running: boolean, itemId: string, turnOpeners: ReadonlyMap<string, string>,
+): boolean {
+  if (running) return false
+  return caps.revert || (caps.fork && turnOpeners.has(itemId))
+}
+
+/** 编辑框里常驻的说明：分支重发会开新会话，原会话保留；原地回退时不需要说明。 */
+export function revisionNote(caps: RevisionCapabilities, firstMessage: boolean): string | undefined {
+  if (caps.revert) return undefined
+  return firstMessage ? t('这是第一条消息：将开新会话发送，原会话保留。') : t('将从上一轮分出新会话发送，原会话保留。')
 }

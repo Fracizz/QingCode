@@ -9,7 +9,7 @@ export const sessionStatusLabels: Record<SessionStatus, string> = {
   idle: t('空闲'),
   running: t('运行中'),
   pending: t('待审批'),
-  input: t('待输入'),
+  input: t('待回答'),
   completed: t('已完成'),
   failed: t('失败'),
   interrupted: t('已中断'),
@@ -43,12 +43,18 @@ export function threadActivityFromStatus(value: unknown): ThreadActivity | undef
   }
 }
 
+function isQuestion(approval: unknown): boolean {
+  const questions = typeof approval === 'object' && approval !== null ? (approval as { questions?: unknown }).questions : undefined
+  return Array.isArray(questions) && questions.length > 0
+}
+
 export function sessionStatus(
   view?: Pick<ThreadView, 'activity' | 'status'> & { pendingApprovals: readonly unknown[] },
   listed?: ThreadActivity,
   unread = false,
 ): SessionStatus {
-  if (view?.pendingApprovals.length) return 'pending'
+  // 只剩 Agent 提问时是在等用户回答，不是审批，与卡片上的“等待回答”保持一致。
+  if (view?.pendingApprovals.length) return view.pendingApprovals.every(isQuestion) ? 'input' : 'pending'
   const activity = view?.activity ?? (view ? runtimeActivity[view.status] : listed) ?? 'idle'
   if (unread && (activity === 'idle' || activity === 'completed')) return 'unread'
   return activity

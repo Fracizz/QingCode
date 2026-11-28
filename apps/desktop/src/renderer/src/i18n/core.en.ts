@@ -188,7 +188,6 @@ export default {
 
   // 额度
   '已达额度上限': 'Quota limit reached',
-  '≈{cost}（估算）': '≈{cost} (est.)',
   '尚未更新': 'Not updated yet',
   '最后更新 {time}': 'Updated {time}',
 

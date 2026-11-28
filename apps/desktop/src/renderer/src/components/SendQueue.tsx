@@ -1,5 +1,5 @@
 import type { UserInput } from '@qn/codex-client'
-import { CornerDownRight, FileText, GitBranch, Image as ImageIcon, ListEnd, MessageSquarePlus, PanelRightOpen, Pencil, Wand2, X } from 'lucide-react'
+import { CornerDownRight, FileText, GitBranch, Image as ImageIcon, ListEnd, MessageSquarePlus, PanelRightOpen, Pencil, Wand2, X, Zap } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { isSlashInput, t, translateMessage, turnSteerBlock } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
@@ -73,6 +73,7 @@ export function SendQueue({
   const hold = useCodex((state) => state.holdPendingSend)
   const saveEdit = useCodex((state) => state.editPendingSend)
   const steer = useCodex((state) => state.steerPendingSend)
+  const insert = useCodex((state) => state.interruptPendingSend)
   const sendInNewThread = useCodex((state) => state.sendPendingInNewThread)
   const [edit, setEdit] = useState<{ id: number; text: string; error?: boolean } | null>(null)
   const [destination, setDestination] = useState<{ id: number; mode: PendingThreadMode } | null>(null)
@@ -166,7 +167,17 @@ export function SendQueue({
                       title={agent === 'claude' ? t('本轮结束时可能进入下一轮') : t('补充到当前一轮')}
                       onClick={() => void steer(chat, item.id)}
                     >
-                      <CornerDownRight size={12} aria-hidden />{t('插入')}
+                      <CornerDownRight size={12} aria-hidden />{t('引导')}
+                    </button>
+                  )}
+                  {!item.sending && running && (
+                    <button
+                      type="button"
+                      className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 text-qn-accent hover:underline"
+                      title={t('打断当前一轮后立即发送')}
+                      onClick={() => void insert(chat, item.id)}
+                    >
+                      <Zap size={12} aria-hidden />{t('插入')}
                     </button>
                   )}
                   {!item.sending && allowNewThread && newThreadActions(agent).map(({ mode, label, Icon }) => (

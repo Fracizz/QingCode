@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ItemView, TurnMeta } from './conversation'
-import { branchPoint, turnOpeningMessages } from './turnPoints'
+import { branchPoint, canReviseMessage, revisionNote, turnOpeningMessages } from './turnPoints'
 
 const user = (id: string, extra: Partial<Extract<ItemView, { kind: 'user' }>> = {}): ItemView =>
   ({ kind: 'user', id, text: id, ...extra })
@@ -44,5 +44,23 @@ describe('轮次定位', () => {
     expect(branchPoint({ items, turns }, 'missing')).toBeNull()
     const noticed = [items[0]!, items[1]!, { kind: 'notice', id: 'n', text: '' } as ItemView, items[2]!]
     expect(branchPoint({ items: noticed, turns }, 'u2')).toEqual({ kind: 'turn', turnId: 'one' })
+  })
+})
+
+describe('编辑重发规则（两端共用）', () => {
+  const openers = turnOpeningMessages({ items, turns })
+
+  it('运行中都不能改；能回退的任意消息，只能分支的只限开启一轮的消息', () => {
+    expect(canReviseMessage({ revert: true, fork: true }, true, 'u1', openers)).toBe(false)
+    expect(canReviseMessage({ revert: true, fork: true }, false, 's2', openers)).toBe(true)
+    expect(canReviseMessage({ revert: false, fork: true }, false, 'u2', openers)).toBe(true)
+    expect(canReviseMessage({ revert: false, fork: true }, false, 's2', openers)).toBe(false)
+    expect(canReviseMessage({ revert: false, fork: false }, false, 'u1', openers)).toBe(false)
+  })
+
+  it('只有分支重发才在编辑框里说明', () => {
+    expect(revisionNote({ revert: true, fork: true }, true)).toBeUndefined()
+    expect(revisionNote({ revert: false, fork: true }, true)).toContain('第一条消息')
+    expect(revisionNote({ revert: false, fork: true }, false)).toContain('上一轮')
   })
 })

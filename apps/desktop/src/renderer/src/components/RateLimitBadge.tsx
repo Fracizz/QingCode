@@ -17,12 +17,7 @@ import {
   type RateLimitWindow,
 } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
-import {
-  claudeCompactText,
-  claudeRateLimitStatus,
-  formatCost,
-  sumCost,
-} from '../lib/claudeUsage'
+import { claudeRateLimitStatus } from '../lib/claudeUsage'
 import {
   severityBarClass,
   severityTextClass,
@@ -80,13 +75,11 @@ function WindowRow({
 function Body({
   targetId,
   agent,
-  threadId,
   entry,
   now,
 }: {
   targetId: string
   agent: AgentKind
-  threadId: string | null
   entry: RateLimitEntry | undefined
   now: number
 }) {
@@ -137,14 +130,6 @@ function Body({
             </div>
           )}
           {source && <p className="text-ui-sm text-qn-muted">{source}</p>}
-          <div className="rounded-lg border border-qn-border/70 p-2">
-            <div className="flex items-center justify-between">
-              <span>{threadId ? t('本会话累计费用') : t('累计费用')}</span>
-              <span className="font-mono">
-                {t('≈{cost}（估算）', { cost: formatCost(sumCost(entry?.costByThread, threadId)) })}
-              </span>
-            </div>
-          </div>
         </div>
       ) : (
         <>
@@ -181,13 +166,6 @@ function Body({
             </div>
           )}
 
-          {snapshot?.credits?.hasCredits && (
-            <div className="mt-2 text-ui-sm text-qn-muted">
-              {t('积分：{balance}', {
-                balance: snapshot.credits.unlimited ? t('不限量') : (snapshot.credits.balance ?? t('有余额')),
-              })}
-            </div>
-          )}
           {(snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true) && (
             <div className="mt-2 text-ui-sm text-qn-danger">
               {snapshot.rateLimitReachedType
@@ -208,22 +186,20 @@ function Body({
   )
 }
 
-export function RateLimitDetails({ targetId, agent, threadId }: {
-  targetId: string; agent: AgentKind; threadId: string | null
+export function RateLimitDetails({ targetId, agent }: {
+  targetId: string; agent: AgentKind
 }) {
   const entry = useRateLimits((s) => entryFor(s.byTarget, s.byAgent, targetId, agent))
-  return <Body targetId={targetId} agent={agent} threadId={threadId} entry={entry} now={Date.now()} />
+  return <Body targetId={targetId} agent={agent} entry={entry} now={Date.now()} />
 }
 
 export function RateLimitBadge({
   targetId,
   agent = DEFAULT_AGENT,
-  threadId = null,
   prefix,
 }: {
   targetId: string | null
   agent?: AgentKind
-  threadId?: string | null
   /** 标题栏胶囊里放在额度前的说明（如目标名）。 */
   prefix?: string
 }) {
@@ -242,8 +218,7 @@ export function RateLimitBadge({
   if (!targetId || agent === 'pi') return null
   const snapshot = entry?.snapshot ?? null
   const level = severity(snapshot)
-  const cost = sumCost(entry?.costByThread, threadId)
-  const text = agent === 'claude' ? claudeCompactText(snapshot, cost) : compactText(snapshot, 'remaining')
+  const text = agent === 'claude' ? claudeRateLimitStatus(snapshot) : compactText(snapshot, 'remaining')
   const used = agent === 'codex' ? tightestPercent(snapshot) : null
   const remaining = used === null ? null : Math.round(remainingQuotaPercent(used))
 
@@ -269,7 +244,7 @@ export function RateLimitBadge({
         </button>
       </PopoverTrigger>
       <PopoverContent align="end">
-        <Body targetId={targetId} agent={agent} threadId={threadId} entry={entry} now={now} />
+        <Body targetId={targetId} agent={agent} entry={entry} now={now} />
       </PopoverContent>
     </PopoverRoot>
   )

@@ -4,7 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import type { CodexRpcLike, ItemView, ThreadView } from '@qn/codex-client'
 import { AGENT_CAPABILITIES, branchPoint, chatCommands, chatCommandUnavailable, claudeQuotaBlocked, collectSubagents, contextUsage, DRAFT_THREAD_ID,
   estimatedTurnUsage, formatTokens, includeWorkSummary, mergeSlashCommands, planApproval, sessionAccessOptions, t, takeSkillTokens, translateMessage,
-  turnOpeningMessages, turnSteerBlock, type ChatCommandId } from '@qn/codex-client'
+  canReviseMessage, revisionNote, turnOpeningMessages, turnSteerBlock, type ChatCommandId } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { buildAnnotatedMessage, sideChatExcerpt, type Annotation } from '../lib/annotations'
 import { agentLabel, sessionKey } from '../lib/agents'
@@ -28,7 +28,6 @@ import { getAccessMode } from '../features/access/accessModel'
 import { useCwdUntrusted } from '../store/projectTrust'
 import { screenFiles, useImageSupport } from '../features/composer'
 import { useSettings } from '../features/settings/settingsStore'
-import { formatCost } from '../lib/claudeUsage'
 import { copyText } from '../lib/clipboard'
 import { isAtBottom } from '../lib/diff'
 import { friendlyError } from '../lib/errors'
@@ -785,7 +784,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
                   const key = `${currentTargetId}:${currentAgent}:${currentThreadId}:${entry.key}`
                   const turnId = turnOpeners.get(entry.item.id)
                   // 能回退的 Agent 在原会话改写任意消息；只能分支的从开启一轮的消息分出新会话。
-                  const editable = !!messageChat && !running && entry.item.kind === 'user' && (revert || (fork && !!turnId))
+                  const editable = !!messageChat && entry.item.kind === 'user' && canReviseMessage({ revert, fork }, running, entry.item.id, turnOpeners)
                   const message = (
                     <MessageItem
                       key={key}
@@ -796,9 +795,7 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
                       onEdit={editable && messageChat
                         ? (_text, input) => sendRevision(messageChat, entry.item.id, input)
                         : undefined}
-                      editNote={!editable || revert ? undefined : entry.item.id === startingMessage
-                        ? t('这是第一条消息：将开新会话发送，原会话保留。')
-                        : t('将从上一轮分出新会话发送，原会话保留。')}
+                      editNote={editable ? revisionNote({ revert, fork }, entry.item.id === startingMessage) : undefined}
                       onRewind={rewindFiles && !running && turnId && entry.item.kind === 'user'
                         ? () => setRewinding({ key: chatKey, turnId })
                         : undefined}
@@ -942,15 +939,14 @@ export function ChatPanel({ visible = true, onConnect, onAddTarget }: {
         ))}</ul>
       </Modal>}
       {activeCommand === 'status' && currentTargetId && <Modal title={t('账号额度')} onClose={closeCommand}>
-        <RateLimitDetails targetId={currentTargetId} agent={currentAgent} threadId={currentThreadId} />
+        <RateLimitDetails targetId={currentTargetId} agent={currentAgent} />
       </Modal>}
       {activeCommand === 'context' && <Modal title={t('会话用量')} onClose={closeCommand}>
         <div className="space-y-2">
           {usage && <p>{t('上下文已用 {percent}% · {used} / {window} tokens', {
             percent: usage.percent, used: formatTokens(usage.used), window: formatTokens(usage.window),
           })}</p>}
-          {turnUsage?.tokens != null && <p>{t('最近上报的单轮用量 {tokens} tokens', { tokens: formatTokens(turnUsage.tokens) })}</p>}
-          {turnUsage?.costUsd != null && <p>{t('费用估算 {cost}', { cost: formatCost(turnUsage.costUsd) })}</p>}
+          {turnUsage && <p>{t('最近上报的单轮用量 {tokens} tokens', { tokens: formatTokens(turnUsage.tokens) })}</p>}
           {!usage && !turnUsage && <p className="text-qn-muted">{t('暂无会话用量')}</p>}
           {currentThreadId && <>
             <button type="button" className="qn-button" disabled={!!compactBlocked} onClick={() => void confirmCommand('compact')}>{t('压缩会话')}</button>

@@ -153,14 +153,11 @@ export function Dialog({
   children,
   onClose,
   placement = 'bottom',
-  closeAt = 'top',
 }: {
   title: string
   children: ReactNode
   onClose: () => void
   placement?: 'bottom' | 'full'
-  /** 关闭按钮放在标题栏；手机靠返回手势关闭，不再在底部放大号关闭按钮。内容自己处理关闭时（如看图点空白关闭）传 none。 */
-  closeAt?: 'top' | 'none'
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const close = useRef(onClose)
@@ -212,11 +209,9 @@ export function Dialog({
       <div className="qn-dialog-panel" {...(placement === 'bottom' ? swipe : {})}>
         <div className="mb-3 flex min-h-11 items-center gap-2">
           <h2 className="qn-title flex-1">{title}</h2>
-          {closeAt === 'top' && (
-            <Button autoFocus variant="ghost" className="qn-header-icon" onClick={onClose} aria-label={t('关闭')}>
-              <X size={20} />
-            </Button>
-          )}
+          <Button autoFocus variant="ghost" className="qn-header-icon" onClick={onClose} aria-label={t('关闭')}>
+            <X size={20} />
+          </Button>
         </div>
         {children}
       </div>

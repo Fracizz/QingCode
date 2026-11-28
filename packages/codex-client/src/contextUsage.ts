@@ -1,15 +1,14 @@
 export type ContextUsage = { percent: number; used: number; window: number }
 
-export type EstimatedTurnUsage = { tokens: number | null; costUsd: number | null }
+export type EstimatedTurnUsage = { tokens: number }
 
 /** Claude 和 pi 上报单轮统计，工具调用可使一轮包含多次模型请求。 */
 export function estimatedTurnUsage(value: unknown): EstimatedTurnUsage | null {
   if (typeof value !== 'object' || value === null) return null
-  const usage = value as { estimated?: unknown; last?: { totalTokens?: unknown }; estimatedCostUsd?: unknown }
+  const usage = value as { estimated?: unknown; last?: { totalTokens?: unknown } }
   if (usage.estimated !== true) return null
   const tokens = nonnegative(usage.last?.totalTokens)
-  const costUsd = nonnegative(usage.estimatedCostUsd)
-  return tokens === null && costUsd === null ? null : { tokens, costUsd }
+  return tokens === null ? null : { tokens }
 }
 
 function nonnegative(value: unknown): number | null {

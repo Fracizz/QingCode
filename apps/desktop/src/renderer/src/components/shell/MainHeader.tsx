@@ -35,7 +35,10 @@ export function MainHeader({ subagents }: { subagents?: ReactNode }) {
     if (!side || side.open) return null
     if (side.expired) return t('侧聊已结束')
     const view = side.threadId ? s.sessions[sessionKey(side.targetId, side.agent)]?.state.threads[side.threadId] : undefined
-    return view?.pendingApprovals.length ? t('侧聊待审批') : view?.status === 'running' ? t('侧聊运行中') : null
+    if (view?.pendingApprovals.length) {
+      return view.pendingApprovals.every((item) => item.questions?.length) ? t('侧聊待回答') : t('侧聊待审批')
+    }
+    return view?.status === 'running' ? t('侧聊运行中') : null
   })
   const threads = useCodex(currentThreads)
   const startDraft = useCodex((s) => s.startDraft)

@@ -22,7 +22,7 @@ export function ImageThumbnail({ src, alt, className, loading, externalHref }: I
         <img src={src} alt={alt} className={className} loading={loading} decoding="async" />
       </button>
       {open && (
-        <Dialog title={alt} placement="full" closeAt="none" onClose={close}>
+        <Dialog title={alt} placement="full" onClose={close}>
           <ZoomableImage src={src} alt={alt} onBlankClick={close} error={(
             <div className="text-center text-sm text-qn-muted" role="status">
               <p>{t('无法加载图片')}</p>

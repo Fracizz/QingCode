@@ -3,7 +3,6 @@ import { estimatedTurnUsage, t, toggleHiddenModel, translateMessage, withoutHidd
 import { Check, ChevronDown, Eye, EyeOff, SlidersHorizontal, Zap } from 'lucide-react'
 import type { AgentKind } from '../../../shared/backendApi'
 import { sessionKey } from '../lib/agents'
-import { formatCost } from '../lib/claudeUsage'
 import { cn } from '../lib/cn'
 import {
   contextUsage,
@@ -317,7 +316,7 @@ function usageTone(percent: number): string {
   return percent >= 90 ? 'var(--color-qn-danger)' : percent >= 75 ? 'var(--color-qn-warn)' : 'var(--color-qn-muted)'
 }
 
-/** 悬浮详情卡：标题 + 已用/窗口 + 进度条；只有单轮统计时列出 tokens 与费用。 */
+/** 悬浮详情卡：标题 + 已用/窗口 + 进度条；只有单轮统计时列出 tokens。 */
 function ContextUsageCard({ tokenUsage }: { tokenUsage: unknown }) {
   const usage = contextUsage(tokenUsage)
   const turn = estimatedTurnUsage(tokenUsage)
@@ -341,8 +340,7 @@ function ContextUsageCard({ tokenUsage }: { tokenUsage: unknown }) {
     return (
       <div className="space-y-1">
         <p className="text-ui font-medium text-qn-text">{t('最近上报的单轮用量')}</p>
-        {turn.tokens !== null && <p className="tabular-nums text-qn-muted">{formatTokensPrecise(turn.tokens)} tokens</p>}
-        {turn.costUsd !== null && <p className="text-qn-muted">{t('费用估算 {cost}', { cost: formatCost(turn.costUsd) })}</p>}
+        <p className="tabular-nums text-qn-muted">{formatTokensPrecise(turn.tokens)} tokens</p>
       </div>
     )
   }

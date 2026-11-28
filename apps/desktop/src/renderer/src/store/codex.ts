@@ -54,6 +54,7 @@ import {
   setThreadName,
   startThreadCompaction,
   startThread,
+  inheritedModelPrefs,
   steerTurn,
   supportsSubagentRequests,
   t,
@@ -349,6 +350,8 @@ type CodexState = {
   editPendingSend: (chat: ChatAddress, id: number, text: string) => boolean
   /** 把排队消息补充到当前一轮；现在不能引导时消息留在队列。 */
   steerPendingSend: (chat: ChatAddress, id: number) => Promise<boolean>
+  /** 插入：打断当前一轮后立即发送这条排队消息，其余消息继续排队。 */
+  interruptPendingSend: (chat: ChatAddress, id: number) => Promise<boolean>
   /** 把排队消息移到新会话发送，并切换到新会话。 */
   sendPendingInNewThread: (chat: ChatAddress, id: number, mode: PendingThreadMode) => Promise<boolean>
   openSideChat: (quote?: string) => void
@@ -1427,6 +1430,17 @@ export const useCodex = create<CodexState>((set, get) => {
     }
   }
 
+  /** 从原会话开出的新会话沿用它的模型与推理强度；overrides 为首轮实际发送的配置。 */
+  function inheritThreadPrefs({ targetId, agent, threadId: sourceId }: ChatAddress, threadId: string, overrides?: TurnOverrides) {
+    const threads = get().sessions[sessionKey(targetId, agent)]?.state.threads
+    useModels.getState().seedFromHistory(targetId, agent, sourceId, threads?.[sourceId]?.savedConfig)
+    const prefs = inheritedModelPrefs(prefsFor(useModels.getState(), targetId, agent, sourceId), overrides)
+    // 记下新会话开出时的配置，避免首轮发送前被当成另一端换过模型。
+    const saved = threads?.[threadId]?.savedConfig
+    useModels.getState().rememberThreadPrefs(targetId, agent, threadId,
+      saved ? { ...prefs, seen: { model: saved.model, effort: saved.effort } } : prefs)
+  }
+
   async function createSideThread(side: SideChatState): Promise<string> {
     const key = sessionKey(side.targetId, side.agent)
     if (!await ensureOpen(side.targetId, side.agent)) throw new Error(get().sessions[key]?.openError ?? t('连接失败'))
@@ -1434,6 +1448,7 @@ export const useCodex = create<CodexState>((set, get) => {
     if (side.agent === 'pi' && !session.openedConfig?.ephemeralNoTools) throw new Error(t('请升级目标服务以使用 Pi 无工具侧聊'))
     const { thread } = await startThread(session.rpc, { cwd: side.cwd, ephemeral: true })
     patchSession(key, (value) => ({ ...value, state: loadThread(value.state, thread) }))
+    inheritThreadPrefs(parentAddress(side), thread.id)
     return thread.id
   }
 
@@ -2230,6 +2245,53 @@ export const useCodex = create<CodexState>((set, get) => {
       }
     },
 
+    interruptPendingSend: async (chat, id) => {
+      const key = pendingSendKey(chat)
+      const state = get()
+      const session = state.sessions[sessionKey(chat.targetId, chat.agent)]
+      const view = session?.state.threads[chat.threadId]
+      const item = state.pendingSends[key]?.find((entry) => entry.id === id)
+      if (!session?.opened || view?.status !== 'running' || !item || item.sending || state.compacting[key] ||
+        submitting.has(key) || holdingPending.has(id) || changingParentThreads.has(key)) return false
+      if (session.openedConfig?.directory !== configDirFor(chat.targetId, chat.agent)) return false
+      const turnId = view.activeTurnId
+      if (!turnId) {
+        set({ notice: t('暂未收到当前轮次，请稍后重试') })
+        return false
+      }
+      submitting.add(key)
+      // 这次中断是为了换上新消息，不能按“上一轮未完成”暂停队列。
+      replacing.add(key)
+      updatePending(chat, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: true, error: undefined } : entry))
+      const pendingUser = userItemFromInput(globalThis.crypto.randomUUID(), item.input)
+      let stopped = false
+      try {
+        await interruptAndWait(session, chat.threadId, turnId)
+        replacing.delete(key)
+        if (get().sessions[session.key]?.state.threads[chat.threadId]?.status === 'running') {
+          throw new Error(t('会话已开始另一轮，请检查后再发送'))
+        }
+        stopped = true
+        addPendingUser(session.key, chat.threadId, pendingUser)
+        await startTurn(session, chat.threadId, item.input, item.overrides, pendingUser)
+        updatePending(chat, (list) => list.filter((entry) => entry.id !== id))
+        return true
+      } catch (err) {
+        removePendingUser(session.key, [chat.threadId], pendingUser.id)
+        const error = friendlyError(err, stopped ? t('立即发送未完成，队列已暂停') : t('打断未成功，消息已保留在队列'))
+        // 没送出的消息本来要优先发送：放到队首并暂停，等用户确认。
+        updatePending(chat, (list) => {
+          const failed = list.find((entry) => entry.id === id)
+          return failed ? [{ ...failed, sending: false, error }, ...list.filter((entry) => entry.id !== id)] : list
+        })
+        return false
+      } finally {
+        submitting.delete(key)
+        replacing.delete(key)
+        void flushPending(chat)
+      }
+    },
+
     sendPendingInNewThread: async (chat, id, mode) => {
       const key = pendingSendKey(chat)
       const state = get()
@@ -2285,6 +2347,7 @@ export const useCodex = create<CodexState>((set, get) => {
         created = threadId
         submitting.add(pendingSendKey({ ...chat, threadId }))
         patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }))
+        inheritThreadPrefs(chat, threadId, item.overrides)
         pendingUser = userItemFromInput(globalThis.crypto.randomUUID(), item.input)
         addPendingUser(session.key, threadId, pendingUser)
         // 侧栏先显示新会话，不等首轮落盘后 thread/list 才列出。

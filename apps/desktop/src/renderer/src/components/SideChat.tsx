@@ -92,7 +92,7 @@ export function SideChat() {
   if (!sideOpen || !sideTargetId || !sideAgent) return null
 
   const status = side.ending ? t('正在结束') : side.expired ? (side.forked ? t('分支已断开') : t('会话已结束'))
-    : approvals.length ? t('等待审批') : running ? t('正在运行') : side.busy ? t('正在处理') : null
+    : approvals.length ? (approvals.every((item) => item.questions?.length) ? t('等待回答') : t('等待审批')) : running ? t('正在运行') : side.busy ? t('正在处理') : null
   const showWelcome = timeline.length === 0 && approvals.length === 0 && !showProgress && !side.expired && !side.busy && !openError
   const annotationCount = side.annotations.filter((annotation) => annotation.quote.trim()).length
   const endDisabled = side.busy || sendingQueued || !!sendingMessage
@@ -126,7 +126,7 @@ export function SideChat() {
           <div className="flex min-w-0 items-center gap-1.5 text-ui-xs text-qn-muted">
             <span className="shrink-0">{agentLabel(agent)}</span>
             <span aria-hidden>·</span>
-            <span className={status === t('等待审批') ? 'truncate text-qn-warn' : 'truncate'} role="status">
+            <span className={approvals.length && !side.ending && !side.expired ? 'truncate text-qn-warn' : 'truncate'} role="status">
               {status ?? (side.forked ? t('新对话继续') : t('临时会话'))}
             </span>
           </div>

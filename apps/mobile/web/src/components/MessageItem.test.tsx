@@ -152,8 +152,25 @@ it('消息操作菜单可引用、复制纯文本或 Markdown，自己的消息�
     expect(host.querySelector('[role="status"]')?.textContent).toBe('已复制')
     await act(() => action('引用到对话').click())
     expect(onQuote).toHaveBeenCalledWith(text)
-    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'own', text }} onQuote={onQuote} onResend={vi.fn()} />))
-    expect(buttons()).toHaveLength(0)
+    const onResend = vi.fn().mockResolvedValue(true)
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'own', text }} onQuote={onQuote} onResend={onResend}
+      resendNote="将从上一轮分出新会话发送，原会话保留。" />))
+    // 与电脑版一致：气泡下常驻复制、编辑。
+    expect(buttons().map((button) => button.getAttribute('aria-label'))).toEqual(['复制消息', '编辑消息'])
+    await act(async () => buttons()[0]!.click())
+    expect(writeText).toHaveBeenLastCalledWith(text)
+    // 不改内容也能提交，即原样重发；分支重发显示说明和对应按钮文案。
+    await act(() => buttons()[1]!.click())
+    expect(host.textContent).toContain('将从上一轮分出新会话发送，原会话保留。')
+    expect(action('在新分支发送').disabled).toBe(false)
+    // host 未挂到文档上，jsdom 不会因点击提交按钮触发表单提交，直接派发 submit。
+    await act(async () => { host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
+    expect(onResend).toHaveBeenCalledWith(text, [])
+    // 不能编辑时（如运行中）只剩复制。
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'own', text }} onQuote={onQuote} />))
+    expect(buttons()).toHaveLength(1)
+    expect(host.querySelector('[aria-label="编辑消息"]')).toBeNull()
+    await act(() => root.render(<MessageItem item={{ kind: 'user', id: 'own', text }} onQuote={onQuote} onResend={onResend} />))
     await act(() => {
       host.querySelector('.qn-user-bubble')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     })

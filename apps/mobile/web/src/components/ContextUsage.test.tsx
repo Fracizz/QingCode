@@ -35,7 +35,7 @@ it('无用量数据也能打开压缩入口，点压缩会话直接发送请求�
     await click('查看会话用量')
     const usage = host.querySelector('[aria-label="会话用量"]')
     expect(usage?.textContent).toContain('128 tokens')
-    expect(usage?.textContent).toMatch(/单轮费用估算.*0\.012/)
+    expect(usage?.textContent).not.toMatch(/费用|0\.012/)
     expect(usage?.querySelector('progress')).toBeNull()
     // 没有窗口大小时也显示圆环（空环），与有用量时同一图标。
     expect(host.querySelector('[data-testid="context-ring"] circle:nth-of-type(2)')?.getAttribute('stroke-dasharray')).toBe('0 100')

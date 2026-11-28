@@ -21,7 +21,6 @@ export function TitleBar({ showWorkspace = true }: { showWorkspace?: boolean }) 
   const targets = useTargets((s) => s.targets)
   const selectedId = useTargets((s) => s.selectedId)
   const agent = useCodex((s) => s.currentAgent)
-  const threadId = useCodex((s) => s.currentThreadId)
 
   const side = windowControlsSide(window.qn?.platform)
   const target = targets.find((item) => item.id === selectedId)
@@ -68,7 +67,7 @@ export function TitleBar({ showWorkspace = true }: { showWorkspace?: boolean }) 
 
       {showWorkspace && (
         <div className="flex shrink-0 items-center pr-2" data-no-drag>
-          <RateLimitBadge targetId={selectedId} agent={agent} threadId={threadId} prefix={target ? targetDisplayName(target) : undefined} />
+          <RateLimitBadge targetId={selectedId} agent={agent} prefix={target ? targetDisplayName(target) : undefined} />
         </div>
       )}
 

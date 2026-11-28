@@ -31,7 +31,7 @@ it('无上下文窗口时仍显示 Claude 和 pi 的单轮统计', () => {
   const html = renderToStaticMarkup(<ContextRing tokenUsage={tokenUsage} />)
   expect(html).toContain('查看最近一轮用量')
   expect(html).toContain('128 tokens')
-  expect(html).toContain('费用估算 $0.012')
+  expect(html).not.toMatch(/费用|\$0\.012/)
   expect(html).not.toContain('上下文已用')
   expect(html).toContain('<svg')
 })

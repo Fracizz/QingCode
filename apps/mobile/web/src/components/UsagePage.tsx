@@ -328,9 +328,6 @@ function CodexQuotaCard({ targetId, available, opened }: { targetId: string; ava
         <p className="qn-usage-error">{snapshot.rateLimitReachedType
           ? t('已达额度上限（{type}）', { type: snapshot.rateLimitReachedType }) : t('已达额度上限')}</p>
       )}
-      {snapshot?.credits?.hasCredits && (
-        <p className="qn-usage-note">{t('积分：{value}', { value: snapshot.credits.unlimited ? t('不限量') : (snapshot.credits.balance ?? t('有余额')) })}</p>
-      )}
     </UsageCard>
   )
 }

@@ -218,7 +218,6 @@ export function RateLimitDetails({ targetId, available, showUsage, label }: {
   const error = session?.openError ?? entry?.error
   const windows = Boolean(snapshot?.primary || snapshot?.secondary)
   const empty = !windows && !loading && !error
-  const credits = snapshot?.credits?.hasCredits === true
   const reached = Boolean(snapshot?.rateLimitReachedType || snapshot?.spendControlReached === true)
 
   function refresh() {
@@ -246,8 +245,8 @@ export function RateLimitDetails({ targetId, available, showUsage, label }: {
         </Button>
       </div>
       {error && <p className="text-xs text-qn-danger">{translateMessage(error)}</p>}
-      {/* 额度窗口、积分与上限提示收进一张卡片，与下方重置卡、总用量同一层级。 */}
-      {(windows || empty || credits || reached) && (
+      {/* 额度窗口与上限提示收进一张卡片，与下方重置卡、总用量同一层级。 */}
+      {(windows || empty || reached) && (
         <div className="qn-surface qn-quota-card">
           {snapshot?.primary && (
             <WindowRow label={windowLabel(snapshot.primary.windowDurationMins ?? 300)} window={snapshot.primary} now={now} />
@@ -256,9 +255,6 @@ export function RateLimitDetails({ targetId, available, showUsage, label }: {
             <WindowRow label={windowLabel(snapshot.secondary.windowDurationMins ?? 10080)} window={snapshot.secondary} now={now} />
           )}
           {empty && <p className="text-sm text-qn-muted">{t('暂无额度数据')}</p>}
-          {credits && (
-            <p className="text-xs text-qn-muted">{t('积分：{value}', { value: snapshot?.credits?.unlimited ? t('不限量') : (snapshot?.credits?.balance ?? t('有余额')) })}</p>
-          )}
           {reached && (
             <p className="text-xs text-qn-danger">{snapshot?.rateLimitReachedType
               ? t('已达额度上限（{type}）', { type: snapshot.rateLimitReachedType }) : t('已达额度上限')}</p>

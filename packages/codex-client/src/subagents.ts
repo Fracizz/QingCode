@@ -71,7 +71,7 @@ export function subagentAvatar(seed: string): { icon: number; color: number } {
 export function subagentStatusTone(status: string): 'active' | 'ok' | 'warn' | 'danger' | 'muted' {
   switch (status) {
     case t('运行中'): case t('已启动'): case t('等待启动'): case t('调用中'): return 'active'
-    case t('待审批'): case t('待输入'): return 'warn'
+    case t('待审批'): case t('待回答'): return 'warn'
     case t('已完成'): case t('调用已返回'): return 'ok'
     case t('失败'): case t('调用失败'): return 'danger'
     default: return 'muted'

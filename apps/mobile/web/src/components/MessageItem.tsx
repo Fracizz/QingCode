@@ -464,16 +464,18 @@ export function isLongUserText(text: string): boolean {
   return text.length > 600 || text.split('\n').length > 8
 }
 
-function UserMessage({ item, onQuote, onResend }: {
+function UserMessage({ item, onQuote, onResend, resendNote }: {
   item: Extract<ItemView, { kind: 'user' }>
   onQuote?: (text: string) => void
   onResend?: Resend
+  resendNote?: string
 }) {
   const [expanded, setExpanded] = useState(false)
   const [edit, setEdit] = useState<string | null>(null)
   const [menu, setMenu] = useState(false)
   const [saving, setSaving] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [copied, setCopied] = useState(false)
   const parsed = splitUserText(item.text)
   // 与电脑版一致：发送中的气泡和 Codex 用 skill 输入项，Claude 回显把技能写在正文开头。
   const skills = item.skills?.length ? item.skills : parsed.skills
@@ -483,7 +485,15 @@ function UserMessage({ item, onQuote, onResend }: {
   const attachments = item.inputExtras ?? []
   const localImage = attachments.some((item) => item.type === 'localImage')
   const revised = edit === null ? '' : editUserText(item.text, edit)
-  const canSave = edit !== null && edit !== parsed.text && !localImage && Boolean(revised.trim() || attachments.length)
+  // 与电脑版一致：不改内容也能提交，即原样重新发送。
+  const canSave = edit !== null && !localImage && Boolean(revised.trim() || attachments.length)
+  const startEdit = onResend ? () => { setFailed(false); setEdit(parsed.text) } : undefined
+
+  async function copy() {
+    const ok = await copyText(parsed.text).then(() => true, () => false)
+    setCopied(ok)
+    if (ok) window.setTimeout(() => setCopied(false), 1600)
+  }
 
   async function submit() {
     if (!onResend || !canSave || saving) return
@@ -532,17 +542,33 @@ function UserMessage({ item, onQuote, onResend }: {
           {item.images.map((url, index) => <MessageImage key={index} src={url} alt={t('附件图片 {index}', { index: index + 1 })} />)}
         </div>}
       </div>
-      <MessageActions text={item.text} onQuote={onQuote} hideTrigger open={menu} onOpenChange={setMenu}
-        onEdit={onResend ? () => { setFailed(false); setEdit(parsed.text) } : undefined} />
+      {/* 与电脑版一致：气泡下常驻复制、编辑；能否编辑由会话状态决定（运行中不可改）。长按仍打开完整菜单。 */}
+      {(parsed.text.trim() || startEdit) && (
+        <div className="qn-user-actions">
+          {parsed.text.trim() && (
+            <Button variant="ghost" className="qn-icon-button qn-user-action" aria-label={copied ? t('已复制') : t('复制消息')}
+              onClick={() => void copy()}>
+              {copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}
+            </Button>
+          )}
+          {startEdit && (
+            <Button variant="ghost" className="qn-icon-button qn-user-action" aria-label={t('编辑消息')} onClick={startEdit}>
+              <Pencil size={15} aria-hidden />
+            </Button>
+          )}
+        </div>
+      )}
+      <MessageActions text={item.text} onQuote={onQuote} hideTrigger open={menu} onOpenChange={setMenu} onEdit={startEdit} />
       {edit !== null && (
         <Dialog title={t('编辑并重发')} onClose={() => { if (!saving) setEdit(null) }}>
           <form onSubmit={(event) => { event.preventDefault(); void submit() }}>
             <textarea className="qn-input w-full resize-y" aria-label={t('修改消息')} rows={4} value={edit}
               disabled={saving} onChange={(event) => setEdit(event.target.value)} />
+            {resendNote && <p className="mt-2 text-xs text-qn-muted">{resendNote}</p>}
             {localImage && <p className="mt-2 text-xs text-qn-warn">{t('此消息含目标机本地图片，请在电脑上重发。')}</p>}
             {failed && <p className="mt-2 text-xs text-qn-warn" role="status">{t('发送失败，修改已保留。')}</p>}
             <Button type="submit" variant="primary" className="mt-3 w-full" disabled={!canSave || saving}>
-              {saving ? t('提交中…') : t('发送修订')}
+              {saving ? t('提交中…') : resendNote ? t('在新分支发送') : t('重新发送')}
             </Button>
           </form>
         </Dialog>
@@ -558,6 +584,7 @@ export function MessageItem({
   active,
   showStreamingDots,
   onResend,
+  resendNote,
   onFork,
   showActions = true,
   replyTimeInSummary = false,
@@ -567,7 +594,10 @@ export function MessageItem({
   agentName?: string
   active?: boolean
   showStreamingDots?: boolean
+  /** 编辑并重发；不传表示这条消息现在不能改（运行中、或只能分支的 Agent 落在轮次中间的消息）。 */
   onResend?: Resend
+  /** 重发会分出新会话时的说明，编辑框里常驻显示。 */
+  resendNote?: string
   /** 从这条回复所在轮次分叉；仅回复消息使用。 */
   onFork?: () => void
   /** 只在每轮最后一条回复下常驻操作入口；中间的过程说明不再逐条挂「⋯」。 */
@@ -577,7 +607,7 @@ export function MessageItem({
   const markdownRef = useRef<HTMLDivElement>(null)
   switch (item.kind) {
     case 'user':
-      return <UserMessage item={item} onQuote={onQuote} onResend={item.pending ? undefined : onResend} />
+      return <UserMessage item={item} onQuote={onQuote} onResend={item.pending ? undefined : onResend} resendNote={resendNote} />
     case 'agent':
       return (
         <div className="px-1 py-1" aria-label={agentName}>

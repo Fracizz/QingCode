@@ -18,6 +18,9 @@ import {
   isStreamDelta,
   isOversizeHistoryResponse,
   isSteerRejected,
+  branchPoint,
+  canReviseMessage,
+  turnOpeningMessages,
   isThreadOutcome,
   listBackgroundTasks,
   listModels,
@@ -43,6 +46,7 @@ import {
   sessionAccessOptions,
   setThreadName,
   startThread,
+  inheritedModelPrefs,
   startThreadCompaction,
   STEER_ECHO_GRACE_MS,
   steerOutcome,
@@ -99,6 +103,7 @@ import {
   pickDefaultAgent,
   recvSessionKey,
   sessionKey,
+  threadKey,
   type MobileAgentSettings,
 } from './agents'
 import { callDevice, getGateway, isMockGateway } from './client'
@@ -409,6 +414,11 @@ type AppState = {
   compactConversation: () => Promise<boolean>
   /** 分叉并打开新会话；给出 lastTurnId 时只保留到该轮（含）。返回是否已切到新会话。 */
   forkConversation: (lastTurnId?: string) => Promise<boolean>
+  /**
+   * 编辑并重发一条用户消息，与电脑版 sendRevision 一致：能回退的 Agent（Codex）在原会话截掉这一轮及之后的历史再发送；
+   * 只能分支的（Claude、pi）从上一轮分出新会话发送，原会话保留。文本不变时就是原样重发。
+   */
+  sendRevision: (itemId: string, text: string, attachments: UserInput[]) => Promise<boolean>
   setDraftText: (text: string) => void
   setAccessMode: (mode: SessionAccessSelection) => void
   /** 读取当前会话轮次外仍在运行的后台任务（打开会话或重连后）。 */
@@ -420,6 +430,8 @@ type AppState = {
   beginQueuedEdit: (id: string) => ((resume?: boolean) => void) | null
   editQueuedSend: (id: string, text: string) => Promise<boolean>
   steerQueuedSend: (id: string) => Promise<boolean>
+  /** 插入：打断当前一轮后立即发送这条排队消息，其余消息继续排队。 */
+  interruptQueuedSend: (id: string) => Promise<boolean>
   dropPendingSteers: (ids: string[]) => void
   sendQueuedInNewThread: (id: string, mode: QueuedThreadMode) => Promise<boolean>
   retryQueuedSend: () => Promise<void>
@@ -794,6 +806,53 @@ export const useApp = create<AppState>((set, get) => {
     saveActiveChat()
   }
 
+  /** 刚建好、还没发过消息的会话，按 sendKey 记录请求时的项目目录。 */
+  const freshThreads = new Map<string, string>()
+  /** 已发出首条消息、服务端列表还没返回的会话；列表查到后移除。 */
+  const localThreads = new Map<string, { address: SendAddress; summary: ThreadSummary }>()
+
+  /** 首轮结束前 thread/list 可能查不到新会话，发送首条消息时先用本地摘要占位，列表能立即看到。 */
+  const rememberLocalThread = (address: SendAddress, input: UserInput[]): void => {
+    const key = sendKey(address)
+    const cwd = freshThreads.get(key)
+    if (cwd === undefined) return
+    freshThreads.delete(key)
+    const text = input.flatMap((item) => item.type === 'text' ? [item.text] : []).join('\n').trim()
+    // 引用批注排在正文前面，标题优先取正文首行。
+    const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
+    const now = Date.now()
+    const summary: ThreadSummary = {
+      id: address.threadId, agent: address.agent, cwd, preview: text.slice(0, 160),
+      title: lines.find((line) => !line.startsWith('>')) ?? lines[0] ?? t('未命名会话'),
+      createdAt: now, updatedAt: now,
+    }
+    localThreads.set(key, { address, summary })
+    const state = get()
+    if (state.activeId !== address.desktopId || state.selectedTargetId !== address.targetId || currentCwd(state) !== cwd) return
+    if (state.threads.some((item) => item.id === summary.id && item.agent === summary.agent)) return
+    set({ threads: mergeThreadSummaries([[summary], state.threads]) })
+  }
+
+  /** 把本地占位补进服务端列表；服务端已返回的以服务端为准。 */
+  const withLocalThreads = (desktopId: string, targetId: string, cwd: string | undefined, listed: ThreadSummary[]): ThreadSummary[] => {
+    const known = new Set(listed.map((item) => threadKey(item.agent, item.id)))
+    const missing: ThreadSummary[] = []
+    for (const [key, { address, summary }] of localThreads) {
+      if (address.desktopId !== desktopId || address.targetId !== targetId) continue
+      if (known.has(threadKey(summary.agent, summary.id))) localThreads.delete(key)
+      else if (cwd === undefined || summary.cwd === cwd) missing.push(summary)
+    }
+    return missing.length ? mergeThreadSummaries([missing, listed]) : listed
+  }
+
+  const renameLocalThread = (targetId: string, agent: AgentKind, threadId: string, title: string): void => {
+    for (const entry of localThreads.values()) {
+      if (entry.address.targetId === targetId && entry.summary.agent === agent && entry.summary.id === threadId) {
+        entry.summary = { ...entry.summary, title }
+      }
+    }
+  }
+
   const isArchived = (desktopId: string, targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>): boolean =>
     get().archivedThreads[archivedThreadKey(desktopId, targetId, thread)] === true
 
@@ -814,6 +873,7 @@ export const useApp = create<AppState>((set, get) => {
   }
 
   const forgetArchivedChat = (desktopId: string, targetId: string, thread: Pick<ThreadSummary, 'agent' | 'id'>): void => {
+    localThreads.delete(sendKey({ desktopId, targetId, agent: thread.agent, threadId: thread.id }))
     const matches = (chat: SavedChat | null | undefined) =>
       chat?.targetId === targetId && chat.agent === thread.agent && chat.threadId === thread.id
     const current = get()
@@ -1255,6 +1315,7 @@ export const useApp = create<AppState>((set, get) => {
       // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
       throw new Error('消息和附件合计超过 1 MiB，请移除部分内容后再发送')
     }
+    rememberLocalThread(address, input)
     const clientUserMessageId = makeId()
     // 与上一轮相比换了模型或强度时，在本轮消息前留一行提示（参考 Codex）。
     const models = get().models[session.key]?.models ?? []
@@ -1440,6 +1501,46 @@ export const useApp = create<AppState>((set, get) => {
     for (const address of pendingQueueAddresses(desktopId)) void handOffQueue(address)
   }
 
+  /**
+   * 电脑代发过的会话：锁屏期间的轮次事件可能没收到，消息已移出队列却看不到气泡和运行动画。
+   * 直接读一次历史；优先走 HTTP，事件流还没发现自己断开时也能拿到结果。
+   */
+  async function syncRelayedThread(conn: Connection, address: SendAddress): Promise<void> {
+    const { targetId, agent, threadId } = address
+    const key = sessionKey(targetId, agent)
+    const session = get().sessions[key]
+    if (!session) return
+    // 下次打开会话时重新读取，不沿用锁屏前的缓存。
+    session.loadedThreads.delete(threadId)
+    const before = session.state.threads[threadId]
+    // 链路中断的会话由重连流程补读。
+    if (!before || !session.opened || session.linkInterrupted) return
+    const epoch = desktopEpoch
+    const isCurrent = () => epoch === desktopEpoch && get().sessions[key]?.transport === session.transport
+    try {
+      let history: Awaited<ReturnType<typeof openThreadHistory>> | undefined
+      if (get().agentSettings?.fastHistoryOpen) {
+        try {
+          history = await getGateway().rpc(conn, 'mobile.history.open', { targetId, agent, threadId })
+        } catch (err) {
+          if (!['forbidden', 'unknown_method', 'method_not_found', 'response_too_large'].includes(errorCode(err))) throw err
+        }
+      }
+      if (!isCurrent()) return
+      history ??= await openThreadHistory(session.rpc, threadId, 'read', isCurrent)
+      if (!isCurrent()) return
+      const { thread, earlier } = history
+      if (thread?.id !== threadId) throw new Error(t('电脑返回的会话与所选会话不一致，请重试'))
+      patchSession(key, (value) => ({
+        ...value, state: loadRecentThreadHistory(value.state, thread, earlier, before),
+      }), session)
+    } catch {
+      // 看不到电脑代发的结果时不能接着发下一条。
+      // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
+      if (isCurrent()) pauseQueue(sendKey(address), '未能确认会话状态，队列已暂停')
+    }
+  }
+
   /** 回到前台：收回交给电脑的队列，去掉电脑已发出的消息，再由手机继续发送。 */
   function takeBackQueues(): Promise<void> {
     if (takeBackTask) return takeBackTask
@@ -1460,22 +1561,33 @@ export const useApp = create<AppState>((set, get) => {
       }
       if (epoch !== desktopEpoch) return
       const known = new Set<string>()
+      const stale: SendAddress[] = []
       for (const entry of queues) {
         if (!isRecord(entry) || typeof entry.targetId !== 'string' || typeof entry.threadId !== 'string' || !isAgentKind(entry.agent)) continue
-        const key = sendKey({ desktopId: conn.id, targetId: entry.targetId, agent: entry.agent, threadId: entry.threadId })
+        const address = { desktopId: conn.id, targetId: entry.targetId, agent: entry.agent, threadId: entry.threadId }
+        const key = sendKey(address)
         const sentIds = Array.isArray(entry.sentIds) ? entry.sentIds.filter((id): id is string => typeof id === 'string') : []
         known.add(key)
+        if (sentIds.length) stale.push(address)
         await updateQueue(key, (list) => applyRelayResult(list, sentIds, typeof entry.error === 'string' ? entry.error : undefined))
       }
       // 交出过但电脑已没有记录（电脑端重启）：无法确认发送情况，暂停等用户核对。
       for (const key of owned) {
-        if (!known.has(key)) await updateQueue(key, (list) => applyRelayResult(list, [], undefined, false))
+        if (!known.has(key)) {
+          await updateQueue(key, (list) => applyRelayResult(list, [], undefined, false))
+          const [desktopId, targetId, agent, threadId] = JSON.parse(key) as [string, string, AgentKind, string]
+          stale.push({ desktopId, targetId, agent, threadId })
+        }
         remoteQueues.delete(key)
       }
+      // 读完历史前收回任务不结束，手机续发时能看到电脑发起的轮次仍在运行。
+      await Promise.all(stale.map((address) => syncRelayedThread(conn, address)))
     })()
     takeBackTask = task
     void task.catch(() => undefined).finally(() => {
       if (takeBackTask === task) takeBackTask = null
+      // 读历史期间又进了后台时交接会被跳过，这里补交。
+      if (epoch === desktopEpoch && inBackground()) handOffQueues()
       // 代发期间暂缓判断的引导。
       for (const record of steers.values()) scheduleSteerCheck(record.address)
     })
@@ -1554,6 +1666,8 @@ export const useApp = create<AppState>((set, get) => {
   }
 
   const resetSessions = (): void => {
+    freshThreads.clear()
+    localThreads.clear()
     const activeId = get().activeId
     // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
     if (activeId) pauseQueues([activeId], '电脑连接已切换，队列已暂停', true)
@@ -1710,6 +1824,7 @@ export const useApp = create<AppState>((set, get) => {
         }
         if (method === 'thread/name/updated' && typeof params?.threadName === 'string' && get().selectedTargetId === targetId) {
           const { threadId, threadName } = params
+          if (typeof threadId === 'string') renameLocalThread(targetId, agent, threadId, threadName)
           set(({ threads }) => ({ threads: threads.map((item) => item.agent === agent && item.id === threadId ? { ...item, title: threadName } : item) }))
         }
       }
@@ -3114,7 +3229,7 @@ export const useApp = create<AppState>((set, get) => {
       for (const result of results) if (result.error) agentErrors[result.agent] = result.error
       const allFailed = skipped.size === 0 && results.length > 0 && results.every((result) => result.error !== null)
       set({
-        threads: mergeThreadSummaries(results.map((result) => result.threads))
+        threads: withLocalThreads(activeId, targetId, cwd, mergeThreadSummaries(results.map((result) => result.threads)))
           .filter((thread) => !isArchived(activeId, targetId, thread)),
         threadsLoading: false,
         agentErrors,
@@ -3181,6 +3296,7 @@ export const useApp = create<AppState>((set, get) => {
         const result = await startThread(session.rpc, cwd ? { cwd } : {})
         if (!isCurrent()) return false
         if (picked === 'codex') session.resumedCodexThreads.add(result.thread.id)
+        freshThreads.set(sendKey({ desktopId: conn.id, targetId, agent: picked, threadId: result.thread.id }), cwd || result.thread.cwd || '')
         patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, result.thread) }), session)
         const movedProject = workspace &&
           (source.selectedTargetId !== targetId || source.selectedProjectId !== workspace.project.id)
@@ -3433,6 +3549,7 @@ export const useApp = create<AppState>((set, get) => {
         if (agent !== 'codex' && err instanceof CodexRpcError && err.code === -32601) return 'local'
         throw err
       }
+      if (epoch === desktopEpoch) renameLocalThread(targetId, agent, threadId, title)
       if (epoch === desktopEpoch && get().selectedTargetId === targetId) {
         set(({ threads }) => ({ threads: threads.map((item) => item.agent === agent && item.id === threadId ? { ...item, title } : item) }))
       }
@@ -3508,6 +3625,119 @@ export const useApp = create<AppState>((set, get) => {
       }
       if (epoch === desktopEpoch && get().selectedTargetId === targetId) void get().refreshThreads({ skipFailed: true })
       return opened
+    },
+
+    sendRevision: async (itemId, text, attachments) => {
+      const initial = get()
+      const address = selectedSendAddress(initial)
+      if (!address || initial.sending || !text.trim() && !attachments.length) return false
+      const { targetId, agent, threadId } = address
+      const caps = AGENT_CAPABILITIES[agent]
+      if (!caps.revert && !caps.fork) return false
+      const key = sendKey(address)
+      const sessionId = sessionKey(targetId, agent)
+      const fail = (message: string) => {
+        set({ error: message })
+        return false
+      }
+      if (submitting.has(key) || initial.compactingThreads[key] || reconnectTask || !initial.eventsConnected) {
+        return fail(t('会话正在处理消息或恢复连接，请稍后再试'))
+      }
+      const view = initial.sessions[sessionId]?.state.threads[threadId]
+      if (view?.status === 'running') return fail(t('当前轮次仍在运行，请先停止再修改消息'))
+      const turn = view?.turns?.find((item) => item.itemIds.includes(itemId))
+      if (!view || !turn || !view.items.some((item) => item.id === itemId && item.kind === 'user' && !item.pending)) {
+        return fail(t('未找到原消息的轮次，请重新打开会话后再试'))
+      }
+      if (!canReviseMessage(caps, false, itemId, turnOpeningMessages(view))) return fail(t('只能从开启一轮的消息分支重发'))
+      const models = initial.models[sessionId]?.models ?? []
+      // 修订沿用原会话的模型、推理强度与访问模式。
+      const prefs = modelPrefsOf(initial, targetId, agent, threadId)
+      const overrides = overridesFor(agent, models, prefs)
+      const input = queuedInput(agent, { text, annotations: [], attachments, delegate: false })
+      const selection = selectedAccessPreference(initial)
+      if (!mobileTurnFits(targetId, agent, threadId, input, overrides, undefined, mobileTurnAccess(initial, agent, selection))) {
+        return fail(t('消息和附件合计超过 1 MiB，请移除部分内容后再发送'))
+      }
+      const epoch = desktopEpoch
+      const navigation = navigationEpoch
+      const isCurrent = () => epoch === desktopEpoch && navigation === navigationEpoch
+      let reverted = false
+      let branch: SendAddress | null = null
+      submitting.add(key)
+      set({ sending: true, error: null })
+      try {
+        const session = await withSession(targetId, agent, navigation)
+        if (!session || !isCurrent()) return false
+        if (agent === 'codex' && !session.resumedCodexThreads.has(threadId)) {
+          await resumeCodexConversation(session, threadId, isCurrent)
+          if (!isCurrent()) return false
+        }
+        if (caps.revert) {
+          // 与 Codex app 一致：thread/revert 只改对话历史，不回退文件改动。
+          const result = await session.rpc.request('thread/revert', { threadId, beforeTurnId: turn.id })
+          if (result?.thread?.id !== threadId) throw new Error(t('电脑返回的会话与所选会话不一致，请重试'))
+          reverted = true
+          if (!isCurrent()) return false
+          const history = await openThreadHistory(session.rpc, threadId, 'read', isCurrent)
+          if (!isCurrent()) return false
+          patchSession(session.key, (value) => {
+            const live = value.state.threads[threadId]
+            // 清空本地条目与轮次，避免被截掉的历史与新历史合并。
+            const cleared = live ? { ...live, items: [], turns: [], plan: undefined } : undefined
+            const base = cleared ? { threads: { ...value.state.threads, [threadId]: cleared } } : value.state
+            return { ...value, state: loadRecentThreadHistory(base, history.thread, history.earlier, cleared) }
+          }, session)
+          await startMessageTurn(session, address, input, overrides, selection)
+          return true
+        }
+        const live = () => get().sessions[session.key]?.state.threads[threadId]
+        let point = branchPoint(live(), itemId)
+        // 上一轮还没加载时向前翻页，直到能确定分支位置。
+        while (point?.kind === 'earlier') {
+          const cursor = live()?.historyCursor
+          if (!cursor) break
+          const page = await readThreadHistoryPage(session.rpc, threadId, cursor, isCurrent)
+          if (!isCurrent()) return false
+          patchSession(session.key, (value) => ({ ...value, state: prependThreadHistory(value.state, threadId, page) }), session)
+          point = branchPoint(live(), itemId)
+        }
+        if (!point || point.kind === 'earlier') throw new Error(t('无法确定上一轮的位置，请重新打开会话后再试'))
+        const cwd = currentCwd(get())
+        const { thread } = point.kind === 'turn'
+          // 分支回包不带轮次，历史由 openThread 重新读取，避免长会话超出手机的回包上限。
+          ? await session.rpc.request('thread/fork', { threadId, lastTurnId: point.turnId, excludeTurns: true })
+          : await startThread(session.rpc, cwd ? { cwd } : {})
+        if (!thread?.id || thread.id === threadId) throw new Error(t('未确认新会话已创建，修改后的消息未发送'))
+        if (!isCurrent()) return false
+        branch = { ...address, threadId: thread.id }
+        submitting.add(sendKey(branch))
+        freshThreads.set(sendKey(branch), cwd || thread.cwd || '')
+        if (agent === 'codex') session.resumedCodexThreads.add(thread.id)
+        patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }), session)
+        get().rememberThreadPrefs(targetId, agent, thread.id, prefs)
+        const carried = carryPlanMode(address, thread.id, point.kind === 'turn' ? live()?.items : undefined)
+        await startMessageTurn(session, branch, input, overrides, carried ?? selection)
+        if (!isCurrent()) return true
+        const notice = point.kind === 'turn' ? t('已从上一轮分出新会话发送，原会话保留') : t('已开新会话发送，原会话保留')
+        await get().openThread(thread.id, agent)
+        if (epoch === desktopEpoch) set({ notice })
+        return true
+      } catch (err) {
+        if (isCurrent()) {
+          const message = friendlyError(err, t('发送修订失败'))
+          set({ error: reverted ? t('历史已回退，但修改后的消息未确认发送成功。{message}', { message: translateMessage(message) }) : message })
+        }
+        return false
+      } finally {
+        if (epoch === desktopEpoch) {
+          submitting.delete(key)
+          if (branch) submitting.delete(sendKey(branch))
+          set({ sending: false })
+          if (get().selectedTargetId === targetId) void get().refreshThreads({ skipFailed: true })
+          void flushQueue(address)
+        }
+      }
     },
 
     compactConversation: async () => {
@@ -3672,6 +3902,7 @@ export const useApp = create<AppState>((set, get) => {
           address = { desktopId: conn.id, targetId, agent, threadId }
           queueKey = sendKey(address)
           submitting.add(queueKey)
+          freshThreads.set(queueKey, cwd || created.thread.cwd || '')
           if (agent === 'codex') session.resumedCodexThreads.add(threadId)
           set({ selectedThreadId: threadId })
           sentDraftKey = draftKey(conn.id, targetId, initial.selectedProjectId, agent, threadId, conn.fp)
@@ -3879,6 +4110,86 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
+    interruptQueuedSend: async (id) => {
+      const state = get()
+      const address = selectedSendAddress(state)
+      if (!address || !state.eventsConnected || reconnectTask) return false
+      const { targetId, agent, threadId } = address
+      const key = sendKey(address)
+      const session = state.sessions[sessionKey(targetId, agent)]
+      const view = session?.state.threads[threadId]
+      const item = state.queuedSends[key]?.find((entry) => entry.id === id)
+      // 队列交给电脑代发期间不能再从手机发送，否则同一条会发两次。
+      if (!session?.opened || session.linkInterrupted || view?.status !== 'running' || !item || item.sending || item.saving
+        || submitting.has(key) || editingQueue.has(id) || savingQueue.has(id) || state.compactingThreads[key]
+        || remoteQueues.has(key) || handingOff.has(key) || takeBackTask) return false
+      const turnId = view.activeTurnId
+      if (!turnId) {
+        set({ notice: t('暂未收到当前轮次，请稍后重试') })
+        return false
+      }
+      // 先确认这条消息能发出去，再打断当前一轮。
+      if (queueLimited(address)) {
+        set({ error: t('当前额度已用完，排队消息已保留') })
+        return false
+      }
+      const input = queuedInput(agent, item)
+      const mode = accessPreference(state, address) ?? item.accessMode
+      if (!mobileTurnFits(targetId, agent, threadId, input, item.overrides, undefined, mobileTurnAccess(state, agent, mode))) {
+        set({ error: t('消息和附件合计超过 1 MiB，请重新编辑后再发送') })
+        return false
+      }
+      const epoch = desktopEpoch
+      const streamEpoch = eventStreamEpoch
+      let stopped = false
+      submitting.add(key)
+      // 这次中断是为了换上新消息，不能按“上一轮未完成”暂停队列。
+      replacing.add(key)
+      set({ error: null })
+      try {
+        await updateQueue(key, (list) => list.map((entry) => entry.id === id ? { ...entry, sending: true, error: undefined } : entry))
+        if (epoch !== desktopEpoch) return false
+        if (agent === 'codex' && !session.resumedCodexThreads.has(threadId)) {
+          await resumeCodexConversation(session, threadId)
+          if (epoch !== desktopEpoch) return false
+        }
+        await interruptAndWait(session, threadId, turnId)
+        if (epoch !== desktopEpoch) return false
+        replacing.delete(key)
+        if (get().sessions[session.key]?.state.threads[threadId]?.status === 'running') {
+          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
+          throw new Error('会话已开始另一轮，请检查后再发送')
+        }
+        stopped = true
+        await startMessageTurn(session, address, input, item.overrides, mode)
+        if (epoch === desktopEpoch) void dropQueuedSend(key, id)
+        return true
+      } catch (err) {
+        if (epoch === desktopEpoch) {
+          // i18n-ignore: 随发送队列持久化，展示时用 translateMessage 翻译
+          const message = friendlyError(err, stopped ? '排队消息未发送' : '打断未成功，消息已保留在队列')
+          const code = isRecord(err) ? errorCode(err.data) : ''
+          const replyLost = code === 'network' || code === 'timeout' || message.startsWith('Codex request timed out:')
+          // turn/start 发出后丢失回包时可能已经在电脑执行。
+          const error = stopped && (streamEpoch !== eventStreamEpoch || replyLost) ? UNCONFIRMED_QUEUED_SEND : message
+          // 没送出的消息本来要优先发送：放到队首并暂停，等用户确认。
+          void updateQueue(key, (list) => {
+            const failed = list.find((entry) => entry.id === id)
+            return failed ? [{ ...failed, sending: false, error }, ...list.filter((entry) => entry.id !== id)] : list
+          })
+          set({ error })
+        }
+        return false
+      } finally {
+        if (epoch === desktopEpoch) {
+          submitting.delete(key)
+          replacing.delete(key)
+          void flushQueue(address)
+          if (inBackground()) void handOffQueue(address)
+        }
+      }
+    },
+
     dropPendingSteers: (ids) => {
       const address = selectedSendAddress(get())
       if (!address || ids.length === 0) return
@@ -3959,7 +4270,11 @@ export const useApp = create<AppState>((set, get) => {
         }
         if (agent === 'codex') session.resumedCodexThreads.add(thread.id)
         patchSession(session.key, (value) => ({ ...value, state: loadThread(value.state, thread) }), session)
+        // 新会话沿用原会话的模型与推理强度。
+        get().rememberThreadPrefs(targetId, agent, thread.id,
+          inheritedModelPrefs(modelPrefsOf(get(), targetId, agent, threadId), item.overrides))
         submitted = true
+        freshThreads.set(sendKey({ ...address, threadId: thread.id }), currentCwd(state) || thread.cwd || '')
         await startMessageTurn(session, { ...address, threadId: thread.id }, input, item.overrides, selection)
         if (epoch !== desktopEpoch) return true
         void dropQueuedSend(key, id)

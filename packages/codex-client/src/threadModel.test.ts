@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { historyModelPrefs, matchModelOption, reconcileThreadPrefs, sameModelConfig, turnModelNote, type ModelOptionLike } from './threadModel'
+import { historyModelPrefs, inheritedModelPrefs, matchModelOption, reconcileThreadPrefs, sameModelConfig, turnModelNote, type ModelOptionLike } from './threadModel'
 
 const option = (model: string, extra: Partial<ModelOptionLike> = {}): ModelOptionLike => ({
   model, isDefault: false, efforts: [{ value: 'low' }, { value: 'high' }], defaultEffort: 'low', serviceTiers: [], ...extra,
@@ -46,6 +46,13 @@ describe('会话模型配置', () => {
     const claudeOwn = { model: 'sonnet', effort: 'max', fast: false, seen: { model: 'claude-sonnet-5-5', effort: null } }
     expect(reconcileThreadPrefs('claude', claude, claudeOwn, { model: 'claude-opus-5-5', effort: null }))
       .toMatchObject({ model: 'opus', effort: 'max' })
+  })
+
+  it('开新会话时沿用原会话选择，首轮覆盖项优先且不带 seen', () => {
+    const source = { model: 'gpt-big', effort: 'high', fast: true, seen: { model: 'gpt-big', effort: 'high' } }
+    expect(inheritedModelPrefs(source)).toEqual({ model: 'gpt-big', effort: 'high', fast: true })
+    expect(inheritedModelPrefs(source, { model: 'gpt-small', effort: 'low', serviceTier: null }))
+      .toEqual({ model: 'gpt-small', effort: 'low', fast: false })
   })
 
   it('换了模型或强度才生成提示，首轮或未显式指定模型时不提示', () => {

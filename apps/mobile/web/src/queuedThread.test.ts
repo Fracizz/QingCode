@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest'
 import { createGateway, setGateway } from './client'
 import { MOCK_FP } from './mock'
-import { selectedQueuedSends, useApp } from './store'
+import { modelPrefsOf, selectedQueuedSends, useApp } from './store'
 import { EventStreamController } from './transport'
 
 it('在空白会话或历史分支发送指定排队消息，原会话继续运行', async () => {
@@ -43,6 +43,8 @@ it('在空白会话或历史分支发送指定排队消息，原会话继续运�
     await advance(state().selectProject('p-local'), 250)
     await expect(advance(state().openThread('t-demo', 'codex'))).resolves.toBe(true)
     await expect(advance(state().send('原会话正在运行'), 25)).resolves.toBe(true)
+    const chosen = { model: 'gpt-5.5-mini', effort: 'high', fast: false }
+    state().rememberThreadPrefs('local', 'codex', 't-demo', chosen)
 
     state().setDraftText('空白会话消息')
     state().addAnnotation('引用内容')
@@ -58,6 +60,8 @@ it('在空白会话或历史分支发送指定排队消息，原会话继续运�
     await expect(advance(state().sendQueuedInNewThread(blank!.id, 'start'), 55)).resolves.toBe(true)
     const startedId = state().selectedThreadId!
     expect(startedId).not.toBe('t-demo')
+    // 新会话沿用原会话的模型与推理强度。
+    expect(modelPrefsOf(state(), 'local', 'codex', startedId)).toMatchObject({ model: chosen.model })
     expect(texts(startedId)).toEqual(['> 引用内容\n\n空白会话消息'])
     expect(rpc.mock.calls).toContainEqual([
       conn, 'codex.send', expect.objectContaining({ msg: expect.objectContaining({

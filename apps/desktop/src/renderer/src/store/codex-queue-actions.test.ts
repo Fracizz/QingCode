@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UserInput } from '@qn/codex-client'
 import type { AgentKind } from '../../../shared/backendApi'
 import { currentSideChat, pendingSendKey, useCodex } from './codex'
+import { prefsFor, useModels } from './models'
 
 type RpcRequest = { id: string; method: string; params: Record<string, unknown> }
 
@@ -71,6 +72,36 @@ describe('排队消息操作', () => {
     expect(pending().map((item) => item.text)).toEqual(['第一条'])
   })
 
+  it('插入排队消息：打断当前一轮后立即发送，其余消息继续排队且不暂停', async () => {
+    const reply = backend.send.getMockImplementation()
+    backend.send.mockImplementation((agent, request) => {
+      reply?.(agent, request)
+      if (request.method === 'turn/interrupt') notifyTurn('turn/completed', 'active', 'interrupted')
+    })
+    const { send, interruptPendingSend } = useCodex.getState()
+    await send('第一条', chat)
+    await send('插队', chat)
+    expect(await interruptPendingSend(chat, pending()[1]!.id)).toBe(true)
+    expect(methods()).toEqual(['turn/interrupt', 'turn/start'])
+    expect(calls()[1]?.params.input).toMatchObject([{ type: 'text', text: '插队' }])
+    expect(pending().map((item) => [item.text, item.error])).toEqual([['第一条', undefined]])
+  })
+
+  it('插入时打断失败，消息放到队首并暂停', async () => {
+    const reply = backend.send.getMockImplementation()
+    backend.send.mockImplementation((agent, request) => {
+      if (request.method === 'turn/interrupt') receive(agent, { id: request.id, error: { code: -32000, message: '打断失败原因' } })
+      else reply?.(agent, request)
+    })
+    const { send, interruptPendingSend } = useCodex.getState()
+    await send('第一条', chat)
+    await send('插队', chat)
+    expect(await interruptPendingSend(chat, pending()[1]!.id)).toBe(false)
+    expect(methods()).toEqual(['turn/interrupt'])
+    expect(pending().map((item) => item.text)).toEqual(['插队', '第一条'])
+    expect(pending()[0]?.error).toBeTruthy()
+  })
+
   it('编辑期间暂停自动发送，保存后替换正文并保留附件', async () => {
     const image = { type: 'image', url: 'data:image/png;base64,AA==' } as const
     await useCodex.getState().send('原文', { ...chat, input: [{ type: 'text', text: '原文', text_elements: [] }, image] })
@@ -95,6 +126,29 @@ describe('排队消息操作', () => {
     expect(calls()[1]?.params.threadId).toBe('new-thread')
     expect(pending()).toEqual([])
     expect(useCodex.getState().currentThreadId).toBe('new-thread')
+  })
+
+  it.each(['start', 'side', 'continue'] as const)('排队消息移到新会话（%s）沿用原会话的模型与推理强度', async (mode) => {
+    const chosen = { model: 'gpt-own', effort: 'high', fast: false }
+    useModels.setState({ prefs: { codex: { model: 'gpt-default', effort: 'low', fast: false } }, threadPrefs: {} })
+    useModels.getState().rememberThreadPrefs(targetId, 'codex', threadId, chosen)
+    useCodex.setState((state) => ({ sessions: Object.fromEntries(Object.entries(state.sessions).map(([key, session]) => {
+      const view = session.state.threads[threadId]!
+      const turns = [{ id: 'done', itemIds: [], outcome: 'completed' as const, startedAtMs: null, durationMs: null }]
+      return [key, { ...session, state: { threads: { ...session.state.threads, [threadId]: { ...view, turns } } } }]
+    })) }))
+    await useCodex.getState().send('另起', chat)
+    expect(await useCodex.getState().sendPendingInNewThread(chat, pending()[0]!.id, mode)).toBe(true)
+    const created = mode === 'continue' ? 'forked-thread' : 'new-thread'
+    expect(prefsFor(useModels.getState(), targetId, 'codex', created)).toMatchObject(chosen)
+  })
+
+  it('侧边对话沿用原会话的模型与推理强度', async () => {
+    useModels.setState({ prefs: { codex: { model: 'gpt-default', effort: 'low', fast: false } }, threadPrefs: {} })
+    useModels.getState().rememberThreadPrefs(targetId, 'codex', threadId, { model: 'gpt-own', effort: 'high', fast: false })
+    useCodex.getState().openSideChat()
+    await useCodex.getState().sendSide('追问', 'queue')
+    expect(prefsFor(useModels.getState(), targetId, 'codex', 'new-thread')).toMatchObject({ model: 'gpt-own', effort: 'high' })
   })
 
   it('新会话创建后立即出现在已加载的会话列表，不等 thread/list 返回', async () => {

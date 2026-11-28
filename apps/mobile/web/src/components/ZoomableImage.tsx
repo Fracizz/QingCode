@@ -1,5 +1,5 @@
 import { t } from '@qn/codex-client'
-import { Minus, Plus } from 'lucide-react'
+import { Minus, Plus, Scan } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Button, Loading } from './ui'
 
@@ -39,7 +39,9 @@ export function ZoomableImage({ src, alt, error, onBlankClick }: {
             onClick={() => setStep((value) => Math.min(ZOOM_LEVELS.length - 1, value + 1))}>
             <Plus size={18} aria-hidden />
           </Button>
-          <Button variant="ghost" onClick={() => setStep(FIT_INDEX)}>{t('适应窗口')}</Button>
+          <Button variant="ghost" aria-label={t('适应窗口')} className="size-11 p-0!" onClick={() => setStep(FIT_INDEX)}>
+            <Scan size={18} aria-hidden />
+          </Button>
         </div>
       )}
     </div>
