@@ -1790,8 +1790,8 @@ input[type="radio"] {
   border-top-color: transparent;
   background: var(--color-qn-bg);
   padding-top: 4px;
-  /* 全面屏底部圆角会遮住输入框：Android 壳按圆角半径下发 --qn-corner-gap，读不到时用默认值。 */
-  padding-bottom: max(8px, var(--qn-corner-gap, 14px));
+  /* 全面屏底部圆角会遮住输入框：至少留 16px，圆角更大时按 Android 壳下发的 --qn-corner-gap 再抬高。 */
+  padding-bottom: max(16px, var(--qn-corner-gap, 16px));
 }
 
 .qn-composer-images {
