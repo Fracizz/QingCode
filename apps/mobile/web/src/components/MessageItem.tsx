@@ -294,7 +294,7 @@ function CommandDetails({ item, status, onQuote }: {
   const output = all.length > 200 ? all.slice(-200).join('\n') : text
   return (
     <div className="qn-tool-body">
-      <div className="qn-mono whitespace-pre-wrap break-all text-[length:var(--text-xs)]">$ {item.command || t('（命令）')}</div>
+      <div className="qn-mono qn-scroll max-h-40 overflow-y-auto whitespace-pre-wrap break-all text-[length:var(--text-xs)]">$ {item.command || t('（命令）')}</div>
       {item.cwd && <div className="qn-mono mt-1 text-3xs text-qn-muted">{item.cwd}</div>}
       {output && (
         <pre className="qn-pre qn-scroll qn-command-output mt-2 overflow-auto whitespace-pre">
@@ -668,7 +668,7 @@ export function MessageItem({
             <ChevronDown size={14} className="shrink-0 transition-transform group-open:rotate-180" aria-hidden />
           </summary>
         }>
-          <div className="qn-markdown min-w-0 wrap-anywhere border-t border-qn-divider px-3 py-2 text-sm">
+          <div className="qn-markdown qn-scroll qn-limit-body min-w-0 wrap-anywhere border-t border-qn-divider px-3 py-2 text-sm">
             <Markdown text={body} streaming={false} />
           </div>
         </LazyDetails>
@@ -712,7 +712,7 @@ export function MessageItem({
               <ChevronDown size={14} className="shrink-0 transition-transform group-open:rotate-180" aria-hidden />
             </summary>
           }>
-            <div className="qn-tool-body whitespace-pre-wrap break-words">{item.summary}</div>
+            <div className="qn-tool-body qn-scroll qn-limit-body whitespace-pre-wrap break-words">{item.summary}</div>
             <MessageActions text={item.summary} onQuote={onQuote} />
           </LazyDetails>
         )

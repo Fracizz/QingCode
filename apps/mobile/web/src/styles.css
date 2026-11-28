@@ -2811,6 +2811,8 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 }
 
 .qn-command-output { max-height: min(24rem, 48dvh); }
+/* 展开的长通知与后台任务结果限高滚动，避免一条内容占满几屏。 */
+.qn-limit-body { max-height: min(18rem, 36dvh); overflow-y: auto; }
 
 .qn-tool-body {
   margin: 2px 0 4px;

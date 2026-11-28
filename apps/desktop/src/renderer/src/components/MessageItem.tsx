@@ -411,7 +411,7 @@ function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, o
       return (
         <ToolRow icon={<ListChecks size={14} aria-hidden />} summary={item.summary ? `${label} · ${item.summary}` : label}>
           {item.result && (
-            <div className="qn-markdown min-w-0 wrap-anywhere border-l border-qn-border pl-3 text-qn-prose">
+            <div className="qn-markdown qn-scroll max-h-72 min-w-0 overflow-y-auto wrap-anywhere border-l border-qn-border pl-3 text-qn-prose">
               <ReplyMarkdown text={item.result} streaming={false} />
             </div>
           )}
@@ -435,7 +435,7 @@ function MessageContent({ item, showStreamingDots, replyTimeInSummary, onFork, o
       }
       return (
         <ToolRow icon={<FileText size={14} />} summary={item.type}>
-          <div className="whitespace-pre-wrap break-words text-ui text-qn-muted">{item.summary}</div>
+          <div className="qn-scroll max-h-72 overflow-y-auto whitespace-pre-wrap break-words text-ui text-qn-muted">{item.summary}</div>
         </ToolRow>
       )
   }
