@@ -14,7 +14,7 @@
 | 三种 Agent 统一实现 `AgentHost.handleClientMessage(clientId, msg)` | `packages/server/src/codexHost.ts:36` | 可在 daemon 内注册「虚拟客户端」（负数 clientId），复用现有协议 |
 | daemon 空闲 30 分钟退出（无客户端、无直连、无活动对话/终端） | `packages/server/src/daemon.ts:296` | 空闲条件需加入「有已启用的任务」 |
 | daemon 不开机自启 | — | 目标机重启后需桌面端连接一次才会拉起 |
-| 电脑版关窗即 `app.quit()`，无托盘 | `apps/desktop/src/main/index.ts:311` | 若调度放桌面端，必须改成托盘常驻 |
+| 电脑版关窗后在系统托盘常驻，退出才停止 | `apps/desktop/src/main/index.ts` | 方案 A 可行，但电脑关机或退出后仍不能运行 |
 | 运行配置 `run.start` 已由 daemon 托管 | `packages/server/src/workspace/run/` | `run` 类型任务可直接复用 |
 | 访问模式参数生成 `turnAccessOverride` | `packages/codex-client/src/accessModes.ts` | 可直接生成 Codex 只读 / Claude 计划模式参数 |
 | 渲染端调用 server 的通道 `serverCall(targetId, method, params)` | `features/run/runStore.ts` | 桌面调用契约 `backendApi.ts` 无需改动 |
@@ -28,9 +28,9 @@
 
 | | A：调度放桌面 backend | B：调度放 daemon（推荐） |
 |---|---|---|
-| 电脑版关闭后 | 不能运行，需改托盘常驻 | 能运行，只要 daemon 存活 |
+| 电脑版退出后 | 不能运行（托盘常驻时可运行） | 能运行，只要 daemon 存活 |
 | 远端任务 | 依赖本机开机、联网并保持 SSH | 在目标机上独立运行 |
-| 改动量 | 不改协议，但改主进程生命周期 | 新增 `schedule.*` 协议与 daemon 调度器 |
+| 改动量 | 不改协议，调度器放主进程或 backend | 新增 `schedule.*` 协议与 daemon 调度器 |
 | 手机查看 | 经网关转发 | 天然共享同一份数据 |
 
 ## 4. 方案 B 设计

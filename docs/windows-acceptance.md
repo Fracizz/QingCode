@@ -3,7 +3,7 @@
 > 本次验收在**本机 Windows 11 x64** 上执行（Node v24.18.0、git 2.45.2.windows.1、
 > `rg` 存在于 `%USERPROFILE%\.pi\agent\bin`、`claude.exe` 存在于
 > `%USERPROFILE%\.local\bin`、本机未安装 codex）。测试全部使用 `os.tmpdir()` 下的临时目录/仓库，
-> 结束后清理。范围与红线见 `docs/tasks/T24-windows-server.md`、`docs/agent-adapters.md`。
+> 结束后清理。红线见 `docs/agent-adapters.md`。
 
 ## 0. 自动验收结果
 

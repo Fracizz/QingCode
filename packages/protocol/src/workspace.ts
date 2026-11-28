@@ -1,4 +1,4 @@
-// 文件与 Git 的 server 协议契约（docs/roadmap.md §4）。
+// 文件、Git、终端与运行配置的 server 协议契约。
 // server 实现与渲染进程调用都以此为准；改字段需同时改两侧。
 
 /** 文件/Git 方法统一错误码；server 以 res.error.code 返回。 */
@@ -343,7 +343,7 @@ export interface WorkspaceMethods {
   'term.list': { params: Record<string, never>; result: { terminals: TermInfo[] } }
 }
 
-// ---- 运行配置 run.*（docs/tasks/T26-run-configs.md） ----
+// ---- 运行配置 run.*（兼容旧版 .qingcode/run.json） ----
 // 运行配置是用户自己的命令：只有用户点击才 run.start，server 不自动执行任何命令。
 // 进程归 daemon 所有，客户端断开不停止；输出以 utf8 文本推送，保留 ANSI 转义。
 

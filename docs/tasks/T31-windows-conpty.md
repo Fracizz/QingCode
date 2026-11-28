@@ -4,7 +4,7 @@
 - `packages/server/src/terminal/**`（Windows 后端、默认 shell 与测试）。
 - `packages/server/build.mjs`（从已准备的桌面依赖复制 Windows x64 预编译包到现有 server 资源目录）。
 
-依据：`docs/next-wave.md` B 组、`docs/spikes/terminal.md` §4、`docs/mvp.md` §2 和 §5。预编译实现使用 [@lydell/node-pty](https://github.com/lydell/node-pty) 对应的 Windows x64 平台包。
+依据：`docs/spikes/terminal.md` §4、`docs/mvp.md` §2 和 §5。预编译实现使用 [@lydell/node-pty](https://github.com/lydell/node-pty) 对应的 Windows x64 平台包。
 
 1. 在 Windows x64 Electron 启动的本机 daemon 按需加载 ConPTY；经 SSH 部署的 server 仍只上传单文件。
 2. 接入默认 shell、输入输出、resize、退出与关闭。原生模块缺失时返回 `pty_unavailable`。

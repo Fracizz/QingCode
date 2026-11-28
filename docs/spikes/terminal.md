@@ -1,8 +1,6 @@
 # T21 终端技术验证（spike）报告
 
-> 状态：完成（2026-11-26）。依据：`docs/tasks/T21-terminal-spike.md`、`docs/roadmap.md` §5 P2 / §7.4、`docs/mvp.md` §2–§4。
-> 范围：只新增 `spikes/terminal/**` 与本文件；未改任何产品代码、未安装依赖、未提交。
-> 结论用于回写 `docs/roadmap.md` §7.4「终端路线待 T21 结论」（本文不改 roadmap，由总管定稿）。
+> 状态：历史报告（2026-11-26 完成）。结论已定为[路线图](../roadmap.md) §5 决策 4，终端已按此实现。协议以 `packages/protocol/src/workspace.ts` 的 `term.*` 为准；手机终端后来已开放，需在电脑端单独启用。下文引用的路线图章节号为当时版本。
 
 ## 1. 结论与推荐
 

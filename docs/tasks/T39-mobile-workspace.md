@@ -1,6 +1,6 @@
 # T39 移动端工作台与会话恢复
 
-范围：`apps/mobile/web/src/**`、`apps/mobile/web/vite.config.ts`、`apps/mobile/tsconfig.json`、`apps/mobile/android/**`、`apps/desktop/src/backend/mobile/**`、`apps/desktop/src/backend/registerMobile.ts`、`apps/desktop/src/shared/backendApi.ts` 的移动端接口、桌面设置页的移动连接部分、`packages/server/src/workspace/fs/**` 的项目只读能力及对应协议类型和测试。依据为 `docs/mvp.md` §9–12、`docs/agent-adapters.md` 和 `docs/tasks/T28-mobile-catchup.md`。界面参考旧版 `origin/master` 33f870ac 的 Android 工作台和设计规范。
+范围：`apps/mobile/web/src/**`、`apps/mobile/web/vite.config.ts`、`apps/mobile/tsconfig.json`、`apps/mobile/android/**`、`apps/desktop/src/backend/mobile/**`、`apps/desktop/src/backend/registerMobile.ts`、`apps/desktop/src/shared/backendApi.ts` 的移动端接口、桌面设置页的移动连接部分、`packages/server/src/workspace/fs/**` 的项目只读能力及对应协议类型和测试。依据为 `docs/mvp.md` §9–12和 `docs/agent-adapters.md`。界面参考旧版 `origin/master` 33f870ac 的 Android 工作台和设计规范。
 
 1. 隔离各台电脑的会话、游标、模型、额度和草稿。换网、返回前台或重开后恢复当前会话，授权或证书变化时可在原连接重新配对。发送和审批保留可确认的结果。
 2. 工作台集中展示会话、项目和连接。会话按项目分组，提供搜索、状态和快速切换。统一弹层、输入、消息菜单和导航的手机交互。
