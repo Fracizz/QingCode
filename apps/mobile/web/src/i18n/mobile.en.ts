@@ -622,7 +622,6 @@ export default {
   '标准': 'Standard',
   '快速': 'Fast',
   '快速档响应更快，额度消耗更多': 'Fast responds quicker but uses more quota',
-  '跟随 Agent 默认': 'Agent default',
   '最低': 'Min',
   '低': 'Low',
   '中': 'Med',

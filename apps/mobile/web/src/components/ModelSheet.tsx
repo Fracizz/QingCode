@@ -2,7 +2,7 @@ import { Check, ChevronDown, Zap } from 'lucide-react'
 import { t, translateMessage, withoutHiddenModels } from '@qn/codex-client'
 import { useEffect, useMemo, useState } from 'react'
 import { sessionKey } from '../agents'
-import { EMPTY_PREFS, effortHint, effortLabel, pickModel, prefsFor, resolveSelection, triggerLabel, visibleModels, type ModelPrefs } from '../models'
+import { effortHint, effortLabel, pickModel, prefsFor, resolveSelection, triggerLabel, visibleModels, type ModelPrefs } from '../models'
 import { useApp } from '../store'
 import type { AgentKind } from '../types'
 import { AgentQuota } from './RateLimitView'
@@ -153,16 +153,9 @@ export function ModelPicker({ targetId, agent, open: controlledOpen, onOpenChang
               </div>
             )}
 
-            <div className="flex gap-2">
-              {agent !== 'codex' && (prefs.model || prefs.effort) && (
-                <Button className="flex-1" onClick={() => setPrefs(targetId, agent, EMPTY_PREFS)}>
-                  {t('跟随 Agent 默认')}
-                </Button>
-              )}
-              <Button variant="primary" className="flex-1" onClick={close}>
-                {t('完成')}
-              </Button>
-            </div>
+            <Button variant="primary" className="w-full" onClick={close}>
+              {t('完成')}
+            </Button>
           </div>
         </Dialog>
       )}
