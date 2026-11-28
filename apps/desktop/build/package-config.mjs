@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { pruneReleaseVersions } from './release-retention.mjs'
 
 function readGitHubOrigin(projectDir) {
   let origin
@@ -19,8 +20,7 @@ function readGitHubOrigin(projectDir) {
   return match && { owner: match[1], repo: match[2] }
 }
 
-function reserveBetaVersion(projectDir, baseVersion, firstBuild) {
-  const releaseDir = join(projectDir, 'release')
+function reserveBetaVersion(releaseDir, baseVersion, firstBuild) {
   mkdirSync(releaseDir, { recursive: true })
   // 同一工作树同时出包时，每个打包进程都需要独立的 win-unpacked 目录。
   for (let build = firstBuild; Number.isSafeInteger(build); build++) {
@@ -54,13 +54,23 @@ export default function packageConfig(
     throw new Error('QINGCODE_PACKAGE_BASE_VERSION 必须为 X.Y.Z')
   }
   const previousBeta = baseVersion === manifestBase ? Number(sourceBeta ?? 0) : 0
+  const outputRoot = join('..', '..', 'release')
+  const releaseDir = resolve(projectDir, outputRoot)
   const version = channel === 'stable'
     ? baseVersion
-    : reserveBetaVersion(projectDir, baseVersion, Math.max(now, previousBeta + 1))
+    : reserveBetaVersion(releaseDir, baseVersion, Math.max(now, previousBeta + 1))
   const repository = readGitHubOrigin(projectDir)
   return {
     extraMetadata: { version },
-    directories: { output: join('release', version) },
+    directories: { output: join(outputRoot, version) },
+    afterAllArtifactBuild({ outDir, artifactPaths }) {
+      // 只在仓库根的安装包出完后清理，Windows 构建机可以指定自己的中间目录。
+      const directory = resolve(outDir)
+      const installer = join(directory, `QingCode-Next-${version}-x64.exe`)
+      if (dirname(directory) === releaseDir && artifactPaths.some((file) => resolve(file) === installer)) {
+        for (const name of pruneReleaseVersions(releaseDir)) console.log(`已移除旧版本 ${name}`)
+      }
+    },
     publish: repository && {
       provider: 'github',
       ...repository,

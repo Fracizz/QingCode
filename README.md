@@ -6,7 +6,11 @@ QingCode Next 是用 Electron 和 TypeScript 开发的桌面客户端，通过�
 
 ## Windows x64 打包
 
-在当前 QingCode Next 工作树的仓库根目录运行 `pnpm package`。每次生成一个新的 `X.Y.Z-beta.N` 版本，Beta 序号以 Unix 毫秒时间戳为起点。NSIS 安装包、ZIP 便携包和 `win-unpacked/` 都在当前工作树的 `apps/desktop/release/<版本>/`。
+在当前 QingCode Next 工作树的仓库根目录运行 `pnpm package`。每次生成一个新的 `X.Y.Z-beta.N` 版本，Beta 序号以 Unix 毫秒时间戳为起点。NSIS 安装包和 `win-unpacked/` 都在仓库根的 `release/<版本>/`。
+
+通过 Windows 构建机同时打包 Windows 安装包和 Android APK 时，运行 `python scripts/qn-package.py`。默认沿用构建机归档中的 beta 版本序列，构建后取回并校验到本机仓库根的 `release/<版本>/`。明确要打正式版时加 `--stable`。 [项目打包技能](.agents/skills/qn-package/SKILL.md)
+
+两种入口都在成功出包后按产物时间保留本机最近两个版本，直接移除更旧的版本目录。
 
 需要正式版时，在本次命令中显式设置 `QINGCODE_PACKAGE_CHANNEL=stable`。下面的命令适用于 PowerShell。
 

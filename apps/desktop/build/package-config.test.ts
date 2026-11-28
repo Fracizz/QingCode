@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -34,8 +34,9 @@ test('默认出新的 Beta 并在当前工作树预留各自的产物目录', ()
 
   expect(first.extraMetadata.version).toBe('0.0.1-beta.1000')
   expect(second.extraMetadata.version).toBe('0.0.1-beta.1001')
-  expect(first.directories.output).toBe(join('release', '0.0.1-beta.1000'))
+  expect(first.directories.output).toBe(join('..', '..', 'release', '0.0.1-beta.1000'))
   expect(existsSync(join(projectDir, first.directories.output))).toBe(true)
+  expect(existsSync(join(root, 'release', '0.0.1-beta.1000'))).toBe(true)
   expect(existsSync(join(projectDir, second.directories.output))).toBe(true)
   expect(first.publish).toEqual({
     provider: 'github',
@@ -53,7 +54,8 @@ test('明确选择 stable 时使用正式版本和当前 fork', () => {
 
   expect(packageConfig({ projectDir })).toEqual({
     extraMetadata: { version: '0.0.1' },
-    directories: { output: join('release', '0.0.1') },
+    directories: { output: join('..', '..', 'release', '0.0.1') },
+    afterAllArtifactBuild: expect.any(Function),
     publish: {
       provider: 'github',
       owner: 'my-fork',
@@ -76,10 +78,40 @@ test('延续源清单中已有的 Beta 版本，并允许无 GitHub origin 的�
 test('拒绝未知的渠道值', () => {
   vi.stubEnv('QINGCODE_PACKAGE_CHANNEL', 'release')
   expect(() => packageConfig({ projectDir })).toThrow('只支持 beta 或 stable')
-  expect(existsSync(join(projectDir, 'release'))).toBe(false)
+  expect(existsSync(join(root, 'release'))).toBe(false)
 })
 
 test('指定本次打包的基础版本时仍默认出 Beta', () => {
   vi.stubEnv('QINGCODE_PACKAGE_BASE_VERSION', '0.0.2')
   expect(packageConfig({ projectDir }, undefined, 1000).extraMetadata.version).toBe('0.0.2-beta.1000')
+})
+
+test('成功出包后按产物时间保留最近两个已生成版本', () => {
+  const release = join(root, 'release')
+  const putArtifact = (version: string, time: number, suffix: string) => {
+    const folder = join(release, version)
+    mkdirSync(folder, { recursive: true })
+    const file = join(folder, `QingCode-Next-${version}-${suffix}`)
+    writeFileSync(file, 'package')
+    utimesSync(file, time, time)
+    return file
+  }
+  putArtifact('0.0.3', 1000, 'Android.apk')
+  putArtifact('0.0.2-beta.4', 2000, 'x64.exe')
+  mkdirSync(join(release, '0.0.4-beta.1'))
+  mkdirSync(join(release, 'notes'))
+  const config = packageConfig({ projectDir }, undefined, 3000)
+  const version = config.extraMetadata.version
+  const file = putArtifact(version, 3000, 'x64.exe')
+  const outDir = join(release, version)
+
+  config.afterAllArtifactBuild({ outDir, artifactPaths: [] })
+  expect(existsSync(join(release, '0.0.3'))).toBe(true)
+
+  config.afterAllArtifactBuild({ outDir, artifactPaths: [file] })
+  expect(existsSync(join(release, '0.0.3'))).toBe(false)
+  expect(existsSync(join(release, '0.0.2-beta.4'))).toBe(true)
+  expect(existsSync(file)).toBe(true)
+  expect(existsSync(join(release, '0.0.4-beta.1'))).toBe(true)
+  expect(existsSync(join(release, 'notes'))).toBe(true)
 })
