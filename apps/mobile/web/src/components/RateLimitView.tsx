@@ -16,6 +16,7 @@ import {
   sumUsageTokens,
   windowLabel,
   resetCreditExpiry,
+  resetCreditText,
   unlistedResetCredits,
   type AccountUsage,
   type ClaudeRateLimitSnapshot,
@@ -311,16 +312,19 @@ function ResetCreditsSummary({ targetId, available, now }: { targetId: string; a
       </div>
       {summary && (summary.credits.length > 0 || unlisted > 0) && (
         <ul className="qn-surface qn-quota-list">
-          {summary.credits.map((credit) => (
-            <li key={credit.id} className="qn-quota-item">
-              <div className="min-w-0 flex-1">
-                <div className="qn-quota-item-title">{credit.title ?? t('额度重置卡')}</div>
-                {credit.description && <div className="qn-quota-sub">{credit.description}</div>}
-                <div className="qn-quota-sub">{resetCreditExpiry(credit.expiresAt, now)}</div>
-              </div>
-              {redeemButton(credit, t('使用'))}
-            </li>
-          ))}
+          {summary.credits.map((credit) => {
+            const { title, description } = resetCreditText(credit)
+            return (
+              <li key={credit.id} className="qn-quota-item">
+                <div className="min-w-0 flex-1">
+                  <div className="qn-quota-item-title">{title ?? t('额度重置卡')}</div>
+                  {description && <div className="qn-quota-sub">{description}</div>}
+                  <div className="qn-quota-sub">{resetCreditExpiry(credit.expiresAt, now)}</div>
+                </div>
+                {redeemButton(credit, t('使用'))}
+              </li>
+            )
+          })}
           {unlisted > 0 && (summary.credits.length === 0
             ? <li className="qn-quota-item justify-end">{redeemButton(null, t('使用一张'))}</li>
             : <li className="qn-quota-item qn-quota-sub">{t('另有 {count} 张未列出明细', { count: unlisted })}</li>)}
@@ -333,7 +337,7 @@ function ResetCreditsSummary({ targetId, available, now }: { targetId: string; a
           <div className="mt-2 text-xs text-qn-muted">
             {pending.credit
               ? <>
-                <div>{pending.credit.title ?? t('额度重置卡')}</div>
+                <div>{resetCreditText(pending.credit).title ?? t('额度重置卡')}</div>
                 <div>{resetCreditExpiry(pending.credit.expiresAt, now)}</div>
               </>
               : <div>{t('由 Codex 选择下一张可用的卡。')}</div>}

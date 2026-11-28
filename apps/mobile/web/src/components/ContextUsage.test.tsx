@@ -37,15 +37,19 @@ it('无用量数据也能打开压缩入口，点压缩会话直接发送请求�
     expect(usage?.textContent).toContain('128 tokens')
     expect(usage?.textContent).not.toMatch(/费用|0\.012/)
     expect(usage?.querySelector('progress')).toBeNull()
-    // 没有窗口大小时也显示圆环（空环），与有用量时同一图标。
+    // 没有窗口大小时显示空环，保留相同的环径。
     expect(host.querySelector('[data-testid="context-ring"] circle:nth-of-type(2)')?.getAttribute('stroke-dasharray')).toBe('0 100')
+    expect(button('查看会话用量')?.textContent).toBe('')
 
-    // 有窗口大小时按钮与电脑版一样显示占用环，不再显示百分比文字。
-    await act(() => root.render(<ContextUsage tokenUsage={{ last: { totalTokens: 160_000 }, modelContextWindow: 200_000 }} />))
-    const ring = host.querySelector('[data-testid="context-ring"]')
-    expect(ring?.querySelectorAll('circle')[1]?.getAttribute('stroke-dasharray')).toBe('80 100')
-    expect(ring?.parentElement?.className).toContain('text-qn-warn')
-    expect(button('查看上下文，上下文已用 80%')?.textContent).toBe('')
+    for (const [percent, color] of [[0, 'text-qn-muted'], [80, 'text-qn-warn'], [100, 'text-qn-danger']] as const) {
+      const usageWithWindow = { last: { totalTokens: percent }, modelContextWindow: 100, estimated: percent === 100 }
+      await act(() => root.render(<ContextUsage tokenUsage={usageWithWindow} />))
+      const ring = host.querySelector('[data-testid="context-ring"]')
+      expect(ring?.getAttribute('width')).toBe('26')
+      expect(ring?.querySelectorAll('circle')[1]?.getAttribute('stroke-dasharray')).toBe(`${percent} 100`)
+      expect(ring?.parentElement?.classList.contains(color)).toBe(true)
+      expect(button(`查看上下文，上下文已用 ${percent}%`)?.textContent).toBe(String(percent))
+    }
   } finally {
     await act(() => root.unmount())
     host.remove()

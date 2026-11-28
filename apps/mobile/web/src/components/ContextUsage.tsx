@@ -27,12 +27,21 @@ export function ContextUsage({ tokenUsage, compact, panel: controlledPanel, onPa
   if (turn) stats.push({ label: t('最近上报的单轮用量'), value: `${formatTokens(turn.tokens)} tokens` })
   return (
     <>
-      <Button variant="ghost" className="qn-icon-button px-1!"
-        aria-label={busy ? t('正在压缩会话') : sessionUsage ? t('查看会话用量') : t('查看上下文，{label}', { label })}
+      <Button variant="ghost" className="qn-icon-button"
+        aria-label={busy ? t('正在压缩会话') : !usage && sessionUsage ? t('查看会话用量') : t('查看上下文，{label}', { label })}
         aria-haspopup="dialog" onClick={() => setPanel('usage')}>
-        {/* 与电脑版输入区的上下文环一致；尚无窗口大小时显示空环，图标不随数据到达而变形。 */}
-        <span className={`flex items-center ${color}`} aria-hidden>
-          {busy ? <LoadingIcon size={18} /> : <ProgressRing percent={percent} size={18} />}
+        {/* 与电脑版使用相同环径，压缩时把加载图标放在同一位置。 */}
+        <span className={`relative grid size-[26px] shrink-0 place-items-center ${color}`} aria-hidden>
+          {busy ? <LoadingIcon size={18} /> : (
+            <>
+              <ProgressRing percent={percent} />
+              {usage && (
+                <span className="absolute inset-0 grid place-items-center text-2xs leading-none font-medium tabular-nums">
+                  {percent}
+                </span>
+              )}
+            </>
+          )}
         </span>
       </Button>
       {panel && (
@@ -85,12 +94,12 @@ export function ContextUsage({ tokenUsage, compact, panel: controlledPanel, onPa
 }
 
 /** 与电脑版 ProgressRing 相同的占用环，颜色跟随文字色。 */
-function ProgressRing({ percent, size }: { percent: number; size: number }) {
+function ProgressRing({ percent }: { percent: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 13 13" className="shrink-0 -rotate-90" data-testid="context-ring">
-      <circle cx="6.5" cy="6.5" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.25" />
-      <circle cx="6.5" cy="6.5" r="5" pathLength="100" fill="none" stroke="currentColor" strokeWidth="1.5"
-        strokeDasharray={`${percent} 100`} />
+    <svg width={26} height={26} viewBox="0 0 26 26" className="-rotate-90" data-testid="context-ring"
+      fill="none" stroke="currentColor" strokeWidth="1.5">
+      <circle cx="13" cy="13" r="12.25" opacity="0.25" />
+      <circle cx="13" cy="13" r="12.25" pathLength="100" strokeDasharray={`${percent} 100`} />
     </svg>
   )
 }

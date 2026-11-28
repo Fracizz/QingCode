@@ -254,6 +254,36 @@ it('恢复的项目在当前连接就绪后加载会话', () => {
   }
 })
 
+it('目标就绪后预取三个 Agent 的模型，重连后重新读取', async () => {
+  const stop = useCodex.getState().init()
+  const targetId = 'remote'
+  let version = 1
+  callMock.mockImplementation(async (method: string, params?: CallParams) => {
+    const msg = params?.msg
+    if (method !== 'codex.send' || msg?.method !== 'model/list') return fakeCall(method, params)
+    const agent = params?.agent ?? 'codex'
+    const model = `${agent}-model-v${version}`
+    queueMicrotask(() => emitRecv({ id: msg.id, result: { data: [{ model }] } }, agent, params?.targetId))
+    return {}
+  })
+  const changeTargetState = (state: 'ready' | 'connecting') => {
+    for (const cb of listeners.get('target.state') ?? []) cb({ id: targetId, state })
+  }
+  const modelNames = () => (['codex', 'claude', 'pi'] as const).map((agent) =>
+    useModels.getState().lists[sessionKey(targetId, agent)]?.models[0]?.model)
+  try {
+    changeTargetState('ready')
+    await vi.waitFor(() => expect(modelNames()).toEqual(['codex-model-v1', 'claude-model-v1', 'pi-model-v1']))
+    changeTargetState('connecting')
+    expect(modelNames()).toEqual([undefined, undefined, undefined])
+    version = 2
+    changeTargetState('ready')
+    await vi.waitFor(() => expect(modelNames()).toEqual(['codex-model-v2', 'claude-model-v2', 'pi-model-v2']))
+  } finally {
+    stop()
+  }
+})
+
 it('同一目标的多个目录和不同目标的同名目录各自加载，迟到回包不会覆盖较新的列表', async () => {
   const replies: { targetId: string; cwd?: string; respond: (threadId: string) => void }[] = []
   callMock.mockImplementation((method: string, params?: CallParams) => {

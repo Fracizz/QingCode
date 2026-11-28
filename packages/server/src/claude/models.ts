@@ -128,10 +128,13 @@ export function supportedModelList(infos: unknown): Json | null {
         : []
     const isDefault = hasDefault ? id === DEFAULT_MODEL : !assignedDefault
     if (isDefault) assignedDefault = true
+    // 使用 SDK 报告的具体型号展示，发送时仍交给 Claude 按别名解析（包含账号默认和动态切换）。
+    const resolved = scalarText(info.resolvedModel)
+    const name = scalarText(info.displayName) || id
     data.push(
       v2Model({
         id,
-        displayName: scalarText(info.displayName) || id,
+        displayName: resolved && resolved !== id && resolved !== name ? `${resolved} (${name})` : name,
         description: scalarText(info.description),
         isDefault,
         efforts: effortOptions(levels),

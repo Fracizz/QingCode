@@ -1,5 +1,13 @@
 import { expect, it } from 'vitest'
-import { parseImageCompression, parseTheme } from './mobilePreferences'
+import { parseImageCompression, parseSessionPreviewCount, parseTheme } from './mobilePreferences'
+
+it('默认显示 6 个会话，旧设置和无效数量回到默认值', () => {
+  expect(parseSessionPreviewCount(1)).toBe(1)
+  expect(parseSessionPreviewCount(10)).toBe(10)
+  for (const invalid of [undefined, 0, 11, 6.5, '10']) {
+    expect(parseSessionPreviewCount(invalid)).toBe(6)
+  }
+})
 
 it('图片压缩只有高、中、低三档，缺省或未知值回到中档', () => {
   expect(parseImageCompression('high')).toBe('high')

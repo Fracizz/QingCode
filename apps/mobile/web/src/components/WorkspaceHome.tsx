@@ -2,6 +2,7 @@ import { sessionStatusLabels, type SessionStatus, t, translateMessage } from '@q
 import { Archive, ChartColumn, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Cloud, Ellipsis, Folder, MessageCircleMore, Monitor, Pencil, Pin, PinOff, RotateCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { sessionKey } from '../agents'
+import { useMobilePreferences } from '../mobilePreferences'
 import { pageName } from '../names'
 import { useApp } from '../store'
 import type { Project, Target } from '../types'
@@ -19,6 +20,7 @@ import {
   placeWorkspaceThread,
   renameCachedThread,
   recentThreadStatus,
+  setWorkspaceActivityPriority,
   threadPreviewLine,
   displayPath,
   showWorkspaceProject,
@@ -56,7 +58,6 @@ const statusTone: Record<SessionStatus, 'muted' | 'accent' | 'warn' | 'danger'> 
 const QUIET_STATUS = new Set<SessionStatus>(['idle', 'completed', 'interrupted'])
 const emptyProjects: Project[] = []
 const emptyThreads: WorkspaceThread[] = []
-const THREAD_PREVIEW_LIMIT = 5
 
 const workspaceIcons = {
   sessions: MessageCircleMore,
@@ -444,9 +445,10 @@ function WorkspaceThreadList({ project, threads, searching, onOpen }: {
   onOpen: (thread: WorkspaceThread) => void
 }) {
   const desktopId = useApp((s) => s.activeId)
+  const previewCount = useMobilePreferences((state) => state.sessionPreviewCount)
   const [expanded, setExpanded] = useState(false)
-  const shown = searching || expanded ? threads : threads.slice(0, THREAD_PREVIEW_LIMIT)
-  const remaining = threads.length - Math.min(threads.length, THREAD_PREVIEW_LIMIT)
+  const shown = searching || expanded ? threads : threads.slice(0, previewCount)
+  const remaining = threads.length - previewCount
   const label = expanded ? t('收起') : t('显示更多（{count} 条）', { count: remaining })
 
   return (
@@ -480,6 +482,7 @@ export function WorkspaceHome() {
   const loadProjects = useWorkspace((s) => s.loadProjects)
   const projectList = useWorkspace((s) => desktopId ? s.projects[desktopId] : undefined)
   const threadList = useWorkspace((s) => desktopId ? s.threads[desktopId] : undefined) ?? emptyThreads
+  const activityPriority = useWorkspace((s) => desktopId ? s.activityPriority[desktopId] : undefined)
   const [query, setQuery] = useState('')
   const [projectTargetId, setProjectTargetId] = useState<string | null>(null)
   const [projectFilterOpen, setProjectFilterOpen] = useState(false)
@@ -505,9 +508,13 @@ export function WorkspaceHome() {
     // 拖动保存过的顺序优先，之后新出现的项目仍插到最前。
     return preferences?.groupOrder ? stickyGroupOrder(next, preferences.groupOrder) : next
   }, [freshGroups, desktopId, preferences])
-  // 置顶项目始终排在最前；取消置顶后回到原来的固定位置。
-  const groups = useMemo(() => applyGroupOrder(freshGroups, pinnedFirst(baseOrder, preferences?.pinnedProjects, (item) => item)),
-    [freshGroups, baseOrder, preferences])
+  // 同一活动时间保留固定顺序，手动置顶始终在最前面。
+  const groups = useMemo(() => {
+    const order = activityPriority
+      ? [...baseOrder].sort((a, b) => (activityPriority.get(b) ?? -1) - (activityPriority.get(a) ?? -1))
+      : baseOrder
+    return applyGroupOrder(freshGroups, pinnedFirst(order, preferences?.pinnedProjects, (item) => item))
+  }, [freshGroups, baseOrder, activityPriority, preferences])
 
   const refresh = useCallback(async () => {
     if (desktopId) await Promise.all([loadTargets(), loadProjects(desktopId)])
@@ -517,16 +524,25 @@ export function WorkspaceHome() {
 
   const isSessions = tab === 'sessions'
   const searching = query.trim().length > 0
+  const canSortGroups = !searching && !!desktopId && !activityPriority
   const pinnedGroupCount = groups.filter((group) => preferences?.pinnedProjects?.includes(workspaceGroupKey(group))).length
   const threadCount = groups.reduce((sum, group) => sum + group.threads.length, 0)
   const projectCount = projectGroups.reduce((sum, group) => sum + group.rows.length, 0)
+  const pullRefresh = async () => {
+    await refresh()
+    if (desktopId && isSessions && activityPriority && useApp.getState().activeId === desktopId
+      && useApp.getState().page === 'workspace' && useWorkspace.getState().tab === 'sessions'
+      && useWorkspace.getState().activityPriority[desktopId] === activityPriority) {
+      setWorkspaceActivityPriority(desktopId, true)
+    }
+  }
   const showTargets = () => {
     useApp.getState().cancelPendingNavigation()
     useApp.setState({ page: 'targets', targetsReturnPage: 'workspace' })
   }
   return (
     <PullToRefresh className="qn-body qn-scroll qn-workspace qn-workspace-home qn-rise"
-      label={pageName(isSessions ? 'sessions' : 'projects')} disabled={!desktopId || projectList?.loading} onRefresh={refresh}
+      label={pageName(isSessions ? 'sessions' : 'projects')} disabled={!desktopId || projectList?.loading} onRefresh={pullRefresh}
       scrollKey={JSON.stringify(['workspace', tab, desktopId])}>
       {/* 大标题、电脑延迟与设置入口统一放在「连接」页，会话和项目页顶部直接从内容开始。 */}
       {repairReason && desktopId && (
@@ -539,8 +555,19 @@ export function WorkspaceHome() {
       {projectList?.loading && projects.length === 0 ? <Loading text={t('正在读取项目…')} /> : (
         <>
           {/* 新建会话从各项目分组标题的 + 进入，顶部不再放全局入口。 */}
-          {isSessions && <div className="qn-list-label"><span>{t('全部会话')}&nbsp;&nbsp;{threadCount}</span></div>}
+          {isSessions && <div className="qn-list-label flex-wrap items-center">
+            <span>{t('全部会话')}&nbsp;&nbsp;{threadCount}</span>
+            {desktopId && <div className="qn-segment" role="group" aria-label={t('项目排序')}>
+              <button type="button" aria-pressed={!activityPriority}
+                onClick={() => { if (activityPriority) setWorkspaceActivityPriority(desktopId, false) }}>{t('固定顺序')}</button>
+              <button type="button" aria-pressed={!!activityPriority}
+                onClick={() => { if (!activityPriority) setWorkspaceActivityPriority(desktopId, true) }}>{t('活动优先')}</button>
+            </div>}
+          </div>}
           <WorkspaceSearch label={isSessions ? t('搜索会话或项目') : t('搜索项目、主机或路径')} query={query} onChange={setQuery} />
+          {isSessions && activityPriority && <p className="mx-1 mb-2 text-[13px] text-qn-muted">
+            {t('运行中、待审批、待回答或有未读结果的项目按最近活动时间优先显示。下拉刷新更新顺序。')}
+          </p>}
           {!isSessions && (
             <>
               <button type="button" className="qn-row qn-project-filter"
@@ -571,7 +598,7 @@ export function WorkspaceHome() {
             groups.length ? (
               // 长按项目标题拖动整个分组；拖动期间收起会话，方便跨多个项目移动。
               <SortableList items={groups} itemKey={(group) => JSON.stringify([desktopId, workspaceGroupKey(group)])}
-                className="qn-group-sort" handle=".qn-group-title" collapse disabled={searching || !desktopId} label={pageName('projects')}
+                className="qn-group-sort" handle=".qn-group-title" collapse disabled={!canSortGroups} label={pageName('projects')}
                 clamp={(from, to) => from < pinnedGroupCount ? Math.min(to, pinnedGroupCount - 1) : Math.max(to, pinnedGroupCount)}
                 onMove={(from, to) => {
                   const moved = groups[from]
@@ -593,10 +620,10 @@ export function WorkspaceHome() {
                       </button>
                       {targets.some((item) => item.id === project.targetId) && <NewSessionButton project={project} iconOnly className="qn-list-action qn-new-session" />}
                       {/* 搜索时总是展示匹配结果，收起操作此时看不出效果，不提供。 */}
-                      <ProjectTools project={project} compact sortable={!searching && groups.length > 1}
+                      <ProjectTools project={project} compact sortable={canSortGroups && groups.length > 1}
                         actions={searching || !desktopId ? undefined : [{
                           icon: collapsed ? ChevronsUpDown : ChevronsDownUp,
-                          label: collapsed ? t('展开会话') : t('收起会话'),
+                          label: collapsed ? t('展开会话') : t('收起项目会话'),
                           onClick: () => toggleProjectCollapse(desktopId, project),
                         }]} />
                     </div>

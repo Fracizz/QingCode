@@ -35,7 +35,8 @@ function notifyTurn(method: 'turn/started' | 'turn/completed', id: string, statu
   receive(agent, { method, params: { threadId, turn: { id, status, items: [] } } })
 }
 
-const methods = () => backend.send.mock.calls.map(([, msg]) => msg.method)
+const calls = () => backend.send.mock.calls.filter(([, msg]) => msg.method !== 'model/list')
+const methods = () => calls().map(([, msg]) => msg.method)
 
 describe('聊天发送方式', () => {
   beforeEach(async () => {
@@ -66,9 +67,9 @@ describe('聊天发送方式', () => {
     notifyTurn('turn/completed', 'active', 'completed')
     await vi.waitFor(() => expect(pending().map((item) => item.text)).toEqual(['最后一个']))
     expect(methods()).toEqual(['turn/start'])
-    notifyTurn('turn/completed', 'c1', 'completed')
+    notifyTurn('turn/completed', calls()[0]![1].id, 'completed')
     await vi.waitFor(() => expect(pending()).toEqual([]))
-    expect(backend.send.mock.calls.map(([, msg]) => msg.params.input)).toEqual([
+    expect(calls().map(([, msg]) => msg.params.input)).toEqual([
       [{ type: 'text', text: '第一个', text_elements: [] }],
       [{ type: 'text', text: '最后一个', text_elements: [] }],
     ])
@@ -79,7 +80,7 @@ describe('聊天发送方式', () => {
     await send('等候', chat)
     expect(await send('补充要求', { ...chat, mode: 'steer' })).toBe(true)
     expect(methods()).toEqual(['turn/steer'])
-    expect(backend.send.mock.calls[0]?.[1].params.expectedTurnId).toBe('active')
+    expect(calls()[0]?.[1].params.expectedTurnId).toBe('active')
     expect(pending().map((item) => item.text)).toEqual(['等候'])
   })
 
@@ -93,7 +94,7 @@ describe('聊天发送方式', () => {
     const queue = () => useCodex.getState().pendingSends[pendingSendKey(address)] ?? []
     expect(await steerPendingSend(address, queue()[0]!.id)).toBe(true)
     expect(queue()).toEqual([])
-    expect(backend.send.mock.calls).toEqual(['补充要求', '排队后引导'].map((text) => [agent, expect.objectContaining({
+    expect(calls()).toEqual(['补充要求', '排队后引导'].map((text) => [agent, expect.objectContaining({
       method: 'turn/steer', params: expect.objectContaining({
         expectedTurnId: 'other-active', clientUserMessageId: expect.any(String),
         input: [{ type: 'text', text, text_elements: [] }],
@@ -123,7 +124,7 @@ describe('聊天发送方式', () => {
     expect(useCodex.getState().sendingMessage).toBeNull()
     expect(methods()).toEqual(['turn/interrupt', 'turn/start'])
     expect(pending().map((item) => item.text)).toEqual(['等候'])
-    notifyTurn('turn/completed', 'c2', 'completed')
+    notifyTurn('turn/completed', calls().find(([, request]) => request.method === 'turn/start')![1].id, 'completed')
     await vi.waitFor(() => expect(pending()).toEqual([]))
     expect(methods()).toEqual(['turn/interrupt', 'turn/start', 'turn/start'])
   })

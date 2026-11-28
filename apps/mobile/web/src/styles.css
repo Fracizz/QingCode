@@ -1247,9 +1247,12 @@ input[type="radio"] {
   z-index: -1;
   inset: 0;
   border-radius: inherit;
-  background: var(--qn-accent-surface);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--color-qn-accent) 20%, var(--color-qn-panel)),
+    color-mix(in srgb, var(--color-qn-accent) 9%, var(--color-qn-panel)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-qn-accent) 28%, transparent);
   opacity: 0;
-  transform: scaleX(0.45);
+  transform: translateY(2px) scaleX(0.42);
   transition: opacity var(--qn-motion-medium) ease, transform var(--qn-motion-long) var(--qn-ease-spring);
   content: "";
 }
@@ -1269,7 +1272,7 @@ input[type="radio"] {
 
 .qn-nav-button[aria-current="page"] span::before { opacity: 1; transform: none; }
 .qn-nav-button[aria-current="page"] span svg { animation: qn-nav-pop 460ms var(--qn-ease-spring); }
-@keyframes qn-nav-pop { from { transform: scale(0.8); } }
+@keyframes qn-nav-pop { from { transform: translateY(2px) scale(0.74); } }
 
 .qn-workspace {
   padding: 0 16px 16px;
@@ -1790,8 +1793,8 @@ input[type="radio"] {
   border-top-color: transparent;
   background: var(--color-qn-bg);
   padding-top: 4px;
-  /* 全面屏底部圆角会遮住输入框：至少留 16px，圆角更大时按 Android 壳下发的 --qn-corner-gap 再抬高。 */
-  padding-bottom: max(16px, var(--qn-corner-gap, 16px));
+  /* 底部至少留 18px，Android 圆角避让距离也按 18/16 放大。 */
+  padding-bottom: max(18px, calc(var(--qn-corner-gap, 0px) * 1.125));
 }
 
 .qn-composer-images {
@@ -2345,9 +2348,16 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 .qn-list-group {
   border: 0;
   background: var(--color-qn-card);
-  /* 列表卡片只靠底色与页面区分、行间细线分隔：不画外圈描边和投影（会话、项目、连接各页统一）。 */
+  /* 会话和项目列表靠底色与页面区分，行间用细线分隔。 */
   position: relative;
   isolation: isolate;
+}
+
+.qn-connection-list {
+  /* 顶部氛围光会抬亮卡片周围的背景，细描边让四角保持清晰。 */
+  border: 1px solid color-mix(in srgb, var(--color-qn-text) 24%, var(--color-qn-card));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--color-qn-text) 3%, var(--color-qn-card)), var(--color-qn-card));
 }
 
 .qn-card {
@@ -2360,11 +2370,12 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
   backdrop-filter: blur(18px);
 }
 
-.qn-nav,
 .qn-footer {
   border-top-color: var(--qn-edge);
   background: var(--color-qn-panel);
 }
+
+.qn-nav { border-top-color: var(--color-qn-border); }
 
 /* 顶部氛围光：随连接状态变化，在线常亮、连接中呼吸、离线熄灭；固定在背后，不随列表滚动。 */
 .qn-glow {
@@ -2484,11 +2495,11 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 
 .qn-page[data-motion="forward"] { animation: qn-push-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
 .qn-page[data-motion="back"] { animation: qn-back-in var(--qn-motion-long) var(--qn-ease-emphasized) backwards; }
-.qn-page[data-motion="tab"] { animation: qn-tab-fade var(--qn-motion-short) ease-out backwards; }
+.qn-page[data-motion="tab"] { animation: qn-tab-enter var(--qn-motion-short) ease-out backwards; }
 
 @keyframes qn-push-in { from { opacity: 0; transform: translateX(32px); } }
 @keyframes qn-back-in { from { opacity: 0; transform: translateX(-24px); } }
-@keyframes qn-tab-fade { from { opacity: 0.82; } }
+@keyframes qn-tab-enter { from { opacity: 0.65; transform: translateY(6px); } }
 
 /* 页面分区上浮 14px，逐段最多延迟 60ms。 */
 .qn-rise > * { animation: qn-rise var(--qn-motion-medium) var(--qn-ease-emphasized) backwards; }
@@ -2496,7 +2507,7 @@ button.qn-file-change-path .qn-file-change-name { text-decoration: underline; te
 .qn-rise > :nth-child(3) { animation-delay: 40ms; }
 .qn-rise > :nth-child(n + 4) { animation-delay: 60ms; }
 
-/* 标签内各区域同步出现，避免淡入时叠加位移。 */
+/* 切换标签时整页一起入场，避免子区块叠加位移。 */
 .qn-page[data-motion="tab"] .qn-rise > * { animation: none; }
 
 @keyframes qn-rise { from { opacity: 0; transform: translateY(14px); } }

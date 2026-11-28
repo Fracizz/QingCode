@@ -94,7 +94,7 @@ export function ConnectionsPage() {
           </div>
         ) : (
           <>
-            <div className="qn-list-group">
+            <div className="qn-list-group qn-connection-list">
               {connections.map((conn) => {
                 const current = conn.id === activeId
                 const repair = needsRepair[conn.id]

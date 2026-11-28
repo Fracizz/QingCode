@@ -1,13 +1,13 @@
 import { readLocalePreference, saveLocalePreference, t, type LocalePreference } from '@qn/codex-client'
 import {
-  ALargeSmall, Check, ChevronRight, CornerDownLeft, CornerDownRight, Download, ImageDown, Info, Languages, Minus, Palette, Plus, Sparkles,
+  ALargeSmall, Check, ChevronRight, CornerDownLeft, CornerDownRight, Download, ImageDown, Info, Languages, List, Minus, Palette, Plus, Sparkles,
   Sun, Wifi, type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DEFAULT_CHAT_FONT, MAX_CHAT_FONT, MIN_CHAT_FONT, readChatFont, saveChatFont } from '../chatFont'
 import { callDevice, getGateway } from '../client'
-import { useMobilePreferences, type MobileTheme } from '../mobilePreferences'
+import { SESSION_PREVIEW_COUNTS, useMobilePreferences, type MobileTheme } from '../mobilePreferences'
 import { getWindowNativePort, NativeRequestError, setNativeLocale } from '../native'
 import { friendlyError } from '../state'
 import { releaseEventStream, useApp } from '../store'
@@ -23,6 +23,8 @@ const themes: readonly { value: MobileTheme; label: string }[] = [
   { value: 'gray', label: t('灰色') },
   { value: 'light', label: t('浅色') },
 ]
+
+const sessionPreviewOptions = SESSION_PREVIEW_COUNTS.map((value) => ({ value, label: String(value) }))
 
 const runningSendOptions = [
   { value: 'queue', label: t('排队') },
@@ -75,7 +77,7 @@ function RowIcon({ icon: Icon }: { icon: LucideIcon }) {
 }
 
 /** 选项行：右侧显示当前值，点开后在底部弹层里选择；选项说明放进弹层，行内只留标题。 */
-function ChoiceRow<T extends string | boolean>({
+function ChoiceRow<T extends string | boolean | number>({
   icon, title, value, options, onChange, hint, disabled,
 }: {
   icon: LucideIcon
@@ -143,6 +145,7 @@ function SwitchRow({ icon, title, hint, checked, onChange, disabled }: {
 export function MobileSettings({ onClose }: { onClose: () => void }) {
   const theme = useMobilePreferences((state) => state.theme)
   const reduceMotion = useMobilePreferences((state) => state.reduceMotion)
+  const sessionPreviewCount = useMobilePreferences((state) => state.sessionPreviewCount)
   const sendKey = useMobilePreferences((state) => state.sendKey)
   const runningSend = useMobilePreferences((state) => state.runningSend)
   const imageCompression = useMobilePreferences((state) => state.imageCompression)
@@ -271,6 +274,8 @@ export function MobileSettings({ onClose }: { onClose: () => void }) {
           <ChoiceRow icon={Sparkles} title={t('界面动效')} value={reduceMotion}
             options={[{ value: false, label: t('跟随系统') }, { value: true, label: t('减少动效') }]}
             onChange={(value) => reportLocalSave(update({ reduceMotion: value }))} />
+          <ChoiceRow icon={List} title={t('每个项目默认显示的会话数')} value={sessionPreviewCount}
+            options={sessionPreviewOptions} onChange={(value) => reportLocalSave(update({ sessionPreviewCount: value }))} />
         </SettingGroup>
 
         <SettingGroup title={t('对话')}>

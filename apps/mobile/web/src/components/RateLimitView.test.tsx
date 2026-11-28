@@ -213,7 +213,10 @@ describe('手机目标额度展示', () => {
     state.rateLimits.local = {
       snapshot: null, account: null, updatedAt: null, loading: false, error: null,
       resetCredits: pickResetCredits({ rateLimitResetCredits: { availableCount: 1, credits: [
-        { id: 'card-1', status: 'available', title: '赠送重置卡', expiresAt: null },
+        {
+          id: 'card-1', status: 'available', title: 'Full reset', expiresAt: null,
+          description: "Thanks for using Codex! You've been granted one free rate limit reset.",
+        },
       ] } }),
     }
     const host = document.createElement('div')
@@ -226,8 +229,11 @@ describe('手机目标额度展示', () => {
     try {
       await act(() => root.render(<RateLimitDetails targetId="local" available />))
       expect(host.textContent).toContain('可用 1 张')
-      expect(host.textContent).toContain('赠送重置卡')
+      expect(host.textContent).toContain('完全重置')
+      expect(host.textContent).toContain('感谢使用 Codex！你获得了一次免费重置额度的机会。')
+      expect(host.textContent).not.toContain('Full reset')
       await click('使用')
+      expect(host.querySelector('[aria-label="使用重置卡？"]')?.textContent).toContain('完全重置')
       await click('关闭')
       expect(state.consumeResetCredit).not.toHaveBeenCalled()
       await click('使用')

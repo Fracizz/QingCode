@@ -668,8 +668,8 @@ export const useCodex = create<CodexState>((set, get) => {
         return state === current.state ? current : { ...current, state }
       })
       if (notification.method === 'thread/closed') expireSides(targetId, agent, notification.params.threadId)
-      // Claude 会话开启后才拿得到真实模型表，server 广播后重拉，替换先前的别名列表。
-      if ((notification as { method: string }).method === 'qingcode/models/updated') {
+      // Claude 和 pi 的会话进程就绪后会广播新的模型表，替换先前的别名或缓存。
+      if ((notification as { method: string }).method === 'qingcode/models/updated' && get().sessions[key]?.opened) {
         void useModels.getState().load(targetId, agent, rpc, true)
       }
       if (steers.size) {
@@ -725,6 +725,14 @@ export const useCodex = create<CodexState>((set, get) => {
     return session
   }
 
+  const prefetchSkills = (session: TargetSession, force = false): void => {
+    const { targetId, agent, rpc, openedConfig } = session
+    const cwd = get().currentTargetId === targetId ? get().currentCwd : null
+    if (cwd && agent !== 'pi') {
+      void useSkills.getState().load(skillsKey(targetId, agent, cwd, openedConfig?.directory), cwd, rpc, force)
+    }
+  }
+
   const ensureOpen = async (targetId: string, agent: AgentKind = DEFAULT_AGENT): Promise<boolean> => {
     const key = sessionKey(targetId, agent)
     const current = get().sessions[key]
@@ -759,8 +767,9 @@ export const useCodex = create<CodexState>((set, get) => {
         const replaced = session.openedConfig !== null && session.openedConfig.directory !== directory
         if (replaced) {
           expireSides(targetId, agent)
-          // 配置目录换了（账号/提供方可能不同），旧模型列表作废，选择器下次渲染时重新拉取。
+          // 配置目录换了（账号/提供方可能不同），清掉旧目录的模型和额度。
           useModels.getState().invalidate(targetId, agent)
+          useRateLimits.getState().reset(targetId, agent)
           const prefix = targetAgentKeyPrefix(targetId, agent)
           patchSession(key, (value) => ({ ...value, state: emptyState(), threadsAwaitingResume: new Set() }))
           set((state) => ({
@@ -809,6 +818,11 @@ export const useCodex = create<CodexState>((set, get) => {
           agentVersion: version,
           lastSeq,
         }))
+        // 每次打开都预取模型，重连时也重新读取；不等切换 Agent 或打开选择器。
+        void useModels.getState().load(targetId, agent, session.rpc, true)
+        const ready = get().sessions[key]
+        if (ready) prefetchSkills(ready, true)
+        if (replaced) void useRateLimits.getState().refresh(targetId, agent)
         for (const threadId of Object.keys(get().sessions[key]?.state.threads ?? {})) {
           void flushPending({ targetId, agent, threadId })
         }
@@ -837,19 +851,6 @@ export const useCodex = create<CodexState>((set, get) => {
     return task
   }
 
-  /**
-   * 启动或连接后各 Agent 打开即预取模型表与当前项目的技能，不等用户切到该 Agent 再加载。
-   * 只调用已打开会话上的只读接口，不为此额外启动 Agent（R9）。
-   * pi 的技能要借运行中的会话进程读取，空闲时取不到，交给输入区按需加载。
-   */
-  const prefetchAgentConfig = (targetId: string, agent: AgentKind, session: TargetSession): void => {
-    void useModels.getState().load(targetId, agent, session.rpc)
-    const cwd = get().currentTargetId === targetId ? get().currentCwd : null
-    if (cwd && agent !== 'pi') {
-      void useSkills.getState().load(skillsKey(targetId, agent, cwd, session.openedConfig?.directory), cwd, session.rpc)
-    }
-  }
-
   const probeAgents = async (targetId: string, force = false): Promise<void> => {
     const busy = probing.get(targetId)
     if (busy) {
@@ -863,6 +864,8 @@ export const useCodex = create<CodexState>((set, get) => {
         const key = sessionKey(targetId, agent)
         const session = get().sessions[key]
         if (session?.opened && session.openedConfig?.directory === configDirFor(targetId, agent)) {
+          if (force) void useModels.getState().load(targetId, agent, session.rpc, true)
+          prefetchSkills(session, force)
           patchAgent(targetId, agent, {
             state: 'ready',
             ...(session.agentVersion ? { version: session.agentVersion } : {}),
@@ -878,7 +881,6 @@ export const useCodex = create<CodexState>((set, get) => {
         patchAgent(targetId, agent, { state: 'checking' })
         const ok = await ensureOpen(targetId, agent)
         const after = get().sessions[key]
-        if (ok && after) prefetchAgentConfig(targetId, agent, after)
         patchAgent(
           targetId,
           agent,
@@ -1553,6 +1555,7 @@ export const useCodex = create<CodexState>((set, get) => {
           if (payload.name === 'server.restarted') {
             for (const session of Object.values(get().sessions)) {
               if (session.targetId !== payload.targetId) continue
+              useModels.getState().invalidate(payload.targetId, session.agent)
               session.transport.resetLastSeq()
               patchSession(session.key, (value) => ({
                 ...value,
@@ -1573,6 +1576,7 @@ export const useCodex = create<CodexState>((set, get) => {
           // 只有真正打开过的会话才算"进程退出"；探测/启动失败（如目标机没装 codex）不是退出，
           // 否则在用 pi 时也会因为探测 codex 不停弹出提示。
           if (!session?.opened) return
+          useModels.getState().invalidate(payload.targetId, exitedAgent)
           patchSession(key, (value) => ({
             ...value,
             state: failActiveThreads(value.state, t('{agent} 进程已退出', { agent: agentLabel(value.agent) })),
@@ -1592,13 +1596,13 @@ export const useCodex = create<CodexState>((set, get) => {
             // 失败冷却也一并清掉：重连后目标环境可能已变化（如刚装好 Agent），应立即重新探测。
             for (const session of Object.values(get().sessions)) {
               if (session.targetId !== payload.id || (!session.opened && session.openFailedAt == null)) continue
+              useModels.getState().invalidate(payload.id, session.agent)
               patchSession(session.key, (value) => ({ ...value, opened: false, openFailedAt: null }))
             }
             return
           }
-          if (get().currentTargetId !== payload.id) return
           // 启动时项目可能先于连接恢复，就绪后才能查到这个目录的历史会话。
-          if (get().currentCwd) void get().refreshThreads()
+          if (get().currentTargetId === payload.id && get().currentCwd) void get().refreshThreads()
           else void get().probeAgents(payload.id)
         }),
       ]

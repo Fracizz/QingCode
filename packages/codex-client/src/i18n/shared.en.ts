@@ -25,6 +25,8 @@ export default {
   '正在压缩会话…': 'Compacting session…',
   '排队压缩': 'Queue compaction',
   '压缩已在排队': 'Compaction is already queued',
+  '排队消息参数无效': 'Invalid queued message parameters',
+  '电脑暂存的排队消息过多': 'Too many queued messages are stored on the computer',
   '当前一轮和已排队的内容处理完后开始压缩。': 'Compaction starts after the current turn and queued items finish.',
   '模型已切换为 {model}': 'Model changed to {model}',
   '已压缩会话上下文': 'Session context compacted',

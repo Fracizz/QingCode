@@ -126,6 +126,41 @@ async function flush(): Promise<void> {
 }
 
 describe('PiHost（v2 JSON-RPC 外观）', () => {
+  it('用户启动 pi 后发布真实模型，重启后可在不启动进程的情况下读取缓存', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'qn-pi-models-'))
+    const h = harness([], stateDir)
+    const restarted = harness([], stateDir)
+    const model = { provider: 'test', id: 'model-v2', name: 'Model v2', reasoning: true, input: ['text'] }
+    h.state.handleCommand = (type) => {
+      if (type === 'get_available_models') return { success: true, data: { models: [model] } }
+      if (type === 'get_state') return { success: true, data: { sessionId: 'fake-session', model, thinkingLevel: 'high' } }
+      if (type === 'get_available_thinking_levels') return { success: true, data: { levels: ['off', 'high'] } }
+    }
+    try {
+      await h.host.open({})
+      h.host.handleClientMessage(1, { id: 1, method: 'model/list' })
+      await flush()
+      expect(responseFor(h.sent, 1)?.result).toMatchObject({ data: [] })
+      expect(h.rpcOptions).toHaveLength(0)
+
+      h.host.handleClientMessage(1, { id: 2, method: 'thread/start', params: { cwd: '/work' } })
+      await flush()
+      expect(h.broadcasts.some(({ msg }) => msg.method === 'qingcode/models/updated')).toBe(true)
+
+      await restarted.host.open({})
+      restarted.host.handleClientMessage(1, { id: 3, method: 'model/list' })
+      await flush()
+      expect(responseFor(restarted.sent, 3)?.result).toMatchObject({
+        data: [{ model: 'test/model-v2', displayName: 'Model v2', isDefault: true, defaultReasoningEffort: 'high' }],
+      })
+      expect(restarted.rpcOptions).toHaveLength(0)
+    } finally {
+      h.host.shutdown()
+      restarted.host.shutdown()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
   it('通过原生 steer 传递图片，只有 pi 开始处理引导时才写入当前轮次', async () => {
     const threadId = 'fake-session'
     const stateDir = mkdtempSync(join(tmpdir(), 'qn-pi-steering-'))
@@ -290,7 +325,7 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
       host.handleClientMessage(1, { id: 1, method: 'thread/compact/start', params: { threadId } })
       await flush()
       expect(responseFor(sent, 1)?.result).toEqual({})
-      expect(state.commands).toEqual(['switch_session', 'get_state', 'compact'])
+      expect(state.commands).toEqual(['switch_session', 'get_state', 'get_available_models', 'compact'])
       expect(host.activeTurns).toBe(1)
       host.handleClientMessage(2, { id: 2, method: 'thread/compact/start', params: { threadId } })
       await flush()
@@ -341,7 +376,7 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
       data: [{ id: 'turn-fake-session-2' }],
       nextCursor: expect.any(String),
     })
-    expect(state.commands).toEqual(['switch_session', 'get_state', 'get_messages', 'get_session_stats'])
+    expect(state.commands).toEqual(['switch_session', 'get_state', 'get_available_models', 'get_messages', 'get_session_stats'])
     host.shutdown()
   })
 
@@ -483,7 +518,7 @@ describe('PiHost（v2 JSON-RPC 外观）', () => {
     await flush()
     expect(responseFor(sent, 2)?.result).toMatchObject({ thread: { id: 'fake-session', cwd: '/other/project' } })
     expect(responseFor(sent, 3)?.result).toEqual(responseFor(sent, 2)?.result)
-    expect(state.commands).toEqual(['switch_session', 'switch_session', 'get_state', 'get_messages', 'get_messages'])
+    expect(state.commands).toEqual(['switch_session', 'switch_session', 'get_state', 'get_available_models', 'get_messages', 'get_messages'])
     expect(rpcOptions.map((options) => options.cwd)).toEqual(['/other/project', '/other/project'])
 
     host.handleClientMessage(1, { id: 4, method: 'thread/read', params: { threadId: 'missing' } })

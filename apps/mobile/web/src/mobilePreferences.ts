@@ -9,9 +9,12 @@ export type MobileTheme = 'dark' | 'gray' | 'light'
 /** 图片压缩档位：高压缩体积最小，低压缩画质最好。 */
 export type ImageCompression = 'high' | 'medium' | 'low'
 export const IMAGE_COMPRESSIONS: readonly ImageCompression[] = ['high', 'medium', 'low']
+export const SESSION_PREVIEW_COUNTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
+type SessionPreviewCount = (typeof SESSION_PREVIEW_COUNTS)[number]
 type MobilePreferences = {
   theme: MobileTheme
   reduceMotion: boolean
+  sessionPreviewCount: SessionPreviewCount
   sendKey: 'newline' | 'send'
   /** 会话运行中点发送键的默认处理。 */
   runningSend: RunningSendPreference
@@ -25,7 +28,12 @@ const storageKey = 'qn.mobile.preferences'
  */
 const MOBILE_RUNNING_SEND: RunningSendPreference = 'queue'
 const defaults: MobilePreferences = {
-  theme: 'dark', reduceMotion: false, sendKey: 'newline', runningSend: MOBILE_RUNNING_SEND, imageCompression: 'medium',
+  theme: 'dark', reduceMotion: false, sessionPreviewCount: 6,
+  sendKey: 'newline', runningSend: MOBILE_RUNNING_SEND, imageCompression: 'medium',
+}
+
+export function parseSessionPreviewCount(value: unknown): SessionPreviewCount {
+  return SESSION_PREVIEW_COUNTS.find((count) => count === value) ?? defaults.sessionPreviewCount
 }
 
 export function parseImageCompression(value: unknown): ImageCompression {
@@ -49,6 +57,7 @@ function readPreferences(): MobilePreferences {
     return {
       theme: parseTheme(value?.theme),
       reduceMotion: value?.reduceMotion === true,
+      sessionPreviewCount: parseSessionPreviewCount(value?.sessionPreviewCount),
       sendKey: value?.sendKey === 'send' ? 'send' : defaults.sendKey,
       runningSend: parseMobileRunningSend(value?.runningSendMode),
       imageCompression: parseImageCompression(value?.imageCompression),
@@ -63,8 +72,8 @@ export const useMobilePreferences = create<MobilePreferences & {
 }>((set, get) => ({
   ...readPreferences(),
   update: (values) => {
-    const { theme, reduceMotion, sendKey, runningSend, imageCompression } = get()
-    const next = { theme, reduceMotion, sendKey, runningSend, imageCompression, ...values }
+    const { theme, reduceMotion, sessionPreviewCount, sendKey, runningSend, imageCompression } = get()
+    const next = { theme, reduceMotion, sessionPreviewCount, sendKey, runningSend, imageCompression, ...values }
     set(next)
     try {
       const { runningSend: runningSendMode, ...rest } = next

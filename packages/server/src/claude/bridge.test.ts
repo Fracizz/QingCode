@@ -192,18 +192,21 @@ describe('ClaudeBridge 端到端（假 query 工厂）', () => {
     const stateDir = mkdtempSync(path.join(tmpdir(), 'qn-claude-models-'))
     const h = harness({ stateDir })
     const restarted = harness({ stateDir })
-    const ids = (msg: { result?: unknown }) => ((msg.result as Json).data as Json[]).map((model) => model.id)
+    const models = (msg: { result?: unknown }) => (msg.result as Json).data as Json[]
     try {
       await h.bridge.open({})
       request(h, 'turn', 'turn/start', { threadId: 'old-1', input: [{ type: 'text', text: '开始', text_elements: [] }] })
       await response(h, 'turn')
-      Object.assign(h.queries[0]!, { supportedModels: async () => [{ value: 'claude-sonnet-5-5', displayName: 'Sonnet 5.5' }] })
+      Object.assign(h.queries[0]!, { supportedModels: async () => [{
+        value: 'sonnet', displayName: 'Sonnet', resolvedModel: 'claude-sonnet-test',
+      }] })
       request(h, 'live', 'model/list')
-      expect(ids(await response(h, 'live'))).toEqual(['claude-sonnet-5-5'])
+      const live = models(await response(h, 'live'))
+      expect(live).toMatchObject([{ id: 'sonnet', model: 'sonnet', displayName: 'claude-sonnet-test (Sonnet)' }])
 
       await restarted.bridge.open({})
       request(restarted, 'cached', 'model/list')
-      expect(ids(await response(restarted, 'cached'))).toEqual(['claude-sonnet-5-5'])
+      expect(models(await response(restarted, 'cached'))).toEqual(live)
       expect(restarted.queries).toHaveLength(0)
     } finally {
       h.bridge.shutdown()

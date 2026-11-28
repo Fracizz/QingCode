@@ -88,7 +88,8 @@ export default function App() {
   useEffect(() => useRateLimits.getState().init(), [])
 
   useEffect(() => {
-    void load().then(() => {
+    // 自动连接后会立即读取模型和额度，先取目标配置里的 Agent 路径与配置目录。
+    void Promise.all([load(), useSettings.getState().load()]).then(() => {
       // 本机目标无需凭据且始终显示在侧栏，启动即连，省去用户每次手动点一次"连接"。smoke 只验证通道，不拉起 daemon。
       // 不再以"当前选中本机"为前提：restoreLast 的 effect 可能先把选中项切到上次的远程目标，
       // 这一竞态在更新后首启（加载变慢）时更容易出现，导致本机不再自动连接。
@@ -98,7 +99,6 @@ export default function App() {
       }
     })
     void useLegacy.getState().detectNow()
-    void useSettings.getState().load()
     return useCodex.getState().init()
   }, [load])
 

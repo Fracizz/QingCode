@@ -58,6 +58,19 @@ export function unlistedResetCredits(summary: ResetCredits): number {
   return Math.max(0, summary.availableCount - summary.credits.filter((credit) => !credit.redeeming).length)
 }
 
+/** 已知的 Codex 卡片文案本地化，其他卡片保留服务端说明。 */
+export function resetCreditText(credit: ResetCredit): Pick<ResetCredit, 'title' | 'description'> {
+  if (getLocale() === 'en') return credit
+  const title = credit.title?.trim().toLowerCase()
+  const description = credit.description?.trim().replace(/’/g, "'").replace(/\s+/g, ' ').replace(/\.$/, '').toLowerCase()
+  return {
+    title: title === 'full reset' ? '完全重置' : credit.title, // i18n-ignore: 仅中文界面，英文保留服务端原文
+    description: description === "thanks for using codex! you've been granted one free rate limit reset"
+      ? '感谢使用 Codex！你获得了一次免费重置额度的机会。' // i18n-ignore: 仅中文界面，英文保留服务端原文
+      : credit.description,
+  }
+}
+
 export function resetCreditExpiry(expiresAt: number | null, now = Date.now()): string {
   if (expiresAt === null) return t('长期有效')
   if (expiresAt * 1000 <= now) return t('已过期')

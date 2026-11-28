@@ -3,9 +3,55 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { App } from '../App'
+import { useMobilePreferences } from '../mobilePreferences'
 import { useApp } from '../store'
-import { useWorkspace } from '../workspace'
+import { useWorkspace, type WorkspaceThread } from '../workspace'
 import { WorkspaceHome } from './WorkspaceHome'
+
+it('每个项目默认显示 6 个会话，设置为 10 后仍可展开其余会话', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const app = useApp.getState()
+  const workspace = useWorkspace.getState()
+  const preferences = useMobilePreferences.getState()
+  const host = document.createElement('div')
+  const root = createRoot(host)
+  const desktopId = 'preview-desktop'
+  const project = { id: 'demo', targetId: 'local', name: '示例项目', path: '/demo', lastOpenedAt: 0 }
+  const threads = Array.from({ length: 12 }, (_, index): WorkspaceThread => ({
+    id: `thread-${index}`, title: `会话 ${index + 1}`, preview: '', cwd: project.path,
+    updatedAt: index, agent: 'codex', targetId: project.targetId, projectId: project.id,
+  }))
+  const rows = () => host.querySelectorAll('.qn-thread-row')
+  const more = () => host.querySelector<HTMLButtonElement>('.qn-session-more')!
+
+  try {
+    await act(() => {
+      useApp.setState({ activeId: desktopId, eventsConnected: false })
+      useWorkspace.setState({
+        tab: 'sessions',
+        projects: { [desktopId]: { loading: false, error: false, loaded: true, items: [project] } },
+        threads: { [desktopId]: threads },
+      })
+      root.render(<WorkspaceHome />)
+    })
+    expect(rows()).toHaveLength(6)
+    expect(more().textContent).toBe('显示更多（6 条）')
+
+    await act(() => useMobilePreferences.setState({ sessionPreviewCount: 10 }))
+    expect(rows()).toHaveLength(10)
+    expect(more().textContent).toBe('显示更多（2 条）')
+    await act(() => more().click())
+    expect(rows()).toHaveLength(12)
+    await act(() => more().click())
+    expect(rows()).toHaveLength(10)
+  } finally {
+    await act(() => root.unmount())
+    useApp.setState(app)
+    useWorkspace.setState(workspace)
+    useMobilePreferences.setState(preferences)
+    vi.unstubAllGlobals()
+  }
+})
 
 it('连接状态跨标签页更新，持续失联只显示一条提示', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)

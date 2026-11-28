@@ -77,6 +77,7 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
 
   const models = list?.models ?? []
   const selection = useMemo(() => resolveSelection(models, prefs), [models, prefs])
+  const effort = effortLabel(selection.effort)
   const filtered = useMemo(() => filterModels(models, query), [models, query])
   const visible = useMemo(
     () => managing ? filtered : withoutHiddenModels(filtered, hiddenList, selection.model?.model),
@@ -127,13 +128,15 @@ export function ModelPicker({ targetId, agent, threadId, piDraft, open: controll
           type="button"
           className={triggerClass}
           aria-label={t('选择模型与推理强度')}
+          title={triggerLabel(selection) || undefined}
         >
           {list?.loading && models.length === 0 ? (
             <LoadingIcon size={13} />
           ) : (
             selection.fast && <Zap size={13} className="shrink-0 text-qn-warn" />
           )}
-          <span className="truncate">{triggerLabel(selection) || t('模型')}</span>
+          <span className="truncate">{selection.model ? translateMessage(selection.model.displayName) : t('模型')}</span>
+          {effort && <span className="shrink-0">· {effort}</span>}
           <ChevronDown size={14} className="shrink-0" />
         </button>
       </PopoverTrigger>
@@ -356,9 +359,19 @@ export function ContextRing({ tokenUsage, onClick }: { tokenUsage: unknown; onCl
   const turn = usage ? null : estimatedTurnUsage(tokenUsage)
   // 草稿没有会话也没有用量时不占位置。
   if (!onClick && !usage && !turn) return null
-  const label = usage ? t('上下文已用 {percent}%', { percent: usage.percent })
+  const percent = usage?.percent ?? 0
+  const label = usage ? t('上下文已用 {percent}%', { percent })
     : turn ? t('查看最近一轮用量') : t('查看会话用量')
-  const ring = <ProgressRing percent={usage?.percent ?? 0} size={18} color={usage ? usageTone(usage.percent) : 'var(--color-qn-muted)'} />
+  const ring = (
+    <span className="relative shrink-0" style={{ color: usageTone(percent) }} aria-hidden>
+      <ProgressRing percent={percent} size={26} fillBounds />
+      {/* 高用量数字沿用额度提示红，确保在石墨灰输入框上仍清晰。 */}
+      {usage && <span className={cn(
+        'absolute inset-0 grid place-items-center text-ui-2xs leading-none font-medium tabular-nums',
+        percent >= 90 && 'text-qn-quota-danger',
+      )}>{percent}</span>}
+    </span>
+  )
   const card = <ContextUsageCard tokenUsage={tokenUsage} />
   const cardClass = 'w-64 rounded-xl px-3.5 py-3'
   if (onClick) {

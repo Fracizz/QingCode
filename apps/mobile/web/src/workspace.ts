@@ -202,6 +202,8 @@ type WorkspaceState = {
   threads: Record<string, WorkspaceThread[]>
   projects: Record<string, ProjectList>
   preferences: Record<string, WorkspacePreferences>
+  /** 项目最近活动时间的快照（秒），切换标签或返回会话列表时沿用。 */
+  activityPriority: Partial<Record<string, ReadonlyMap<string, number>>>
   loadProjects: (desktopId: string) => Promise<void>
 }
 
@@ -270,6 +272,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   threads: {},
   projects: {},
   preferences: {},
+  activityPriority: {},
   loadProjects: async (desktopId) => {
     const connection = useApp.getState().connections.find((item) => item.id === desktopId)
     if (!connection || get().projects[desktopId]?.loading) return
@@ -303,6 +306,30 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     }
   },
 }))
+
+export function setWorkspaceActivityPriority(desktopId: string, enabled: boolean): void {
+  const { activeId, sessions, archivedThreads } = useApp.getState()
+  if (activeId !== desktopId) return
+  useWorkspace.setState(({ activityPriority, threads }) => {
+    const next = { ...activityPriority }
+    if (enabled) {
+      const times = new Map<string, number>()
+      for (const thread of visibleWorkspaceThreads(threads[desktopId] ?? [], desktopId, archivedThreads)) {
+        const view = sessions[sessionKey(thread.targetId, thread.agent)]?.state.threads[thread.id]
+        if (!thread.unread && !isActiveThread(recentThreadStatus(thread, view))) continue
+        const startedAt = view?.turns?.findLast((turn) => turn.id === view.activeTurnId)?.startedAtMs
+        // 同一秒开始的项目按固定顺序排，避免不同 Agent 的时间精度影响先后。
+        const seconds = Math.floor((startedAt ?? thread.updatedAt) / 1000)
+        const key = workspaceProjectKey({ targetId: thread.targetId, id: thread.projectId })
+        times.set(key, Math.max(times.get(key) ?? 0, seconds))
+      }
+      next[desktopId] = times
+    } else {
+      delete next[desktopId]
+    }
+    return { activityPriority: next }
+  })
+}
 
 function changePreferences(desktopId: string, change: (current: WorkspacePreferences) => WorkspacePreferences): void {
   const fp = useApp.getState().connections.find((item) => item.id === desktopId)?.fp
@@ -576,13 +603,15 @@ export function startWorkspaceObserver(): () => void {
           const threads = { ...state.threads }
           const projects = { ...state.projects }
           const preferences = { ...state.preferences }
+          const activityPriority = { ...state.activityPriority }
           for (const item of removed) {
             removedDesktops.add(item.id)
             delete threads[item.id]
             delete projects[item.id]
             delete preferences[item.id]
+            delete activityPriority[item.id]
           }
-          return { threads, projects, preferences }
+          return { threads, projects, preferences, activityPriority }
         })
         persistWorkspace()
       }

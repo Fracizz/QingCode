@@ -110,6 +110,7 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
           session.rpc.request('account/rateLimits/read', {}),
           session.rpc.request('account/read', {}),
         ])
+        if (!isCurrent()) return
         const snapshot = limits.status === 'fulfilled' ? pickSnapshot(limits.value) : null
         const accountInfo = account.status === 'fulfilled' ? pickAccount(account.value) : null
         const error =
@@ -125,7 +126,7 @@ export const useRateLimits = create<RateLimitsState>((set, get) => {
         if (snapshot || accountInfo) changes.updatedAt = Date.now()
         patch(targetId, agent, changes)
       } catch (err) {
-        if (agent !== 'claude' || isCurrent()) {
+        if (isCurrent()) {
           patch(targetId, agent, { loading: false, error: friendlyError(err, t('读取额度失败')) })
         }
       } finally {

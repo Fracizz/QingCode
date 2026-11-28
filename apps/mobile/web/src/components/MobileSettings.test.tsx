@@ -66,9 +66,11 @@ it('常用设置即时应用并保存，对话继承原有字号且选词时不�
     expect(document.documentElement.dataset.theme).toBe('light')
     expect(document.documentElement.hasAttribute('data-reduce-motion')).toBe(true)
 
+    await choose('每个项目默认显示的会话数', '10')
     await choose('发送按键', '回车发送')
     expect(JSON.parse(localStorage.getItem('qn.mobile.preferences') ?? 'null')).toEqual({
       theme: 'light', reduceMotion: true, sendKey: 'send', runningSendMode: 'queue', imageCompression: 'medium',
+      sessionPreviewCount: 10,
     })
     await choose('图片压缩', '高（体积最小）')
     expect(JSON.parse(localStorage.getItem('qn.mobile.preferences') ?? 'null')).toMatchObject({ imageCompression: 'high' })

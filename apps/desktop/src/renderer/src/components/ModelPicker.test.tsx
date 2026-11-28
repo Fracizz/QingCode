@@ -34,15 +34,28 @@ it('无上下文窗口时仍显示 Claude 和 pi 的单轮统计', () => {
   expect(html).not.toMatch(/费用|\$0\.012/)
   expect(html).not.toContain('上下文已用')
   expect(html).toContain('<svg')
+  const host = document.createElement('div')
+  host.innerHTML = html
+  expect(host.querySelector('[role="img"]')?.textContent).toBe('')
 })
 
-it('有窗口时显示圆环，悬浮卡列出已用/窗口和进度条', () => {
+it('有窗口时在圆环内显示占用数值，悬浮卡列出已用/窗口和进度条', () => {
   const tokenUsage = { last: { totalTokens: 126_700 }, modelContextWindow: 258_400 }
   const html = renderToStaticMarkup(<ContextRing tokenUsage={tokenUsage} onClick={() => undefined} />)
   expect(html).toContain('aria-label="上下文已用 49%"')
-  expect(html).toContain('<svg')
+  expect(html).toContain('<svg width="26" height="26"')
+  expect(html).toContain('tabular-nums">49</span>')
   expect(html).toContain('126.7k/258.4k')
   expect(html).toContain('aria-valuenow="49"')
+})
+
+it.each([0, 100])('上下文占用为 %i%% 时保留环心读数', (percent) => {
+  const tokenUsage = { last: { totalTokens: percent }, modelContextWindow: 100 }
+  const host = document.createElement('div')
+  host.innerHTML = renderToStaticMarkup(<ContextRing tokenUsage={tokenUsage} onClick={() => undefined} />)
+  const button = host.querySelector('button')
+  expect(button?.textContent).toBe(String(percent))
+  expect(button?.getAttribute('aria-label')).toBe(`上下文已用 ${percent}%`)
 })
 
 it('会话暂无用量时仍显示圆环，草稿无用量时不显示', () => {

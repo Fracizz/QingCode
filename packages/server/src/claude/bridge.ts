@@ -3,6 +3,7 @@
  * 审批、中断、空闲关闭与错误恢复。只发 v2 JSON-RPC，与客户端的渲染链路完全复用。
  */
 import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import type { ElicitationRequest, ElicitationResult, Options, PermissionMode, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ThreadStatus } from '../../../../vendor/codex-protocol/ts/v2/ThreadStatus'
 import { classifyJsonRpc, type JsonRpcId } from '@qn/protocol'
@@ -22,7 +23,7 @@ import { VERSION } from '../version'
 import { nativeAgentCwd } from '../workspace/paths'
 import { buildApprovalRequest, permissionResult } from './approval'
 import { ContextWindowStore, resultModelWindow } from './contextWindows'
-import { ModelCache } from './modelCache'
+import { ModelCache } from '../agentModelCache'
 import { lastContextUsage, lastReplyModel, parseClaudeSteer, sessionInfoToMeta, sessionMessagesToThread, threadListResponse, type ClaudeSteerHistory } from './history'
 import { backgroundTaskList, rewindResponse, slashCommandList, type BackgroundTask, type RewindResponse } from './controls'
 import { HistoryPageCache, listHistoryItems, listHistoryTurns } from './historyPages'
@@ -254,7 +255,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     this.steerHistory = new SteerHistoryStore(options.stateDir, 'claude', parseClaudeSteer, (msg) => this.hub.log(msg))
     this.archives = new ArchiveStore(options.stateDir, 'claude', (msg) => this.hub.log(msg))
     this.contextWindows = new ContextWindowStore(options.stateDir, (msg) => this.hub.log(msg))
-    this.modelCache = new ModelCache(options.stateDir, (msg) => this.hub.log(msg))
+    this.modelCache = new ModelCache(options.stateDir, 'claude', (msg) => this.hub.log(msg))
   }
 
   protected async openAgent(options: AgentOpenOptions): Promise<{
@@ -692,12 +693,7 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private async listModels(scope: ClaudeScope): Promise<Json> {
     if (scope.realModels) return scope.realModels
     const query = this.activeModelQuery(scope)
-    const read = query?.supportedModels
-    if (!query || !read) return this.fallbackModels(scope)
-    scope.modelListRequest ??= this.fetchModels(scope, read.bind(query)).finally(() => {
-      scope.modelListRequest = null
-    })
-    return scope.modelListRequest
+    return this.readModels(scope, query) ?? this.fallbackModels(scope)
   }
 
   private activeModelQuery(scope: ClaudeScope): QueryLike | null {
@@ -710,12 +706,12 @@ export class ClaudeBridge extends JsonRpcAgentHost {
   private async fetchModels(scope: ClaudeScope, read: () => Promise<unknown[]>): Promise<Json> {
     try {
       const list = supportedModelList(await read())
-      if (!list) return this.fallbackModels(scope)
-      this.storeModels(scope, list)
+      if (!list) return scope.realModels ?? this.fallbackModels(scope)
+      if (this.opened) this.storeModels(scope, list)
       return list
     } catch (err) {
       this.hub.log(`claude 模型表读取失败，回退缓存或别名列表: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
-      return this.fallbackModels(scope)
+      return scope.realModels ?? this.fallbackModels(scope)
     }
   }
 
@@ -729,25 +725,20 @@ export class ClaudeBridge extends JsonRpcAgentHost {
    * 否则界面会一直停在别名列表上。
    */
   private storeModels(scope: ClaudeScope, list: Json): void {
-    if (scope.realModels) return
+    const previous = scope.realModels ?? this.modelCache.get(scope.directory)
     scope.realModels = list
+    if (isDeepStrictEqual(previous, list)) return
     this.modelCache.set(scope.directory, list)
     if (this.opened && scope === this.currentScope()) this.notify({ method: 'qingcode/models/updated', params: {} })
   }
 
-  /** 会话已开启后顺手取一次真实表；不等待、不阻断 turn，失败时下次 model/list 会重试。 */
-  private cacheModels(scope: ClaudeScope, query: QueryLike): void {
-    const read = query.supportedModels
-    if (scope.realModels || !read) return
-    void read
-      .call(query)
-      .then((infos) => {
-        const list = supportedModelList(infos)
-        if (this.opened && list && !scope.realModels) this.storeModels(scope, list)
-      })
-      .catch((err: unknown) => {
-        this.hub.log(`claude 模型表读取失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
-      })
+  private readModels(scope: ClaudeScope, query: QueryLike | null): Promise<Json> | null {
+    const read = query?.supportedModels
+    if (!query || !read) return scope.modelListRequest
+    scope.modelListRequest ??= this.fetchModels(scope, read.bind(query)).finally(() => {
+      scope.modelListRequest = null
+    })
+    return scope.modelListRequest
   }
 
   private async listSkills(scope: ClaudeScope, cwds: string[], force: boolean): Promise<Json> {
@@ -1080,7 +1071,8 @@ export class ClaudeBridge extends JsonRpcAgentHost {
     session.settings = { ...settings }
     session.permissionMode = permissionMode
     session.allowsBypass = permissionMode === 'bypassPermissions'
-    this.cacheModels(session.scope, query)
+    // 只借用用户已经开启的 query 刷新，沿用本次 SDK 初始化结果，不阻断 turn。
+    void this.readModels(session.scope, query)
     void this.consume(session, query)
   }
 

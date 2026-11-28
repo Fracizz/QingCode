@@ -1893,7 +1893,7 @@ export const useApp = create<AppState>((set, get) => {
           return { approvalSubmitting }
         })
       }
-      // Claude 会话开启后才拿得到真实模型表，server 广播后重拉，替换先前的别名列表。
+      // Claude 和 pi 的会话进程就绪后会广播新的模型表。
       if (method === 'qingcode/models/updated') void get().loadModels(targetId, agent, true)
       if (agent === 'claude' && method === 'account/rateLimits/updated') {
         const snapshot = pickClaudeSnapshot(notification)
@@ -3099,7 +3099,7 @@ export const useApp = create<AppState>((set, get) => {
           if (agent === 'codex') void get().refreshRateLimits(targetId)
           else if (agent === 'claude') void readClaudeRateLimits(session)
           // 打开即预取模型表，弹层打开时不必再等。
-          void get().loadModels(targetId, agent)
+          void get().loadModels(targetId, agent, true)
           return true
         } catch (err) {
           if (epoch !== desktopEpoch) return false
@@ -3176,6 +3176,8 @@ export const useApp = create<AppState>((set, get) => {
             openError: null,
             lastSeq: restarted ? info.lastSeq : maxSeq(value.lastSeq, info.lastSeq),
           }), session)
+          // 断线期间可能错过模型更新通知；重新接到已打开的 Agent 后立即补读。
+          if (!restarted || showsConversation(session)) void get().loadModels(session.targetId, session.agent, true)
           const quota = session.agent === 'claude' ? readClaudeRateLimits(session) : undefined
           const queueAddresses = queued()
           const threadIds = new Set(queueAddresses.map((address) => address.threadId))

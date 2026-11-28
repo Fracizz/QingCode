@@ -31,6 +31,7 @@ import {
 import { HistoryPageCache, listHistoryItems, listHistoryTurns } from '../claude/historyPages'
 import { redact } from '../log'
 import { ArchiveStore } from '../archiveStore'
+import { ModelCache } from '../agentModelCache'
 import { SteerHistoryStore } from '../steerHistory'
 import { VERSION } from '../version'
 import { nativeAgentCwd } from '../workspace/paths'
@@ -124,8 +125,7 @@ export class PiHost extends JsonRpcAgentHost {
   private readonly archives: ArchiveStore
   private counter = 0
   private readonly dialogs = new Map<JsonRpcId, OpenDialog>()
-  // 最近一次从运行中进程取到的模型列表，daemon 生命周期内复用
-  private cachedModels: Json | null = null
+  private readonly modelCache: ModelCache
   private modelListRequest: Promise<Json> | null = null
   // 按 cwd 缓存最近一次取到的技能，进程空闲关闭后仍可选择
   private readonly cachedSkills = new Map<string, Json[]>()
@@ -139,6 +139,7 @@ export class PiHost extends JsonRpcAgentHost {
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
     this.steerHistory = new SteerHistoryStore(options.stateDir, 'pi', parsePiSteer, (msg) => this.hub.log(msg))
     this.archives = new ArchiveStore(options.stateDir, 'pi', (msg) => this.hub.log(msg))
+    this.modelCache = new ModelCache(options.stateDir, 'pi', (msg) => this.hub.log(msg))
   }
 
   /** codex.open {agent:'pi'} 的结果：能力字段让前端如实标注无审批、无额度。 */
@@ -339,6 +340,7 @@ export class PiHost extends JsonRpcAgentHost {
     this.sessions.set(id, session)
     this.metas.set(id, session.meta)
     this.touch(session)
+    if (!ephemeral && session.rpc) void this.readModels(session.rpc, true)
     return threadStartResult(session.meta)
   }
 
@@ -572,35 +574,48 @@ export class PiHost extends JsonRpcAgentHost {
   }
 
   private modelList(): Promise<Json> {
-    // 并发的 model/list（桌面多个组件、手机同时请求）合并为一组 RPC，避免对 pi 进程重复串行发三条命令。
-    this.modelListRequest ??= this.fetchModelList().finally(() => {
-      this.modelListRequest = null
-    })
-    return this.modelListRequest
-  }
-
-  private async fetchModelList(): Promise<Json> {
-    // 只借用已运行的会话进程（R9：后台取列表不为此启动 pi）；没有时返回上次缓存，首次则为空列表。
-    let rpc: PiRpcProcess | null = null
     for (const session of this.sessions.values()) {
-      if (!session.meta.ephemeral && session.rpc?.running) {
-        rpc = session.rpc
-        break
+      if (!session.meta.ephemeral && !session.starting && !session.meta.id.startsWith(PENDING_PREFIX) && session.rpc?.running) {
+        return this.readModels(session.rpc)
       }
     }
-    if (!rpc) return this.cachedModels ?? piModelList([], {})
-    const models = asRecord((await rpc.command('get_available_models')).data)?.models
-    const state = asRecord((await rpc.command('get_state')).data) ?? {}
-    const levels = await rpc
-      .command('get_available_thinking_levels')
-      .then((response) => asRecord(response.data)?.levels)
-      .catch(() => undefined)
-    this.cachedModels = piModelList(Array.isArray(models) ? models : [], {
-      model: state.model,
-      thinkingLevel: state.thinkingLevel,
-      levels,
+    // 只从已有会话进程读取；冷连接时先返回目标机上的上次结果。
+    return Promise.resolve(this.modelCache.get(this.pi?.path) ?? piModelList([], {}))
+  }
+
+  private readModels(rpc: PiRpcProcess, notify = false): Promise<Json> {
+    // 同一时刻多个客户端请求、会话启动只发一组 RPC。
+    const path = this.pi?.path
+    const previous = this.modelCache.get(path)
+    this.modelListRequest ??= this.fetchModelList(rpc, path, previous).finally(() => {
+      this.modelListRequest = null
     })
-    return this.cachedModels
+    const task = this.modelListRequest
+    if (notify) void task.then((list) => {
+      if (this.opened && !isDeepStrictEqual(previous ?? piModelList([], {}), list)) {
+        this.notify({ method: 'qingcode/models/updated', params: {} })
+      }
+    })
+    return task
+  }
+
+  private async fetchModelList(rpc: PiRpcProcess, path: string | undefined, previous: Json | null): Promise<Json> {
+    try {
+      const response = await rpc.command('get_available_models')
+      const models = asRecord(response.data)?.models
+      if (response.success === true && Array.isArray(models)) {
+        const state = asRecord((await rpc.command('get_state')).data) ?? {}
+        const levels = await rpc.command('get_available_thinking_levels')
+          .then((result) => asRecord(result.data)?.levels)
+          .catch(() => undefined)
+        const list = piModelList(models, { model: state.model, thinkingLevel: state.thinkingLevel, levels })
+        if (!isDeepStrictEqual(previous, list)) this.modelCache.set(path, list)
+        return list
+      }
+    } catch (err) {
+      this.hub.log(`pi 模型表读取失败: ${redact(describe(err))}`) // i18n-ignore: 仅进日志
+    }
+    return previous ?? piModelList([], {})
   }
 
   private async compactThread(params: Json): Promise<Json> {
@@ -969,6 +984,9 @@ export class PiHost extends JsonRpcAgentHost {
         if (state.success !== true || asRecord(state.data)?.sessionId !== session.meta.id) {
           throw new PiRpcError(-32603, 'pi 返回的会话与所选会话不一致')
         }
+      }
+      if (!session.meta.ephemeral && !session.meta.id.startsWith(PENDING_PREFIX) && this.sessions.get(session.meta.id) === session) {
+        void this.readModels(rpc, true)
       }
       return rpc
     } catch (err) {

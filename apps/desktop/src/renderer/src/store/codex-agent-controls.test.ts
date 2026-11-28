@@ -34,9 +34,8 @@ const pending = (agent: AgentKind = 'claude', id = threadId) =>
 const view = (id = threadId, agent: AgentKind = 'claude') =>
   useCodex.getState().sessions[sessionKey(targetId, agent)]?.state.threads[id]
 const calls = () => backend.send.mock.calls.map(([, msg]) => msg)
-  .filter((msg) => msg.method && msg.method !== 'thread/list')
-// 连接后预取模型表的 model/list 与发送流程无关，断言时略去。
-const methods = () => calls().map((msg) => msg.method).filter((method) => method !== 'model/list')
+  .filter((msg) => msg.method && msg.method !== 'thread/list' && msg.method !== 'model/list')
+const methods = () => calls().map((msg) => msg.method)
 const receive = (msg: unknown, agent: AgentKind = 'claude') => {
   for (const listener of backend.listeners) listener({ agent, targetId, seq: null, msg })
 }
